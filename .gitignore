@@ -1,0 +1,10 @@
+node_modules
+.next
+.env.*
+.env
+service-account.json
+scripts
+.DS_Store.DS_Store
+.DS_Store
+.DS_Store
+**/.DS_Store
