@@ -32,7 +32,7 @@ try {
 }
 
 console.log('Getting Firestore instance...');
-const db = getFirestore("miniappdb");
+const db = getFirestore("swap-db");
 console.log('Firestore instance created');
 
 console.log('Getting Storage bucket...');

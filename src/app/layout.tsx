@@ -4,10 +4,6 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
-import Script from "next/script";
-import WebApp from "@twa-dev/sdk";
-import Providers from "@/providers/PrivyProvider";
-import { UserProvider } from '@/contexts/UserContext';
 
 const inter = Inter({
   subsets: ["latin"],
@@ -27,23 +23,11 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  if (typeof window !== "undefined") {
-    WebApp.enableClosingConfirmation();
-  }
-
   return (
     <html lang="en" className={`${inter.variable} font-grotesk`}>
       <body className="antialiased">
-        <Script
-          src="https://telegram.org/js/telegram-web-app.js"
-          strategy="beforeInteractive"
-        />
-        <UserProvider>
-          <Providers>
-            {children}
-            <Toaster />
-          </Providers>
-        </UserProvider>
+        {children}
+        <Toaster />
       </body>
     </html>
   );
