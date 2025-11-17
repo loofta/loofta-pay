@@ -109,87 +109,85 @@ export default function Home() {
 
       <div className="max-w-7xl mx-auto px-4 pb-12 relative z-10">
         {/* Hero Section */}
-        <div className="text-center space-y-4  md:space-y-6 mb-8 md:mb-12 animate-slide-up mt-4 md:mt-6">
-          <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold leading-tight px-4">
-            <span className="inline-flex gap-0.5">
-              {'Swap'.split('').map((letter, index) => (
-                <motion.span
-                  key={`swap-${index}`}
-                  className="inline-block"
-                  initial={{ opacity: 0, y: -20, scale: 0.5 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{
-                    delay: index * 0.1,
-                    type: "spring",
-                    stiffness: 300,
-                    damping: 20
-                  }}
-                  whileHover={{
-                    scale: 1.2,
-                    transition: { type: "spring", stiffness: 400 }
-                  }}
-                  style={{
-                    background: 'linear-gradient(to right, #EAB308, #FF0F00)',
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                    backgroundClip: 'text',
-                  }}
-                >
-                  {letter}
-                </motion.span>
-              ))}
-            </span>{' '}
-            <span className="text-gray-900">across chains.<br /></span>
-            <span className="inline-flex gap-0.5">
-              {'Earn'.split('').map((letter, index) => (
-                <motion.span
-                  key={`points-${index}`}
-                  className="inline-block"
-                  initial={{ opacity: 0, y: -20, scale: 0.5 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{
-                    delay: index * 0.1 + 0.6,
-                    type: "spring",
-                    stiffness: 300,
-                    damping: 20
-                  }}
-                  whileHover={{
-                    scale: 1.2,
-                    transition: { type: "spring", stiffness: 400 }
-                  }}
-                  style={{
-                    background: 'linear-gradient(to right, #EAB308, #FF0F00)',
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                    backgroundClip: 'text',
-                  }}
-                >
-                  {letter}
-                </motion.span>
-              ))}
-            </span>
-            <span className="text-gray-900"> Points.</span>
-          </h1>
-          <p className="text-lg md:text-xl text-gray-600 max-w-3xl mx-auto px-4">
-            Bring your friends. Simple swaps. Cute rewards.
-          </p>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12 mb-8 md:mb-12 mt-4 md:mt-6 items-start">
+          <div className="space-y-4 md:space-y-6 animate-slide-up text-left">
+            <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold leading-tight px-4">
+              <span className="inline-flex gap-0.5">
+                {'Swap'.split('').map((letter, index) => (
+                  <motion.span
+                    key={`swap-${index}`}
+                    className="inline-block"
+                    initial={{ opacity: 0, y: -20, scale: 0.5 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{
+                      delay: index * 0.1,
+                      type: "spring",
+                      stiffness: 300,
+                      damping: 20
+                    }}
+                    whileHover={{
+                      scale: 1.2,
+                      transition: { type: "spring", stiffness: 400 }
+                    }}
+                    style={{
+                      background: 'linear-gradient(to right, #EAB308, #FF0F00)',
+                      WebkitBackgroundClip: 'text',
+                      WebkitTextFillColor: 'transparent',
+                      backgroundClip: 'text',
+                    }}
+                  >
+                    {letter}
+                  </motion.span>
+                ))}
+              </span>{' '}
+              <span className="text-gray-900">across chains.<br /></span>
+              <span className="inline-flex gap-0.5">
+                {'Earn'.split('').map((letter, index) => (
+                  <motion.span
+                    key={`points-${index}`}
+                    className="inline-block"
+                    initial={{ opacity: 0, y: -20, scale: 0.5 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{
+                      delay: index * 0.1 + 0.6,
+                      type: "spring",
+                      stiffness: 300,
+                      damping: 20
+                    }}
+                    whileHover={{
+                      scale: 1.2,
+                      transition: { type: "spring", stiffness: 400 }
+                    }}
+                    style={{
+                      background: 'linear-gradient(to right, #EAB308, #FF0F00)',
+                      WebkitBackgroundClip: 'text',
+                      WebkitTextFillColor: 'transparent',
+                      backgroundClip: 'text',
+                    }}
+                  >
+                    {letter}
+                  </motion.span>
+                ))}
+              </span>
+              <span className="text-gray-900"> Points.</span>
+            </h1>
+            <p className="text-lg md:text-xl text-gray-600 max-w-3xl px-4">
+              Bring your friends. Simple swaps. Cute rewards.
+            </p>
 
-          <div className="relative inline-block group">
-            <div className="absolute -inset-3 rounded-3xl bg-gradient-to-r from-orange-400/35 via-orange-500/30 to-red-500/35 blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"></div>
-            <Button
-              style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-              className="relative z-10 mt-4 px-10   py-6 text-lg md:text-xl text-white font-semibold rounded-2xl border-0 transition-transform duration-200 ease-out hover:scale-[1.03] active:scale-95 shadow-[0_20px_60px_-15px_rgba(255,15,0,0.35)] hover:shadow-[0_25px_80px_-20px_rgba(255,15,0,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-400"
-              onClick={() => { }}
-            >
-              Get Started Now
-              <ArrowRight className="ml-3 h-6 w-6" />
-            </Button>
+            <div className="relative inline-block group">
+              <div className="absolute -inset-3 rounded-3xl bg-gradient-to-r from-orange-400/35 via-orange-500/30 to-red-500/35 blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"></div>
+              <Button
+                style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+                className="relative z-10 mt-4 px-10   py-6 text-lg md:text-xl text-white font-semibold rounded-2xl border-0 transition-transform duration-200 ease-out hover:scale-[1.03] active:scale-95 shadow-[0_20px_60px_-15px_rgba(255,15,0,0.35)] hover:shadow-[0_25px_80px_-20px_rgba(255,15,0,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-400"
+                onClick={() => { }}
+              >
+                Get Started Now
+                <ArrowRight className="ml-3 h-6 w-6" />
+              </Button>
+            </div>
           </div>
-        </div>
-
-        {/* Feature Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-0 md:mb-16">
-          {/* Swap Widget Card */}
+          {/* Right: Swap widget */}
           <motion.div
             className="group relative bg-white rounded-3xl p-6 cursor-pointer overflow-hidden shadow-md"
             initial={{ opacity: 0, y: 30 }}
@@ -269,6 +267,8 @@ export default function Home() {
             </div>
           </motion.div>
         </div>
+
+        {/* End hero */}
       </div>
 
       {/* Animated Section Transition */}
@@ -768,7 +768,7 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="p-3">
-                  <Tweet id={openTweetId} />
+                  <Tweet id={openTweetId!} />
                 </div>
               </div>
             </motion.div>
