@@ -10,7 +10,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			appId={appId}
 			config={{
 				loginMethods: ["email"],
-				session: { duration: 7 * 24 * 60 * 60 },
 			}}
 		>
 			{children}
