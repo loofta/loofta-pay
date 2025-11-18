@@ -205,7 +205,7 @@ export default function Home() {
                   className="relative z-10 mt-4 px-10   py-6 text-lg md:text-xl text-white font-semibold rounded-2xl border-0 transition-transform duration-200 ease-out hover:scale-[1.03] active:scale-95 shadow-[0_20px_60px_-15px_rgba(255,15,0,0.35)] hover:shadow-[0_25px_80px_-20px_rgba(255,15,0,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-400"
                   onClick={() => login()}
                 >
-                  Log in for future updates 
+                  Log in for future updates
                   <ArrowRight className="ml-3 h-6 w-6" />
                 </Button>
               )}

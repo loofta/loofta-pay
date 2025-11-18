@@ -103,6 +103,25 @@ export function TokenCombobox({
 		return chains.filter((c) => formatChainLabel(c).toLowerCase().includes(q) || c.toLowerCase().includes(q));
 	}, [chains, query]);
 
+	const isSearching = React.useMemo(() => query.trim().length > 0, [query]);
+	const searchItems = React.useMemo(() => {
+		if (!isSearching) return [] as Array<{ symbol: string; name?: string; chain: string; token: NearToken }>
+		const q = query.trim().toLowerCase();
+		const items: Array<{ symbol: string; name?: string; chain: string; token: NearToken }> = [];
+		for (const g of grouped) {
+			const symbol = g.symbol || "";
+			for (const c of Object.keys(g.chains)) {
+				const tok = g.chains[c] as NearToken;
+				const match = symbol.toLowerCase().includes(q)
+					|| (g.name || "").toLowerCase().includes(q)
+					|| c.toLowerCase().includes(q)
+					|| formatChainLabel(c).toLowerCase().includes(q);
+				if (match) items.push({ symbol, name: g.name, chain: c, token: tok });
+			}
+		}
+		return items;
+	}, [isSearching, query, grouped]);
+
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
@@ -178,35 +197,65 @@ export function TokenCombobox({
 									<div className="py-4 text-center text-sm text-muted-foreground">Searching…</div>
 								) : null}
 								<CommandEmpty>No token found.</CommandEmpty>
-								<CommandGroup heading="Tokens">
-									{visibleGroups.map((g) => {
-										const tok = selectedChain ? g.chains[selectedChain] : undefined;
-										const id = `${g.symbol}-${selectedChain || "any"}`;
-										const isSelected = value?.symbol === g.symbol && value?.chain === selectedChain;
-										return (
-											<CommandItem
-												key={id}
-												value={`${g.symbol} ${g.name} ${selectedChain}`}
-												onSelect={() => {
-													if (!selectedChain || !tok) return;
-													onChange({ symbol: g.symbol, chain: selectedChain });
-													setOpen(false);
-												}}
-											>
-												<div className="flex items-center gap-3 w-full">
-													<TokenIcon token={tok ?? g} chain={selectedChain} size={22} />
-													<div className="flex-1 overflow-hidden">
-														<div className="font-semibold truncate">{g.symbol}</div>
-														<div className="text-xs text-muted-foreground truncate">
-															{g.name} · {formatChainLabel(selectedChain)}
+								{isSearching ? (
+									<CommandGroup heading="Results">
+										{searchItems.map((it) => {
+											const isSelected = value?.symbol === it.symbol && value?.chain === it.chain;
+											const id = `${it.symbol}-${it.chain}`;
+											return (
+												<CommandItem
+													key={id}
+													value={`${it.symbol} ${it.name || ""} ${it.chain}`}
+													onSelect={() => {
+														onChange({ symbol: it.symbol, chain: it.chain });
+														setOpen(false);
+													}}
+												>
+													<div className="flex items-center gap-3 w-full">
+														<TokenIcon token={it.token} chain={it.chain} size={22} />
+														<div className="flex-1 overflow-hidden">
+															<div className="font-semibold truncate">{it.symbol}</div>
+															<div className="text-xs text-muted-foreground truncate">
+																{it.name} · {formatChainLabel(it.chain)}
+															</div>
 														</div>
+														<Check className={cn("h-4 w-4", isSelected ? "opacity-100" : "opacity-0")} />
 													</div>
-													<Check className={cn("h-4 w-4", isSelected ? "opacity-100" : "opacity-0")} />
-												</div>
-											</CommandItem>
-										);
-									})}
-								</CommandGroup>
+												</CommandItem>
+											);
+										})}
+									</CommandGroup>
+								) : (
+									<CommandGroup heading="Tokens">
+										{visibleGroups.map((g) => {
+											const tok = selectedChain ? g.chains[selectedChain] : undefined;
+											const id = `${g.symbol}-${selectedChain || "any"}`;
+											const isSelected = value?.symbol === g.symbol && value?.chain === selectedChain;
+											return (
+												<CommandItem
+													key={id}
+													value={`${g.symbol} ${g.name} ${selectedChain}`}
+													onSelect={() => {
+														if (!selectedChain || !tok) return;
+														onChange({ symbol: g.symbol, chain: selectedChain });
+														setOpen(false);
+													}}
+												>
+													<div className="flex items-center gap-3 w-full">
+														<TokenIcon token={tok ?? g} chain={selectedChain} size={22} />
+														<div className="flex-1 overflow-hidden">
+															<div className="font-semibold truncate">{g.symbol}</div>
+															<div className="text-xs text-muted-foreground truncate">
+																{g.name} · {formatChainLabel(selectedChain)}
+															</div>
+														</div>
+														<Check className={cn("h-4 w-4", isSelected ? "opacity-100" : "opacity-0")} />
+													</div>
+												</CommandItem>
+											);
+										})}
+									</CommandGroup>
+								)}
 							</CommandList>
 						</Command>
 					</div>

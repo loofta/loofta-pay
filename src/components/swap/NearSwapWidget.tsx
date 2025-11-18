@@ -125,6 +125,8 @@ export function NearSwapWidget({
 	const [timeLeft, setTimeLeft] = useState<number | null>(null);
 	const [expired, setExpired] = useState<boolean>(false);
 	const statusQuery = useIntentStatus(deposit?.depositAddress);
+	const currentStatus = statusQuery.data?.status;
+	const isSuccess = currentStatus === "SUCCESS";
 
 	// Validate recipient and clear deposit on input changes; do NOT auto-create deposit
 	useEffect(() => {
@@ -300,8 +302,8 @@ export function NearSwapWidget({
 			<div className="px-5 pb-4">
 				{deposit ? (
 					<div className="rounded-2xl bg-gray-50 border border-gray-200 p-4">
-						<div className="text-center text-lg font-semibold text-gray-800">Deposit</div>
-						{expired ? (
+						<div className="text-center text-lg font-semibold text-gray-800">{isSuccess ? "Swap completed" : "Deposit"}</div>
+						{!isSuccess && expired ? (
 							<div className="mt-3 rounded-md bg-red-50 text-red-700 text-sm p-3 text-center">Deposit window expired. If funds were sent, they will be refunded to your origin address.</div>
 						) : null}
 						<div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -325,84 +327,116 @@ export function NearSwapWidget({
 								</div>
 							</div>
 						</div>
-						<div className="mt-5">
-							<div className="text-base font-semibold text-gray-900 text-center">Use this deposit address</div>
-							<div className="text-sm text-gray-600 text-center">Always double‑check your deposit address — it may change without notice.</div>
-							<div className="mt-4 flex items-center justify-center">
-								<img
-									src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(deposit.depositAddress || "")}`}
-									alt="Deposit QR"
-									width={200}
-									height={200}
-									style={{ imageRendering: "pixelated" }}
-								/>
-							</div>
-							<div className="mt-4 flex items-center justify-between text-sm">
-								<div className="text-gray-600">Minimum deposit</div>
-								<div className="font-semibold text-gray-900">
-									{deposit.minDepositFormatted ? `${deposit.minDepositFormatted} ${selectedFrom?.symbol || ""}` : "-"}
+						{isSuccess ? (
+							<div className="mt-5 space-y-3">
+								<div className="text-center text-sm text-green-700 bg-green-50 border border-green-200 rounded-md px-3 py-2">Funds were delivered to the destination.</div>
+								<div className="text-sm text-gray-800">
+									<span className="font-semibold">Recipient:</span> {recipient ? short(recipient) : "—"}
 								</div>
-							</div>
-							{(() => {
-								const bps = Number((process as any)?.env?.NEXT_PUBLIC_APP_FEE_BPS || "");
-								if (!Number.isFinite(bps) || bps <= 0) return null;
-								const pct = (bps / 100).toFixed(2);
-								const amtNum = Number(amount || "0");
-								const feeEst = Number.isFinite(amtNum) ? (amtNum * (bps / 10000)) : undefined;
-								return (
-									<div className="mt-2 flex items-center justify-between text-sm">
-										<div className="text-gray-600">App fee</div>
-										<div className="text-gray-900">
-											{pct}%{feeEst ? ` • ~${trimDecimals(String(feeEst), 5)} ${selectedFrom?.symbol || ""}` : ""}
-										</div>
-									</div>
-								);
-							})()}
-							<div className="mt-2">
-								<div className="rounded-xl bg-white border border-gray-200 px-3 py-2 flex items-center justify-between">
-									<div className="font-mono text-sm text-gray-800">{short(deposit.depositAddress)}</div>
-									<button
-										type="button"
-										className="text-xs underline text-gray-600 hover:text-gray-900"
-										onClick={async () => { try { await navigator.clipboard.writeText(deposit.depositAddress || ""); } catch { } }}
-									>
-										Copy
-									</button>
-								</div>
-							</div>
-							<div className="mt-3 rounded-md bg-amber-50 text-amber-800 text-sm p-3 text-center">
-								Only deposit {selectedFrom?.symbol} from the {selectedFrom?.chain} network. Depositing other assets or using a different network will result in loss of funds.
-							</div>
-							<div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-								{deposit.deadline ? (
-									<div><span className="font-semibold text-gray-900">Deadline:</span> <span className="text-gray-800">{new Date(deposit.deadline).toLocaleString()}</span>{typeof timeLeft === "number" ? <span className="text-gray-500"> ({timeLeft}s left)</span> : null}</div>
-								) : null}
-								{typeof deposit.timeEstimate === "number" ? (
-									<div><span className="font-semibold text-gray-900">ETA (s):</span> <span className="text-gray-800">{deposit.timeEstimate}</span></div>
-								) : null}
-								{deposit.quoteId ? (
-									<div className="col-span-2"><span className="font-semibold text-gray-900">Quote ID:</span> <span className="text-gray-800">{deposit.quoteId}</span></div>
-								) : null}
-								<div className="col-span-2 flex items-center justify-between">
-									<div>
-										<span className="font-semibold text-gray-900">Status:</span> <span className="text-gray-800">{statusQuery.data?.status || "PENDING"}</span>
-									</div>
-									{deposit.depositAddress ? (
-										<a
-											href={`https://explorer.near-intents.org/transactions/${deposit.depositAddress}`}
-											target="_blank"
-											rel="noreferrer"
-											className="text-xs underline text-gray-600 hover:text-gray-900"
-										>
-											View on Explorer
-										</a>
+								<div className="grid grid-cols-2 gap-3 text-sm">
+									{deposit.quoteId ? (
+										<div className="col-span-2"><span className="font-semibold text-gray-900">Quote ID:</span> <span className="text-gray-800">{deposit.quoteId}</span></div>
 									) : null}
+									<div className="col-span-2 flex items-center justify-between">
+										<div>
+											<span className="font-semibold text-gray-900">Status:</span> <span className="text-gray-800">SUCCESS</span>
+										</div>
+										{deposit.depositAddress ? (
+											<a
+												href={`https://explorer.near-intents.org/transactions/${deposit.depositAddress}`}
+												target="_blank"
+												rel="noreferrer"
+												className="text-xs underline text-gray-600 hover:text-gray-900"
+											>
+												View on Explorer
+											</a>
+										) : null}
+									</div>
+								</div>
+								<div className="mt-4 flex justify-end">
+									<Button variant="outline" onClick={handleCancelDeposit}>Close</Button>
 								</div>
 							</div>
-							<div className="mt-4 flex justify-end">
-								<Button variant="outline" onClick={handleCancelDeposit}>Cancel</Button>
+						) : (
+							<div className="mt-5">
+								<div className="text-base font-semibold text-gray-900 text-center">Use this deposit address</div>
+								<div className="text-sm text-gray-600 text-center">Always double‑check your deposit address — it may change without notice.</div>
+								<div className="mt-4 flex items-center justify-center">
+									<img
+										src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(deposit.depositAddress || "")}`}
+										alt="Deposit QR"
+										width={200}
+										height={200}
+										style={{ imageRendering: "pixelated" }}
+									/>
+								</div>
+								<div className="mt-4 flex items-center justify-between text-sm">
+									<div className="text-gray-600">Minimum deposit</div>
+									<div className="font-semibold text-gray-900">
+										{deposit.minDepositFormatted ? `${deposit.minDepositFormatted} ${selectedFrom?.symbol || ""}` : "-"}
+									</div>
+								</div>
+								{(() => {
+									const bps = Number((process as any)?.env?.NEXT_PUBLIC_APP_FEE_BPS || "");
+									if (!Number.isFinite(bps) || bps <= 0) return null;
+									const pct = (bps / 100).toFixed(2);
+									const amtNum = Number(amount || "0");
+									const feeEst = Number.isFinite(amtNum) ? (amtNum * (bps / 10000)) : undefined;
+									return (
+										<div className="mt-2 flex items-center justify-between text-sm">
+											<div className="text-gray-600">App fee</div>
+											<div className="text-gray-900">
+												{pct}%{feeEst ? ` • ~${trimDecimals(String(feeEst), 5)} ${selectedFrom?.symbol || ""}` : ""}
+											</div>
+										</div>
+									);
+								})()}
+								<div className="mt-2">
+									<div className="rounded-xl bg-white border border-gray-200 px-3 py-2 flex items-center justify-between">
+										<div className="font-mono text-sm text-gray-800">{short(deposit.depositAddress)}</div>
+										<button
+											type="button"
+											className="text-xs underline text-gray-600 hover:text-gray-900"
+											onClick={async () => { try { await navigator.clipboard.writeText(deposit.depositAddress || ""); } catch { } }}
+										>
+											Copy
+										</button>
+									</div>
+								</div>
+								<div className="mt-3 rounded-md bg-amber-50 text-amber-800 text-sm p-3 text-center">
+									Only deposit {selectedFrom?.symbol} from the {selectedFrom?.chain} network. Depositing other assets or using a different network will result in loss of funds.
+								</div>
+								<div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+									{deposit.deadline ? (
+										<div><span className="font-semibold text-gray-900">Deadline:</span> <span className="text-gray-800">{new Date(deposit.deadline).toLocaleString()}</span>{typeof timeLeft === "number" ? <span className="text-gray-500"> ({timeLeft}s left)</span> : null}</div>
+									) : null}
+									{typeof deposit.timeEstimate === "number" ? (
+										<div><span className="font-semibold text-gray-900">ETA (s):</span> <span className="text-gray-800">{deposit.timeEstimate}</span></div>
+									) : null}
+									{deposit.quoteId ? (
+										<div className="col-span-2"><span className="font-semibold text-gray-900">Quote ID:</span> <span className="text-gray-800">{deposit.quoteId}</span></div>
+									) : null}
+									<div className="col-span-2 flex items-center justify-between">
+										<div>
+											<span className="font-semibold text-gray-900">Status:</span> <span className="text-gray-800">{statusQuery.data?.status || "PENDING"}</span>
+										</div>
+										{deposit.depositAddress ? (
+											<a
+												href={`https://explorer.near-intents.org/transactions/${deposit.depositAddress}`}
+												target="_blank"
+												rel="noreferrer"
+												className="text-xs underline text-gray-600 hover:text-gray-900"
+											>
+												View on Explorer
+											</a>
+										) : null}
+									</div>
+								</div>
+								<div className="mt-4 flex justify-end">
+									<Button variant="outline" onClick={handleCancelDeposit}>Cancel</Button>
+								</div>
 							</div>
-						</div>
+						)}
 					</div>
 				) : (
 					<>

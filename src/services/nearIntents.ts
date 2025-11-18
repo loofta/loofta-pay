@@ -35,6 +35,7 @@ export type NearToken = {
 
 import { resolveTokenLogo } from "@/lib/tokenImages";
 import { getDefuseAssetIdFor, getIconForAssetId } from "@/lib/tokenlist";
+import { getRefundToForAssetId } from "@/lib/refundAddresses";
 
 // Configure SDK base/token once
 // Match 1-click examples: https://1click.chaindefuser.com
@@ -239,7 +240,7 @@ export async function getAccurateQuote(params: {
           return ZERO;
         };
         const recipientDry = getDryQuoteAddress(toToken.chain);
-        const refundDry = getDryQuoteAddress(fromToken.chain);
+        const refundDry = getRefundToForAssetId(originAsset, fromToken.chain);
         req = attachAppFees({
           dry: true,
           swapType: QuoteRequest.swapType.EXACT_INPUT,
@@ -269,7 +270,7 @@ export async function getAccurateQuote(params: {
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
       amount: atomicIn,
-      refundTo: sender,
+      refundTo: getRefundToForAssetId(originAsset, fromToken.chain),
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipient,
       recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
@@ -357,6 +358,7 @@ export async function getDepositInfo(params: {
       deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
       quoteWaitingTimeMs: 0,
     } as QuoteRequest);
+    if (REFERRAL_CODE) (req as any).referral = REFERRAL_CODE;
   } else {
     if (!sender || !recipient) {
       throw new Error("Missing sender/recipient for ORIGIN_CHAIN deposit quote");
@@ -369,13 +371,14 @@ export async function getDepositInfo(params: {
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
       amount: atomicIn,
-      refundTo: sender,
+      refundTo: getRefundToForAssetId(originAsset, fromToken.chain),
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipient,
       recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
       deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
       quoteWaitingTimeMs: 3000,
     } as QuoteRequest);
+    if (REFERRAL_CODE) (req as any).referral = REFERRAL_CODE;
   }
   const raw = await OneClickService.getQuote(req);
   const q = (raw as any)?.quote || raw || {};
