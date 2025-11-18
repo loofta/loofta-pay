@@ -25,10 +25,9 @@ export function getRefundToForChain(chain: string): string {
 
 export function getRefundToForAssetId(assetId: string, fallbackChain?: string): string {
 	const id = String(assetId || "");
+	// Any nep141:* asset is on NEAR → use NEAR refund address explicitly
 	if (id.startsWith("nep141:")) {
-		const rest = id.slice("nep141:".length);
-		const head = rest.includes("-") ? rest.split("-")[0] : rest.split(".")[0];
-		return getRefundToForChain(head || fallbackChain || "");
+		return "lisabey.near";
 	}
 	return getRefundToForChain(fallbackChain || "");
 }
