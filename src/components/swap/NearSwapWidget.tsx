@@ -90,7 +90,6 @@ export function NearSwapWidget({
 				</div>
 			</div>
 			<div className="px-6 pt-5">
-
 				<div className="flex items-center justify-between">
 					<div className="relative pb-3">
 						<div className="text-2xl font-extrabold text-gray-900 tracking-tight"></div>

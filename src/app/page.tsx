@@ -167,7 +167,7 @@ export default function Home() {
             {provider === "near-intents" ? (
               <NearSwapWidget tokens={tokens} loadingTokens={loadingTokens} />
             ) : (
-              <BiconomySwapWidget tokens={tokens} loadingTokens={loadingTokens} />
+              <BiconomySwapWidget />
             )}
           </div>
         </div>
