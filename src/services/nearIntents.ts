@@ -199,6 +199,29 @@ export async function getAccurateQuote(params: {
       // Fallback path without authMethod: for dry quotes, align with intents-swap-widget to avoid KYT
       if (dryRun) {
         const ZERO = "0x0000000000000000000000000000000000000000";
+        const getDryQuoteAddress = (blockchain: string): string => {
+          const key = String(blockchain || "").toLowerCase();
+          const evmSet = new Set([
+            "eth",
+            "bera",
+            "base",
+            "gnosis",
+            "arb",
+            "bsc",
+            "avax",
+            "op",
+            "pol",
+            "polygon",
+          ]);
+          if (key === "near") return "system.near";
+          if (key === "sol" || key === "solana")
+            return "11111111111111111111111111111111";
+          if (evmSet.has(key)) return ZERO;
+          // default to evm zero
+          return ZERO;
+        };
+        const recipientDry = getDryQuoteAddress(toToken.chain);
+        const refundDry = getDryQuoteAddress(fromToken.chain);
         req = {
           dry: true,
           swapType: QuoteRequest.swapType.EXACT_INPUT,
@@ -207,10 +230,10 @@ export async function getAccurateQuote(params: {
           depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
           destinationAsset,
           amount: atomicIn,
-          refundTo: ZERO,
+          refundTo: refundDry,
           refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
-          recipient: "system.near",
-          recipientType: QuoteRequest.recipientType.INTENTS,
+          recipient: recipientDry,
+          recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
           deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
           quoteWaitingTimeMs: 3000,
         } as QuoteRequest;

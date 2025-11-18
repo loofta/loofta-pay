@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { NearToken } from "@/services/nearIntents";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSwapStore } from "@/store/swap";
 import { useQuote } from "@/hooks/useQuote";
 import { findTokenBySelection } from "@/lib/tokens";
@@ -48,7 +48,7 @@ export function NearSwapWidget({
 		const n = parseFloat(amount);
 		return Number.isFinite(n) ? n : 0;
 	}, [amount]);
-	const swapDisabled = !(amountNum > 0) || !selectedFrom || !selectedTo || !!quoteError || (
+	const swapDisabled = !(amountNum > 0) || !selectedFrom || !selectedTo || !!quoteError || !recipient || !!recipientError || (
 		fromSel?.symbol === toSel?.symbol && fromSel?.chain === toSel?.chain
 	);
 	function flip() {
@@ -107,48 +107,55 @@ export function NearSwapWidget({
 		timeEstimate?: number;
 		quoteId?: string;
 	} | null>(null);
-	async function onGetDeposit() {
-		if (!selectedFrom || !selectedTo || !(amountNum > 0)) return;
-		setDepositLoading(true);
-		setDepositError(null);
-		setDeposit(null);
-		try {
-			const originAssetId = selectedFrom.tokenId || selectedFrom.address || "";
+	useEffect(() => {
+		let cancelled = false;
+		async function run() {
+			if (!selectedFrom || !selectedTo || !(amountNum > 0)) { setDeposit(null); return; }
 			const destAssetId = selectedTo.tokenId || selectedTo.address || "";
 			const destFamily = inferDestFamily(destAssetId);
-			// Validate manual recipient; if invalid, block and show error
+			if (!recipient) { setDeposit(null); return; }
 			if (!isValidRecipientByFamily(recipient, destFamily)) {
 				setRecipientError(`Invalid ${destFamily} address format`);
+				setDeposit(null);
 				return;
 			}
 			setRecipientError(null);
-			// Use zero address placeholders for refundTo in deposit request as per widget
-			const ZERO = "0x0000000000000000000000000000000000000000";
-			const info = await getDepositInfo({
-				fromToken: selectedFrom,
-				toToken: selectedTo,
-				amount,
-				sender: ZERO,
-				recipient: recipient || getKnownGoodAddressForFamily(destFamily, "recipient"),
-				slippageBps: 100,
-			});
-			if (!info?.depositAddress) {
-				setDepositError("Failed to obtain deposit address");
-			} else {
-				setDeposit({
-					depositAddress: info.depositAddress,
-					memo: info.memo ?? null,
-					deadline: info.deadline,
-					timeEstimate: info.timeEstimate,
-					quoteId: info.quoteId,
+			setDepositLoading(true);
+			setDepositError(null);
+			try {
+				const ZERO = "0x0000000000000000000000000000000000000000";
+				const info = await getDepositInfo({
+					fromToken: selectedFrom,
+					toToken: selectedTo,
+					amount,
+					sender: ZERO,
+					recipient,
+					slippageBps: 100,
 				});
+				if (cancelled) return;
+				if (!info?.depositAddress) {
+					setDepositError("Failed to obtain deposit address");
+					setDeposit(null);
+				} else {
+					setDeposit({
+						depositAddress: info.depositAddress,
+						memo: info.memo ?? null,
+						deadline: info.deadline,
+						timeEstimate: info.timeEstimate,
+						quoteId: info.quoteId,
+					});
+				}
+			} catch (e: any) {
+				if (cancelled) return;
+				setDeposit(null);
+				setDepositError(e?.message || "Failed to get deposit address");
+			} finally {
+				if (!cancelled) setDepositLoading(false);
 			}
-		} catch (e: any) {
-			setDepositError(e?.message || "Failed to get deposit address");
-		} finally {
-			setDepositLoading(false);
 		}
-	}
+		run();
+		return () => { cancelled = true; };
+	}, [selectedFrom, selectedTo, amountNum, recipient]);
 	return (
 		<motion.div
 			className="group relative bg-white rounded-3xl p-0 cursor-pointer overflow-hidden shadow-md border border-gray-100"
@@ -281,47 +288,45 @@ export function NearSwapWidget({
 				>
 					Swap Now
 				</Button>
-				<div className="mt-3">
-					<Button onClick={onGetDeposit} disabled={depositLoading || swapDisabled || !!recipientError} variant="outline" className="w-full">
-						{depositLoading ? "Preparing deposit..." : "Get deposit address"}
-					</Button>
-					{depositError ? <div className="text-sm text-red-600 mt-2">{depositError}</div> : null}
-					{deposit ? (
-						<div className="mt-3 rounded-2xl border border-gray-200 p-4 bg-white text-sm text-gray-800 space-y-1.5">
-							<div><span className="font-semibold">Deposit address:</span> <span className="break-all">{deposit.depositAddress}</span></div>
-							{deposit.memo ? <div><span className="font-semibold">Memo:</span> <span className="break-all">{deposit.memo}</span></div> : null}
-							{deposit.deadline ? <div><span className="font-semibold">Deadline:</span> {new Date(deposit.deadline).toLocaleString()}</div> : null}
-							{typeof deposit.timeEstimate === "number" ? <div><span className="font-semibold">ETA (s):</span> {deposit.timeEstimate}</div> : null}
-							{deposit.quoteId ? <div><span className="font-semibold">Quote ID:</span> {deposit.quoteId}</div> : null}
-							<div className="flex gap-2 mt-2">
+				{depositError ? <div className="text-sm text-red-600 mt-2">{depositError}</div> : null}
+				{depositLoading && recipient && !recipientError ? (
+					<div className="mt-3 text-sm text-gray-600">Preparing deposit…</div>
+				) : null}
+				{deposit ? (
+					<div className="mt-3 rounded-2xl border border-gray-200 p-4 bg-white text-sm text-gray-800 space-y-1.5">
+						<div><span className="font-semibold">Deposit address:</span> <span className="break-all">{deposit.depositAddress}</span></div>
+						{deposit.memo ? <div><span className="font-semibold">Memo:</span> <span className="break-all">{deposit.memo}</span></div> : null}
+						{deposit.deadline ? <div><span className="font-semibold">Deadline:</span> {new Date(deposit.deadline).toLocaleString()}</div> : null}
+						{typeof deposit.timeEstimate === "number" ? <div><span className="font-semibold">ETA (s):</span> {deposit.timeEstimate}</div> : null}
+						{deposit.quoteId ? <div><span className="font-semibold">Quote ID:</span> {deposit.quoteId}</div> : null}
+						<div className="flex gap-2 mt-2">
+							<button
+								type="button"
+								className="text-xs underline text-gray-600 hover:text-gray-900"
+								onClick={async () => {
+									try {
+										await navigator.clipboard.writeText(deposit.depositAddress || "");
+									} catch { }
+								}}
+							>
+								Copy address
+							</button>
+							{deposit.memo ? (
 								<button
 									type="button"
 									className="text-xs underline text-gray-600 hover:text-gray-900"
 									onClick={async () => {
 										try {
-											await navigator.clipboard.writeText(deposit.depositAddress || "");
+											await navigator.clipboard.writeText(deposit.memo || "");
 										} catch { }
 									}}
 								>
-									Copy address
+									Copy memo
 								</button>
-								{deposit.memo ? (
-									<button
-										type="button"
-										className="text-xs underline text-gray-600 hover:text-gray-900"
-										onClick={async () => {
-											try {
-												await navigator.clipboard.writeText(deposit.memo || "");
-											} catch { }
-										}}
-									>
-										Copy memo
-									</button>
-								) : null}
-							</div>
+							) : null}
 						</div>
-					) : null}
-				</div>
+					</div>
+				) : null}
 			</div>
 		</motion.div>
 	);
