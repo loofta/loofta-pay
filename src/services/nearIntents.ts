@@ -1,8 +1,9 @@
-import { NEAR_INTENTS_ENDPOINTS, NEAR_INTENTS_TEST_MODE, NEAR_INTENTS_REMOTE_BASE } from "@/config/nearIntents";
+import { NEAR_INTENTS_TEST_MODE } from "@/config/nearIntents";
 import defaults from "@/config/defaultTokens.json";
 // Prefer official SDK APIs per near-intents-examples
 // https://github.com/defuse-protocol/near-intents-examples
-// Example: import { OneClickService } from '@defuse-protocol/one-click-sdk-typescript'
+import { OneClickService, QuoteRequest, OpenAPI } from '@defuse-protocol/one-click-sdk-typescript';
+import { ONECLICK_API_BASE } from "@/config/oneClick";
 
 export type NearToken = {
   symbol: string;
@@ -12,136 +13,80 @@ export type NearToken = {
   tokenId?: string;
   decimals: number;
   logoURI?: string;
+  price?: number;
+  priceUpdatedAt?: string;
 };
 
-// Dynamic import so build doesn't fail if package missing at first
-let OneClickServiceRef: any | null = null;
-// Basic local fallbacks; will be overridden by CoinMarketCap resolver when possible
-const TOKEN_LOGOS: Record<string, string> = {
-  ETH: "/images/eth.png",
-  SOL: "/images/solana.png",
-  USDT: "/usdt.svg",
-  USDC: "/usdt.svg",
-  NEAR: "/images/eth.png",
-};
-// Minimal CMC ID map for common assets; extend as needed
-const CMC_IDS: Record<string, number> = {
-  BTC: 1,
-  ETH: 1027,
-  USDT: 825,
-  USDC: 3408,
-  SOL: 5426,
-  NEAR: 6535,
-  TON: 11419,
-  TONCOIN: 11419,
-};
-function cmcLogo(symbol?: string): string | undefined {
-  const id = symbol ? CMC_IDS[symbol.toUpperCase()] : undefined;
-  return id ? `https://s2.coinmarketcap.com/static/img/coins/64x64/${id}.png` : undefined;
-}
-async function loadOneClickService(): Promise<any | null> {
-  if (OneClickServiceRef) return OneClickServiceRef;
-  try {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore - rely on runtime presence after install
-    const m: any = await import('@defuse-protocol/one-click-sdk-typescript');
-    OneClickServiceRef = m?.OneClickService || m?.default || null;
-    // Configure base URL if SDK exposes a setter (keep compatibility if not)
-    if (OneClickServiceRef?.setConfig) {
-      OneClickServiceRef.setConfig({
-        baseUrl: NEAR_INTENTS_REMOTE_BASE,
-        mode: NEAR_INTENTS_TEST_MODE ? 'test' : 'prod',
-      });
-    }
-    return OneClickServiceRef;
-  } catch {
-    return null;
-  }
+import { resolveTokenLogo } from "@/lib/tokenImages";
+import { getDefuseAssetIdFor, getIconForAssetId } from "@/lib/tokenlist";
+
+// Configure SDK base/token once
+// Match 1-click examples: https://1click.chaindefuser.com
+OpenAPI.BASE = ONECLICK_API_BASE;
+if (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_ONECLICK_JWT) {
+  OpenAPI.TOKEN = (process as any).env.NEXT_PUBLIC_ONECLICK_JWT;
 }
 
 function mapSdkToken(t: any): NearToken {
   // Example token fields per example repo:
   // { blockchain, symbol, assetId, contractAddress }
   const symbol = t?.symbol || '';
+  const assetId = t?.assetId || t?.tokenId || t?.address;
   return {
     symbol,
     name: symbol || '',
     chain: t?.blockchain || t?.chain || '',
     address: t?.assetId || t?.contractAddress || '',
-    tokenId: t?.assetId || t?.tokenId || t?.address,
+    tokenId: assetId || getDefuseAssetIdFor(symbol, t?.blockchain || t?.chain),
     decimals: typeof t?.decimals === 'number' ? t.decimals : 0,
-    logoURI: t?.logoURI || cmcLogo(symbol) || TOKEN_LOGOS[symbol] || undefined,
+    logoURI: resolveTokenLogo({ symbol, logoURI: t?.logoURI, icon: t?.icon || getIconForAssetId(assetId), logo: t?.logo }),
+    price: typeof t?.price === 'number' ? t.price : undefined,
+    priceUpdatedAt: typeof t?.priceUpdatedAt === 'string' ? t.priceUpdatedAt : undefined,
   };
 }
 
 export async function fetchTokens(): Promise<NearToken[]> {
-  // Prefer SDK (static service) if available
-  const OneClickService = await loadOneClickService();
-  try {
-    if (OneClickService?.getTokens) {
-      const r = await OneClickService.getTokens();
-      const arr = Array.isArray(r) ? r : (r?.tokens || []);
-      return arr.map(mapSdkToken);
-    }
-  } catch {
-    // fall through to proxy
+  // SDK getTokens (matches 1-get-tokens.ts)
+  const r: any = await OneClickService.getTokens();
+  const arr = Array.isArray(r) ? r : (r?.tokens || []);
+  if (Array.isArray(arr) && arr.length) {
+    return arr.map(mapSdkToken);
   }
-  try {
-    const res = await fetch(NEAR_INTENTS_ENDPOINTS.tokens, { cache: "no-store" });
-    if (!res.ok) throw new Error(`Failed to fetch tokens: ${res.status}`);
-    const data = await res.json();
-    // Expecting an array of tokens compatible with NearToken
-    const arr = (data?.tokens || data || []) as any[];
-    return arr.map(rt => {
-      const symbol = rt?.symbol || '';
-      return {
-        ...(rt as any),
-        tokenId: rt?.assetId || rt?.tokenId || rt?.address,
-        logoURI: rt?.logoURI || cmcLogo(symbol) || TOKEN_LOGOS[symbol] || rt?.logo || undefined,
-      } as NearToken;
-    });
-  } catch (_) {
-    // Fallback to defaults if remote fails
-    return defaults as NearToken[];
-  }
+  // Fallback to defaults if SDK not available
+  return (defaults as any[]).map((rt: any) => {
+    const symbol = rt?.symbol || '';
+    return {
+      ...(rt as any),
+      tokenId: rt?.assetId || rt?.tokenId || rt?.address || getDefuseAssetIdFor(symbol, rt?.blockchain || rt?.chain),
+      price: undefined,
+      priceUpdatedAt: undefined,
+      logoURI: resolveTokenLogo({ symbol, logoURI: rt?.logoURI, icon: rt?.icon, logo: rt?.logo }),
+    } as NearToken;
+  });
 }
 
 export async function searchTokens(query: string): Promise<NearToken[]> {
   const q = (query || "").trim();
   // If empty query, return full list (or defaults)
   if (!q) return fetchTokens();
-  // Try SDK first: many SDKs only expose list; filter locally
-  const OneClickService = await loadOneClickService();
-  try {
-    if (OneClickService?.getTokens) {
-      const r = await OneClickService.getTokens();
-      const arr: NearToken[] = (Array.isArray(r) ? r : (r?.tokens || [])).map(mapSdkToken);
-      const lc = q.toLowerCase();
-      return arr.filter(t =>
-        t.symbol.toLowerCase().includes(lc) ||
-        t.name.toLowerCase().includes(lc) ||
-        t.chain.toLowerCase().includes(lc)
-      );
-    }
-  } catch {
-    // fall back to proxy/local
-  }
-  try {
-    const url = `${NEAR_INTENTS_ENDPOINTS.tokens}?q=${encodeURIComponent(q)}`;
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`Failed to search tokens: ${res.status}`);
-    const data = await res.json();
-    return (data?.tokens || data || []) as NearToken[];
-  } catch {
-    // Fallback: filter locally from full list
-    const all = await fetchTokens();
-    const lc = q.toLowerCase();
-    return all.filter(t =>
+  const r: any = await OneClickService.getTokens();
+  const arr: NearToken[] = (Array.isArray(r) ? r : (r?.tokens || [])).map(mapSdkToken);
+  const lc = q.toLowerCase();
+  if (arr?.length) {
+    return arr.filter(t =>
       t.symbol.toLowerCase().includes(lc) ||
       t.name.toLowerCase().includes(lc) ||
       t.chain.toLowerCase().includes(lc)
     );
   }
+  // Fallback: filter locally from full list
+  const all = await fetchTokens();
+  const lcLocal = q.toLowerCase();
+  return all.filter(t =>
+    t.symbol.toLowerCase().includes(lcLocal) ||
+    t.name.toLowerCase().includes(lcLocal) ||
+    t.chain.toLowerCase().includes(lcLocal)
+  );
 }
 
 export type CreateIntentInput = {
@@ -158,64 +103,233 @@ export type CreateIntentResponse = {
 };
 
 export async function createTestIntent(input: CreateIntentInput): Promise<CreateIntentResponse> {
-  // Try SDK first (shape unknown, handle common variants)
-  const OneClickService = await loadOneClickService();
-  try {
-    const payload = {
-      mode: NEAR_INTENTS_TEST_MODE ? "test" : "prod",
-      request: {
-        kind: "swap",
-        from: {
-          chain: input.fromToken.chain,
-          token: input.fromToken.tokenId || input.fromToken.address,
-          amount: input.amount,
-          decimals: input.fromToken.decimals,
-        },
-        to: {
-          chain: input.toToken.chain,
-          token: input.toToken.tokenId || input.toToken.address,
-        },
-        referralCode: input.referralCode || undefined,
-      },
-    };
-    if (OneClickService?.createIntent) {
-      const r = await OneClickService.createIntent(payload);
-      return r as CreateIntentResponse;
-    }
-  } catch {
-    // Fall through to proxy fetch
-  }
-  const body = {
+  const payload = {
     mode: NEAR_INTENTS_TEST_MODE ? "test" : "prod",
     request: {
       kind: "swap",
       from: {
         chain: input.fromToken.chain,
-        token: input.fromToken.address,
+        token: input.fromToken.tokenId || input.fromToken.address,
         amount: input.amount,
         decimals: input.fromToken.decimals,
       },
       to: {
         chain: input.toToken.chain,
-        token: input.toToken.address,
+        token: input.toToken.tokenId || input.toToken.address,
       },
       referralCode: input.referralCode || undefined,
     },
   };
-
-  const res = await fetch(NEAR_INTENTS_ENDPOINTS.intents, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Failed to create intent: ${res.status} ${text}`);
-  }
-  return (await res.json()) as CreateIntentResponse;
+  const r = await (OneClickService as any).createIntent(payload as any);
+  return r as CreateIntentResponse;
 }
+
+// Lightweight quote helper (EXACT_INPUT), amount in human string -> atomic for origin token
+export type QuoteResponse = {
+  raw: any;
+  amountOut?: string; // human-readable amount for destination token when available
+  error?: {
+    type: "client" | "server" | "network" | "unknown";
+    status?: number;
+    message?: string;
+    correlationId?: string;
+  };
+};
+
+export type AuthMethod = "near" | "evm" | "solana" | "webauthn" | "ton" | "stellar" | "tron";
+
+export type DepositInfo = {
+  raw: any;
+  depositAddress?: string;
+  memo?: string | null;
+  deadline?: string;
+  timeEstimate?: number;
+  timeWhenInactive?: string;
+  quoteId?: string;
+  originAsset?: string;
+  destinationAsset?: string;
+  amountAtomic?: string; // amount to send in atomic units for origin asset
+};
+
+export async function getAccurateQuote(params: {
+  fromToken: NearToken;
+  toToken: NearToken;
+  amount: string; // human-readable input amount
+  recipient?: string;
+  sender?: string;
+  slippageBps?: number; // default 100 = 1%
+  dryRun?: boolean; // default true for quick quote
+  userAddress?: string; // optional; when provided with authMethod, uses INTENTS routing
+  authMethod?: AuthMethod;
+}): Promise<QuoteResponse> {
+  const { fromToken, toToken, amount, recipient, sender, slippageBps = 100, dryRun = true, userAddress, authMethod } = params;
+  const toAtomic = (val: string, decimals: number): string => {
+    const [i, f = ""] = String(val).split(".");
+    const cleanF = f.replace(/\D/g, "").slice(0, Math.max(0, decimals));
+    const padded = (i.replace(/\D/g, "") || "0") + (cleanF.padEnd(decimals, "0"));
+    // remove leading zeros
+    return BigInt(padded).toString();
+  };
+  const originAsset = fromToken.tokenId || fromToken.address;
+  const destinationAsset = toToken.tokenId || toToken.address;
+  const atomicIn = toAtomic(amount || "0", fromToken.decimals || 0);
+  try {
+    let req: QuoteRequest;
+    if (userAddress && authMethod) {
+      // Use INTENTS identity mapping (authMethod:userAddress)
+      const intentsUserId = `${authMethod.toLowerCase()}:${userAddress}`;
+      req = {
+        dry: dryRun,
+        swapType: QuoteRequest.swapType.EXACT_INPUT,
+        slippageTolerance: slippageBps,
+        originAsset,
+        depositType: QuoteRequest.depositType.INTENTS,
+        destinationAsset,
+        amount: atomicIn,
+        refundTo: intentsUserId,
+        refundType: QuoteRequest.refundType.INTENTS,
+        recipient: intentsUserId,
+        recipientType: QuoteRequest.recipientType.INTENTS,
+        deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
+        quoteWaitingTimeMs: 0,
+      };
+    } else {
+      // Fallback to origin/destination chain addressing
+      if (!sender || !recipient) {
+        throw new Error("Missing sender/recipient for ORIGIN_CHAIN quote");
+      }
+      req = {
+        dry: dryRun,
+        swapType: QuoteRequest.swapType.EXACT_INPUT,
+        slippageTolerance: slippageBps,
+        originAsset,
+        depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
+        destinationAsset,
+        amount: atomicIn,
+        refundTo: sender,
+        refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
+        recipient: recipient,
+        recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
+        deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
+        quoteWaitingTimeMs: 3000,
+      };
+    }
+    const raw = await OneClickService.getQuote(req);
+    const q = (raw as any)?.quote || raw;
+    const humanOut = q?.amountOutFormatted
+      ? String(q.amountOutFormatted)
+      : (typeof q?.amountOut === "string" && toToken.decimals != null
+          ? (Number(q.amountOut) / Math.pow(10, toToken.decimals)).toString()
+          : undefined);
+    return { raw, amountOut: humanOut };
+  } catch (_e: any) {
+    // Build an error typology from SDK/axios error shapes
+    const err = _e || {};
+    const status: number | undefined = err?.status ?? err?.response?.status;
+    const data = err?.body ?? err?.response?.data;
+    const message: string | undefined = data?.message || err?.message;
+    const correlationId: string | undefined = data?.correlationId;
+    let type: "client" | "server" | "network" | "unknown" = "unknown";
+    if (typeof status === "number") {
+      if (status >= 400 && status < 500) type = "client";
+      else if (status >= 500) type = "server";
+    } else if (err?.code === "ERR_NETWORK" || message?.toLowerCase().includes("network")) {
+      type = "network";
+    }
+    // Fallback: compute via prices if available, but attach error
+    const pIn = typeof fromToken.price === "number" ? fromToken.price : undefined;
+    const pOut = typeof toToken.price === "number" ? toToken.price : undefined;
+    if (pIn && pOut && pOut > 0) {
+      const n = Number(amount || 0);
+      if (Number.isFinite(n)) {
+        return {
+          raw: null,
+          amountOut: ((n * pIn) / pOut).toString(),
+          error: { type, status, message, correlationId },
+        };
+      }
+    }
+    return { raw: null, amountOut: undefined, error: { type, status, message, correlationId } };
+  }
+}
+
+// Request a non-dry quote to obtain deposit instructions (address, deadline, etc.)
+export async function getDepositInfo(params: {
+  fromToken: NearToken;
+  toToken: NearToken;
+  amount: string; // human-readable input amount
+  recipient?: string;
+  sender?: string;
+  slippageBps?: number; // default 100 = 1%
+  userAddress?: string;
+  authMethod?: AuthMethod;
+}): Promise<DepositInfo> {
+  const { fromToken, toToken, amount, recipient, sender, slippageBps = 100, userAddress, authMethod } = params;
+  const toAtomic = (val: string, decimals: number): string => {
+    const [i, f = ""] = String(val).split(".");
+    const cleanF = f.replace(/\D/g, "").slice(0, Math.max(0, decimals));
+    const padded = (i.replace(/\D/g, "") || "0") + (cleanF.padEnd(decimals, "0"));
+    return BigInt(padded).toString();
+  };
+  const originAsset = fromToken.tokenId || fromToken.address;
+  const destinationAsset = toToken.tokenId || toToken.address;
+  const atomicIn = toAtomic(amount || "0", fromToken.decimals || 0);
+  let req: QuoteRequest;
+  if (userAddress && authMethod) {
+    const intentsUserId = `${authMethod.toLowerCase()}:${userAddress}`;
+    req = {
+      dry: false,
+      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      slippageTolerance: slippageBps,
+      originAsset,
+      depositType: QuoteRequest.depositType.INTENTS,
+      destinationAsset,
+      amount: atomicIn,
+      refundTo: intentsUserId,
+      refundType: QuoteRequest.refundType.INTENTS,
+      recipient: intentsUserId,
+      recipientType: QuoteRequest.recipientType.INTENTS,
+      deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
+      quoteWaitingTimeMs: 0,
+    };
+  } else {
+    if (!sender || !recipient) {
+      throw new Error("Missing sender/recipient for ORIGIN_CHAIN deposit quote");
+    }
+    req = {
+      dry: false,
+      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      slippageTolerance: slippageBps,
+      originAsset,
+      depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
+      destinationAsset,
+      amount: atomicIn,
+      refundTo: sender,
+      refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
+      recipient: recipient,
+      recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
+      deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
+      quoteWaitingTimeMs: 3000,
+    };
+  }
+  const raw = await OneClickService.getQuote(req);
+  const q = (raw as any)?.quote || raw || {};
+  return {
+    raw,
+    depositAddress: q?.depositAddress || q?.address,
+    memo: q?.memo ?? null,
+    deadline: q?.deadline,
+    timeEstimate: q?.timeEstimate,
+    timeWhenInactive: q?.timeWhenInactive,
+    quoteId: q?.id || q?.quoteId,
+    originAsset,
+    destinationAsset,
+    amountAtomic: atomicIn,
+  };
+}
+
+// SDK-style names to mirror 1click examples
+export const getTokens = fetchTokens;
+export const getQuote = getAccurateQuote;
 
 

@@ -6,50 +6,51 @@ import { Check, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
+	Command,
+	CommandEmpty,
+	CommandGroup,
+	CommandInput,
+	CommandItem,
+	CommandList,
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import type { NearToken } from "@/services/nearIntents";
 import { findTokenBySelection, formatChainLabel, groupTokensBySymbol, uniqueChains } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
+import { TokenIcon } from "./TokenIcon";
 
 type Props = {
-  tokens: NearToken[];
+	tokens: NearToken[];
 	value?: TokenSelection;
 	onChange: (selection: TokenSelection) => void;
-  placeholder?: string;
-  className?: string;
-  onQuery?: (q: string) => Promise<NearToken[]>;
+	placeholder?: string;
+	className?: string;
+	onQuery?: (q: string) => Promise<NearToken[]>;
 };
 
 export function TokenCombobox({
-  tokens,
-  value,
-  onChange,
-  placeholder = "Select token...",
-  className,
-  onQuery
+	tokens,
+	value,
+	onChange,
+	placeholder = "Select token...",
+	className,
+	onQuery
 }: Props) {
-  const [open, setOpen] = React.useState(false);
-  const [query, setQuery] = React.useState("");
-  const [options, setOptions] = React.useState<NearToken[]>(tokens);
-  const [loading, setLoading] = React.useState(false);
+	const [open, setOpen] = React.useState(false);
+	const [query, setQuery] = React.useState("");
+	const [options, setOptions] = React.useState<NearToken[]>(tokens);
+	const [loading, setLoading] = React.useState(false);
 	const selectedToken = React.useMemo(() => {
 		return findTokenBySelection(tokens, value);
 	}, [tokens, value]);
 	const [selectedChain, setSelectedChain] = React.useState<string | undefined>(value?.chain);
 
-  // keep options in sync if tokens prop changes and no query
-  React.useEffect(() => {
-    if (!query) {
-      setOptions(tokens);
-    }
-  }, [tokens, query]);
+	// keep options in sync if tokens prop changes and no query
+	React.useEffect(() => {
+		if (!query) {
+			setOptions(tokens);
+		}
+	}, [tokens, query]);
 
 	React.useEffect(() => {
 		// Ensure selectedChain is a valid option for current option set
@@ -59,24 +60,24 @@ export function TokenCombobox({
 		}
 	}, [options, selectedChain, value]);
 
-  // debounced remote search
-  React.useEffect(() => {
-    if (!onQuery) return;
-    let active = true;
-    const handle = setTimeout(async () => {
-      setLoading(true);
-      try {
-        const next = await onQuery(query);
-        if (active) setOptions(next);
-      } finally {
-        if (active) setLoading(false);
-      }
-    }, 250);
-    return () => {
-      active = false;
-      clearTimeout(handle);
-    };
-  }, [query, onQuery]);
+	// debounced remote search
+	React.useEffect(() => {
+		if (!onQuery) return;
+		let active = true;
+		const handle = setTimeout(async () => {
+			setLoading(true);
+			try {
+				const next = await onQuery(query);
+				if (active) setOptions(next);
+			} finally {
+				if (active) setLoading(false);
+			}
+		}, 250);
+		return () => {
+			active = false;
+			clearTimeout(handle);
+		};
+	}, [query, onQuery]);
 
 	// If query clearly matches a single network, auto-select it for convenience
 	React.useEffect(() => {
@@ -101,39 +102,29 @@ export function TokenCombobox({
 		return chains.filter((c) => formatChainLabel(c).toLowerCase().includes(q) || c.toLowerCase().includes(q));
 	}, [chains, query]);
 
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          className={cn("w-full justify-between", className)}
-        >
-          <div className="flex items-center gap-2">
-						{selectedToken?.logoURI ? (
-              <Image
-								src={selectedToken.logoURI}
-								alt={selectedToken.symbol}
-                width={18}
-                height={18}
-                sizes="18px"
-								unoptimized={/^https?:\/\//.test(selectedToken.logoURI)}
-                className="rounded-full"
-              />
-            ) : null}
-            <span className="font-semibold">
+	return (
+		<Dialog open={open} onOpenChange={setOpen}>
+			<DialogTrigger asChild>
+				<Button
+					variant="outline"
+					role="combobox"
+					aria-expanded={open}
+					className={cn("w-full justify-between", className)}
+				>
+					<div className="flex items-center gap-2">
+						<TokenIcon token={selectedToken ?? undefined} chain={selectedToken?.chain} size={22} />
+						<span className="font-semibold">
 							{selectedToken ? selectedToken.symbol : placeholder}
-            </span>
+						</span>
 						{selectedToken ? (
-              <span className="text-xs text-muted-foreground ml-1">
+							<span className="text-xs text-muted-foreground ml-1">
 								{formatChainLabel(selectedToken.chain)}
-              </span>
-            ) : null}
-          </div>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </Button>
-      </DialogTrigger>
+							</span>
+						) : null}
+					</div>
+					<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+				</Button>
+			</DialogTrigger>
 			<DialogContent className="sm:max-w-[640px] w-[min(96vw,640px)] p-0 overflow-hidden">
 				<DialogHeader className="px-4 py-3 border-b">
 					<DialogTitle className="text-sm text-muted-foreground">Select token</DialogTitle>
@@ -155,7 +146,9 @@ export function TokenCombobox({
 											active ? "bg-muted font-semibold" : "hover:bg-muted/60"
 										)}
 									>
-										{formatChainLabel(c)}
+										<span className="inline-flex items-center gap-2">
+											{formatChainLabel(c)}
+										</span>
 									</button>
 								);
 							})}
@@ -187,17 +180,7 @@ export function TokenCombobox({
 												}}
 											>
 												<div className="flex items-center gap-3 w-full">
-													{(tok?.logoURI || g.logoURI) ? (
-														<Image
-															src={(tok?.logoURI || g.logoURI)!}
-															alt={g.symbol}
-															width={20}
-															height={20}
-															sizes="20px"
-															unoptimized={/^https?:\/\//.test((tok?.logoURI || g.logoURI) || "")}
-															className="rounded-full"
-														/>
-													) : null}
+													<TokenIcon token={tok ?? g} chain={selectedChain} size={22} />
 													<div className="flex-1 overflow-hidden">
 														<div className="font-semibold truncate">{g.symbol}</div>
 														<div className="text-xs text-muted-foreground truncate">
@@ -214,9 +197,9 @@ export function TokenCombobox({
 						</Command>
 					</div>
 				</div>
-      </DialogContent>
-    </Dialog>
-  );
+			</DialogContent>
+		</Dialog>
+	);
 }
 
 

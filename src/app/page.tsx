@@ -6,61 +6,25 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Tweet } from "react-tweet";
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from 'lucide-react';
-import { ArrowUpDown } from 'lucide-react';
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem
-} from "@/components/ui/select";
-import { fetchTokens, searchTokens, createTestIntent, type NearToken } from "@/services/nearIntents";
-import { TokenCombobox } from "@/components/TokenCombobox";
+
+import { searchTokens, createTestIntent, type NearToken } from "@/services/nearIntents";
+import { useTokensQuery } from "@/hooks/useTokensQuery";
 import type { TokenSelection } from "@/app/utils/types";
 import { findTokenBySelection } from "@/lib/tokens";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useSwapStore } from "@/store/swap";
+import { useQuote } from "@/hooks/useQuote";
+import { ProviderTabs } from "@/components/swap/ProviderTabs";
+import { NearSwapWidget } from "@/components/swap/NearSwapWidget";
+import { BiconomySwapWidget } from "@/components/swap/BiconomySwapWidget";
 
 export default function Home() {
   // Swap state
-  const [tokens, setTokens] = useState<NearToken[]>([]);
-  const [fromSel, setFromSel] = useState<TokenSelection | null>(null);
-  const [toSel, setToSel] = useState<TokenSelection | null>(null);
-  const [amount, setAmount] = useState<string>("");
+  const { data: tokens = [], isLoading: loadingTokens } = useTokensQuery();
+  const { fromSel, toSel, amount, setFromSel, setToSel, setAmount, hydrated } = useSwapStore();
   const selectedFrom = useMemo(() => findTokenBySelection(tokens, fromSel), [tokens, fromSel]);
   const selectedTo = useMemo(() => findTokenBySelection(tokens, toSel), [tokens, toSel]);
-  const rate = useMemo(() => {
-    if (!amount || !selectedFrom || !selectedTo) return "";
-    const base = selectedFrom.symbol === "ETH" ? 3500 : selectedFrom.symbol === "SOL" ? 150 : 1;
-    const target = selectedTo.symbol === "ETH" ? 1 / 3500 : selectedTo.symbol === "SOL" ? 1 / 150 : 1;
-    const est = Number(amount || 0) * base * target;
-    if (!isFinite(est)) return "";
-    return est.toFixed(6);
-  }, [amount, selectedFrom, selectedTo]);
-  const amountNum = useMemo(() => {
-    const n = parseFloat(amount);
-    return Number.isFinite(n) ? n : 0;
-  }, [amount]);
-  const swapDisabled = !(amountNum > 0) || !selectedFrom || !selectedTo || (
-    fromSel?.symbol === toSel?.symbol && fromSel?.chain === toSel?.chain
-  );
-  function flip() {
-    const prevFrom = fromSel;
-    setFromSel(toSel);
-    setToSel(prevFrom);
-  }
-  async function onSwap() {
-    if (!selectedFrom || !selectedTo || !amount) return;
-    try {
-      const intent = await createTestIntent({
-        fromToken: selectedFrom,
-        toToken: selectedTo,
-        amount,
-      });
-      console.log("Created test intent:", intent);
-    } catch (err) {
-      console.error("Intent creation failed", err);
-    }
-  }
+  const [provider, setProvider] = useState<"near-intents" | "biconomy">("near-intents");
 
   // Landing behaviors
   const prefersReducedMotion = useReducedMotion();
@@ -90,23 +54,20 @@ export default function Home() {
   const [budgetIndex, setBudgetIndex] = useState<number>(0);
   const budget = budgetStops[budgetIndex];
   const [postUrl, setPostUrl] = useState<string>("");
-  // Load tokens
+  // Initialize defaults when tokens are loaded
   useEffect(() => {
-    (async () => {
-      const list = await fetchTokens();
-      setTokens(list);
-      if (!fromSel) {
-        const df = list.find(t => t.symbol === "USDT") || list[0];
-        if (df) setFromSel({ symbol: df.symbol, chain: df.chain });
-      }
-      if (!toSel) {
-        const preferred = list.find(t => t.symbol === "ETH" && (!fromSel || t.chain !== fromSel.chain));
-        const fallback = list.find(t => fromSel ? (t.symbol !== fromSel.symbol || t.chain !== fromSel.chain) : true);
-        const dt = preferred || fallback;
-        if (dt) setToSel({ symbol: dt.symbol, chain: dt.chain });
-      }
-    })();
-  }, []);
+    if (!hydrated || !tokens.length) return;
+    if (!fromSel) {
+      const df = tokens.find((t: NearToken) => t.symbol === "USDT") || tokens[0];
+      if (df) setFromSel({ symbol: df.symbol, chain: df.chain });
+    }
+    if (!toSel) {
+      const preferred = tokens.find((t: NearToken) => t.symbol === "ETH" && (!fromSel || t.chain !== fromSel.chain));
+      const fallback = tokens.find((t: NearToken) => fromSel ? (t.symbol !== fromSel.symbol || t.chain !== fromSel.chain) : true);
+      const dt = preferred || fallback;
+      if (dt) setToSel({ symbol: dt.symbol, chain: dt.chain });
+    }
+  }, [hydrated, tokens, fromSel, toSel, setFromSel, setToSel]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 relative overflow-hidden">
@@ -180,38 +141,10 @@ export default function Home() {
                 ))}
               </span>{' '}
               <span className="text-gray-900">across multiple chains.<br /></span>
-              <span className="inline-flex gap-0.5">
-                {'Earn'.split('').map((letter, index) => (
-                  <motion.span
-                    key={`points-${index}`}
-                    className="inline-block"
-                    initial={{ opacity: 0, y: -20, scale: 0.5 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{
-                      delay: index * 0.05 + 0.3,
-                      type: "spring",
-                      stiffness: 300,
-                      damping: 20
-                    }}
-                    whileHover={{
-                      scale: 1.2,
-                      transition: { type: "spring", stiffness: 400 }
-                    }}
-                    style={{
-                      background: 'linear-gradient(to right, #EAB308, #FF0F00)',
-                      WebkitBackgroundClip: 'text',
-                      WebkitTextFillColor: 'transparent',
-                      backgroundClip: 'text',
-                    }}
-                  >
-                    {letter}
-                  </motion.span>
-                ))}
-              </span>
-              <span className="text-gray-900"> Points.</span>
+
             </h1>
             <p className="text-lg md:text-xl text-gray-600 max-w-3xl px-4">
-              Bring your friends. Simple swaps. Cute rewards.
+              Powered by Near Intents, the easiest way to swap tokens across multiple chains.
             </p>
 
             <div className="relative inline-block group">
@@ -226,128 +159,17 @@ export default function Home() {
               </Button>
             </div>
           </div>
-          {/* Right: Swap widget */}
-          <motion.div
-            className="group relative bg-white rounded-3xl p-0 cursor-pointer overflow-hidden shadow-md border border-gray-100"
-            initial={{ opacity: 0, y: 30 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.05, type: "spring", stiffness: 100 }}
-            whileHover={{
-              y: -8,
-              boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
-              transition: { duration: 0.2, ease: "easeOut" }
-            }}
-            viewport={{ once: true }}
-          >
-            {/* Header */}
-            <div className="px-6 pt-5">
-              <div className="flex items-center gap-8">
-                <div className="relative pb-3">
-                  <div className="text-2xl font-extrabold text-gray-900 tracking-tight"></div>
-                  <div
-                    className="absolute left-0 right-0 -bottom-0.5 h-[3px] rounded"
-                    style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                  />
-                </div>
-              </div>
+          {/* Right: Swap container with provider tabs */}
+          <div className="space-y-3">
+            <div className="flex justify-end pr-2">
+              <ProviderTabs value={provider} onChange={setProvider} />
             </div>
-
-            {/* Panels */}
-            <div className="px-6 pb-6">
-              {/* Sell panel */}
-              <div className="mt-5 rounded-2xl bg-gray-50 border border-gray-200 px-4 py-5">
-                <div className="flex items-center justify-between">
-                  <div className="text-base font-semibold text-gray-700">Sell</div>
-                  <div className="w-44">
-                    <TokenCombobox
-                      tokens={tokens}
-                      value={fromSel || undefined}
-                      onChange={(sel) => setFromSel(sel)}
-                      placeholder="From"
-                      onQuery={searchTokens}
-                      className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50"
-                    />
-                  </div>
-                </div>
-                <div className="mt-3 flex items-end justify-between">
-                  <Input
-                    inputMode="decimal"
-                    placeholder="0"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="text-5xl md:text-6xl font-semibold border-none bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-auto"
-                  />
-                </div>
-                <div className="mt-3 flex items-center gap-2 text-sm">
-                  <span className="text-gray-500">0</span>
-                  <button
-                    type="button"
-                    onClick={() => setAmount("0")}
-                    className="rounded-xl border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-100"
-                  >
-                    Max
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAmount(prev => {
-                      const n = Number(prev || 0);
-                      if (!n) return prev;
-                      return (n * 0.5).toString();
-                    })}
-                    className="rounded-xl border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-100"
-                  >
-                    50%
-                  </button>
-                </div>
-              </div>
-
-              {/* Flip button */}
-              <div className="flex justify-center -my-1">
-                <button
-                  type="button"
-                  onClick={flip}
-                  className="mt-2 mb-2 inline-flex items-center justify-center h-10 w-10 rounded-2xl text-white shadow"
-                  style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                  aria-label="Flip pair"
-                >
-                  <ArrowUpDown className="h-5 w-5" />
-                </button>
-              </div>
-
-              {/* Buy panel */}
-              <div className="rounded-2xl bg-gray-50 border border-gray-200 px-4 py-5">
-                <div className="flex items-center justify-between">
-                  <div className="text-base font-semibold text-gray-700">Buy</div>
-                  <div className="w-44">
-                    <TokenCombobox
-                      tokens={tokens}
-                      value={toSel || undefined}
-                      onChange={(sel) => setToSel(sel)}
-                      placeholder="To"
-                      onQuery={searchTokens}
-                      className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50"
-                    />
-                  </div>
-                </div>
-                <div className="mt-3 flex items-end justify-between">
-                  <div className="text-5xl md:text-6xl font-semibold text-gray-900 leading-none">
-                    {rate || "0"}
-                  </div>
-                </div>
-                <div className="mt-3 text-sm text-gray-500">0</div>
-              </div>
-
-              {/* Primary CTA */}
-              <Button
-                onClick={onSwap}
-                disabled={swapDisabled}
-                className="w-full mt-5 text-white font-semibold rounded-2xl border-0 py-5"
-                style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-              >
-                Swap Now
-              </Button>
-            </div>
-          </motion.div>
+            {provider === "near-intents" ? (
+              <NearSwapWidget tokens={tokens} loadingTokens={loadingTokens} />
+            ) : (
+              <BiconomySwapWidget />
+            )}
+          </div>
         </div>
 
         {/* End hero */}
