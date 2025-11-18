@@ -196,25 +196,47 @@ export async function getAccurateQuote(params: {
         quoteWaitingTimeMs: 0,
       };
     } else {
-      // Fallback to origin/destination chain addressing
-      if (!sender || !recipient) {
-        throw new Error("Missing sender/recipient for ORIGIN_CHAIN quote");
+      // Fallback path without authMethod: for dry quotes, align with intents-swap-widget to avoid KYT
+      if (dryRun) {
+        const ZERO = "0x0000000000000000000000000000000000000000";
+        req = {
+          dry: true,
+          swapType: QuoteRequest.swapType.EXACT_INPUT,
+          slippageTolerance: slippageBps,
+          originAsset,
+          depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
+          destinationAsset,
+          amount: atomicIn,
+          refundTo: ZERO,
+          refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
+          recipient: "system.near",
+          recipientType: QuoteRequest.recipientType.INTENTS,
+          deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
+          quoteWaitingTimeMs: 3000,
+        } as QuoteRequest;
+        // Add referral like the widget payload (SDK types may not include it)
+        (req as any).referral = "unknown";
+      } else {
+        // Non-dry requires concrete chain addressing
+        if (!sender || !recipient) {
+          throw new Error("Missing sender/recipient for ORIGIN_CHAIN quote");
+        }
+        req = {
+          dry: false,
+          swapType: QuoteRequest.swapType.EXACT_INPUT,
+          slippageTolerance: slippageBps,
+          originAsset,
+          depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
+          destinationAsset,
+          amount: atomicIn,
+          refundTo: sender,
+          refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
+          recipient: recipient,
+          recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
+          deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
+          quoteWaitingTimeMs: 3000,
+        };
       }
-      req = {
-        dry: dryRun,
-        swapType: QuoteRequest.swapType.EXACT_INPUT,
-        slippageTolerance: slippageBps,
-        originAsset,
-        depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
-        destinationAsset,
-        amount: atomicIn,
-        refundTo: sender,
-        refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
-        recipient: recipient,
-        recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
-        deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
-        quoteWaitingTimeMs: 3000,
-      };
     }
     const raw = await OneClickService.getQuote(req);
     const q = (raw as any)?.quote || raw;
