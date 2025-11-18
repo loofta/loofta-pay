@@ -8,9 +8,15 @@ const REFERRAL_CODE = (process as any)?.env?.NEXT_PUBLIC_REFERRAL_CODE || (proce
 const APP_FEE_BPS = Number((process as any)?.env?.NEXT_PUBLIC_APP_FEE_BPS || "");
 const APP_FEE_RECIPIENT = (process as any)?.env?.NEXT_PUBLIC_APP_FEE_RECIPIENT || undefined;
 
-function attachFees(req: any) {
-  if (APP_FEE_RECIPIENT && Number.isFinite(APP_FEE_BPS) && APP_FEE_BPS >= 0 && APP_FEE_BPS <= 10000) {
-    req.fees = [{ recipient: APP_FEE_RECIPIENT, fee_bps: APP_FEE_BPS }];
+function attachAppFees(req: any) {
+  if (
+    APP_FEE_RECIPIENT &&
+    Number.isFinite(APP_FEE_BPS) &&
+    APP_FEE_BPS >= 0 &&
+    APP_FEE_BPS <= 10000
+  ) {
+    // appFees: [{ recipient, fee (bps) }]
+    req.appFees = [{ recipient: APP_FEE_RECIPIENT, fee: APP_FEE_BPS }];
   }
   return req;
 }
@@ -191,8 +197,8 @@ export async function getAccurateQuote(params: {
     if (userAddress && authMethod) {
       // Use INTENTS identity mapping (authMethod:userAddress)
       const intentsUserId = `${authMethod.toLowerCase()}:${userAddress}`;
-      req = attachFees({
-        dry: dryRun,
+      req = attachAppFees({
+      dry: dryRun,
         swapType: QuoteRequest.swapType.EXACT_INPUT,
         slippageTolerance: slippageBps,
         originAsset,
@@ -234,7 +240,7 @@ export async function getAccurateQuote(params: {
         };
         const recipientDry = getDryQuoteAddress(toToken.chain);
         const refundDry = getDryQuoteAddress(fromToken.chain);
-        req = attachFees({
+        req = attachAppFees({
           dry: true,
           swapType: QuoteRequest.swapType.EXACT_INPUT,
           slippageTolerance: slippageBps,
@@ -255,20 +261,20 @@ export async function getAccurateQuote(params: {
         if (!sender || !recipient) {
           throw new Error("Missing sender/recipient for ORIGIN_CHAIN quote");
         }
-        req = attachFees({
+        req = attachAppFees({
           dry: false,
-          swapType: QuoteRequest.swapType.EXACT_INPUT,
-          slippageTolerance: slippageBps,
-          originAsset,
-          depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
-          destinationAsset,
-          amount: atomicIn,
-          refundTo: sender,
-          refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
-          recipient: recipient,
-          recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
-          deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
-          quoteWaitingTimeMs: 3000,
+      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      slippageTolerance: slippageBps,
+      originAsset,
+      depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
+      destinationAsset,
+      amount: atomicIn,
+      refundTo: sender,
+      refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
+      recipient: recipient,
+      recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
+      deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
+      quoteWaitingTimeMs: 3000,
         } as QuoteRequest);
         if (REFERRAL_CODE) (req as any).referral = REFERRAL_CODE;
       }
@@ -294,20 +300,20 @@ export async function getAccurateQuote(params: {
       else if (status >= 500) type = "server";
     } else if (err?.code === "ERR_NETWORK" || message?.toLowerCase().includes("network")) {
       type = "network";
-    }
+  }
     // Fallback: compute via prices if available, but attach error
-    const pIn = typeof fromToken.price === "number" ? fromToken.price : undefined;
-    const pOut = typeof toToken.price === "number" ? toToken.price : undefined;
-    if (pIn && pOut && pOut > 0) {
-      const n = Number(amount || 0);
-      if (Number.isFinite(n)) {
+  const pIn = typeof fromToken.price === "number" ? fromToken.price : undefined;
+  const pOut = typeof toToken.price === "number" ? toToken.price : undefined;
+  if (pIn && pOut && pOut > 0) {
+    const n = Number(amount || 0);
+    if (Number.isFinite(n)) {
         return {
           raw: null,
           amountOut: ((n * pIn) / pOut).toString(),
           error: { type, status, message, correlationId },
         };
-      }
     }
+  }
     return { raw: null, amountOut: undefined, error: { type, status, message, correlationId } };
   }
 }
@@ -336,7 +342,7 @@ export async function getDepositInfo(params: {
   let req: QuoteRequest;
   if (userAddress && authMethod) {
     const intentsUserId = `${authMethod.toLowerCase()}:${userAddress}`;
-    req = attachFees({
+    req = attachAppFees({
       dry: false,
       swapType: QuoteRequest.swapType.EXACT_INPUT,
       slippageTolerance: slippageBps,
@@ -355,7 +361,7 @@ export async function getDepositInfo(params: {
     if (!sender || !recipient) {
       throw new Error("Missing sender/recipient for ORIGIN_CHAIN deposit quote");
     }
-    req = attachFees({
+    req = attachAppFees({
       dry: false,
       swapType: QuoteRequest.swapType.EXACT_INPUT,
       slippageTolerance: slippageBps,

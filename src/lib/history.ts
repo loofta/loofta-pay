@@ -1,8 +1,5 @@
 "use client";
 
-import { db } from "@/lib/firebase";
-import { doc, setDoc, serverTimestamp, getDocs, collection, query, where } from "firebase/firestore";
-
 export type SwapHistoryItem = {
 	id: string; // depositAddress
 	createdAt: number;
@@ -31,13 +28,14 @@ export function getLocalHistory(): SwapHistoryItem[] {
 		if (!raw) return [];
 		const arr = JSON.parse(raw);
 		return Array.isArray(arr) ? arr : [];
-	} catch {
+	} catch (e) {
+		console.error("[history] getLocalHistory error", e);
 		return [];
 	}
 }
 
 export function saveLocalHistory(items: SwapHistoryItem[]) {
-	try { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); } catch {}
+	try { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); } catch (e) { console.error("[history] saveLocalHistory error", e); }
 }
 
 export function upsertLocal(item: SwapHistoryItem) {
@@ -48,31 +46,23 @@ export function upsertLocal(item: SwapHistoryItem) {
 	saveLocalHistory(arr);
 }
 
-export async function upsertRemote(userId: string, item: SwapHistoryItem) {
-	if (!userId) return;
-	const ref = doc(db, "swapHistory", `${userId}:${item.id}`);
-	await setDoc(ref, { ...item, userId, updatedAt: Date.now(), updatedAtServer: serverTimestamp() }, { merge: true });
+// Remote ops disabled (Firebase removed)
+export async function upsertRemote(_userId: string, _item: SwapHistoryItem) {
+	return;
 }
 
-export async function fetchRemoteHistory(userId: string): Promise<SwapHistoryItem[]> {
-	if (!userId) return [];
-	const q = query(collection(db, "swapHistory"), where("userId", "==", userId));
-	const snap = await getDocs(q);
-	const items: SwapHistoryItem[] = [];
-	snap.forEach((d) => items.push(d.data() as any));
-	return items.sort((a, b) => b.createdAt - a.createdAt);
+export async function fetchRemoteHistory(_userId: string): Promise<SwapHistoryItem[]> {
+	return [];
 }
 
-export async function mergeLocalIntoRemote(userId: string) {
-	if (!userId) return;
-	const local = getLocalHistory();
-	for (const it of local) {
-		await upsertRemote(userId, it);
-	}
+export async function mergeLocalIntoRemote(_userId: string) {
+	return;
 }
 
-export function mergeRemoteIntoLocal(remote: SwapHistoryItem[]) {
-	for (const it of remote) {
-		upsertLocal(it);
-	}
+export function mergeRemoteIntoLocal(_remote: SwapHistoryItem[]) {
+	return;
+}
+
+export async function ensureUser(_userId?: string, _email?: string) {
+	return;
 }

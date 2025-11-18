@@ -20,7 +20,7 @@ import { getChainIcon } from "@/lib/chains";
 import { useToast } from "@/components/ui/use-toast";
 import { useIntentStatus } from "@/hooks/useIntentStatus";
 import { useAuth } from "@/hooks/useAuth";
-import { upsertLocal, upsertRemote } from "@/lib/history";
+import { upsertLocal } from "@/lib/history";
 import { getClientGeo } from "@/lib/geo";
 
 export function NearSwapWidget({
@@ -180,15 +180,7 @@ export function NearSwapWidget({
 				updatedAt: Date.now(),
 				status: s,
 			});
-			if (authenticated && userId && deposit.depositAddress) {
-				upsertRemote(userId, {
-					id: deposit.depositAddress,
-					createdAt: Date.now(),
-					updatedAt: Date.now(),
-					status: s,
-					userId,
-				});
-			}
+			// remote disabled
 		} catch { }
 	}, [statusQuery.data?.status, deposit, toast]);
 
@@ -245,27 +237,7 @@ export function NearSwapWidget({
 						country: geo.country,
 						countryCode: geo.countryCode,
 					});
-					if (authenticated && userId) {
-						await upsertRemote(userId, {
-							id: info.depositAddress,
-							createdAt: Date.now(),
-							updatedAt: Date.now(),
-							status: "PENDING_DEPOSIT",
-							fromSymbol: selectedFrom?.symbol,
-							fromChain: selectedFrom?.chain,
-							toSymbol: selectedTo?.symbol,
-							toChain: selectedTo?.chain,
-							amount,
-							recipient,
-							quoteId: info.quoteId,
-							deadline: info.deadline,
-							userId,
-							userEmail: email,
-							ip: geo.ip,
-							country: geo.country,
-							countryCode: geo.countryCode,
-						});
-					}
+					// remote disabled
 				} catch { }
 				if (info.deadline) {
 					const end = new Date(info.deadline).getTime();
@@ -463,13 +435,19 @@ export function NearSwapWidget({
 										<Skeleton className="h-4 w-20" />
 									) : (usdFrom ?? "-")}
 								</span>
+
 								<button
 									type="button"
-									onClick={() => setAmount("0")}
-									className="rounded-xl border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-100"
+									onClick={() => {
+										const n = Number(amount || 0);
+										if (!n) return;
+										setAmount((n * 0.5).toString());
+									}}
+									className="rounded-xl border mx-2 border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-100"
 								>
-									Max
+									10%
 								</button>
+
 								<button
 									type="button"
 									onClick={() => {

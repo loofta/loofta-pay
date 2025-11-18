@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchRemoteHistory, getLocalHistory, mergeRemoteIntoLocal, type SwapHistoryItem, upsertLocal, upsertRemote } from "@/lib/history";
+import { getLocalHistory, type SwapHistoryItem, upsertLocal } from "@/lib/history";
 import { Button } from "@/components/ui/button";
 import { getExecutionStatus } from "@/services/nearIntents";
+import { useHistoryQuery } from "@/hooks/useHistoryQuery";
 
 function statusColor(s?: string) {
 	const k = String(s || "").toUpperCase();
@@ -16,9 +17,8 @@ function statusColor(s?: string) {
 }
 
 export function HistoryModal({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
-	const { authenticated, userId } = useAuth();
-	const [items, setItems] = useState<SwapHistoryItem[]>([]);
-	const [loading, setLoading] = useState(false);
+	const { authenticated } = useAuth();
+	const { data: items = [], isFetching, refetch } = useHistoryQuery();
 	const intervalRef = useRef<any>(null);
 	const refreshingRef = useRef<boolean>(false);
 
@@ -39,49 +39,25 @@ export function HistoryModal({ open, onOpenChange }: { open: boolean; onOpenChan
 				}
 				const merged: SwapHistoryItem = { ...it, status: finalStatus, updatedAt: Date.now() };
 				upsertLocal(merged);
-				if (authenticated && userId) await upsertRemote(userId, merged);
 				return merged;
 			} catch {
 				return it;
 			}
 		}));
 		const updated = results.map((r, i) => r.status === "fulfilled" ? r.value as SwapHistoryItem : list[i]);
-		setItems(updated.sort((a,b) => b.createdAt - a.createdAt));
 		refreshingRef.current = false;
-	}
-
-	async function load() {
-		setLoading(true);
-		try {
-			const local = getLocalHistory();
-			let combined = local;
-			if (authenticated && userId) {
-				try {
-					const remote = await fetchRemoteHistory(userId);
-					mergeRemoteIntoLocal(remote);
-					combined = getLocalHistory();
-				} catch {}
-			}
-			setItems(combined.sort((a, b) => b.createdAt - a.createdAt));
-			setLoading(false);
-			// Kick off background status refresh without blocking UI
-			refreshStatuses(combined);
-		} finally {
-			// no-op
-		}
 	}
 
 	useEffect(() => {
 		if (!open) return;
-		load();
+		refreshStatuses(items);
 		clearInterval(intervalRef.current);
 		intervalRef.current = setInterval(() => {
-			const list = getLocalHistory();
-			refreshStatuses(list);
+			refreshStatuses(getLocalHistory());
 		}, 10000);
 		return () => { clearInterval(intervalRef.current); };
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [open, authenticated, userId]);
+	}, [open]);
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -89,17 +65,15 @@ export function HistoryModal({ open, onOpenChange }: { open: boolean; onOpenChan
 				<DialogHeader>
 					<DialogTitle>Your swaps</DialogTitle>
 				</DialogHeader>
-				{!authenticated ? (
-					<div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-sm px-3 py-2">
-						Log in to sync your history across devices.
-					</div>
-				) : null}
+				<div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-sm px-3 py-2">
+					History is stored locally on this device.
+				</div>
 				<div className="flex items-center justify-between mb-3">
 					<div className="text-xs text-gray-600">Auto-refreshing every 10s</div>
-					<Button variant="outline" size="sm" onClick={() => load()}>Refresh</Button>
+					<Button variant="outline" size="sm" onClick={() => refetch()}>Refresh</Button>
 				</div>
 				<div className="space-y-2 max-h-[60vh] overflow-auto">
-					{loading && items.length === 0 ? (
+					{isFetching && items.length === 0 ? (
 						<div className="text-sm text-gray-600">Loading…</div>
 					) : items.length === 0 ? (
 						<div className="text-sm text-gray-600">No history yet.</div>

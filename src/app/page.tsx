@@ -50,7 +50,7 @@ export default function Home() {
 
   // Dune stats
   const { data: dune, isLoading: loadingDune, error: duneError } = useDuneStats();
-  const { authenticated, login } = useAuth();
+  const { authenticated, login, email, logout } = useAuth();
   const [historyOpen, setHistoryOpen] = useState(false);
 
   useEffect(() => {
@@ -115,6 +115,7 @@ export default function Home() {
 
           {/* CTA Button (auth) */}
           <div className="flex items-center gap-2">
+
             <Button
               className="bg-gray-900 hover:bg-gray-800 text-white font-semibold px-6 py-2.5 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg"
               onClick={() => setHistoryOpen(true)}
@@ -129,7 +130,20 @@ export default function Home() {
               >
                 Log in
               </Button>
-            ) : null}
+            ) : (
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-700">{email}</span>
+                <Button
+                  variant="outline"
+                  className="border-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-xl"
+                  onClick={() => logout()}
+                >
+                  Log out
+                </Button>
+              </div>
+            )}
+
+
           </div>
         </div>
       </div>
@@ -191,7 +205,7 @@ export default function Home() {
                   className="relative z-10 mt-4 px-10   py-6 text-lg md:text-xl text-white font-semibold rounded-2xl border-0 transition-transform duration-200 ease-out hover:scale-[1.03] active:scale-95 shadow-[0_20px_60px_-15px_rgba(255,15,0,0.35)] hover:shadow-[0_25px_80px_-20px_rgba(255,15,0,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-400"
                   onClick={() => login()}
                 >
-                  Log in to sync history
+                  Log in for future updates 
                   <ArrowRight className="ml-3 h-6 w-6" />
                 </Button>
               )}
