@@ -14,9 +14,9 @@ import { findTokenBySelection } from "@/lib/tokens";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSwapStore } from "@/store/swap";
 import { useQuote } from "@/hooks/useQuote";
-import { ProviderTabs } from "@/components/swap/ProviderTabs";
 import { NearSwapWidget } from "@/components/swap/NearSwapWidget";
-import { BiconomySwapWidget } from "@/components/swap/BiconomySwapWidget";
+import { useDuneStats } from "@/hooks/useDuneStats";
+import { cmcLogoForSymbol } from "@/lib/tokenImages";
 
 export default function Home() {
   // Swap state
@@ -24,7 +24,6 @@ export default function Home() {
   const { fromSel, toSel, amount, setFromSel, setToSel, setAmount, hydrated } = useSwapStore();
   const selectedFrom = useMemo(() => findTokenBySelection(tokens, fromSel), [tokens, fromSel]);
   const selectedTo = useMemo(() => findTokenBySelection(tokens, toSel), [tokens, toSel]);
-  const [provider, setProvider] = useState<"near-intents" | "biconomy">("near-intents");
 
   // Landing behaviors
   const prefersReducedMotion = useReducedMotion();
@@ -45,6 +44,9 @@ export default function Home() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // Dune stats
+  const { data: dune, isLoading: loadingDune, error: duneError } = useDuneStats();
 
   // Static stats (previously fetched)
   const displayedStats = { activeUsers: 1200, questsCompleted: 3400, communities: 200 };
@@ -161,14 +163,7 @@ export default function Home() {
           </div>
           {/* Right: Swap container with provider tabs */}
           <div className="space-y-3">
-            <div className="flex justify-end pr-2">
-              <ProviderTabs value={provider} onChange={setProvider} />
-            </div>
-            {provider === "near-intents" ? (
-              <NearSwapWidget tokens={tokens} loadingTokens={loadingTokens} />
-            ) : (
-              <BiconomySwapWidget />
-            )}
+            <NearSwapWidget tokens={tokens} loadingTokens={loadingTokens} />
           </div>
         </div>
 
@@ -227,30 +222,19 @@ export default function Home() {
       </motion.div>
 
       <div className="max-w-7xl mx-auto px-4 pb-12 relative z-10">
-        {/* Stats Intro */}
-        <div className="text-center mb-6 md:mb-8">
-          <h2 className="text-2xl md:text-4xl font-bold tracking-tight">
-            <span style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-              The easiest way to run authentic creator campaigns.
-            </span>
-          </h2>
-          <p className="mt-2 text-sm md:text-base text-gray-600">
-            Every creator is verified. Every campaign is genuine. Every result matters.
-          </p>
-        </div>
 
-        {/* Stats Section */}
+
+        {/* Live Analytics (Dune) */}
         <motion.div
           id="stats-section"
-          className="border border-orange-200 rounded-3xl p-6 md:p-8 mt-12 md:mt-16 mb-16 md:mb-20"
-          style={{ background: 'linear-gradient(to right, rgba(234, 179, 8, 0.05), rgba(255, 15, 0, 0.05), rgba(234, 179, 8, 0.05))' }}
+          className="rounded-3xl p-6 md:p-8 mt-12 md:mt-16 mb-12 md:mb-16"
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: false, amount: 0.3 }}
           transition={{ duration: 0.6, ease: "easeOut" }}
         >
           <motion.div
-            className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 text-center"
+            className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8"
             initial="hidden"
             whileInView="visible"
             exit="hidden"
@@ -266,296 +250,126 @@ export default function Home() {
             }}
           >
             <motion.div
-              className="space-y-2"
+              className="group relative overflow-hidden rounded-2xl p-5 shadow-lg hover:shadow-2xl transition-shadow"
               variants={{
                 hidden: { opacity: 0, y: 20 },
                 visible: { opacity: 1, y: 0 }
               }}
               transition={{ duration: 0.5, ease: "easeOut" }}
             >
-              <div className="text-4xl md:text-5xl font-bold" style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-                {displayedStats.activeUsers.toLocaleString()}+
+              <div className="absolute -inset-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                style={{ background: 'radial-gradient(600px circle at var(--x,50%) var(--y,50%), rgba(234,179,8,0.08), transparent 40%)' }} />
+              <div className="text-lg text-black  font-semibold tracking-wider text-center">Total Volume (All time)</div>
+              <div className="text-3xl md:text-4xl font-extrabold mt-1 text-center" style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+                {loadingDune ? "…" : dune?.totalVolumeUSD != null ? `$${dune.totalVolumeUSD.toLocaleString()}` : "—"}
               </div>
-              <div className="text-gray-600 text-lg font-medium">Active Creators</div>
             </motion.div>
 
             <motion.div
-              className="space-y-2"
+              className="group relative overflow-hidden rounded-2xl p-5 shadow-lg hover:shadow-2xl transition-shadow"
               variants={{
                 hidden: { opacity: 0, y: 20 },
                 visible: { opacity: 1, y: 0 }
               }}
               transition={{ duration: 0.5, ease: "easeOut" }}
             >
-              <div className="text-4xl md:text-5xl font-bold" style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-                {displayedStats.questsCompleted.toLocaleString()}+
+              <div className="absolute -inset-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                style={{ background: 'radial-gradient(600px circle at var(--x,50%) var(--y,50%), rgba(255,15,0,0.08), transparent 40%)' }} />
+              <div className="text-lg text-black  font-semibold tracking-wider text-center">Total Swaps</div>
+              <div className="text-3xl md:text-4xl font-extrabold mt-1 text-center" style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+                {loadingDune ? "…" : dune?.totalSwaps != null ? dune.totalSwaps.toLocaleString() : "—"}
               </div>
-              <div className="text-gray-600 text-lg font-medium">Deals Completed</div>
             </motion.div>
 
             <motion.div
-              className="space-y-2"
+              className="group relative overflow-hidden rounded-2xl p-5 shadow-lg hover:shadow-2xl transition-shadow"
               variants={{
                 hidden: { opacity: 0, y: 20 },
                 visible: { opacity: 1, y: 0 }
               }}
               transition={{ duration: 0.5, ease: "easeOut" }}
             >
-              <div className="text-4xl md:text-5xl font-bold" style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-                {displayedStats.communities.toLocaleString()}+
+              <div className="absolute -inset-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                style={{ background: 'radial-gradient(600px circle at var(--x,50%) var(--y,50%), rgba(234,179,8,0.08), transparent 40%)' }} />
+              <div className="text-lg text-black  font-semibold tracking-wider text-center">Unique Users (7D)</div>
+              <div className="text-3xl md:text-4xl font-extrabold mt-1 text-center" style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+                {loadingDune ? "…" : dune?.uniqueUsers7d != null ? dune.uniqueUsers7d.toLocaleString() : "—"}
               </div>
-              <div className="text-gray-600 text-lg font-medium">Campaigns</div>
             </motion.div>
           </motion.div>
         </motion.div>
-      </div>
 
-      {/* Case Studies */}
-      <div className="max-w-7xl mx-auto px-4 pb-12 mb-12 relative z-10">
-        <div className="mb-6 md:mb-8 text-center">
+        {/* Near Intents Intro */}
+        <div className="text-center mb-6 md:mb-12">
           <h2 className="text-2xl md:text-4xl font-bold tracking-tight">
-            <span style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-              Case Studies
+            <span style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+              Cross‑chain swaps made simple
             </span>
           </h2>
-          <p className="mt-2 text-base md:text-lg text-gray-600 mb-8">
-            Real campaigns. Real metrics. See how we've helped our clients grow with verified creators.
+          <p className="mt-2 text-base md:text-lg text-gray-600 max-w-3xl mx-auto">
+            NEAR Intents lets you swap any supported asset across chains with a single deposit.<br />
+            Send to the generated address, and your funds are routed automatically to the target chain.<br />
+            If a swap fails, your deposit is refunded to your origin address.
           </p>
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-left max-w-5xl mx-auto">
+            <div className="rounded-xl p-4 bg-white shadow-md hover:shadow-lg transition-shadow">
+              <div className="text-base font-semibold text-gray-900 mb-1">Quotes</div>
+              <div className="text-base md:text-lg text-gray-600">
+                Get a dry quote by providing origin asset, destination asset, and amount.<br />
+                Choose routing mode and set slippage/deadline.
+              </div>
+            </div>
+            <div className="rounded-xl p-4 bg-white shadow-md hover:shadow-lg transition-shadow">
+              <div className="text-base font-semibold text-gray-900 mb-1">Deposit</div>
+              <div className="text-base md:text-lg text-gray-600">
+                Execution quotes return a unique deposit address (and memo if needed).<br />
+                Send funds manually — no wallet connection required.
+              </div>
+            </div>
+            <div className="rounded-xl p-4 bg-white shadow-md hover:shadow-lg transition-shadow">
+              <div className="text-base font-semibold text-gray-900 mb-1">Payout & Refunds</div>
+              <div className="text-base md:text-lg text-gray-600">
+                Received tokens are sent to your chosen recipient.<br />
+                If the intent can’t execute before the deadline, your funds are automatically refunded.
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
-          {[
-            {
-              name: 'Internet Token',
-              logo: '/clients/int.png',
-              tweetId: '1958574225494876433',
-              metrics: { budget: 500, impressions: 67398, likes: 2668, engagementRate: 6.21, followers: 145 }
-            },
-            {
-              name: 'Conft',
-              logo: '/clients/conft.svg',
-              tweetId: '1956337393511907652',
-              metrics: { budget: 500, impressions: 84938, likes: 1789, engagementRate: 3.03, followers: 250 }
-            },
-            {
-              name: 'Coinomi Wallet',
-              logo: '/clients/coinomi.png',
-              tweetId: '1965079046384972168',
-              metrics: { budget: 250, impressions: 52214, likes: 1204, engagementRate: 2.31, followers: 98 }
-            },
-          ].map((c, idx) => (
-            <motion.div
-              key={c.name}
-              className="group relative bg-white rounded-3xl p-6 cursor-pointer overflow-hidden shadow-md"
-              initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 24 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              whileHover={{ y: -8, boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)", transition: { duration: 0.2, ease: "easeOut" } }}
-              viewport={{ once: true, amount: 0.3 }}
-              transition={{ duration: prefersReducedMotion ? 0 : 0.5, delay: idx * 0.08, ease: 'easeOut' }}
-            >
-              <div className="flex items-center gap-3" >
-                <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-50 ring-1 ring-gray-200 flex items-center justify-center">
-                  <Image src={c.logo} alt={`${c.name} logo`} width={24} height={24} />
-                </div>
-                <div className="text-xl font-bold text-gray-900">{c.name}</div>
-              </div>
 
-              <div className="mt-4 text-xs font-semibold tracking-wider text-gray-500">
-                PERFORMANCE
-              </div>
-
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div className="rounded-xl border border-gray-200 p-4">
-                  <div className="text-xs text-gray-500 font-medium">Budget</div>
-                  <div className="text-xl md:text-2xl font-extrabold text-gray-900">${c.metrics.budget.toLocaleString()}</div>
-                </div>
-
-                <div className="rounded-xl border border-gray-200 p-4">
-                  <div className="text-xs text-gray-500 font-medium">Total Impressions</div>
-                  <div className="text-xl md:text-2xl font-extrabold" style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-                    {c.metrics.impressions.toLocaleString()}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-gray-200 p-4">
-                  <div className="text-xs text-gray-500 font-medium">Total Likes</div>
-                  <div className="text-xl md:text-2xl font-extrabold text-gray-900">{c.metrics.likes.toLocaleString()}</div>
-                </div>
-                <div className="rounded-xl border border-gray-200 p-4">
-                  <div className="text-xs text-gray-500 font-medium">New Followers</div>
-                  <div className="text-xl md:text-2xl font-extrabold text-gray-900">{c.metrics.followers.toLocaleString()}</div>
-                </div>
-              </div>
-
-              <div className="mt-5 rounded-2xl overflow-hidden tweet-truncate-150">
-                <Tweet id={c.tweetId} />
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      </div>
-
-      {/* Quick Boost Section */}
-      <motion.div
-        className="max-w-7xl mx-auto px-4 pb-12 mt-12 mb-12 relative z-10"
-        initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 24 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, amount: 0.3 }}
-        transition={{ duration: prefersReducedMotion ? 0 : 0.6, ease: 'easeOut' }}
-      >
-        <div className="mb-6 md:mb-8 text-center">
-          <h2 className="text-2xl md:text-4xl font-bold tracking-tight">
+        {/* Top Traded Tokens Cloud */}
+        <div className="mt-12 md:mt-16 mb-12 md:mb-16">
+          <h3 className="text-center text-2xl md:text-4xl font-bold tracking-tight mb-4">
             <span style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-              Quickly Boost Engagement on a Post
+              Top Traded Tokens
             </span>
-          </h2>
-          <p className="mt-2 text-base md:text-lg text-gray-600">For individuals or project want to boost engagement fast</p>
-        </div>
-
-        <div className="rounded-3xl bg-white p-6 md:p-8 shadow-md">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="md:col-span-1 md:pr-6 md:border-r md:border-gray-200">
-              <div className="space-y-3">
-                <div className="text-lg font-semibold tracking-wide text-gray-700">How it works</div>
-                <p className="text-base text-gray-700">
-                  We run a targeted giveaway with Loofta‑verified creators. To enter, users must engage with your post — like, comment, bookmark, or retweet/quote. Our team selects the right creators and monitors results.
-                </p>
-                <ul className="space-y-2 text-lg text-gray-700 boost-bullets">
-                  <li>Go live fast with curated creators</li>
-                  <li>Authentic audiences, no bots</li>
-                  <li>Transparent tracking and reporting</li>
-                </ul>
-              </div>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Input X Post URL</label>
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <input
-                    type="url"
-                    value={postUrl}
-                    onChange={(e) => setPostUrl(e.target.value)}
-                    placeholder="https://x.com/yourURLtoQuote"
-                    className="w-full rounded-xl border border-gray-200 bg-black/5 text-gray-900 placeholder-gray-500 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-400"
-                    inputMode="url"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-6">
-                <div className="text-lg font-semibold text-gray-900">What is your budget?</div>
-                <div className="mt-4">
-                  <input
-                    type="range"
-                    min={0}
-                    max={budgetStops.length - 1}
-                    step={1}
-                    value={budgetIndex}
-                    onChange={(e) => setBudgetIndex(Number(e.target.value))}
-                    aria-label="Budget"
-                    className="w-full boost-range"
-                    style={{ ['--fill' as any]: `${(budgetIndex / (budgetStops.length - 1)) * 100}%` }}
-                  />
-                  <div className="flex justify-between text-xs text-gray-700 mt-2">
-                    {budgetStops.map((v, i) => (
-                      <button
-                        key={v}
-                        type="button"
-                        onClick={() => setBudgetIndex(i)}
-                        className={`px-1 -mx-1 transition-colors ${i === budgetIndex ? 'font-bold' : 'opacity-80'}`}
-                        style={i === budgetIndex ? { background: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' } : {}}
-                        aria-label={`Select budget $${v}`}
-                      >
-                        ${v}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {(() => {
-                const impressionsMin = Math.round(budget * 50);
-                const impressionsMax = Math.round(budget * 120);
-                return (
-                  <div className="mt-6">
-                    <div className="rounded-2xl bg-gradient-to-r from-orange-500/10 to-red-500/10 border border-orange-200/50 p-4">
-                      <div className="text-sm font-semibold text-gray-800">Estimated Impressions</div>
-                      <div className="mt-1 text-xl font-extrabold" style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-                        {impressionsMin.toLocaleString()} - {impressionsMax.toLocaleString()} views
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              <div className="mt-6 flex items-center justify-between">
-                <div className="text-sm text-gray-600">
-                  Larger budget? <a href="mailto:hello@loofta.xyz" className="underline decoration-orange-400 underline-offset-4 hover:text-gray-900">Contact us</a>
-                </div>
-                <Button
-                  style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                  className="px-6 py-3 text-white font-semibold rounded-xl border-0 shadow-md transition-transform duration-200 ease-out hover:scale-[1.02] active:scale-95"
-                  onClick={() => { }}
-                >
-                  Launch Boost
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Other Clients */}
-      <div className="max-w-7xl mx-auto px-4 pb-12 relative z-20">
-        <motion.h3
-          className="text-2xl md:text-3xl font-bold text-black text-center mb-4"
-          initial={{ opacity: 0, y: 8 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.4 }}
-          transition={{ duration: 0.5, ease: 'easeOut' }}
-        >
-          We helped these projects grow with verified creators
-        </motion.h3>
-        <div
-          className="rounded-3xl p-6 md:p-8 border border-transparent"
-          style={{ background: 'linear-gradient(90deg, rgba(255,15,0,0.15), rgba(234,179,8,0.15))' }}
-        >
-          <div className="flex flex-wrap items-center justify-between px-24 gap-x-10 gap-y-8">
-            {[
-              { name: 'Taraxa', logo: '/clients/taraxa.svg', url: 'https://x.com/looftaxyz/status/1965858670404829305' },
-              { name: 'TrendMoon', logo: '/clients/trendmoon.svg', url: 'https://x.com/looftaxyz/status/1920170053548286194' },
-              { name: 'World of Dypians', logo: '/clients/wod.svg', url: 'https://x.com/looftaxyz/status/1980322274873078134' },
-              { name: 'ChainGPT', logo: '/clients/chaingpt.svg', url: 'https://x.com/looftaxyz/status/1988898355976573313' },
-            ].map((c) => (
-              <button
-                key={c.name}
-                type="button"
-                onClick={() => handleLogoClick((c as any).tweetId, (c as any).url)}
-                className="group relative flex basis-1/2 sm:basis-1/3 md:basis-1/4 lg:basis-1/6 items-center justify-center rounded-2xl px-4 py-3 transition-transform duration-200 hover:scale-[1.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
-                aria-label={`View ${c.name} tweet`}
-              >
-                <div className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-                  style={{ background: 'linear-gradient(90deg, rgba(255,15,0,0.9), rgba(234,179,8,0.9))' }}
-                />
+          </h3>
+          <div className="flex flex-wrap justify-center gap-3">
+            {(dune?.topAssetsByVolume || []).slice(0, 5).map((a) => {
+              const src = cmcLogoForSymbol(a.symbol) || "/images/eth.png";
+              return (
                 <div
-                  aria-label={c.name}
-                  className="relative z-10 h-6 md:h-8 w-[140px] bg-black transition-colors duration-200 group-hover:bg-white"
-                  style={{
-                    WebkitMaskImage: `url(${c.logo})`,
-                    maskImage: `url(${c.logo})`,
-                    WebkitMaskRepeat: 'no-repeat',
-                    maskRepeat: 'no-repeat',
-                    WebkitMaskSize: 'contain',
-                    maskSize: 'contain',
-                    WebkitMaskPosition: 'center',
-                    maskPosition: 'center'
-                  }}
-                />
-              </button>
-            ))}
+                  key={a.key}
+                  className="inline-flex items-center gap-2 rounded-full bg-white shadow-md px-3 py-2 hover:shadow-lg transition-shadow"
+                >
+                  <Image
+                    src={src}
+                    alt={`${a.symbol} logo`}
+                    width={20}
+                    height={20}
+                    sizes="20px"
+                    unoptimized={/^https?:\/\//.test(src)}
+                    className="rounded-full"
+                  />
+                  <span className="text-sm font-semibold text-gray-900">{a.symbol}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
+
+
 
       {/* Animated Section Transition */}
       <motion.div
@@ -624,61 +438,22 @@ export default function Home() {
             className="text-2xl md:text-4xl font-bold mb-3"
             style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}
           >
-            Ready to launch your next campaign?
+            Swap across chains with ease.
           </h3>
-          <p className="text-sm md:text-base text-gray-600 mb-5">Work with verified creators and track outcomes that matter.</p>
+          <p className="text-sm md:text-base text-gray-600 mb-5"> Questions or issues? Contact us and we’ll take care of you.</p>
           <div className="inline-block relative group">
             <div className="absolute -inset-3 rounded-2xl bg-gradient-to-r from-orange-400/35 via-orange-500/30 to-red-500/35 blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none" />
             <Button
               style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
               className="relative z-10 px-8 py-4 text-base md:text-lg text-white font-semibold rounded-2xl border-0 transition-transform duration-200 ease-out hover:scale-[1.03] active:scale-95 shadow-[0_20px_60px_-15px_rgba(255,15,0,0.35)] hover:shadow-[0_25px_80px_-20px_rgba(255,15,0,0.55)]"
-              onClick={() => { }}
+              onClick={() => window.open('https://t.me/looftaxyz', '_blank', 'noopener,noreferrer')}
             >
-              Launch your campaign
+              Contact us
             </Button>
           </div>
         </div>
       </motion.div>
 
-      {/* Tweet Modal */}
-      <AnimatePresence>
-        {openTweetId && (
-          <>
-            <motion.div
-              className="fixed inset-0 z-[60] bg-black/60"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setOpenTweetId(null)}
-            />
-            <motion.div
-              role="dialog"
-              aria-modal="true"
-              className="fixed inset-0 z-[61] flex items-center justify-center p-4"
-              initial={{ opacity: 0, scale: prefersReducedMotion ? 1 : 0.98, y: prefersReducedMotion ? 0 : 8 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: prefersReducedMotion ? 1 : 0.98, y: prefersReducedMotion ? 0 : 8 }}
-              transition={{ type: 'spring', stiffness: 200, damping: 24 }}
-            >
-              <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl border border-gray-200 overflow-hidden">
-                <div className="p-3 border-b border-gray-200 flex items-center justify-between">
-                  <div className="text-sm font-semibold text-gray-800">Tweet Preview</div>
-                  <button
-                    onClick={() => setOpenTweetId(null)}
-                    className="rounded-md px-2 py-1 text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
-                    aria-label="Close"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="p-3">
-                  <Tweet id={openTweetId!} />
-                </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
 
       {/* Social Links - Footer */}
       <div className="mt-12 pb-6 text-center">

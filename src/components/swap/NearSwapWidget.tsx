@@ -162,7 +162,7 @@ export function NearSwapWidget({
 			}}
 			viewport={{ once: true }}
 		>
-			<div className="px-6 pt-5">
+			<div className="px-5 pt-4">
 				<div className="flex items-center justify-between">
 					<div className="relative pb-3">
 						<div className="text-2xl font-extrabold text-gray-900 tracking-tight"></div>
@@ -173,11 +173,11 @@ export function NearSwapWidget({
 					</div>
 				</div>
 			</div>
-			<div className="px-6 pb-6">
-				<div className="mt-5 rounded-2xl bg-gray-50 border border-gray-200 px-4 py-5">
+			<div className="px-5 pb-4">
+				<div className="mt-3 rounded-2xl bg-gray-50 border border-gray-200 px-3 py-3.5">
 					<div className="flex items-center justify-between">
 						<div className="text-base font-semibold text-gray-700">Sell</div>
-						<div className="w-44">
+						<div className="w-40">
 							<TokenCombobox
 								tokens={tokens}
 								value={fromSel || undefined}
@@ -194,7 +194,7 @@ export function NearSwapWidget({
 							placeholder="0"
 							value={amount}
 							onChange={(e) => setAmount(e.target.value)}
-							className="text-5xl md:text-6xl font-semibold border-none bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-auto"
+							className="text-3xl md:text-4xl font-semibold border-none bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-auto"
 						/>
 					</div>
 					<div className="mt-3 flex items-center justify-between text-sm">
@@ -227,17 +227,17 @@ export function NearSwapWidget({
 					<button
 						type="button"
 						onClick={flip}
-						className="mt-2 mb-2 inline-flex items-center justify-center h-10 w-10 rounded-2xl text-white shadow"
+						className="mt-2 mb-2 inline-flex items-center justify-center h-9 w-9 rounded-2xl text-white shadow"
 						style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
 						aria-label="Flip pair"
 					>
 						<ArrowUpDown className="h-5 w-5" />
 					</button>
 				</div>
-				<div className="rounded-2xl bg-gray-50 border border-gray-200 px-4 py-5">
+				<div className="rounded-2xl bg-gray-50 border border-gray-200 px-3 py-3.5">
 					<div className="flex items-center justify-between">
 						<div className="text-base font-semibold text-gray-700">Buy</div>
-						<div className="w-44">
+						<div className="w-40">
 							<TokenCombobox
 								tokens={tokens}
 								value={toSel || undefined}
@@ -249,7 +249,7 @@ export function NearSwapWidget({
 						</div>
 					</div>
 					<div className="mt-3 flex items-end justify-between">
-						<div className="text-5xl md:text-6xl font-semibold text-gray-900 leading-none">
+						<div className="text-3xl md:text-4xl font-semibold text-gray-900 leading-none">
 							{quoteLoading ? <span className="inline-block"><Skeleton className="h-8 w-24 rounded-md" /></span> : trimDecimals(rate || "0", 5)}
 						</div>
 					</div>
@@ -276,7 +276,7 @@ export function NearSwapWidget({
 				<Button
 					onClick={onSwap}
 					disabled={swapDisabled}
-					className="w-full mt-5 text-white font-semibold rounded-2xl border-0 py-5"
+					className="w-full mt-3.5 text-white font-semibold rounded-2xl border-0 py-3"
 					style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
 				>
 					Swap Now

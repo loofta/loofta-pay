@@ -16,15 +16,34 @@ function getIconFromTokenListBySymbol(sym: string): string | undefined {
 
 export function getChainIcon(chain?: string): string | undefined {
 	if (!chain) return undefined;
-	const key = String(chain).toLowerCase();
+	let key = String(chain).toLowerCase();
+	// Normalize common aliases used in asset ids/symbols
+	const alias: Record<string, string> = {
+		arb: "arbitrum",
+		op: "optimism",
+		avax: "avalanche",
+		pol: "polygon",
+		matic: "polygon",
+		sol: "solana",
+		xdai: "gnosis",
+		btc: "bitcoin",
+		doge: "dogecoin",
+		ltc: "litecoin",
+		xrp: "xrpledger",
+		zec: "zcash",
+		bera: "berachain",
+	};
+	if (alias[key]) key = alias[key];
 	// Only map icons that exist in /public/static/icons/network to avoid broken images.
 	const map: Record<string, string> = {
 		ethereum: "/static/icons/network/ethereum.svg",
 		eth: "/static/icons/network/ethereum.svg",
 		base: "/static/icons/network/base.svg",
+		berachain: "/static/icons/network/berachain.svg",
+		bera: "/static/icons/network/berachain.svg",
 		arbitrum: "/static/icons/network/arbitrum.svg",
 		polygon: "/static/icons/network/polygon.svg",
-		near: "/static/icons/network/near.svg",
+		near: "/static/icons/network/near_dark.svg",
 		solana: "/static/icons/network/solana.svg",
 		optimism: "/static/icons/network/optimism.svg",
 		bsc: "/static/icons/network/bsc.svg",
@@ -53,13 +72,16 @@ export function getChainIcon(chain?: string): string | undefined {
 		solana: "SOL",
 		near: "NEAR",
 		cardano: "ADA",
+		xrpledger: "XRP",
 		ton: "TON",
 		aptos: "APT",
 		tron: "TRX",
 		sui: "SUI",
 		stellar: "XLM",
 		bitcoin: "BTC",
+		dogecoin: "DOGE",
 		litecoin: "LTC",
+		zcash: "ZEC",
 		berachain: "BERA",
 	};
 	const sym = chainToSymbol[key];

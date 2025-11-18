@@ -29,7 +29,7 @@ const CMC_IDS: Record<string, number> = {
 
 export function cmcLogoForSymbol(symbol?: string): string | undefined {
 	const id = symbol ? CMC_IDS[symbol.toUpperCase()] : undefined;
-	return id ? `https://s2.coinmarketcap.com/static/img/coins/64x64/${id}.png` : undefined;
+	return id ? `https://s2.coinmarketcap.com/static/img/coins/64x64/${id}.png` : `/static/icons/network/${symbol}.svg`;
 }
 
 const LOCAL_FALLBACKS: Record<string, string> = {};
