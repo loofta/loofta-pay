@@ -6,6 +6,9 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Tweet } from "react-tweet";
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from 'lucide-react';
+import { useAuth } from "@/hooks/useAuth";
+import { HistoryModal } from "@/components/history/HistoryModal";
+import { mergeLocalIntoRemote } from "@/lib/history";
 
 import { searchTokens, createTestIntent, type NearToken } from "@/services/nearIntents";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
@@ -47,6 +50,17 @@ export default function Home() {
 
   // Dune stats
   const { data: dune, isLoading: loadingDune, error: duneError } = useDuneStats();
+  const { authenticated, login } = useAuth();
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  useEffect(() => {
+    async function sync() {
+      try {
+        // @ts-ignore
+        const { userId } = require("@/hooks/useAuth").useAuth();
+      } catch { }
+    }
+  }, []);
 
   // Static stats (previously fetched)
   const displayedStats = { activeUsers: 1200, questsCompleted: 3400, communities: 200 };
@@ -99,13 +113,24 @@ export default function Home() {
             </span>
           </div>
 
-          {/* CTA Button (no auth) */}
-          <Button
-            className="bg-gray-900 hover:bg-gray-800 text-white font-semibold px-6 py-2.5 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg"
-            onClick={() => { }}
-          >
-            Get Started
-          </Button>
+          {/* CTA Button (auth) */}
+          <div className="flex items-center gap-2">
+            <Button
+              className="bg-gray-900 hover:bg-gray-800 text-white font-semibold px-6 py-2.5 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg"
+              onClick={() => setHistoryOpen(true)}
+            >
+              History
+            </Button>
+            {!authenticated ? (
+              <Button
+                variant="outline"
+                className="border-gray-300 text-gray-800 font-semibold px-6 py-2.5 rounded-xl transition-all duration-300 hover:scale-105"
+                onClick={() => login()}
+              >
+                Log in
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -151,14 +176,25 @@ export default function Home() {
 
             <div className="relative inline-block group">
               <div className="absolute -inset-3 rounded-3xl bg-gradient-to-r from-orange-400/35 via-orange-500/30 to-red-500/35 blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"></div>
-              <Button
-                style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                className="relative z-10 mt-4 px-10   py-6 text-lg md:text-xl text-white font-semibold rounded-2xl border-0 transition-transform duration-200 ease-out hover:scale-[1.03] active:scale-95 shadow-[0_20px_60px_-15px_rgba(255,15,0,0.35)] hover:shadow-[0_25px_80px_-20px_rgba(255,15,0,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-400"
-                onClick={() => { }}
-              >
-                Get Started Now
-                <ArrowRight className="ml-3 h-6 w-6" />
-              </Button>
+              {authenticated ? (
+                <Button
+                  style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+                  className="relative z-10 mt-4 px-10   py-6 text-lg md:text-xl text-white font-semibold rounded-2xl border-0 transition-transform duration-200 ease-out hover:scale-[1.03] active:scale-95 shadow-[0_20px_60px_-15px_rgba(255,15,0,0.35)] hover:shadow-[0_25px_80px_-20px_rgba(255,15,0,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-400"
+                  onClick={() => setHistoryOpen(true)}
+                >
+                  View History
+                  <ArrowRight className="ml-3 h-6 w-6" />
+                </Button>
+              ) : (
+                <Button
+                  style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+                  className="relative z-10 mt-4 px-10   py-6 text-lg md:text-xl text-white font-semibold rounded-2xl border-0 transition-transform duration-200 ease-out hover:scale-[1.03] active:scale-95 shadow-[0_20px_60px_-15px_rgba(255,15,0,0.35)] hover:shadow-[0_25px_80px_-20px_rgba(255,15,0,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-400"
+                  onClick={() => login()}
+                >
+                  Log in to sync history
+                  <ArrowRight className="ml-3 h-6 w-6" />
+                </Button>
+              )}
             </div>
           </div>
           {/* Right: Swap container with provider tabs */}
@@ -541,6 +577,7 @@ export default function Home() {
         }
         .tweet-truncate-150 p, .tweet-truncate-150 span, .tweet-truncate-150 a { font-size: 0.875rem !important; line-height: 1.35 !important; }
       `}</style>
+      <HistoryModal open={historyOpen} onOpenChange={setHistoryOpen} />
     </div>
   );
 }

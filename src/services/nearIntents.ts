@@ -4,6 +4,16 @@ import defaults from "@/config/defaultTokens.json";
 // https://github.com/defuse-protocol/near-intents-examples
 import { OneClickService, QuoteRequest, OpenAPI } from '@defuse-protocol/one-click-sdk-typescript';
 import { ONECLICK_API_BASE } from "@/config/oneClick";
+const REFERRAL_CODE = (process as any)?.env?.NEXT_PUBLIC_REFERRAL_CODE || (process as any)?.env?.NEXT_PUBLIC_ONECLICK_REFERRAL || undefined;
+const APP_FEE_BPS = Number((process as any)?.env?.NEXT_PUBLIC_APP_FEE_BPS || "");
+const APP_FEE_RECIPIENT = (process as any)?.env?.NEXT_PUBLIC_APP_FEE_RECIPIENT || undefined;
+
+function attachFees(req: any) {
+  if (APP_FEE_RECIPIENT && Number.isFinite(APP_FEE_BPS) && APP_FEE_BPS >= 0 && APP_FEE_BPS <= 10000) {
+    req.fees = [{ recipient: APP_FEE_RECIPIENT, fee_bps: APP_FEE_BPS }];
+  }
+  return req;
+}
 
 export type NearToken = {
   symbol: string;
@@ -151,6 +161,7 @@ export type DepositInfo = {
   originAsset?: string;
   destinationAsset?: string;
   amountAtomic?: string; // amount to send in atomic units for origin asset
+  minDepositFormatted?: string;
 };
 
 export async function getAccurateQuote(params: {
@@ -180,7 +191,7 @@ export async function getAccurateQuote(params: {
     if (userAddress && authMethod) {
       // Use INTENTS identity mapping (authMethod:userAddress)
       const intentsUserId = `${authMethod.toLowerCase()}:${userAddress}`;
-      req = {
+      req = attachFees({
         dry: dryRun,
         swapType: QuoteRequest.swapType.EXACT_INPUT,
         slippageTolerance: slippageBps,
@@ -194,7 +205,8 @@ export async function getAccurateQuote(params: {
         recipientType: QuoteRequest.recipientType.INTENTS,
         deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
         quoteWaitingTimeMs: 0,
-      };
+      } as QuoteRequest);
+      if (REFERRAL_CODE) (req as any).referral = REFERRAL_CODE;
     } else {
       // Fallback path without authMethod: for dry quotes, align with intents-swap-widget to avoid KYT
       if (dryRun) {
@@ -222,7 +234,7 @@ export async function getAccurateQuote(params: {
         };
         const recipientDry = getDryQuoteAddress(toToken.chain);
         const refundDry = getDryQuoteAddress(fromToken.chain);
-        req = {
+        req = attachFees({
           dry: true,
           swapType: QuoteRequest.swapType.EXACT_INPUT,
           slippageTolerance: slippageBps,
@@ -236,15 +248,14 @@ export async function getAccurateQuote(params: {
           recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
           deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
           quoteWaitingTimeMs: 3000,
-        } as QuoteRequest;
-        // Add referral like the widget payload (SDK types may not include it)
-        (req as any).referral = "unknown";
+        } as QuoteRequest);
+        if (REFERRAL_CODE) (req as any).referral = REFERRAL_CODE; else (req as any).referral = "unknown";
       } else {
         // Non-dry requires concrete chain addressing
         if (!sender || !recipient) {
           throw new Error("Missing sender/recipient for ORIGIN_CHAIN quote");
         }
-        req = {
+        req = attachFees({
           dry: false,
           swapType: QuoteRequest.swapType.EXACT_INPUT,
           slippageTolerance: slippageBps,
@@ -258,7 +269,8 @@ export async function getAccurateQuote(params: {
           recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
           deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
           quoteWaitingTimeMs: 3000,
-        };
+        } as QuoteRequest);
+        if (REFERRAL_CODE) (req as any).referral = REFERRAL_CODE;
       }
     }
     const raw = await OneClickService.getQuote(req);
@@ -324,7 +336,7 @@ export async function getDepositInfo(params: {
   let req: QuoteRequest;
   if (userAddress && authMethod) {
     const intentsUserId = `${authMethod.toLowerCase()}:${userAddress}`;
-    req = {
+    req = attachFees({
       dry: false,
       swapType: QuoteRequest.swapType.EXACT_INPUT,
       slippageTolerance: slippageBps,
@@ -338,12 +350,12 @@ export async function getDepositInfo(params: {
       recipientType: QuoteRequest.recipientType.INTENTS,
       deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
       quoteWaitingTimeMs: 0,
-    };
+    } as QuoteRequest);
   } else {
     if (!sender || !recipient) {
       throw new Error("Missing sender/recipient for ORIGIN_CHAIN deposit quote");
     }
-    req = {
+    req = attachFees({
       dry: false,
       swapType: QuoteRequest.swapType.EXACT_INPUT,
       slippageTolerance: slippageBps,
@@ -357,10 +369,18 @@ export async function getDepositInfo(params: {
       recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
       deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
       quoteWaitingTimeMs: 3000,
-    };
+    } as QuoteRequest);
   }
   const raw = await OneClickService.getQuote(req);
   const q = (raw as any)?.quote || raw || {};
+  // Try to expose minimum deposit as human-readable
+  let minDepositFormatted: string | undefined = q?.minAmountInFormatted;
+  if (!minDepositFormatted && typeof q?.minAmountIn === "string" && fromToken.decimals != null) {
+    try {
+      const v = Number(q.minAmountIn) / Math.pow(10, fromToken.decimals);
+      if (Number.isFinite(v)) minDepositFormatted = String(v);
+    } catch {}
+  }
   return {
     raw,
     depositAddress: q?.depositAddress || q?.address,
@@ -372,11 +392,18 @@ export async function getDepositInfo(params: {
     originAsset,
     destinationAsset,
     amountAtomic: atomicIn,
+    minDepositFormatted,
   };
 }
 
 // SDK-style names to mirror 1click examples
 export const getTokens = fetchTokens;
 export const getQuote = getAccurateQuote;
+
+export async function getExecutionStatus(depositAddress: string): Promise<any> {
+  if (!depositAddress) throw new Error("Missing depositAddress");
+  const status = await OneClickService.getExecutionStatus(depositAddress);
+  return status;
+}
 
 

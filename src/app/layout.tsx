@@ -5,6 +5,8 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { QueryProvider } from "@/providers/QueryProvider";
+import { AuthProvider } from "@/providers/AuthProvider";
+import { HistorySync } from "@/providers/HistorySync";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -27,9 +29,12 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} font-grotesk`}>
       <body className="antialiased">
-        <QueryProvider>
-          {children}
-        </QueryProvider>
+        <AuthProvider>
+          <QueryProvider>
+            {children}
+            <HistorySync />
+          </QueryProvider>
+        </AuthProvider>
         <Toaster />
       </body>
     </html>
