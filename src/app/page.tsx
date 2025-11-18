@@ -148,7 +148,7 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 pb-12 relative z-10">
+      <div className="max-w-7xl mx-auto mt-12 px-4 pb-12 relative z-10">
         {/* Hero Section */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12 mb-8 md:mb-12 mt-4 md:mt-6 items-start">
           <div className="space-y-4 md:space-y-6 animate-slide-up text-left">
