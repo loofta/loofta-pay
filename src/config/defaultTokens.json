@@ -1,0 +1,35 @@
+[
+  {
+    "symbol": "ETH",
+    "name": "Ether",
+    "chain": "ethereum",
+    "address": "native",
+    "decimals": 18,
+    "logoURI": "/images/eth.png"
+  },
+  {
+    "symbol": "USDT",
+    "name": "Tether USD",
+    "chain": "ethereum",
+    "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "decimals": 6,
+    "logoURI": "/usdt.svg"
+  },
+  {
+    "symbol": "USDC",
+    "name": "USD Coin",
+    "chain": "solana",
+    "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "decimals": 6,
+    "logoURI": "/usdt.svg"
+  },
+  {
+    "symbol": "SOL",
+    "name": "Solana",
+    "chain": "solana",
+    "address": "native",
+    "decimals": 9,
+    "logoURI": "/images/solana.png"
+  }
+]
+

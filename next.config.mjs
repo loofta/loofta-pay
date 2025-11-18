@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
-    domains: ['t.me'],
+    domains: ['raw.githubusercontent.com'],
   },
   webpack: config => {
     config.resolve.fallback = { fs: false };

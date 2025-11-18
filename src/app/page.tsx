@@ -6,6 +6,7 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Tweet } from "react-tweet";
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from 'lucide-react';
+import { ArrowUpDown } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -14,30 +15,51 @@ import {
   SelectContent,
   SelectItem
 } from "@/components/ui/select";
-
-type TokenSymbol = "USDT" | "USDC" | "ETH" | "SOL";
-const TOKENS: TokenSymbol[] = ["USDT", "USDC", "ETH", "SOL"];
+import { fetchTokens, searchTokens, createTestIntent, type NearToken } from "@/services/nearIntents";
+import { TokenCombobox } from "@/components/TokenCombobox";
+import type { TokenSelection } from "@/app/utils/types";
+import { findTokenBySelection } from "@/lib/tokens";
 
 export default function Home() {
   // Swap state
-  const [fromToken, setFromToken] = useState<TokenSymbol>("USDT");
-  const [toToken, setToToken] = useState<TokenSymbol>("ETH");
+  const [tokens, setTokens] = useState<NearToken[]>([]);
+  const [fromSel, setFromSel] = useState<TokenSelection | null>(null);
+  const [toSel, setToSel] = useState<TokenSelection | null>(null);
   const [amount, setAmount] = useState<string>("");
+  const selectedFrom = useMemo(() => findTokenBySelection(tokens, fromSel), [tokens, fromSel]);
+  const selectedTo = useMemo(() => findTokenBySelection(tokens, toSel), [tokens, toSel]);
   const rate = useMemo(() => {
-    if (!amount) return "";
-    const base = fromToken === "ETH" ? 3500 : fromToken === "SOL" ? 150 : 1;
-    const target = toToken === "ETH" ? 1 / 3500 : toToken === "SOL" ? 1 / 150 : 1;
+    if (!amount || !selectedFrom || !selectedTo) return "";
+    const base = selectedFrom.symbol === "ETH" ? 3500 : selectedFrom.symbol === "SOL" ? 150 : 1;
+    const target = selectedTo.symbol === "ETH" ? 1 / 3500 : selectedTo.symbol === "SOL" ? 1 / 150 : 1;
     const est = Number(amount || 0) * base * target;
     if (!isFinite(est)) return "";
     return est.toFixed(6);
-  }, [amount, fromToken, toToken]);
-  const swapDisabled = !amount || fromToken === toToken;
+  }, [amount, selectedFrom, selectedTo]);
+  const amountNum = useMemo(() => {
+    const n = parseFloat(amount);
+    return Number.isFinite(n) ? n : 0;
+  }, [amount]);
+  const swapDisabled = !(amountNum > 0) || !selectedFrom || !selectedTo || (
+    fromSel?.symbol === toSel?.symbol && fromSel?.chain === toSel?.chain
+  );
   function flip() {
-    setFromToken(toToken);
-    setToToken(fromToken);
+    const prevFrom = fromSel;
+    setFromSel(toSel);
+    setToSel(prevFrom);
   }
-  function onSwap() {
-    // placeholder: implement real swap later
+  async function onSwap() {
+    if (!selectedFrom || !selectedTo || !amount) return;
+    try {
+      const intent = await createTestIntent({
+        fromToken: selectedFrom,
+        toToken: selectedTo,
+        amount,
+      });
+      console.log("Created test intent:", intent);
+    } catch (err) {
+      console.error("Intent creation failed", err);
+    }
   }
 
   // Landing behaviors
@@ -68,6 +90,23 @@ export default function Home() {
   const [budgetIndex, setBudgetIndex] = useState<number>(0);
   const budget = budgetStops[budgetIndex];
   const [postUrl, setPostUrl] = useState<string>("");
+  // Load tokens
+  useEffect(() => {
+    (async () => {
+      const list = await fetchTokens();
+      setTokens(list);
+      if (!fromSel) {
+        const df = list.find(t => t.symbol === "USDT") || list[0];
+        if (df) setFromSel({ symbol: df.symbol, chain: df.chain });
+      }
+      if (!toSel) {
+        const preferred = list.find(t => t.symbol === "ETH" && (!fromSel || t.chain !== fromSel.chain));
+        const fallback = list.find(t => fromSel ? (t.symbol !== fromSel.symbol || t.chain !== fromSel.chain) : true);
+        const dt = preferred || fallback;
+        if (dt) setToSel({ symbol: dt.symbol, chain: dt.chain });
+      }
+    })();
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 relative overflow-hidden">
@@ -120,7 +159,7 @@ export default function Home() {
                     initial={{ opacity: 0, y: -20, scale: 0.5 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     transition={{
-                      delay: index * 0.1,
+                      delay: index * 0.05,
                       type: "spring",
                       stiffness: 300,
                       damping: 20
@@ -140,7 +179,7 @@ export default function Home() {
                   </motion.span>
                 ))}
               </span>{' '}
-              <span className="text-gray-900">across chains.<br /></span>
+              <span className="text-gray-900">across multiple chains.<br /></span>
               <span className="inline-flex gap-0.5">
                 {'Earn'.split('').map((letter, index) => (
                   <motion.span
@@ -149,7 +188,7 @@ export default function Home() {
                     initial={{ opacity: 0, y: -20, scale: 0.5 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     transition={{
-                      delay: index * 0.1 + 0.6,
+                      delay: index * 0.05 + 0.3,
                       type: "spring",
                       stiffness: 300,
                       damping: 20
@@ -189,7 +228,7 @@ export default function Home() {
           </div>
           {/* Right: Swap widget */}
           <motion.div
-            className="group relative bg-white rounded-3xl p-6 cursor-pointer overflow-hidden shadow-md"
+            className="group relative bg-white rounded-3xl p-0 cursor-pointer overflow-hidden shadow-md border border-gray-100"
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.05, type: "spring", stiffness: 100 }}
@@ -200,69 +239,112 @@ export default function Home() {
             }}
             viewport={{ once: true }}
           >
-            <div className="mb-4">
-              <h3 className="text-2xl font-extrabold text-gray-900 mb-2 tracking-tight">Swap</h3>
-              <p className="text-gray-800 font-semibold text-base">Convert tokens instantly</p>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <div className="text-xs text-gray-600 mb-1">From</div>
-                <div className="flex gap-2">
-                  <div className="w-28">
-                    <Select value={fromToken} onValueChange={(v) => setFromToken(v as TokenSymbol)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Token" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TOKENS.map(t => (
-                          <SelectItem key={t} value={t}>{t}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Input
-                    inputMode="decimal"
-                    placeholder="0.0"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
+            {/* Header */}
+            <div className="px-6 pt-5">
+              <div className="flex items-center gap-8">
+                <div className="relative pb-3">
+                  <div className="text-2xl font-extrabold text-gray-900 tracking-tight"></div>
+                  <div
+                    className="absolute left-0 right-0 -bottom-0.5 h-[3px] rounded"
+                    style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
                   />
                 </div>
               </div>
+            </div>
 
-              <div className="flex items-center justify-between text-xs text-gray-600">
-                <button className="text-gray-700 underline decoration-orange-400 underline-offset-4" onClick={flip}>
-                  Flip pair
-                </button>
-                <div>Est. output</div>
-              </div>
-
-              <div>
-                <div className="text-xs text-gray-600 mb-1">To</div>
-                <div className="flex gap-2">
-                  <div className="w-28">
-                    <Select value={toToken} onValueChange={(v) => setToToken(v as TokenSymbol)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Token" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TOKENS.map(t => (
-                          <SelectItem key={t} value={t}>{t}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+            {/* Panels */}
+            <div className="px-6 pb-6">
+              {/* Sell panel */}
+              <div className="mt-5 rounded-2xl bg-gray-50 border border-gray-200 px-4 py-5">
+                <div className="flex items-center justify-between">
+                  <div className="text-base font-semibold text-gray-700">Sell</div>
+                  <div className="w-44">
+                    <TokenCombobox
+                      tokens={tokens}
+                      value={fromSel || undefined}
+                      onChange={(sel) => setFromSel(sel)}
+                      placeholder="From"
+                      onQuery={searchTokens}
+                      className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50"
+                    />
                   </div>
-                  <Input value={rate} readOnly placeholder="0.0" />
+                </div>
+                <div className="mt-3 flex items-end justify-between">
+                  <Input
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="text-5xl md:text-6xl font-semibold border-none bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-auto"
+                  />
+                </div>
+                <div className="mt-3 flex items-center gap-2 text-sm">
+                  <span className="text-gray-500">0</span>
+                  <button
+                    type="button"
+                    onClick={() => setAmount("0")}
+                    className="rounded-xl border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-100"
+                  >
+                    Max
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAmount(prev => {
+                      const n = Number(prev || 0);
+                      if (!n) return prev;
+                      return (n * 0.5).toString();
+                    })}
+                    className="rounded-xl border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-100"
+                  >
+                    50%
+                  </button>
                 </div>
               </div>
 
+              {/* Flip button */}
+              <div className="flex justify-center -my-1">
+                <button
+                  type="button"
+                  onClick={flip}
+                  className="mt-2 mb-2 inline-flex items-center justify-center h-10 w-10 rounded-2xl text-white shadow"
+                  style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+                  aria-label="Flip pair"
+                >
+                  <ArrowUpDown className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Buy panel */}
+              <div className="rounded-2xl bg-gray-50 border border-gray-200 px-4 py-5">
+                <div className="flex items-center justify-between">
+                  <div className="text-base font-semibold text-gray-700">Buy</div>
+                  <div className="w-44">
+                    <TokenCombobox
+                      tokens={tokens}
+                      value={toSel || undefined}
+                      onChange={(sel) => setToSel(sel)}
+                      placeholder="To"
+                      onQuery={searchTokens}
+                      className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50"
+                    />
+                  </div>
+                </div>
+                <div className="mt-3 flex items-end justify-between">
+                  <div className="text-5xl md:text-6xl font-semibold text-gray-900 leading-none">
+                    {rate || "0"}
+                  </div>
+                </div>
+                <div className="mt-3 text-sm text-gray-500">0</div>
+              </div>
+
+              {/* Primary CTA */}
               <Button
                 onClick={onSwap}
                 disabled={swapDisabled}
-                className="w-full mt-2 text-white font-semibold rounded-xl border-0"
+                className="w-full mt-5 text-white font-semibold rounded-2xl border-0 py-5"
                 style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
               >
-                Swap
+                Swap Now
               </Button>
             </div>
           </motion.div>

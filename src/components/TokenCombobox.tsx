@@ -1,0 +1,222 @@
+'use client'
+
+import * as React from "react";
+import Image from "next/image";
+import { Check, ChevronsUpDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { cn } from "@/lib/utils";
+import type { NearToken } from "@/services/nearIntents";
+import { findTokenBySelection, formatChainLabel, groupTokensBySymbol, uniqueChains } from "@/lib/tokens";
+import type { TokenSelection } from "@/app/utils/types";
+
+type Props = {
+  tokens: NearToken[];
+	value?: TokenSelection;
+	onChange: (selection: TokenSelection) => void;
+  placeholder?: string;
+  className?: string;
+  onQuery?: (q: string) => Promise<NearToken[]>;
+};
+
+export function TokenCombobox({
+  tokens,
+  value,
+  onChange,
+  placeholder = "Select token...",
+  className,
+  onQuery
+}: Props) {
+  const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState("");
+  const [options, setOptions] = React.useState<NearToken[]>(tokens);
+  const [loading, setLoading] = React.useState(false);
+	const selectedToken = React.useMemo(() => {
+		return findTokenBySelection(tokens, value);
+	}, [tokens, value]);
+	const [selectedChain, setSelectedChain] = React.useState<string | undefined>(value?.chain);
+
+  // keep options in sync if tokens prop changes and no query
+  React.useEffect(() => {
+    if (!query) {
+      setOptions(tokens);
+    }
+  }, [tokens, query]);
+
+	React.useEffect(() => {
+		// Ensure selectedChain is a valid option for current option set
+		const chains = uniqueChains(options);
+		if (!selectedChain || !chains.includes(selectedChain)) {
+			setSelectedChain(value?.chain && chains.includes(value.chain) ? value.chain : chains[0]);
+		}
+	}, [options, selectedChain, value]);
+
+  // debounced remote search
+  React.useEffect(() => {
+    if (!onQuery) return;
+    let active = true;
+    const handle = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const next = await onQuery(query);
+        if (active) setOptions(next);
+      } finally {
+        if (active) setLoading(false);
+      }
+    }, 250);
+    return () => {
+      active = false;
+      clearTimeout(handle);
+    };
+  }, [query, onQuery]);
+
+	// If query clearly matches a single network, auto-select it for convenience
+	React.useEffect(() => {
+		const q = query.trim().toLowerCase();
+		if (!q) return;
+		const chans = uniqueChains(options);
+		const matches = chans.filter(c => formatChainLabel(c).toLowerCase().includes(q) || c.toLowerCase().includes(q));
+		if (matches.length === 1 && matches[0] !== selectedChain) {
+			setSelectedChain(matches[0]);
+		}
+	}, [query, options, selectedChain]);
+
+	const grouped = React.useMemo(() => groupTokensBySymbol(options), [options]);
+	const chains = React.useMemo(() => uniqueChains(options), [options]);
+	const visibleGroups = React.useMemo(() => {
+		if (!selectedChain) return grouped;
+		return grouped.filter(g => g.chains[selectedChain!]);
+	}, [grouped, selectedChain]);
+	const filteredChains = React.useMemo(() => {
+		const q = query.trim().toLowerCase();
+		if (!q) return chains;
+		return chains.filter((c) => formatChainLabel(c).toLowerCase().includes(q) || c.toLowerCase().includes(q));
+	}, [chains, query]);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={cn("w-full justify-between", className)}
+        >
+          <div className="flex items-center gap-2">
+						{selectedToken?.logoURI ? (
+              <Image
+								src={selectedToken.logoURI}
+								alt={selectedToken.symbol}
+                width={18}
+                height={18}
+                sizes="18px"
+								unoptimized={/^https?:\/\//.test(selectedToken.logoURI)}
+                className="rounded-full"
+              />
+            ) : null}
+            <span className="font-semibold">
+							{selectedToken ? selectedToken.symbol : placeholder}
+            </span>
+						{selectedToken ? (
+              <span className="text-xs text-muted-foreground ml-1">
+								{formatChainLabel(selectedToken.chain)}
+              </span>
+            ) : null}
+          </div>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </DialogTrigger>
+			<DialogContent className="sm:max-w-[640px] w-[min(96vw,640px)] p-0 overflow-hidden">
+				<DialogHeader className="px-4 py-3 border-b">
+					<DialogTitle className="text-sm text-muted-foreground">Select token</DialogTitle>
+				</DialogHeader>
+				<div className="flex">
+					{/* Left: Networks */}
+					<div className="w-40 max-h-[65vh] overflow-auto border-r border-border/50 p-1">
+						<div className="px-3 py-2 text-xs font-medium text-muted-foreground">Select network</div>
+						<div className="flex flex-col gap-1 p-1">
+							{filteredChains.map((c) => {
+								const active = c === selectedChain;
+								return (
+									<button
+										key={c}
+										type="button"
+										onClick={() => setSelectedChain(c)}
+										className={cn(
+											"w-full text-left rounded-xl px-3 py-2 text-sm transition-colors",
+											active ? "bg-muted font-semibold" : "hover:bg-muted/60"
+										)}
+									>
+										{formatChainLabel(c)}
+									</button>
+								);
+							})}
+						</div>
+					</div>
+
+					{/* Right: Tokens (grouped by symbol) */}
+					<div className="flex-1 min-w-0 max-h-[65vh] overflow-hidden">
+						<Command>
+							<CommandInput placeholder="Search token, network or address" value={query} onValueChange={setQuery} />
+							<CommandList className="max-h-[55vh]">
+								{loading ? (
+									<div className="py-4 text-center text-sm text-muted-foreground">Searching…</div>
+								) : null}
+								<CommandEmpty>No token found.</CommandEmpty>
+								<CommandGroup heading="Tokens">
+									{visibleGroups.map((g) => {
+										const tok = selectedChain ? g.chains[selectedChain] : undefined;
+										const id = `${g.symbol}-${selectedChain || "any"}`;
+										const isSelected = value?.symbol === g.symbol && value?.chain === selectedChain;
+										return (
+											<CommandItem
+												key={id}
+												value={`${g.symbol} ${g.name} ${selectedChain}`}
+												onSelect={() => {
+													if (!selectedChain || !tok) return;
+													onChange({ symbol: g.symbol, chain: selectedChain });
+													setOpen(false);
+												}}
+											>
+												<div className="flex items-center gap-3 w-full">
+													{(tok?.logoURI || g.logoURI) ? (
+														<Image
+															src={(tok?.logoURI || g.logoURI)!}
+															alt={g.symbol}
+															width={20}
+															height={20}
+															sizes="20px"
+															unoptimized={/^https?:\/\//.test((tok?.logoURI || g.logoURI) || "")}
+															className="rounded-full"
+														/>
+													) : null}
+													<div className="flex-1 overflow-hidden">
+														<div className="font-semibold truncate">{g.symbol}</div>
+														<div className="text-xs text-muted-foreground truncate">
+															{g.name} · {formatChainLabel(selectedChain)}
+														</div>
+													</div>
+													<Check className={cn("h-4 w-4", isSelected ? "opacity-100" : "opacity-0")} />
+												</div>
+											</CommandItem>
+										);
+									})}
+								</CommandGroup>
+							</CommandList>
+						</Command>
+					</div>
+				</div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+
