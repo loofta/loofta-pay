@@ -10,7 +10,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			appId={appId}
 			config={{
 				loginMethods: ["email"],
-				embeddedWallets: { createOnLogin: false },
 				session: { duration: 7 * 24 * 60 * 60 },
 			}}
 		>
