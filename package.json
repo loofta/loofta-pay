@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@defuse-protocol/one-click-sdk-typescript": "0.1.1",
+    "@duneanalytics/client-sdk": "^0.2.5",
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
     "@hookform/resolvers": "^3.9.0",

@@ -28,18 +28,19 @@ if (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_ONECLICK
 }
 
 function mapSdkToken(t: any): NearToken {
-  // Example token fields per example repo:
-  // { blockchain, symbol, assetId, contractAddress }
+  // Match intents-swap-widget shape: prefer backend icon, chain lowercase, use assetId
   const symbol = t?.symbol || '';
   const assetId = t?.assetId || t?.tokenId || t?.address;
+  const blockchain = typeof t?.blockchain === 'string' ? t.blockchain.toLowerCase() : (t?.chain || '');
+  const preferredIcon = typeof t?.icon === 'string' ? t.icon : getIconForAssetId(assetId);
   return {
     symbol,
     name: symbol || '',
-    chain: t?.blockchain || t?.chain || '',
+    chain: blockchain || '',
     address: t?.assetId || t?.contractAddress || '',
-    tokenId: assetId || getDefuseAssetIdFor(symbol, t?.blockchain || t?.chain),
+    tokenId: assetId || getDefuseAssetIdFor(symbol, blockchain),
     decimals: typeof t?.decimals === 'number' ? t.decimals : 0,
-    logoURI: resolveTokenLogo({ symbol, logoURI: t?.logoURI, icon: t?.icon || getIconForAssetId(assetId), logo: t?.logo }),
+    logoURI: preferredIcon || resolveTokenLogo({ symbol, logoURI: t?.logoURI, icon: preferredIcon, logo: t?.logo }),
     price: typeof t?.price === 'number' ? t.price : undefined,
     priceUpdatedAt: typeof t?.priceUpdatedAt === 'string' ? t.priceUpdatedAt : undefined,
   };
@@ -50,7 +51,8 @@ export async function fetchTokens(): Promise<NearToken[]> {
   const r: any = await OneClickService.getTokens();
   const arr = Array.isArray(r) ? r : (r?.tokens || []);
   if (Array.isArray(arr) && arr.length) {
-    return arr.map(mapSdkToken);
+    const mapped = arr.map(mapSdkToken).filter((t) => t.symbol && t.tokenId && t.chain);
+    return mapped;
   }
   // Fallback to defaults if SDK not available
   return (defaults as any[]).map((rt: any) => {

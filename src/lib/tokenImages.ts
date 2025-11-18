@@ -1,4 +1,5 @@
 import type { NearToken } from "@/services/nearIntents";
+import { getIconForAssetId } from "@/lib/tokenlist";
 // Optional local copy of Defuse production tokenlist (trimmed or full)
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -34,7 +35,13 @@ export function cmcLogoForSymbol(symbol?: string): string | undefined {
 const LOCAL_FALLBACKS: Record<string, string> = {};
 
 export function resolveTokenLogo(meta: Partial<NearToken> & Record<string, any>): string | undefined {
-	// Prefer explicit icon from backend (defuse tokenlists use "icon")
+	// 1) Exact match by defuse asset id (assetId/tokenId)
+	const assetId = (meta as any)?.tokenId || (meta as any)?.address || (meta as any)?.assetId;
+	if (typeof assetId === "string") {
+		const iconByAsset = getIconForAssetId(assetId);
+		if (iconByAsset) return iconByAsset;
+	}
+	// 2) Prefer explicit icon from backend (defuse tokenlists use "icon")
 	const ordered = [meta.icon, meta.logo, meta.logoURI] as Array<unknown>;
 	for (const candidate of ordered) {
 		const s = typeof candidate === "string" ? candidate : undefined;
@@ -47,10 +54,10 @@ export function resolveTokenLogo(meta: Partial<NearToken> & Record<string, any>)
 		}
 		return s;
 	}
-	// Fallback to known CMC ids by symbol
+	// 3) Fallback to known CMC ids by symbol
 	const cmc = cmcLogoForSymbol(meta.symbol);
 	if (cmc) return cmc;
-	// Local tokenlist mapping (by symbol)
+	// 4) Local tokenlist mapping (by symbol)
 	try {
 		const tokens: any[] = (tokenlist?.tokens as any[]) || [];
 		const sym = (meta.symbol || "").toUpperCase();
@@ -61,7 +68,7 @@ export function resolveTokenLogo(meta: Partial<NearToken> & Record<string, any>)
 	} catch {
 		// noop
 	}
-	// Local fallback assets
+	// 5) Local fallback assets
 	if (meta.symbol) {
 		const local = LOCAL_FALLBACKS[meta.symbol.toUpperCase()];
 		if (local) return local;

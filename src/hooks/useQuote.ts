@@ -30,6 +30,7 @@ export function useQuote(tokens: NearToken[], fromSel: TokenSelection | null, to
 		const v = s.trim();
 		return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v);
 	}
+	const ZERO = "0x0000000000000000000000000000000000000000";
 	function validateRefundForOrigin(originAssetId: string, proposed: string | null | undefined, fromChain: string) {
 		const val = (proposed || "").trim();
 		// For OMFT (nep141) origin, deposit happens on NEAR
@@ -97,20 +98,10 @@ export function useQuote(tokens: NearToken[], fromSel: TokenSelection | null, to
 			setError(null);
 			try {
 				let q = null;
-				// ORIGIN_CHAIN quote using env defaults or mock addresses derived from assets
+				// ORIGIN_CHAIN quote using placeholders (zero addresses) to match widget behavior
 				const originAssetId = fromToken.tokenId || fromToken.address || "";
 				const destAssetId = toToken.tokenId || toToken.address || "";
-				const sender = (() => {
-					// When using ORIGIN_CHAIN, refundTo must be on the origin chain family
-					const fam = inferOriginFamily(originAssetId);
-					const proposed = (ONECLICK_REFUND_TO || "").trim();
-					// Validate basic formats for known families
-					if (fam === "ethereum" && isLikelyEvmAddress(proposed)) return proposed;
-					if (fam === "solana" && isLikelySolanaAddress(proposed)) return proposed;
-					if (fam === "near" && isLikelyNearAccount(proposed)) return proposed;
-					// Cardano/Ton/Aptos not validated strictly here; use mock
-					return getMockSender(fam);
-				})();
+				const sender = ZERO;
 				// Infer destination chain family from destination asset id (e.g., nep141:sol.* => solana)
 				const destFamily = (() => {
 					const id = String(destAssetId);
@@ -129,20 +120,16 @@ export function useQuote(tokens: NearToken[], fromSel: TokenSelection | null, to
 					return "ethereum";
 				})();
 				// Use ORIGIN_CHAIN to match the 1-click example payload precisely
-				const recipient = validateRecipientForDestination(
-					destAssetId,
-					ONECLICK_RECIPIENT,
-					destFamily
-				);
-				q = await getAccurateQuote({
-					fromToken,
-					toToken,
-					amount,
-					dryRun: true,
-					slippageBps: 100,
+				const recipient = ZERO;
+					q = await getAccurateQuote({
+						fromToken,
+						toToken,
+						amount,
+						dryRun: true,
+						slippageBps: 100,
 					sender,
 					recipient,
-				});
+					});
 				// Handle error typology (client/server/network) and fallback amountOut if present
 				if (q && q.error) {
 					setError(q.error.message || "Quote error");

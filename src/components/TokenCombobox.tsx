@@ -18,6 +18,7 @@ import type { NearToken } from "@/services/nearIntents";
 import { findTokenBySelection, formatChainLabel, groupTokensBySymbol, uniqueChains } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenIcon } from "./TokenIcon";
+import { getChainIcon } from "@/lib/chains";
 
 type Props = {
 	tokens: NearToken[];
@@ -147,6 +148,19 @@ export function TokenCombobox({
 										)}
 									>
 										<span className="inline-flex items-center gap-2">
+											{(() => {
+												const src = getChainIcon(c);
+												return src ? (
+													<Image
+														src={src}
+														alt={`${formatChainLabel(c)} icon`}
+														width={16}
+														height={16}
+														sizes="16px"
+														unoptimized={/^https?:\/\//.test(src)}
+													/>
+												) : null;
+											})()}
 											{formatChainLabel(c)}
 										</span>
 									</button>

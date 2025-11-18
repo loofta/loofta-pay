@@ -14,7 +14,6 @@ export function TokenIcon({ token, size = 20, chain }: Props) {
 	const src =
 		resolveTokenLogo(token || {}) ||
 		(token?.symbol ? cmcLogoForSymbol(token.symbol) : undefined) ||
-		getChainIcon(chain) ||
 		"/images/eth.png";
 	const chainSrc = getChainIcon(chain);
 	const dim = size;
@@ -44,6 +43,7 @@ export function TokenIcon({ token, size = 20, chain }: Props) {
 						width={Math.round(dim * 0.32)}
 						height={Math.round(dim * 0.32)}
 						sizes={`${Math.round(dim * 0.32)}px`}
+						unoptimized={/^https?:\/\//.test(chainSrc)}
 						className="rounded-full object-cover"
 					/>
 				</span>
