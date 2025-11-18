@@ -144,7 +144,7 @@ export default function Home() {
 
             </h1>
             <p className="text-lg md:text-xl text-gray-600 max-w-3xl px-4">
-              Powered by Near Intents, the easiest way to swap tokens across multiple chains.
+              Powered by intents, the easiest way to swap tokens across multiple chains.
             </p>
 
             <div className="relative inline-block group">
@@ -167,7 +167,7 @@ export default function Home() {
             {provider === "near-intents" ? (
               <NearSwapWidget tokens={tokens} loadingTokens={loadingTokens} />
             ) : (
-              <BiconomySwapWidget />
+              <BiconomySwapWidget tokens={tokens} loadingTokens={loadingTokens} />
             )}
           </div>
         </div>

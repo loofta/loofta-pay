@@ -81,6 +81,18 @@ export function NearSwapWidget({
 			<div className="px-6 pt-5">
 				<div className="flex items-center justify-between">
 					<div className="relative pb-3">
+						<div className="text-2xl font-extrabold text-gray-900 tracking-tight">Near Intents</div>
+						<div
+							className="absolute left-0 right-0 -bottom-0.5 h-[3px] rounded"
+							style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+						/>
+					</div>
+				</div>
+			</div>
+			<div className="px-6 pt-5">
+
+				<div className="flex items-center justify-between">
+					<div className="relative pb-3">
 						<div className="text-2xl font-extrabold text-gray-900 tracking-tight"></div>
 						<div
 							className="absolute left-0 right-0 -bottom-0.5 h-[3px] rounded"
