@@ -475,11 +475,11 @@ export function NearSwapWidget({
 									onClick={() => {
 										const n = Number(amount || 0);
 										if (!n) return;
-										setAmount((n * 0.5).toString());
+										setAmount((n * 0.25).toString());
 									}}
 									className="rounded-xl border mx-2 border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-100"
 								>
-									10%
+									25%
 								</button>
 
 								<button
