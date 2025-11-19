@@ -275,6 +275,19 @@ export function NearSwapWidget({
 		setDepositLoading(false);
 	}
 
+	function formatRemaining(seconds?: number | null): string {
+		if (typeof seconds !== "number" || !Number.isFinite(seconds)) return "";
+		const total = Math.max(0, Math.floor(seconds));
+		const d = Math.floor(total / 86400);
+		const h = Math.floor((total % 86400) / 3600);
+		const m = Math.floor((total % 3600) / 60);
+		const s = total % 60;
+		if (d > 0) return `${d}d ${h}h`;
+		if (h > 0) return `${h}h ${m}m`;
+		if (m > 0) return `${m}m ${s}s`;
+		return `${s}s`;
+	}
+
 	return (
 		<motion.div
 			className="group relative bg-white rounded-3xl p-0 cursor-pointer overflow-hidden shadow-md border border-gray-100"
@@ -323,7 +336,7 @@ export function NearSwapWidget({
 								})()}
 								<div>
 									<div className="text-sm text-gray-600">Network</div>
-									<div className="text-base font-semibold text-gray-900">{selectedFrom?.chain || "-"}</div>
+									<div className="text-base font-semibold uppercase text-gray-900">{selectedFrom?.chain || "-"}</div>
 								</div>
 							</div>
 						</div>
@@ -378,7 +391,22 @@ export function NearSwapWidget({
 								</div>
 								{(() => {
 									const bps = Number((process as any)?.env?.NEXT_PUBLIC_APP_FEE_BPS || "");
-									if (!Number.isFinite(bps) || bps <= 0) return null;
+									if (!Number.isFinite(bps) || bps < 0) return null;
+									if (bps === 0) {
+										return (
+											<div className="mt-2 flex items-center justify-between text-sm">
+												<div className="text-gray-600">App fee</div>
+												<div className="inline-flex items-center gap-2">
+													<span
+														className="px-2 py-0.5 rounded-md text-xs font-semibold text-white shadow-sm"
+														style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+													>
+														FREE
+													</span>
+												</div>
+											</div>
+										);
+									}
 									const pct = (bps / 100).toFixed(2);
 									const amtNum = Number(amount || "0");
 									const feeEst = Number.isFinite(amtNum) ? (amtNum * (bps / 10000)) : undefined;
@@ -408,10 +436,10 @@ export function NearSwapWidget({
 								</div>
 								<div className="mt-3 grid grid-cols-2 gap-3 text-sm">
 									{deposit.deadline ? (
-										<div><span className="font-semibold text-gray-900">Deadline:</span> <span className="text-gray-800">{new Date(deposit.deadline).toLocaleString()}</span>{typeof timeLeft === "number" ? <span className="text-gray-500"> ({timeLeft}s left)</span> : null}</div>
+										<div><span className="font-semibold text-gray-900">Deadline:</span> <span className="text-gray-800">{new Date(deposit.deadline).toLocaleString()}</span>{typeof timeLeft === "number" ? <span className="text-gray-500"> ({formatRemaining(timeLeft)} left)</span> : null}</div>
 									) : null}
 									{typeof deposit.timeEstimate === "number" ? (
-										<div><span className="font-semibold text-gray-900">ETA (s):</span> <span className="text-gray-800">{deposit.timeEstimate}</span></div>
+										<div className="text-right"><span className="font-semibold text-gray-900">ETA:</span> <span className="text-gray-800">{formatRemaining(deposit.timeEstimate)}</span></div>
 									) : null}
 									{deposit.quoteId ? (
 										<div className="col-span-2"><span className="font-semibold text-gray-900">Quote ID:</span> <span className="text-gray-800">{deposit.quoteId}</span></div>
