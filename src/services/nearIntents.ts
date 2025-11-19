@@ -35,7 +35,7 @@ export type NearToken = {
 
 import { resolveTokenLogo } from "@/lib/tokenImages";
 import { getDefuseAssetIdFor, getIconForAssetId } from "@/lib/tokenlist";
-import { getRefundToForAssetId } from "@/lib/refundAddresses";
+import { getRefundToForChain } from "@/lib/refundAddresses";
 
 // Configure SDK base/token once
 // Match 1-click examples: https://1click.chaindefuser.com
@@ -240,7 +240,7 @@ export async function getAccurateQuote(params: {
           return ZERO;
         };
         const recipientDry = getDryQuoteAddress(toToken.chain);
-        const refundDry = getRefundToForAssetId(originAsset, fromToken.chain);
+        const refundDry = getRefundToForChain(fromToken.chain);
         req = attachAppFees({
           dry: true,
           swapType: QuoteRequest.swapType.EXACT_INPUT,
@@ -270,7 +270,7 @@ export async function getAccurateQuote(params: {
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
       amount: atomicIn,
-      refundTo: getRefundToForAssetId(originAsset, fromToken.chain),
+      refundTo: getRefundToForChain(fromToken.chain),
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipient,
       recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
@@ -371,7 +371,7 @@ export async function getDepositInfo(params: {
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
       amount: atomicIn,
-      refundTo: getRefundToForAssetId(originAsset, fromToken.chain),
+      refundTo: getRefundToForChain(fromToken.chain),
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipient,
       recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,

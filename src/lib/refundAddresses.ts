@@ -1,6 +1,7 @@
 export function getRefundToForChain(chain: string): string {
 	const key = String(chain || "").toLowerCase();
 	// EVM family
+	console.log("key", key);
 	const evmSet = new Set([
 		"eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism",
 		"bsc", "berachain", "pol", "polygon", "avax", "avalanche", "gnosis",
@@ -25,9 +26,11 @@ export function getRefundToForChain(chain: string): string {
 
 export function getRefundToForAssetId(assetId: string, fallbackChain?: string): string {
 	const id = String(assetId || "");
-	// Any nep141:* asset is on NEAR → use NEAR refund address explicitly
+	// Parse nep141:<head>-... to infer underlying chain family
 	if (id.startsWith("nep141:")) {
-		return "lisabey.near";
+		const rest = id.slice("nep141:".length);
+		const head = rest.includes("-") ? rest.split("-")[0] : rest.split(".")[0];
+		return getRefundToForChain(head || fallbackChain || "");
 	}
 	return getRefundToForChain(fallbackChain || "");
 }
