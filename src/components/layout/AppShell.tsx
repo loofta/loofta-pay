@@ -9,7 +9,7 @@ import { usePathname } from "next/navigation";
 function ShellContent({ children }: { children: ReactNode }) {
   const { open, setOpen } = useHistoryModal();
   const pathname = usePathname();
-  const showHistory = pathname === '/';
+  const showHistory = pathname?.startsWith('/swap') === true;
   return (
     <>
       <Header />

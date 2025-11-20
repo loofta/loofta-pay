@@ -10,7 +10,7 @@ export function Header() {
   const { authenticated, login, email, logout } = useAuth();
   const { openHistory } = useHistoryModal();
   const pathname = usePathname();
-  const showHistory = pathname === '/';
+  const showHistory = pathname?.startsWith('/swap') === true;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 md:py-8 relative z-10">
