@@ -24,18 +24,26 @@ const STORAGE_KEY = "loofta.swap.history.v1";
 
 export function getLocalHistory(): SwapHistoryItem[] {
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY);
+		const hasStorage = typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+		if (!hasStorage) return [];
+		const raw = window.localStorage.getItem(STORAGE_KEY);
 		if (!raw) return [];
 		const arr = JSON.parse(raw);
 		return Array.isArray(arr) ? arr : [];
 	} catch (e) {
-		console.error("[history] getLocalHistory error", e);
+		// Swallow errors silently in non-browser environments
 		return [];
 	}
 }
 
 export function saveLocalHistory(items: SwapHistoryItem[]) {
-	try { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); } catch (e) { console.error("[history] saveLocalHistory error", e); }
+	try {
+		const hasStorage = typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+		if (!hasStorage) return;
+		window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+	} catch (e) {
+		// Ignore write errors (private mode, quota exceeded, SSR)
+	}
 }
 
 export function upsertLocal(item: SwapHistoryItem) {
