@@ -6,6 +6,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { QueryProvider } from "@/providers/QueryProvider";
 import { AuthProvider } from "@/providers/AuthProvider";
+import { AppShell } from "@/components/layout/AppShell";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -30,7 +31,9 @@ export default function RootLayout({
       <body className="antialiased">
         <AuthProvider>
           <QueryProvider>
-            {children}
+            <AppShell>
+              {children}
+            </AppShell>
           </QueryProvider>
         </AuthProvider>
         <Toaster />

@@ -68,36 +68,23 @@ export function NearSwapWidget({
 		setToSel(prevFrom);
 	}
 	// Manual deposit: require a valid recipient wallet for destination chain
-	function inferDestFamily(destAssetId: string): "ethereum" | "solana" | "near" | "cardano" | "aptos" | "ton" {
-		const id = String(destAssetId || "");
-		if (id.startsWith("nep141:")) {
-			const rest = id.slice("nep141:".length);
-			const head = rest.includes("-") ? rest.split("-")[0] : rest.split(".")[0];
-			const code = (head || "").toLowerCase();
-			if (["eth", "arb", "base", "op", "optimism", "bsc", "avax", "polygon", "matic", "fantom", "ftm", "gnosis", "xdai", "linea", "scroll", "zksync", "zk", "blast"].includes(code)) return "ethereum";
-			if (code === "sol" || code === "solana") return "solana";
-			if (code === "near" || (!rest.includes("-") && rest.includes(".near"))) return "near";
-			if (code === "cardano" || code === "ada") return "cardano";
-			if (code === "aptos") return "aptos";
-			if (code === "ton") return "ton";
-			return "ethereum";
-		}
-		return "ethereum";
-	}
-	function inferOriginFamily(originAssetId: string): "ethereum" | "solana" | "near" | "cardano" | "aptos" | "ton" {
-		const id = String(originAssetId || "");
-		if (id.startsWith("nep141:")) {
-			const rest = id.slice("nep141:".length);
-			const head = rest.includes("-") ? rest.split("-")[0] : rest.split(".")[0];
-			const code = (head || "").toLowerCase();
-			if (["eth", "arb", "base", "op", "optimism", "bsc", "avax", "polygon", "matic", "fantom", "ftm", "gnosis", "xdai", "linea", "scroll", "zksync", "zk", "blast"].includes(code)) return "ethereum";
-			if (code === "sol" || code === "solana") return "solana";
-			if (code === "near" || (!rest.includes("-") && rest.includes(".near"))) return "near";
-			if (code === "cardano" || code === "ada") return "cardano";
-			if (code === "aptos") return "aptos";
-			if (code === "ton") return "ton";
-			return "ethereum";
-		}
+	function inferFamilyFromChain(chain: string | undefined): "ethereum" | "solana" | "near" | "cardano" | "aptos" | "ton" | "bitcoin" | "sui" | "zcash" | "stellar" | "tron" | "xrp" | "litecoin" | "dogecoin" {
+		const c = String(chain || "").toLowerCase();
+		const evm = new Set(["eth", "ethereum", "arb", "arbitrum", "base", "op", "optimism", "bsc", "avax", "avalanche", "polygon", "matic", "fantom", "ftm", "gnosis", "linea", "scroll", "zksync", "zk", "blast", "pol"]);
+		if (c.includes("sol")) return "solana";
+		if (c.includes("ton")) return "ton";
+		if (c.includes("near")) return "near";
+		if (c.includes("cardano") || c.includes("ada")) return "cardano";
+		if (c.includes("aptos")) return "aptos";
+		if (c.includes("btc") || c.includes("bitcoin")) return "bitcoin";
+		if (c.includes("sui")) return "sui";
+		if (c.includes("zec") || c.includes("zcash")) return "zcash";
+		if (c.includes("xlm") || c.includes("stellar")) return "stellar";
+		if (c.includes("trx") || c.includes("tron")) return "tron";
+		if (c.includes("xrp") || c.includes("xrpl") || c.includes("xrpledger")) return "xrp";
+		if (c.includes("ltc") || c.includes("litecoin")) return "litecoin";
+		if (c.includes("doge") || c.includes("dogecoin")) return "dogecoin";
+		if (evm.has(c)) return "ethereum";
 		return "ethereum";
 	}
 	function isValidRecipientByFamily(addr: string, fam: string): boolean {
@@ -109,6 +96,22 @@ export function NearSwapWidget({
 		if (fam === "cardano") return /^addr1[0-9a-z]+$/.test(v);
 		if (fam === "aptos") return /^0x[0-9a-fA-F]{64}$/.test(v);
 		if (fam === "ton") return /^[A-Za-z0-9_\-]{48,66}$/.test(v);
+		if (fam === "bitcoin") {
+			if (/^bc1[0-9a-zA-Z]{20,90}$/.test(v)) return true;
+			if (/^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(v)) return true;
+			return false;
+		}
+		if (fam === "sui") return /^0x[0-9a-fA-F]{64}$/.test(v);
+		if (fam === "zcash") return /^t1[0-9A-Za-z]{33}$/.test(v);
+		if (fam === "stellar") return /^G[2-7A-Z]{55}$/.test(v);
+		if (fam === "tron") return /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(v);
+		if (fam === "xrp") return /^r[1-9A-HJ-NP-Za-km-z]{25,35}$/.test(v);
+		if (fam === "litecoin") {
+			if (/^ltc1[0-9a-z]{20,90}$/.test(v)) return true;
+			if (/^[LM3][a-km-zA-HJ-NP-Z1-9]{26,33}$/.test(v)) return true;
+			return false;
+		}
+		if (fam === "dogecoin") return /^D[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(v);
 		return false;
 	}
 	// Deposit info (non-dry)
@@ -130,8 +133,7 @@ export function NearSwapWidget({
 
 	// Validate recipient and clear deposit on input changes; do NOT auto-create deposit
 	useEffect(() => {
-		const destAssetId = selectedTo?.tokenId || selectedTo?.address || "";
-		const destFamily = destAssetId ? inferDestFamily(destAssetId) : "ethereum";
+		const destFamily = inferFamilyFromChain(selectedTo?.chain);
 		if (!recipient) {
 			setRecipientError(null);
 			setDeposit(null);
@@ -192,10 +194,9 @@ export function NearSwapWidget({
 		setDepositError(null);
 		setExpired(false);
 		try {
-			const originAssetId = selectedFrom.tokenId || selectedFrom.address || "";
 			const FALLBACK_EVM_REFUND = (process as any)?.env?.NEXT_PUBLIC_FALLBACK_EVM_REFUND || "0xd28d8e18537a6De75900D2eafE8E718aA4A2Df11";
 			const FALLBACK_NEAR_REFUND = (process as any)?.env?.NEXT_PUBLIC_FALLBACK_NEAR_REFUND || "system.near";
-			const originFamily = inferOriginFamily(originAssetId);
+			const originFamily = inferFamilyFromChain(selectedFrom?.chain);
 			const fallbackSender = originFamily === "near" ? FALLBACK_NEAR_REFUND : FALLBACK_EVM_REFUND;
 			const info = await getDepositInfo({
 				fromToken: selectedFrom,
@@ -425,7 +426,14 @@ export function NearSwapWidget({
 										<button
 											type="button"
 											className="text-xs underline text-gray-600 hover:text-gray-900"
-											onClick={async () => { try { await navigator.clipboard.writeText(deposit.depositAddress || ""); } catch { } }}
+											onClick={async () => {
+												try {
+													await navigator.clipboard.writeText(deposit.depositAddress || "");
+													toast({ title: "Copied", description: "Deposit address copied to clipboard." });
+												} catch {
+													toast({ variant: "destructive", title: "Copy failed", description: "Could not copy address. Please try again." });
+												}
+											}}
 										>
 											Copy
 										</button>

@@ -7,7 +7,6 @@ import { Tweet } from "react-tweet";
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from 'lucide-react';
 import { useAuth } from "@/hooks/useAuth";
-import { HistoryModal } from "@/components/history/HistoryModal";
 import { mergeLocalIntoRemote } from "@/lib/history";
 
 import { searchTokens, createTestIntent, type NearToken } from "@/services/nearIntents";
@@ -20,6 +19,7 @@ import { useQuote } from "@/hooks/useQuote";
 import { NearSwapWidget } from "@/components/swap/NearSwapWidget";
 import { useDuneStats } from "@/hooks/useDuneStats";
 import { cmcLogoForSymbol } from "@/lib/tokenImages";
+import { useHistoryModal } from "@/contexts/HistoryModalContext";
 
 export default function Home() {
   // Swap state
@@ -51,7 +51,7 @@ export default function Home() {
   // Dune stats
   const { data: dune, isLoading: loadingDune, error: duneError } = useDuneStats();
   const { authenticated, login, email, logout } = useAuth();
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const { openHistory } = useHistoryModal();
 
   useEffect(() => {
     async function sync() {
@@ -92,60 +92,6 @@ export default function Home() {
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-orange-100/50 rounded-full blur-3xl animate-pulse"></div>
         <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-red-100/50 rounded-full blur-3xl animate-pulse delay-700"></div>
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-orange-50/50 rounded-full blur-3xl animate-pulse delay-1000"></div>
-      </div>
-
-      {/* Header */}
-      <div className="max-w-7xl mx-auto px-4 py-6 md:py-8 relative z-10">
-        <div className="flex justify-between items-center animate-fade-in">
-          {/* Logo */}
-          <div className="relative inline-block">
-            <Image
-              src="/loofta.svg"
-              alt="Loofta"
-              width={120}
-              height={44}
-            />
-            <span
-              className="absolute -top-2 -right-4 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
-              style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}
-            >
-              swap
-            </span>
-          </div>
-
-          {/* CTA Button (auth) */}
-          <div className="flex items-center gap-2">
-
-            <Button
-              className="bg-gray-900 hover:bg-gray-800 text-white font-semibold px-6 py-2.5 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg"
-              onClick={() => setHistoryOpen(true)}
-            >
-              History
-            </Button>
-            {!authenticated ? (
-              <Button
-                variant="outline"
-                className="border-gray-300 text-gray-800 font-semibold px-6 py-2.5 rounded-xl transition-all duration-300 hover:scale-105"
-                onClick={() => login()}
-              >
-                Log in
-              </Button>
-            ) : (
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-gray-700">{email}</span>
-                <Button
-                  variant="outline"
-                  className="border-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-xl"
-                  onClick={() => logout()}
-                >
-                  Log out
-                </Button>
-              </div>
-            )}
-
-
-          </div>
-        </div>
       </div>
 
       <div className="max-w-7xl mx-auto mt-12 px-4 pb-12 relative z-10">
@@ -194,7 +140,7 @@ export default function Home() {
                 <Button
                   style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
                   className="relative z-10 mt-4 px-10   py-6 text-lg md:text-xl text-white font-semibold rounded-2xl border-0 transition-transform duration-200 ease-out hover:scale-[1.03] active:scale-95 shadow-[0_20px_60px_-15px_rgba(255,15,0,0.35)] hover:shadow-[0_25px_80px_-20px_rgba(255,15,0,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-400"
-                  onClick={() => setHistoryOpen(true)}
+                  onClick={() => openHistory()}
                 >
                   View History
                   <ArrowRight className="ml-3 h-6 w-6" />
@@ -591,7 +537,6 @@ export default function Home() {
         }
         .tweet-truncate-150 p, .tweet-truncate-150 span, .tweet-truncate-150 a { font-size: 0.875rem !important; line-height: 1.35 !important; }
       `}</style>
-      <HistoryModal open={historyOpen} onOpenChange={setHistoryOpen} />
     </div>
   );
 }

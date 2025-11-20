@@ -239,7 +239,7 @@ export async function getAccurateQuote(params: {
           // default to evm zero
           return ZERO;
         };
-        const recipientDry = getDryQuoteAddress(toToken.chain);
+        const recipientDry = getRefundToForChain(toToken.chain);
         const refundDry = getRefundToForChain(fromToken.chain);
         req = attachAppFees({
           dry: true,
