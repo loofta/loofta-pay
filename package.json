@@ -60,6 +60,7 @@
     "tailwind-merge": "^2.5.2",
     "tailwindcss-animate": "^1.0.7",
     "tonweb": "^0.0.66",
+    "@supabase/supabase-js": "^2.46.1",
     "uuid": "^10.0.0",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8",
