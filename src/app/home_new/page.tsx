@@ -188,8 +188,29 @@ export default function Home() {
         <div className="mt-6 text-center text-gray-800">Crypto finally works like money.</div>
       </div>
 
-      {/* Section 3 — Privacy That Makes Sense */}
+     
+
+      {/* Section 6 — Use Cases */}
       <div className="max-w-7xl mx-auto px-4 mt-16 md:mt-20">
+        <h2 className="text-2xl md:text-4xl font-bold text-center">Use Cases</h2>
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
+          {[
+            { title: "Creators & KOLs", desc: "Get paid privately without leaking your wallet." },
+            { title: "Freelancers", desc: "One link. Any client. Any chain. Stable income." },
+            { title: "DAOs & Teams", desc: "Pay contributors globally without the chain mess." },
+            { title: "Businesses", desc: "Private payroll. Vendor payments. Cross-chain treasury ops." },
+          ].map((u) => (
+            <div key={u.title} className="rounded-2xl bg-white border border-orange-200 p-5">
+              <div className="text-lg font-bold text-gray-900">{u.title}</div>
+              <div className="mt-1 text-sm text-gray-700">{u.desc}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-6 text-center text-gray-800">Send crypto like sending an email.</div>
+      </div>
+
+       {/* Section 3 — Privacy That Makes Sense */}
+       <div className="max-w-7xl mx-auto px-4 mt-16 md:mt-20">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-start">
           <div>
             <h2 className="text-2xl md:text-4xl font-bold">Private for the public. Transparent for your business.</h2>
@@ -221,71 +242,6 @@ export default function Home() {
         <div className="mt-8 text-center text-gray-800">
           You get privacy. Your company gets traceability. Everyone wins.
         </div>
-      </div>
-
-      {/* Section 4 — ZK Private Pools (Coming Soon) */}
-      <div className="max-w-7xl mx-auto px-4 mt-16 md:mt-20">
-        <div className="rounded-3xl bg-white/90 border border-orange-200 p-6 md:p-8">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <h2 className="text-2xl md:text-3xl font-bold">ZK Private Pools (Coming Soon)</h2>
-            <div className="text-xs font-semibold px-3 py-1 rounded-full border bg-gray-50">COMING SOON</div>
-          </div>
-          <p className="mt-2 text-gray-700">Next-gen privacy without the risk.</p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {[
-              "incoming payments are shielded",
-              "outgoing payouts are unlinkable",
-              "full correctness proven with zk-proofs",
-              "internal audit trail preserved",
-              "no “black-box anonymity” issues",
-            ].map((item) => (
-              <span key={item} className="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 text-sm text-gray-900">
-                <CheckCircle2 className="h-4 w-4 text-orange-600" />
-                {item}
-              </span>
-            ))}
-          </div>
-          <div className="mt-5 text-gray-800">Real privacy for real businesses — not criminal anonymity.</div>
-        </div>
-      </div>
-
-      {/* Section 5 — Earn Yield While You Wait (Coming Soon) */}
-      <div className="max-w-7xl mx-auto px-4 mt-16 md:mt-20">
-        <div className="rounded-3xl bg-white/90 border border-orange-200 p-6 md:p-8">
-          <h2 className="text-2xl md:text-3xl font-bold">Earn Yield While You Wait (Coming Soon)</h2>
-          <p className="mt-2 text-gray-700">Your claim balance, earning for you.</p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {[
-              "stable yield, intent-routed strategies, RWA vaults",
-              "Always solvent. Always opt-in. zk-proof backed.",
-              "Get paid. Earn yield. Claim anytime.",
-            ].map((item) => (
-              <span key={item} className="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 text-sm text-gray-900">
-                <CheckCircle2 className="h-4 w-4 text-orange-600" />
-                {item}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Section 6 — Use Cases */}
-      <div className="max-w-7xl mx-auto px-4 mt-16 md:mt-20">
-        <h2 className="text-2xl md:text-4xl font-bold text-center">Use Cases</h2>
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
-          {[
-            { title: "Creators & KOLs", desc: "Get paid privately without leaking your wallet." },
-            { title: "Freelancers", desc: "One link. Any client. Any chain. Stable income." },
-            { title: "DAOs & Teams", desc: "Pay contributors globally without the chain mess." },
-            { title: "Businesses", desc: "Private payroll. Vendor payments. Cross-chain treasury ops." },
-          ].map((u) => (
-            <div key={u.title} className="rounded-2xl bg-white border border-orange-200 p-5">
-              <div className="text-lg font-bold text-gray-900">{u.title}</div>
-              <div className="mt-1 text-sm text-gray-700">{u.desc}</div>
-            </div>
-          ))}
-        </div>
-        <div className="mt-6 text-center text-gray-800">Send crypto like sending an email.</div>
       </div>
 
       {/* Section 7 — Why Loofta */}
