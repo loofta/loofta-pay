@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Tweet } from "react-tweet";
 import { Button } from "@/components/ui/button";
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, ArrowLeftRight, Send, CheckCircle2 } from 'lucide-react';
 import { useAuth } from "@/hooks/useAuth";
 import { mergeLocalIntoRemote } from "@/lib/history";
 
@@ -86,7 +86,7 @@ export default function Home() {
   }, [hydrated, tokens, fromSel, toSel, setFromSel, setToSel]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white to-gray-50 relative overflow-hidden">
+    <div className=" bg-gradient-to-b from-white to-gray-50 relative">
       {/* Animated Background Elements */}
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-orange-100/50 rounded-full blur-3xl animate-pulse"></div>
@@ -165,7 +165,7 @@ export default function Home() {
 
       {/* Animated Section Transition */}
       <motion.div
-        className="w-full mt-0 mb-12 md:my-16 overflow-hidden relative"
+        className="w-full mt-6 md:mt-12 mb-12 md:my-16 overflow-hidden relative"
         initial="hidden"
         whileInView="visible"
         viewport={{ once: false, amount: 0.3 }}
@@ -220,7 +220,7 @@ export default function Home() {
         {/* Live Analytics (Dune) */}
         <motion.div
           id="stats-section"
-          className="rounded-3xl p-6 md:p-8 mt-12 md:mt-16 mb-12 md:mb-16"
+          className="rounded-3xl p-6 md:p-8 mt-12 md:mt-24 mb-12 md:mb-24"
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: false, amount: 0.3 }}
@@ -292,38 +292,48 @@ export default function Home() {
           </motion.div>
         </motion.div>
 
-        {/* Near Intents Intro */}
-        <div className="text-center mb-6 md:mb-12">
+        {/* Simple 3‑step intro */}
+        <div className="text-center mt-12 md:mt-24 mb-12 md:mb-24">
           <h2 className="text-2xl md:text-4xl font-bold tracking-tight">
             <span style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-              Cross‑chain swaps made simple
+              Swap across chains in 3 simple steps
             </span>
           </h2>
           <p className="mt-2 text-base md:text-lg text-gray-600 max-w-3xl mx-auto">
-            NEAR Intents lets you swap any supported asset across chains with a single deposit.<br />
-            Send to the generated address, and your funds are routed automatically to the target chain.<br />
-            If a swap fails, your deposit is refunded to your origin address.
+            Loofta lets you move tokens between chains — fast and easy. We handle the tech behind the scenes (powered by NEAR Intents).
           </p>
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-left max-w-5xl mx-auto">
-            <div className="rounded-xl p-4 bg-white shadow-md hover:shadow-lg transition-shadow">
-              <div className="text-base font-semibold text-gray-900 mb-1">Quotes</div>
+          <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-12 text-left max-w-6xl mx-auto">
+            <div className="rounded-xl p-6 bg-white shadow-md hover:shadow-lg transition-shadow">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #FFE8B0, #FFD0B3)' }}>
+                  <ArrowLeftRight className="h-5 w-5 text-orange-700" />
+                </div>
+                <div className="text-base font-semibold text-gray-900">1) Select tokens</div>
+              </div>
               <div className="text-base md:text-lg text-gray-600">
-                Get a dry quote by providing origin asset, destination asset, and amount.<br />
-                Choose routing mode and set slippage/deadline.
+                Choose the token you want to send and the token you want to receive. Enter an amount to preview your output.
               </div>
             </div>
-            <div className="rounded-xl p-4 bg-white shadow-md hover:shadow-lg transition-shadow">
-              <div className="text-base font-semibold text-gray-900 mb-1">Deposit</div>
+            <div className="rounded-xl p-6 bg-white shadow-md hover:shadow-lg transition-shadow">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #FFD1C4, #FFB3B3)' }}>
+                  <Send className="h-5 w-5 text-red-700" />
+                </div>
+                <div className="text-base font-semibold text-gray-900">2) Send</div>
+              </div>
               <div className="text-base md:text-lg text-gray-600">
-                Execution quotes return a unique deposit address (and memo if needed).<br />
-                Send funds manually — no wallet connection required.
+                We generate a one-time deposit address (and memo if required). Send your funds — no wallet connection needed.
               </div>
             </div>
-            <div className="rounded-xl p-4 bg-white shadow-md hover:shadow-lg transition-shadow">
-              <div className="text-base font-semibold text-gray-900 mb-1">Payout & Refunds</div>
-              <div className="text-base md:text-lg text-gray-600">
-                Received tokens are sent to your chosen recipient.<br />
-                If the intent can’t execute before the deadline, your funds are automatically refunded.
+            <div className="rounded-xl p-6 bg-white shadow-md hover:shadow-lg transition-shadow">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #D1FAE5, #BBF7D0)' }}>
+                  <CheckCircle2 className="h-5 w-5 text-emerald-700" />
+                </div>
+                <div className="text-base font-semibold text-gray-900">3) Receive</div>
+              </div>
+              <div className="text-base md:text-lg  text-gray-600">
+                We route your swap and deliver the output to your recipient on the target chain.
               </div>
             </div>
           </div>
@@ -331,8 +341,8 @@ export default function Home() {
 
 
         {/* Top Traded Tokens Cloud */}
-        <div className="mt-12 md:mt-16 mb-12 md:mb-16">
-          <h3 className="text-center text-2xl md:text-4xl font-bold tracking-tight mb-4">
+        <div className="mt-12 md:mt-24 mb-12 md:mb-24">
+          <h3 className="text-center mt-8text-2xl md:text-4xl font-bold tracking-tight mb-8">
             <span style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
               Top Traded Tokens
             </span>
