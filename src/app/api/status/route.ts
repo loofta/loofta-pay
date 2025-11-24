@@ -34,13 +34,13 @@ export async function GET(request: Request) {
       const upd = await supabase
         .from("claim_intents")
         .update({
-          status: status?.status || status?.executionStatus || null,
+          status: (status as any)?.status || (status as any)?.executionStatus || null,
           last_status_payload: status || null,
         })
         .eq("deposit_address", depositAddress)
         .select("claim_id, status")
         .single();
-      const s = String(status?.status || status?.executionStatus || "").toUpperCase();
+      const s = String((status as any)?.status || (status as any)?.executionStatus || "").toUpperCase();
       const terminal = ["SUCCESS", "REFUNDED", "EXPIRED", "FAILED"];
       if (upd?.data?.claim_id && s) {
         await supabase.from("claims").update({ status: terminal.includes(s) ? s : "IN_FLIGHT" }).eq("id", upd.data.claim_id);
