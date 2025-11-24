@@ -100,32 +100,29 @@ export default function Home() {
           <div className="space-y-4 md:space-y-6 animate-slide-up text-left">
             <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold leading-tight px-4">
               <span className="inline-flex gap-0.5">
-                {'Swap'.split('').map((letter, index) => (
-                  <motion.span
-                    key={`swap-${index}`}
-                    className="inline-block"
-                    initial={{ opacity: 0, y: -20, scale: 0.5 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{
-                      delay: index * 0.05,
-                      type: "spring",
-                      stiffness: 300,
-                      damping: 20
-                    }}
-                    whileHover={{
-                      scale: 1.2,
-                      transition: { type: "spring", stiffness: 400 }
-                    }}
-                    style={{
-                      background: 'linear-gradient(to right, #EAB308, #FF0F00)',
-                      WebkitBackgroundClip: 'text',
-                      WebkitTextFillColor: 'transparent',
-                      backgroundClip: 'text',
-                    }}
-                  >
-                    {letter}
-                  </motion.span>
-                ))}
+                <motion.span
+                  className="inline-block"
+                  initial={{ opacity: 0, y: -20, scale: 0.5 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{
+                    delay: 0.05,
+                    type: "spring",
+                    stiffness: 300,
+                    damping: 20
+                  }}
+                  whileHover={{
+                    scale: 1.1,
+                    transition: { type: "spring", stiffness: 400 }
+                  }}
+                  style={{
+                    background: 'linear-gradient(to right, #EAB308, #FF0F00)',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                    backgroundClip: 'text',
+                  }}
+                >
+                  Swap
+                </motion.span>
               </span>{' '}
               <span className="text-gray-900">across multiple chains.<br /></span>
 
