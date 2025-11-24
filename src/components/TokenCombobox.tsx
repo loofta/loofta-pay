@@ -54,9 +54,10 @@ export function TokenCombobox({
 	}, [tokens, query]);
 
 	React.useEffect(() => {
-		// Ensure selectedChain is a valid option for current option set
+		// Ensure selectedChain is a valid option only when it's set.
+		// Allow undefined to represent "All networks".
 		const chains = uniqueChains(options);
-		if (!selectedChain || !chains.includes(selectedChain)) {
+		if (selectedChain && !chains.includes(selectedChain)) {
 			setSelectedChain(value?.chain && chains.includes(value.chain) ? value.chain : chains[0]);
 		}
 	}, [options, selectedChain, value]);
@@ -97,12 +98,6 @@ export function TokenCombobox({
 		if (!selectedChain) return grouped;
 		return grouped.filter(g => g.chains[selectedChain!]);
 	}, [grouped, selectedChain]);
-	const filteredChains = React.useMemo(() => {
-		const q = query.trim().toLowerCase();
-		if (!q) return chains;
-		return chains.filter((c) => formatChainLabel(c).toLowerCase().includes(q) || c.toLowerCase().includes(q));
-	}, [chains, query]);
-
 	const isSearching = React.useMemo(() => query.trim().length > 0, [query]);
 	const searchItems = React.useMemo(() => {
 		if (!isSearching) return [] as Array<{ symbol: string; name?: string; chain: string; token: NearToken }>
@@ -121,6 +116,18 @@ export function TokenCombobox({
 		}
 		return items;
 	}, [isSearching, query, grouped]);
+	const filteredSearchItems = React.useMemo(() => {
+		if (!isSearching) return [] as Array<{ symbol: string; name?: string; chain: string; token: NearToken }>;
+		if (!selectedChain) return searchItems;
+		return searchItems.filter((it) => it.chain === selectedChain);
+	}, [isSearching, searchItems, selectedChain]);
+	const filteredChains = React.useMemo(() => {
+		if (!isSearching) return chains;
+		const s = new Set<string>();
+		for (const it of searchItems) s.add(it.chain);
+		const arr = Array.from(s.values());
+		return arr.length ? arr.sort((a, b) => a.localeCompare(b)) : chains;
+	}, [isSearching, searchItems, chains]);
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
@@ -154,6 +161,20 @@ export function TokenCombobox({
 					<div className="w-40 max-h-[65vh] overflow-auto border-r border-border/50 p-1">
 						<div className="px-3 py-2 text-xs font-medium text-muted-foreground">Select network</div>
 						<div className="flex flex-col gap-1 p-1">
+							{/* All networks option */}
+							<button
+								key="__all__"
+								type="button"
+								onClick={() => setSelectedChain(undefined)}
+								className={cn(
+									"w-full text-left rounded-xl px-3 py-2 text-sm transition-colors",
+									!selectedChain ? "bg-muted font-semibold" : "hover:bg-muted/60"
+								)}
+							>
+								<span className="inline-flex items-center gap-2">
+									All networks
+								</span>
+							</button>
 							{filteredChains.map((c) => {
 								const active = c === selectedChain;
 								return (
@@ -199,7 +220,7 @@ export function TokenCombobox({
 								<CommandEmpty>No token found.</CommandEmpty>
 								{isSearching ? (
 									<CommandGroup heading="Results">
-										{searchItems.map((it) => {
+										{filteredSearchItems.map((it) => {
 											const isSelected = value?.symbol === it.symbol && value?.chain === it.chain;
 											const id = `${it.symbol}-${it.chain}`;
 											return (

@@ -71,7 +71,8 @@ const CHAIN_LABELS: Record<string, string> = {
 export function formatChainLabel(chain: string | undefined): string {
 	if (!chain) return "";
 	const key = String(chain).toLowerCase();
-	return CHAIN_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1);
+	const label = CHAIN_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1);
+	return label.length < 4 ? label.toUpperCase() : label;
 }
 
 
