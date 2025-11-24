@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { ArrowUpDown } from "lucide-react";
+import { ArrowUpDown, Shield } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,6 +22,7 @@ import { useIntentStatus } from "@/hooks/useIntentStatus";
 import { useAuth } from "@/hooks/useAuth";
 import { upsertLocal } from "@/lib/history";
 import { getClientGeo } from "@/lib/geo";
+import { Switch } from "@/components/ui/switch";
 
 export function NearSwapWidget({
 	tokens,
@@ -36,6 +37,7 @@ export function NearSwapWidget({
 	const { email } = useAuth();
 	const [recipient, setRecipient] = useState<string>("");
 	const [recipientError, setRecipientError] = useState<string | null>(null);
+	const [useShielded, setUseShielded] = useState<boolean>(false);
 	const selectedFrom = useMemo(() => findTokenBySelection(tokens, fromSel), [tokens, fromSel]);
 	const selectedTo = useMemo(() => findTokenBySelection(tokens, toSel), [tokens, toSel]);
 	const { loading: quoteLoading, amountOut, error: quoteError } = useQuote(tokens, fromSel, toSel, amount);
@@ -114,6 +116,20 @@ export function NearSwapWidget({
 		if (fam === "dogecoin") return /^D[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(v);
 		return false;
 	}
+	function isValidZcashShielded(addr: string): boolean {
+		const v = (addr || "").trim();
+		// Accept Zcash Unified Address (starts with 'u', long, lowercase base charset) or Sapling 'zs...'
+		if (/^u[0-9a-z]{60,220}$/.test(v)) return true;
+		if (/^zs[0-9a-z]{60,200}$/i.test(v)) return true;
+		return false;
+	}
+	// Reset shielded toggle if destination stops being ZEC
+	useEffect(() => {
+		const isZec = (selectedTo?.symbol || "").toUpperCase() === "ZEC" || inferFamilyFromChain(selectedTo?.chain) === "zcash";
+		if (!isZec && useShielded) {
+			setUseShielded(false);
+		}
+	}, [selectedTo, useShielded]);
 	// Deposit info (non-dry)
 	const [depositLoading, setDepositLoading] = useState(false);
 	const [depositError, setDepositError] = useState<string | null>(null);
@@ -142,18 +158,31 @@ export function NearSwapWidget({
 			setDepositLoading(false);
 			return;
 		}
-		if (!isValidRecipientByFamily(recipient, destFamily)) {
-			setRecipientError(`Invalid ${destFamily} address format`);
-			setDeposit(null);
-			setExpired(false);
-			setTimeLeft(null);
-			setDepositLoading(false);
-			return;
+		// Special case: ZEC shielded toggle requires shielded formats
+		const isZecDest = destFamily === "zcash" && ((selectedTo?.symbol || "").toUpperCase() === "ZEC");
+		if (isZecDest && useShielded) {
+			if (!isValidZcashShielded(recipient)) {
+				setRecipientError("Invalid zcash shielded address format");
+				setDeposit(null);
+				setExpired(false);
+				setTimeLeft(null);
+				setDepositLoading(false);
+				return;
+			}
+		} else {
+			if (!isValidRecipientByFamily(recipient, destFamily)) {
+				setRecipientError(`Invalid ${destFamily} address format`);
+				setDeposit(null);
+				setExpired(false);
+				setTimeLeft(null);
+				setDepositLoading(false);
+				return;
+			}
 		}
 		setRecipientError(null);
 		setExpired(false);
 		setTimeLeft(null);
-	}, [recipient, selectedTo]);
+	}, [recipient, selectedTo, useShielded]);
 
 	// Toast when expired
 	useEffect(() => {
@@ -583,14 +612,49 @@ export function NearSwapWidget({
 										<div className="flex items-center justify-between">
 											<div className="text-base font-semibold text-gray-700">Send to</div>
 										</div>
+										{/* ZEC shielded toggle */}
+										{(() => {
+											const isZec = ((selectedTo?.symbol || "").toUpperCase() === "ZEC") || inferFamilyFromChain(selectedTo?.chain) === "zcash";
+											if (!isZec) return null;
+											return (
+												<div className="mt-3 flex items-center justify-between">
+													<div className="flex items-center gap-2">
+														<Shield className="h-4 w-4 text-emerald-600" />
+														<div className="text-sm text-gray-800 font-semibold">Private payment (shielded)</div>
+													</div>
+													<Switch checked={useShielded} onCheckedChange={setUseShielded} aria-label="Private payment (shielded)" />
+												</div>
+											);
+										})()}
+										{(() => {
+											const isZec = ((selectedTo?.symbol || "").toUpperCase() === "ZEC") || inferFamilyFromChain(selectedTo?.chain) === "zcash";
+											if (!isZec) return null;
+											return (
+												<div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs px-3 py-2">
+													<div className="font-medium">Privacy tip</div>
+													<div>Payment will only be private if you use a shielded address as the recipient.</div>
+												</div>
+											);
+										})()}
 										{/* Manual recipient input */}
 										<div className="mt-4">
-											<label className="text-sm font-medium text-gray-700">Recipient address</label>
+											<label className="text-sm font-medium text-gray-700">
+												{(() => {
+													const isZec = ((selectedTo?.symbol || "").toUpperCase() === "ZEC") || inferFamilyFromChain(selectedTo?.chain) === "zcash";
+													return isZec && useShielded ? "Recipient shielded address" : "Recipient address";
+												})()}
+											</label>
 											<input
 												type="text"
 												value={recipient}
 												onChange={(e) => setRecipient(e.target.value)}
-												placeholder="Enter destination wallet address"
+												placeholder={(() => {
+													const isZec = ((selectedTo?.symbol || "").toUpperCase() === "ZEC") || inferFamilyFromChain(selectedTo?.chain) === "zcash";
+													if (isZec && useShielded) {
+														return "Enter Zcash shielded address (Unified or Sapling)";
+													}
+													return "Enter destination wallet address";
+												})()}
 												className="mt-1 w-full rounded-xl border border-gray-200 bg-white text-gray-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400"
 											/>
 											{recipientError ? <div className="text-xs text-red-600 mt-1">{recipientError}</div> : null}
