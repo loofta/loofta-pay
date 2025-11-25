@@ -20,6 +20,7 @@ import { NearSwapWidget } from "@/components/swap/NearSwapWidget";
 import { useDuneStats } from "@/hooks/useDuneStats";
 import { cmcLogoForSymbol } from "@/lib/tokenImages";
 import { useHistoryModal } from "@/contexts/HistoryModalContext";
+import { FAQAccordion } from "@/components/FAQAccordion";
 
 export default function Home() {
   // Swap state
@@ -53,6 +54,7 @@ export default function Home() {
   const { authenticated, login, email, logout } = useAuth();
   const { openHistory } = useHistoryModal();
 
+  // FR gating removed for now; EN content only
   useEffect(() => {
     async function sync() {
       try {
@@ -302,6 +304,7 @@ export default function Home() {
           <p className="mt-2 text-base md:text-lg text-gray-600 max-w-3xl mx-auto">
             Loofta lets you move tokens between chains — fast and easy. We handle the tech behind the scenes (powered by NEAR Intents).
           </p>
+          {/* FR summary removed for now */}
           <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-12 text-left max-w-6xl mx-auto">
             <div className="rounded-xl p-6 bg-white shadow-md hover:shadow-lg transition-shadow">
               <div className="flex items-center gap-3 mb-2">
@@ -337,6 +340,69 @@ export default function Home() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Accordion FAQ (EN only) */}
+        <div className="mt-12 md:mt-24">
+          <h3 className="text-xl md:text-2xl text-center font-bold mb-4">FAQ — Cross‑chain swap</h3>
+          <FAQAccordion
+            items={[
+              {
+                question: "What is a cross‑chain swap?",
+                answer:
+                  "A cross‑chain swap lets you send one token on a source network and receive another token on a different network, in one flow.",
+              },
+              {
+                question: "Is a wallet connection required?",
+                answer:
+                  "No. We generate a one‑time deposit address. Send funds manually and we route them to your recipient.",
+              },
+              {
+                question: "What happens if the swap fails?",
+                answer:
+                  "If it cannot complete in time, we automatically refund to your original address.",
+              },
+            ]}
+          />
+          {/* FAQ JSON-LD */}
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{
+              __html: JSON.stringify({
+                "@context": "https://schema.org",
+                "@type": "FAQPage",
+                mainEntity: [
+                  {
+                    "@type": "Question",
+                    name: "What is a cross‑chain swap?",
+                    acceptedAnswer: {
+                      "@type": "Answer",
+                      text:
+                        "A cross‑chain swap lets you send one token on a source network and receive another token on a different network, in one flow.",
+                    },
+                  },
+                  {
+                    "@type": "Question",
+                    name: "Is a wallet connection required?",
+                    acceptedAnswer: {
+                      "@type": "Answer",
+                      text:
+                        "No. We generate a one‑time deposit address. Send funds manually and we route them to your recipient.",
+                    },
+                  },
+                  {
+                    "@type": "Question",
+                    name: "What happens if the swap fails?",
+                    acceptedAnswer: {
+                      "@type": "Answer",
+                      text:
+                        "If it cannot complete in time, we automatically refund to your original address.",
+                    },
+                  },
+                ],
+              }),
+            }}
+          />
         </div>
 
 
