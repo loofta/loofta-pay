@@ -4,7 +4,7 @@ type AddressRole = "sender" | "recipient";
 
 function isEvmChain(chain: string) {
 	const c = chain.toLowerCase();
-	return ["ethereum", "arbitrum", "polygon", "bsc", "avalanche", "optimism", "base", "fantom", "gnosis", "linea", "zksync", "scroll"]
+	return ["ethereum", "arbitrum", "polygon", "bsc", "avalanche", "optimism", "base", "fantom", "gnosis", "linea", "zksync", "scroll", "monad"]
 		.some((n) => c.includes(n));
 }
 

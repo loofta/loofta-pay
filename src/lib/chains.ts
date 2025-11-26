@@ -52,6 +52,7 @@ export function getChainIcon(chain?: string): string | undefined {
 		cardano: "/static/icons/network/cardano.svg",
 		ton: "/static/icons/network/ton.svg",
 		aptos: "/static/icons/network/aptos.svg",
+		monad: "/static/icons/network/monad.svg",
 	};
 	const local = map[key];
 	if (local) return local;
@@ -67,6 +68,7 @@ export function getChainIcon(chain?: string): string | undefined {
 		gnosis: "GNO",
 		bsc: "BNB",
 		avalanche: "AVAX",
+		monad: "MON",
 		aurora: "ETH",
 		// Non-EVM
 		solana: "SOL",

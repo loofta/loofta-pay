@@ -52,7 +52,7 @@ export function useQuote(tokens: NearToken[], fromSel: TokenSelection | null, to
 			const rest = id.slice("nep141:".length);
 			const head = rest.includes("-") ? rest.split("-")[0] : rest.split(".")[0];
 			const code = (head || "").toLowerCase();
-			if (["eth","arb","base","op","optimism","bsc","avax","polygon","matic","fantom","ftm","gnosis","xdai","linea","scroll","zksync","zk","blast"].includes(code)) fam = "ethereum";
+			if (["eth","arb","base","op","optimism","bsc","avax","polygon","matic","fantom","ftm","gnosis","xdai","linea","scroll","zksync","zk","blast", "monad"].includes(code)) fam = "ethereum";
 			else if (code === "sol" || code === "solana") fam = "solana";
 			else if (code === "ton") fam = "ton";
 			else if (code === "aptos") fam = "aptos";
