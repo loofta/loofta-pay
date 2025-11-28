@@ -7,4 +7,27 @@ export function trimDecimals(value: string | number, maxDecimals: number = 5): s
 	return trimmed ? `${intPart}.${trimmed}` : intPart;
 }
 
+export function maskLink(link: string): string {
+	try {
+		const url = new URL(link);
+		const host = url.host;
+		const path = url.pathname || "";
+		const tail = path.replace(/\/+$/, "").split("/").pop() || "";
+		const last4 = tail.slice(-4);
+		return `${host}/...${last4}`;
+	} catch {
+		const last4 = (link || "").slice(-4);
+		return `...${last4}`;
+	}
+}
+
+export function roundUpDecimals(value: string | number, decimals: number): string {
+	const n = Number(value);
+	if (!Number.isFinite(n)) return String(value);
+	const factor = Math.pow(10, Math.max(0, decimals));
+	const up = Math.ceil(n * factor) / factor;
+	// Ensure fixed decimals, then trim trailing zeros
+	return up.toFixed(decimals).replace(/\.?0+$/, (m) => (decimals === 0 ? "" : m));
+}
+
 

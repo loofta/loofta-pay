@@ -241,6 +241,7 @@ export async function getAccurateQuote(params: {
         };
         const recipientDry = getRefundToForChain(toToken.chain);
         const refundDry = getRefundToForChain(fromToken.chain);
+        const sameChain = String(fromToken.chain || "").toLowerCase() === String(toToken.chain || "").toLowerCase();
         req = attachAppFees({
           dry: true,
           swapType: QuoteRequest.swapType.EXACT_INPUT,
@@ -252,7 +253,7 @@ export async function getAccurateQuote(params: {
           refundTo: refundDry,
           refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
           recipient: recipientDry,
-          recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
+          recipientType: sameChain ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN : QuoteRequest.recipientType.DESTINATION_CHAIN,
           deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
           quoteWaitingTimeMs: 3000,
         } as QuoteRequest);
@@ -262,6 +263,7 @@ export async function getAccurateQuote(params: {
         if (!sender || !recipient) {
           throw new Error("Missing sender/recipient for ORIGIN_CHAIN quote");
         }
+        const sameChain = String(fromToken.chain || "").toLowerCase() === String(toToken.chain || "").toLowerCase();
         req = attachAppFees({
           dry: false,
       swapType: QuoteRequest.swapType.EXACT_INPUT,
@@ -273,7 +275,7 @@ export async function getAccurateQuote(params: {
       refundTo: getRefundToForChain(fromToken.chain),
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipient,
-      recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
+      recipientType: sameChain ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN : QuoteRequest.recipientType.DESTINATION_CHAIN,
       deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
       quoteWaitingTimeMs: 3000,
         } as QuoteRequest);
@@ -345,12 +347,13 @@ export async function getDepositInfo(params: {
     const intentsUserId = `${authMethod.toLowerCase()}:${userAddress}`;
     req = attachAppFees({
       dry: false,
-      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      swapType: QuoteRequest.swapType.EXACT_OUTPUT,
       slippageTolerance: slippageBps,
       originAsset,
       depositType: QuoteRequest.depositType.INTENTS,
       destinationAsset,
-      amount: atomicIn,
+      // EXACT_OUTPUT expects desired out in atomic units for destination asset
+      amount: toAtomic(amount || "0", toToken.decimals || 0),
       refundTo: intentsUserId,
       refundType: QuoteRequest.refundType.INTENTS,
       recipient: intentsUserId,
@@ -363,18 +366,20 @@ export async function getDepositInfo(params: {
     if (!sender || !recipient) {
       throw new Error("Missing sender/recipient for ORIGIN_CHAIN deposit quote");
     }
+    const sameChain = String(fromToken.chain || "").toLowerCase() === String(toToken.chain || "").toLowerCase();
     req = attachAppFees({
       dry: false,
-      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      swapType: QuoteRequest.swapType.EXACT_OUTPUT,
       slippageTolerance: slippageBps,
       originAsset,
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
-      amount: atomicIn,
+      // EXACT_OUTPUT expects desired out in atomic units for destination asset
+      amount: toAtomic(amount || "0", toToken.decimals || 0),
       refundTo: getRefundToForChain(fromToken.chain),
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipient,
-      recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
+      recipientType: sameChain ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN : QuoteRequest.recipientType.DESTINATION_CHAIN,
       deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
       quoteWaitingTimeMs: 3000,
     } as QuoteRequest);

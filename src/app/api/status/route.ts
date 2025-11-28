@@ -1,57 +1,57 @@
-'use server'
-
 import { NextResponse } from "next/server";
-import { OneClickService, OpenAPI } from "@defuse-protocol/one-click-sdk-typescript";
-import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { getExecutionStatus } from "@/services/nearIntents";
 
-function getEnv(name: string, fallbacks: string[] = []) {
-  const all = [name, ...fallbacks];
-  for (const n of all) {
-    const v = (process as any).env?.[n];
-    if (typeof v === "string" && v.length > 0) return v;
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const depositAddress = (searchParams.get("depositAddress") || "").trim();
+  if (!depositAddress) {
+    return NextResponse.json({ error: "Missing depositAddress" }, { status: 400 });
   }
-  return undefined;
-}
-
-const ONECLICK_BASE = getEnv("ONECLICK_API_BASE", ["NEXT_PUBLIC_ONECLICK_API_BASE"]) || "https://1click.chaindefuser.com";
-const ONECLICK_JWT = getEnv("ONECLICK_JWT", ["NEXT_PUBLIC_ONECLICK_JWT"]);
-OpenAPI.BASE = ONECLICK_BASE;
-if (ONECLICK_JWT) OpenAPI.TOKEN = ONECLICK_JWT;
-
-export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const depositAddress = searchParams.get("depositAddress");
-    if (!depositAddress) {
-      return NextResponse.json({ error: "Missing depositAddress" }, { status: 400 });
-    }
-    const status = await OneClickService.getExecutionStatus(depositAddress);
-
-    // Persist status if we have a matching claim_intents row
-    try {
-      const supabase = getSupabaseAdmin();
-      // Update claim_intents
-      const upd = await supabase
-        .from("claim_intents")
-        .update({
-          status: (status as any)?.status || (status as any)?.executionStatus || null,
-          last_status_payload: status || null,
-        })
-        .eq("deposit_address", depositAddress)
-        .select("claim_id, status")
-        .single();
-      const s = String((status as any)?.status || (status as any)?.executionStatus || "").toUpperCase();
-      const terminal = ["SUCCESS", "REFUNDED", "EXPIRED", "FAILED"];
-      if (upd?.data?.claim_id && s) {
-        await supabase.from("claims").update({ status: terminal.includes(s) ? s : "IN_FLIGHT" }).eq("id", upd.data.claim_id);
-      }
-    } catch {}
-
-    return NextResponse.json(status, { status: 200 });
+    const raw = await getExecutionStatus(depositAddress);
+    console.log('logo status', raw);
+    const s =
+      raw?.status ||
+      raw?.executionStatus ||
+      raw?.state ||
+      "UNKNOWN";
+    const sd = raw?.swapDetails || raw || {};
+    const out = {
+      status: String(s),
+      updatedAt:
+        (raw?.updatedAt as string) ||
+        (sd?.updatedAt as string) ||
+        new Date().toISOString(),
+      swapDetails: {
+        amountIn: sd?.amountIn ?? null,
+        amountInFormatted: sd?.amountInFormatted ?? null,
+        amountInUsd: sd?.amountInUsd ?? null,
+        amountOut: sd?.amountOut ?? null,
+        amountOutFormatted: sd?.amountOutFormatted ?? null,
+        amountOutUsd: sd?.amountOutUsd ?? null,
+        depositedAmount: sd?.depositedAmount ?? null,
+        depositedAmountFormatted: sd?.depositedAmountFormatted ?? null,
+        depositedAmountUsd: sd?.depositedAmountUsd ?? null,
+        destinationChainTxHashes: Array.isArray(sd?.destinationChainTxHashes)
+          ? sd.destinationChainTxHashes
+          : [],
+        intentHashes: Array.isArray(sd?.intentHashes) ? sd.intentHashes : [],
+        nearTxHashes: Array.isArray(sd?.nearTxHashes) ? sd.nearTxHashes : [],
+        originChainTxHashes: Array.isArray(sd?.originChainTxHashes)
+          ? sd.originChainTxHashes
+          : [],
+        refundedAmount: sd?.refundedAmount ?? "0",
+        refundedAmountFormatted: sd?.refundedAmountFormatted ?? "0",
+        refundedAmountUsd: sd?.refundedAmountUsd ?? "0",
+        slippage: sd?.slippage ?? null,
+      },
+    };
+    return NextResponse.json(out, { status: 200 });
   } catch (e: any) {
-    const status = typeof e?.status === "number" ? e.status : 500;
-    return NextResponse.json({ error: e?.message || "Failed to fetch status" }, { status });
+    return NextResponse.json(
+      { error: e?.message || "Failed to fetch status" },
+      { status: 500 }
+    );
   }
 }
-
 

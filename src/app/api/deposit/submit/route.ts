@@ -30,6 +30,8 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({ txHash, depositAddress, nearSenderAccount, memo }),
     });
+
+    console.log('res deposit', res);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       return NextResponse.json({ error: data?.error || "Submit failed" }, { status: res.status });

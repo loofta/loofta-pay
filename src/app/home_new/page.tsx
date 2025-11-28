@@ -131,7 +131,7 @@ export default function Home() {
       </div>
 
       {/* Section — Dark features block (Figma) */}
-      <section className="mt-0 md:mt-0 bg-[#0d0d0f]">
+      <section className="mt-0 md:mt-0 bg-[#18181F]">
         <div className="max-w-7xl mx-auto px-4 py-14 md:py-20">
           <div className="text-center">
             <h2 className="text-3xl md:text-5xl font-bold text-white leading-tight">
@@ -171,7 +171,7 @@ export default function Home() {
                 desc: "Accept payments from any blockchain, no bridges, no swaps, nothing to explain.",
               },
             ].map((f) => (
-              <div key={f.title} className="rounded-[20px] bg-[#151518] border border-white/5 p-6 text-white">
+              <div key={f.title} className="rounded-[20px] bg-[#1D1D25] border border-white/5 p-6 text-white">
                 <div className="text-lg font-bold">{f.title}</div>
                 <div className="mt-2 text-sm text-white/70">{f.desc}</div>
               </div>
