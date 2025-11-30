@@ -5,15 +5,31 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useHistoryModal } from "@/contexts/HistoryModalContext";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
 
 export function Header() {
   const { authenticated, login, email, logout } = useAuth();
   const { openHistory } = useHistoryModal();
   const pathname = usePathname();
   const showHistory = pathname?.startsWith('/swap') === true;
+  const headerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const updateHeaderVar = () => {
+      const h = headerRef.current?.offsetHeight || 0;
+      if (typeof document !== "undefined") {
+        document.documentElement.style.setProperty('--header-h', `${h}px`);
+      }
+    };
+    updateHeaderVar();
+    window.addEventListener('resize', updateHeaderVar);
+    return () => {
+      window.removeEventListener('resize', updateHeaderVar);
+    };
+  }, []);
 
   return (
-    <div className="fixed inset-x-0 top-0 z-50 bg-transparent">
+    <div ref={headerRef} className="fixed inset-x-0 top-0 z-50 bg-transparent">
       <div className="max-w-7xl mx-auto px-4 py-6 md:py-8">
         <div className="flex justify-between items-center animate-fade-in">
           <div className="relative inline-block">

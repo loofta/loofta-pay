@@ -253,7 +253,7 @@ export async function getAccurateQuote(params: {
           refundTo: refundDry,
           refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
           recipient: recipientDry,
-          recipientType: sameChain ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN : QuoteRequest.recipientType.DESTINATION_CHAIN,
+          recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
           deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
           quoteWaitingTimeMs: 3000,
         } as QuoteRequest);
@@ -275,7 +275,7 @@ export async function getAccurateQuote(params: {
       refundTo: getRefundToForChain(fromToken.chain),
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipient,
-      recipientType: sameChain ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN : QuoteRequest.recipientType.DESTINATION_CHAIN,
+      recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
       deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
       quoteWaitingTimeMs: 3000,
         } as QuoteRequest);
@@ -379,7 +379,7 @@ export async function getDepositInfo(params: {
       refundTo: getRefundToForChain(fromToken.chain),
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipient,
-      recipientType: sameChain ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN : QuoteRequest.recipientType.DESTINATION_CHAIN,
+      recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
       deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
       quoteWaitingTimeMs: 3000,
     } as QuoteRequest);

@@ -22,6 +22,9 @@ export async function GET(req: Request) {
         (raw?.updatedAt as string) ||
         (sd?.updatedAt as string) ||
         new Date().toISOString(),
+      // expose assets from quote for client-side display of symbols/chains
+      originAsset: raw?.quoteResponse?.quoteRequest?.originAsset || null,
+      destinationAsset: raw?.quoteResponse?.quoteRequest?.destinationAsset || null,
       swapDetails: {
         amountIn: sd?.amountIn ?? null,
         amountInFormatted: sd?.amountInFormatted ?? null,

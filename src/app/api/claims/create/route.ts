@@ -13,6 +13,7 @@ export async function POST(request: Request) {
     const { data, error } = await supabase
       .from("claims")
       .insert({
+        // Store USD amount as string
         amount: String(amount),
         to_symbol: String(toSel.symbol),
         to_chain: String(toSel.chain),

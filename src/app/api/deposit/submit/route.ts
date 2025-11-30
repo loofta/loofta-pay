@@ -31,8 +31,37 @@ export async function POST(request: Request) {
       body: JSON.stringify({ txHash, depositAddress, nearSenderAccount, memo }),
     });
 
-    console.log('res deposit', res);
     const data = await res.json().catch(() => ({}));
+    try {
+      const qr = (data as any)?.quoteResponse || {};
+      const q = qr?.quote || {};
+      const req = qr?.quoteRequest || {};
+      console.log("[deposit/submit] status", res.status, "ok", res.ok);
+      console.log("[deposit/submit] quoteRequest", {
+        swapType: req?.swapType,
+        depositType: req?.depositType,
+        recipientType: req?.recipientType,
+        originAsset: req?.originAsset,
+        destinationAsset: req?.destinationAsset,
+        amount: req?.amount,
+        refundType: req?.refundType,
+        deadline: req?.deadline,
+      });
+      console.log("[deposit/submit] quote", {
+        amountIn: q?.amountIn,
+        amountInFormatted: q?.amountInFormatted,
+        minAmountIn: q?.minAmountIn,
+        amountOut: q?.amountOut,
+        amountOutFormatted: q?.amountOutFormatted,
+        minAmountOut: q?.minAmountOut,
+        depositAddress: q?.depositAddress || q?.address,
+        deadline: q?.deadline,
+        timeEstimate: q?.timeEstimate,
+      });
+      if ((data as any)?.error) {
+        console.warn("[deposit/submit] error", (data as any)?.error);
+      }
+    } catch {}
     if (!res.ok) {
       return NextResponse.json({ error: data?.error || "Submit failed" }, { status: res.status });
     }

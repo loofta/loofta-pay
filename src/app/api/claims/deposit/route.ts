@@ -41,22 +41,59 @@ export async function POST(request: Request) {
     };
     const atomicIn = toAtomic(String(amount || "0"), Number(fromToken.decimals));
 
+    // Destination asset id from claim row (matches 1Click nep141:<chain>.omft.near style in your schema)
+    const destinationAsset = claim.to_symbol && claim.to_chain ? `nep141:${claim.to_chain}.omft.near` : "";
+    // Determine same-chain and choose recipient type accordingly
+    const sameChain = String(fromToken?.chain || "").toLowerCase() === String(claim.to_chain || "").toLowerCase();
+    // For EXACT_OUTPUT we need destination token decimals to convert human -> atomic
+    let destDecimals = 6;
+    let destPrice: number | undefined = undefined;
+    try {
+      const tokens: any = await (OneClickService as any).getTokens();
+      const arr: any[] = Array.isArray(tokens) ? tokens : (tokens?.tokens || []);
+      const found = arr.find((t: any) => String(t?.assetId || t?.tokenId || "").toLowerCase() === String(destinationAsset).toLowerCase());
+      if (found && typeof found.decimals === "number") destDecimals = found.decimals;
+      if (found && typeof found.price === "number") destPrice = found.price;
+    } catch {}
+    // amount on claim is stored in USD, convert to destination token using price
+    const amountUsd = Number(claim.amount || 0);
+    const destHumanOut = (Number.isFinite(amountUsd) && typeof destPrice === "number" && destPrice > 0)
+      ? (amountUsd / destPrice)
+      : 0;
+    // Round up to 6 decimals to avoid under-paying due to rounding
+    const destHumanOutRoundedUp = (() => {
+      const factor = Math.pow(10, 6);
+      return Math.ceil(destHumanOut * factor) / factor;
+    })();
+    const amountOutAtomic = toAtomic(String(destHumanOutRoundedUp || "0"), destDecimals);
     const req: QuoteRequest = {
       dry: false,
-      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      swapType: QuoteRequest.swapType.EXACT_OUTPUT,
       slippageTolerance: 100,
       originAsset: fromToken.tokenId,
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
-      destinationAsset: claim.to_symbol && claim.to_chain ? (claim.to_symbol && claim.to_chain ? `nep141:${claim.to_chain}.omft.near` : "") : "",
-      amount: atomicIn,
+      destinationAsset,
+      // EXACT_OUTPUT expects desired out amount in destination-asset atomic units
+      amount: amountOutAtomic,
       refundTo: fromToken.chain === "near" ? "system.near" : "0xd28d8e18537a6De75900D2eafE8E718aA4A2Df11",
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: claim.recipient_address,
-      recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
+      recipientType: sameChain ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN : QuoteRequest.recipientType.DESTINATION_CHAIN,
       deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
       quoteWaitingTimeMs: 3000,
     } as any;
 
+    // Debug log (visible in server logs)
+    try {
+      console.log("[claims/deposit] quoteRequest", {
+        swapType: req.swapType,
+        depositType: req.depositType,
+        recipientType: req.recipientType,
+        originAsset: req.originAsset,
+        destinationAsset: req.destinationAsset,
+        amount: req.amount,
+      });
+    } catch {}
     const raw = await OneClickService.getQuote(req);
     const q = (raw as any)?.quote || raw || {};
 

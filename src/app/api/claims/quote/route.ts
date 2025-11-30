@@ -37,7 +37,11 @@ export async function POST(request: Request) {
     // Attempt EXACT_OUTPUT dry quote to find amountIn for payer token
     const toAsset = destToken.tokenId;
 
-    const desiredOutHuman = String(claim.amount || "0");
+    // amount is stored in USD; convert USD -> destination token using provided price
+    const amountUsd = Number(claim.amount || 0);
+    const desiredOutHuman = (Number.isFinite(amountUsd) && Number(destTokenPriceUSD) > 0)
+      ? String(amountUsd / Number(destTokenPriceUSD))
+      : "0";
     const toAtomic = (val: string, decimals: number): string => {
       const [i, f = ""] = String(val).split(".");
       const cleanF = f.replace(/\D/g, "").slice(0, Math.max(0, decimals));
@@ -78,7 +82,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ quote: q, amountInFormatted }, { status: 200 });
     } catch {
       // USD fallback
-      const destUsd = Number(claim.amount) * Number(destTokenPriceUSD || 0);
+      const destUsd = Number(claim.amount);
       const amountInEst = Number(fromTokenPriceUSD) ? (destUsd / Number(fromTokenPriceUSD)) : null;
       return NextResponse.json({
         quote: null,

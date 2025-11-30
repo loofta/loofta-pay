@@ -83,7 +83,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${inter.variable} font-grotesk`}>
-      <body className="antialiased">
+      <body className="min-h-[calc(100vh-var(--header-h,0px))] pt-[var(--header-h,0px)] antialiased">
         {/* Organization JSON-LD */}
         <script
           type="application/ld+json"

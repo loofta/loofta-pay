@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type SVGProps } from "react";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import type { TokenSelection } from "@/app/utils/types";
@@ -53,6 +53,19 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
   });
   const claim = claimQuery.data as any;
   const loadingClaim = claimQuery.isLoading;
+  // Cache latest intent for initial status/deposit hydration
+  const latestIntentQuery = useQuery({
+    queryKey: ["latest-intent", id],
+    queryFn: async () => {
+      const r = await fetch(`/api/claims/${id}/latest-intent`, { cache: "no-store" });
+      if (!r.ok) return null;
+      return await r.json();
+    },
+    enabled: !!id,
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
   const [deposit, setDeposit] = useState<any>(null);
   const [preparing, setPreparing] = useState(false);
@@ -66,11 +79,25 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
   const selectedFrom = findTokenBySelection(tokens, fromSel || null);
   const destToken = useMemo(() => tokens.find(t => t.symbol === claim?.to_symbol && t.chain === claim?.to_chain), [tokens, claim?.to_symbol, claim?.to_chain]);
   const destUSD = useMemo(() => {
-    const p = typeof destToken?.price === "number" ? destToken.price : null;
     const amt = Number(claim?.amount || 0);
-    if (!p || !Number.isFinite(amt)) return null;
-    return amt * p;
-  }, [destToken?.price, claim?.amount]);
+    return Number.isFinite(amt) ? amt : null;
+  }, [claim?.amount]);
+  const destTokenAmount = useMemo(() => {
+    const usd = Number(claim?.amount || 0);
+    const p = typeof destToken?.price === "number" ? destToken.price : null;
+    if (!Number.isFinite(usd) || !p || p <= 0) return null;
+    return usd / p;
+  }, [claim?.amount, destToken?.price]);
+  // Derive payer token from status originAsset if available
+  const paidToken = useMemo(() => {
+    const assetId = statusData?.originAsset as string | undefined;
+    if (!assetId || !Array.isArray(tokens) || !tokens.length) return null;
+    const t = tokens.find(tk => {
+      const id = tk.tokenId || tk.address;
+      return String(id || "").toLowerCase() === String(assetId || "").toLowerCase();
+    });
+    return t || null;
+  }, [statusData?.originAsset, tokens]);
 
   // Hydrate UI state from persisted zustand on mount
   useEffect(() => {
@@ -80,6 +107,29 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
     if (entry?.status) setStatus(entry.status);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Hydrate from latest-intent cache
+  useEffect(() => {
+    const d: any = latestIntentQuery.data;
+    if (!d) return;
+    if (d?.depositAddress && !deposit) {
+      const dep = {
+        depositAddress: d.depositAddress,
+        memo: d.memo ?? null,
+        deadline: d.deadline,
+        quoteId: d.quoteId,
+        minDepositFormatted: d.minDepositFormatted,
+      };
+      setDeposit(dep);
+      useClaimPayStore.getState().setDeposit(id, dep as any);
+    }
+    if (d?.status && !status) {
+      const s = String(d.status);
+      setStatus(s);
+      useClaimPayStore.getState().setStatus(id, s);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestIntentQuery.data]);
 
   useEffect(() => {
     (async () => {
@@ -110,6 +160,26 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
     })();
   }, [id, claim, selectedFrom, destToken?.tokenId, destToken?.price, destToken?.decimals]);
 
+  // Try to hydrate deposit from backend so anyone opening the link sees status
+  useEffect(() => {
+    (async () => {
+      if (deposit || !id) return;
+      try {
+        const r = await fetch(`/api/claims/${id}/latest-intent`, { cache: "no-store" });
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d?.depositAddress) {
+          setDeposit({ depositAddress: d.depositAddress, memo: d.memo ?? null, deadline: d.deadline, quoteId: d.quoteId, minDepositFormatted: d.minDepositFormatted });
+          useClaimPayStore.getState().setDeposit(id, { depositAddress: d.depositAddress, memo: d.memo ?? null, deadline: d.deadline, quoteId: d.quoteId, minDepositFormatted: d.minDepositFormatted });
+        }
+        if (d?.status) {
+          const s = String(d.status);
+          setStatus(s);
+          useClaimPayStore.getState().setStatus(id, s);
+        }
+      } catch { }
+    })();
+  }, [id, deposit]);
   async function onPrepare() {
     if (!claim || !selectedFrom) return;
     setPreparing(true);
@@ -136,33 +206,36 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
     }
   }
 
+  // Cache and refresh status via TanStack Query
+  const statusQuery = useQuery({
+    queryKey: ["status", deposit?.depositAddress],
+    enabled: !!deposit?.depositAddress,
+    queryFn: async () => {
+      const addr = deposit?.depositAddress as string;
+      const r = await fetch(`/api/status?depositAddress=${encodeURIComponent(addr)}`, { cache: "no-store" });
+      if (!r.ok) throw new Error("Failed to load status");
+      return await r.json();
+    },
+    refetchOnWindowFocus: false,
+    refetchInterval: (query) => {
+      const s = query?.state?.data?.status;
+      const terminal = s && ["SUCCESS", "FAILED", "REFUNDED", "EXPIRED"].includes(String(s).toUpperCase());
+      return terminal ? false : 15000;
+    },
+    staleTime: 10_000,
+    gcTime: 5 * 60_000,
+  });
+
   useEffect(() => {
-    let timer: any = null;
-    async function tick(addr: string) {
-      try {
-        const r = await fetch(`/api/status?depositAddress=${encodeURIComponent(addr)}`, { cache: "no-store" });
-        if (!r.ok) return;
-        const data = await r.json();
-        const s = data?.status || data?.executionStatus || null;
-        if (s) {
-          setStatus(s);
-          useClaimPayStore.getState().setStatus(id, s);
-          setStatusData(data || null);
-        }
-        if (s && ["SUCCESS", "REFUNDED", "EXPIRED", "FAILED"].includes(String(s).toUpperCase())) {
-          if (timer) clearInterval(timer);
-        }
-      } catch { }
+    if (!statusQuery.data) return;
+    const s = statusQuery.data?.status || statusQuery.data?.executionStatus || null;
+    if (s) {
+      setStatus(s);
+      useClaimPayStore.getState().setStatus(id, s);
+      setStatusData(statusQuery.data || null);
     }
-    if (deposit?.depositAddress) {
-      // initial tick and then poll every 6s
-      tick(deposit.depositAddress);
-      timer = setInterval(() => tick(deposit.depositAddress), 15000);
-    }
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [deposit?.depositAddress]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusQuery.data]);
 
   function extractTxHash(raw: string): string | null {
     const v = String(raw || "").trim();
@@ -229,282 +302,388 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#18181F] text-white pt-28">
-      <div className="max-w-7xl mx-auto px-4 pb-12">
-        <div className="flex flex-col md:flex-row items-center justify-center gap-32 min-h-[calc(100vh-7rem)]">
-          {/* Left column - text/summary */}
-          <div className="w-full md:w-1/2">
-            <h1 className="text-5xl md:text-6xl font-medium font-display text-white leading-tight mb-8">
-              Complete your <span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>payment</span>
-            </h1>
-            <p className="text-gray-300 text-xl mb-8">Loofta ensures your funds are securely deposited and your payment is completed. Send exactly the amount shown to the deposit address. </p>
-            <ul className="mt-6 space-y-4">
-              <li className="flex items-start gap-3">
-                <span className="mt-1 inline-block h-2.5 w-2.5 rounded-full bg-emerald-400" />
-                <span className="text-gray-300 text-xl">
-                  Amount due:{" "}
-                  {(loadingClaim || !claim) ? (
-                    <span className="align-middle inline-block">
-                      <Skeleton className="h-5 w-28 rounded-md" />
-                    </span>
-                  ) : (
-                    <span className="text-white font-semibold">
-                      {destUSD != null ? `$${destUSD.toFixed(2)}` : `${claim.amount} ${claim.to_symbol}`}
-                    </span>
-                  )}
-                </span>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="mt-1 inline-block h-2.5 w-2.5 rounded-full bg-amber-400" />
-                <span className="text-gray-300 text-xl">Choose which token you want to pay with</span>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="mt-1 inline-block h-2.5 w-2.5 rounded-full bg-sky-400" />
-                <span className="text-gray-300 text-xl">Send exactly the amount shown to the deposit address</span>
-              </li>
-            </ul>
-          </div>
-
-          {/* Right column - card */}
-          <div className="w-full md:w-1/2">
-            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm text-gray-900">
-              {loadingClaim ? (
-                <div className="space-y-4">
-                  <Skeleton className="h-8 w-1/2" />
-                  <Skeleton className="h-12 w-full" />
-                </div>
-              ) : claim ? (
-                <>
-                  <div className="mb-3 flex items-start justify-between">
-                    <div className="text-sm font-medium text-gray-700">Payment request</div>
-                    <StatusBadge status={status || "PENDING_DEPOSIT"} />
-                  </div>
-                  <div className="text-sm text-gray-700">Amount requested</div>
-                  <div className="mt-1 flex items-baseline justify-between">
-                    <div className="text-3xl md:text-4xl font-semibold text-gray-900 leading-none">
-                      {destUSD != null ? `$${destUSD.toFixed(2)}` : `${claim.amount} ${claim.to_symbol}`}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      <span className="inline-flex items-center gap-1">
-                        <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
-                        {claim.amount} {claim.to_symbol}
+    <>
+      <div className="fixed inset-0 -z-10 bg-[#18181F]" />
+      <div className="min-h-screen text-white">
+        <div className="max-w-7xl mx-auto px-4 pb-12">
+          <div className="flex flex-col md:flex-row items-center justify-center gap-32 min-h-[calc(100vh-7rem)]">
+            {/* Left column - text/summary */}
+            <div className="w-full md:w-1/2">
+              <h1 className="text-5xl md:text-6xl font-medium font-display text-white leading-tight mb-8">
+                Complete your <span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>payment</span>
+              </h1>
+              <p className="text-gray-300 text-xl mb-8">Loofta ensures your funds are securely deposited and your payment is completed. Send exactly the amount shown to the deposit address. </p>
+              <ul className="mt-6 space-y-4">
+                <li className="flex items-start gap-3">
+                  <MoneyIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                  <span className="text-gray-300 text-xl">
+                    Amount due:{" "}
+                    {(loadingClaim || !claim) ? (
+                      <span className="align-middle inline-block">
+                        <Skeleton className="h-5 w-28 rounded-md" />
                       </span>
-                    </div>
-                  </div>
+                    ) : (
+                      <span className="text-white font-semibold">
+                        {destUSD != null ? `$${destUSD.toFixed(2)}` : `${claim.amount} ${claim.to_symbol}`}
+                      </span>
+                    )}
+                  </span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <ChainIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                  <span className="text-gray-300 text-xl">Choose which token you want to pay with</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <ShareIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                  <span className="text-gray-300 text-xl">Send exactly the amount shown to the deposit address</span>
+                </li>
+              </ul>
+            </div>
 
-                  {!deposit ? (
-                    <>
-                      <div className="mt-6">
-                        <div className="text-sm font-medium text-gray-700 mb-2">Pay with</div>
-                        <TokenCombobox
-                          tokens={tokens}
-                          value={fromSel}
-                          onChange={setFromSel}
-                          placeholder="Select token to pay with"
-                          onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                          className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none focus:border-orange-400 transition-colors"
-                        />
-                        {selectedFrom ? (
-                          <div className="mt-2 text-sm text-gray-700">
-                            {quote?.amountInFormatted
-                              ? `Estimated to send: ${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                              : quote?.est
-                                ? `Estimated to send: ${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
-                                : quote?.usd
-                                  ? `Estimated cost ≈ $${quote.usd.toFixed(2)}`
-                                  : ""}
+            {/* Right column - card */}
+            <div className="w-full md:w-1/2">
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm text-gray-900">
+                {loadingClaim ? (
+                  <div className="space-y-4">
+                    <Skeleton className="h-8 w-1/2" />
+                    <Skeleton className="h-12 w-full" />
+                  </div>
+                ) : claim ? (
+                  <>
+                    {String(status || "").toUpperCase() === "SUCCESS" ? (
+                      <>
+                        <div className="flex justify-center">
+                          <div className="flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-400/30 shadow">
+                            <svg className="h-12 w-12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                              <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
                           </div>
-                        ) : null}
-                        <div className="mt-4">
-                          <GradientActionButton
-                            onClick={onPrepare}
-                            disabled={!selectedFrom || preparing}
-                            loading={preparing}
-                            loadingText="Preparing…"
-                          >
-                            Get deposit address
-                          </GradientActionButton>
                         </div>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      {(() => {
-                        const s = String(status || "").toUpperCase();
-                        const isTerminal = s === "FAILED" || s === "REFUNDED";
-                        if (isTerminal) {
+                        <div className="mt-4 text-center">
+                          <h2 className="text-2xl md:text-3xl text-gray-900 font-semibold">Payment completed</h2>
+                          <p className="mt-1 text-lg md:text-xl text-gray-700 font-medium">Funds were paid successfully.</p>
+                        </div>
+                        <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                          <div className="text-base font-medium text-gray-800 mb-2">Payment summary</div>
+                          <div className="text-base text-gray-700 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-600">Amount requested</span>
+                              <span className="text-lg font-semibold text-gray-900">
+
+                                <span className="inline-flex items-center gap-1">
+                                  <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={14} />
+                                  {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol}
+                                </span>
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-600">Paid with</span>
+                              <span className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
+                                {(() => {
+                                  const paid = statusData?.swapDetails?.depositedAmountFormatted ?? statusData?.swapDetails?.amountInFormatted ?? null;
+                                  const sym = paidToken?.symbol || selectedFrom?.symbol;
+                                  const chain = paidToken?.chain || selectedFrom?.chain;
+                                  return (
+                                    <>
+                                      <TokenIcon token={(paidToken as any) ?? (selectedFrom as any)} chain={(paidToken?.chain as any) ?? (selectedFrom?.chain as any)} size={14} />
+                                      <span>{paid != null ? roundUpDecimals(String(paid), 6) : "—"} {sym || ""}{chain ? ` on ${String(chain)}` : ""}</span>
+                                    </>
+                                  );
+                                })()}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="mb-3 flex items-start justify-between">
+                          <div className="text-sm font-medium text-gray-700">Payment request</div>
+                          {deposit?.depositAddress ? <StatusBadge status={status || "PENDING_DEPOSIT"} /> : null}
+                        </div>
+                        <div className="text-sm text-gray-700">Amount requested</div>
+                        <div className="mt-1 flex items-baseline justify-between">
+                          <div className="text-3xl md:text-4xl font-semibold text-gray-900 leading-none">
+                            {destUSD != null ? `$${destUSD.toFixed(2)}` : `—`}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            <span className="inline-flex items-center gap-1">
+                              <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
+                              {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol}
+                            </span>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {String(status || "").toUpperCase() !== "SUCCESS" && (!deposit ? (
+                      <>
+                        <div className="mt-6">
+                          <div className="text-sm font-medium text-gray-700 mb-2">Pay with</div>
+                          <TokenCombobox
+                            tokens={tokens}
+                            value={fromSel}
+                            onChange={setFromSel}
+                            placeholder="Select token to pay with"
+                            onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                            className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none focus:border-orange-400 transition-colors"
+                          />
+                          {selectedFrom ? (
+                            <div className="mt-2 text-sm text-gray-700">
+                              {quote?.amountInFormatted
+                                ? `Estimated to send: ${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                : quote?.est
+                                  ? `Estimated to send: ${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
+                                  : quote?.usd
+                                    ? `Estimated cost ≈ $${quote.usd.toFixed(2)}`
+                                    : ""}
+                            </div>
+                          ) : null}
+                          <div className="mt-4">
+                            <GradientActionButton
+                              onClick={onPrepare}
+                              disabled={!selectedFrom || preparing}
+                              loading={preparing}
+                              loadingText="Preparing…"
+                            >
+                              Get deposit address
+                            </GradientActionButton>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {(() => {
+                          const s = String(status || "").toUpperCase();
+                          const isTerminal = s === "FAILED" || s === "REFUNDED";
+                          if (s === "PROCESSING") {
+                            return (
+                              <>
+                                <div className="mt-6 flex flex-col items-center justify-center py-6">
+                                  <div className="relative h-10 w-10">
+                                    <span className="absolute inset-0 rounded-full border-2 border-gray-300" />
+                                    <span className="absolute inset-1 rounded-full border-t-2 border-blue-500 animate-spin" />
+                                  </div>
+                                  <div className="mt-4 text-base text-gray-700">Payment is processing…</div>
+                                </div>
+                                <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                                  <div className="text-lg font-semibold text-gray-900 mb-2">Payment summary</div>
+                                  <div className="text-base text-gray-700 space-y-1">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-gray-600">Amount requested</span>
+                                      <span className="text-lg font-semibold text-gray-900">
+                                        {destUSD != null ? `$${destUSD.toFixed(2)}` : "—"}
+                                        <span className="mx-1 text-gray-400">•</span>
+                                        <span className="inline-flex items-center gap-1">
+                                          <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={24} />
+                                          {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol}
+                                          <span className="mx-1 text-gray-400">•</span>
+                                          {(() => {
+                                            const chain = destToken?.chain;
+                                            const src = getChainIcon(chain);
+                                            return src ? <Image src={src} alt="chain" width={24} height={24} sizes="24px" unoptimized={/^https?:\/\//.test(src)} /> : null;
+                                          })()}
+                                          {String(destToken?.chain || "")}
+                                        </span>
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-gray-600">Paid with</span>
+                                      <span className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
+                                        {(() => {
+                                          const paid = statusData?.swapDetails?.depositedAmountFormatted ?? null;
+                                          const sym = paidToken?.symbol || selectedFrom?.symbol;
+                                          return (
+                                            <>
+                                              <TokenIcon token={(paidToken as any) ?? (selectedFrom as any)} chain={(paidToken?.chain as any) ?? (selectedFrom?.chain as any)} size={24} />
+                                              <span>{paid != null ? roundUpDecimals(String(paid), 6) : "—"} {sym || ""}</span>
+                                            </>
+                                          );
+                                        })()}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </>
+                            );
+                          }
+                          if (s === "SUCCESS") return null;
+                          if (isTerminal) {
+                            return (
+                              <>
+                                <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-3">
+                                  <div className="text-sm font-semibold text-red-700">
+                                    {s === "FAILED" ? "Deposit failed." : "Deposit was refunded."}
+                                  </div>
+                                  <div className="text-xs text-red-700/80 mt-1">
+                                    Please try again with a different token or network.
+                                  </div>
+                                </div>
+                                <div className="mt-2 flex justify-end">
+                                  <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                      setDeposit(null);
+                                      setStatus(null);
+                                      useClaimPayStore.getState().setDeposit(id, null);
+                                      useClaimPayStore.getState().setStatus(id, null);
+                                    }}
+                                    className="ml-auto"
+                                  >
+                                    Retry with another token/chain
+                                  </Button>
+                                </div>
+                              </>
+                            );
+                          }
                           return (
-                            <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-3">
-                              <div className="text-sm font-semibold text-red-700">
-                                {s === "FAILED" ? "Deposit failed." : "Deposit was refunded."}
+                            <div className="mt-6">
+                              <div className="text-sm text-gray-700">Send exactly</div>
+                              <div className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
+                                <TokenIcon
+                                  token={(selectedFrom as any) ?? (destToken as any) ?? undefined}
+                                  chain={(selectedFrom?.chain as any) ?? (destToken?.chain as any)}
+                                  size={18}
+                                />
+                                <span>
+                                  {quote?.amountInFormatted && selectedFrom
+                                    ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                    : `${roundUpDecimals(claim.amount, 6)} ${claim.to_symbol}`}
+                                </span>
+                                <span className="mx-1 text-gray-400">•</span>
+                                <span className="inline-flex items-center gap-1 uppercase text-sm font-medium text-gray-700">
+                                  {(() => {
+                                    const chain = (selectedFrom?.chain || destToken?.chain) as string | undefined;
+                                    const src = getChainIcon(chain);
+                                    return src ? (
+                                      <Image src={src} alt="chain" width={14} height={14} sizes="14px" unoptimized={/^https?:\/\//.test(src)} />
+                                    ) : null;
+                                  })()}
+                                  {String((selectedFrom?.chain || destToken?.chain) || "")}
+                                </span>
                               </div>
-                              <div className="text-xs text-red-700/80 mt-1">
-                                Please try again with a different token or network.
-                              </div>
-                              <div className="mt-2 flex justify-end">
-                                <Button
-                                  variant="outline"
-                                  onClick={() => {
-                                    setDeposit(null);
-                                    setStatus(null);
-                                    useClaimPayStore.getState().setDeposit(id, null);
-                                    useClaimPayStore.getState().setStatus(id, null);
+                              <div className="mt-3 text-sm text-gray-700">Deposit address</div>
+                              <div className="mt-1 relative">
+                                <div className="rounded-lg border border-gray-200 bg-gray-50 pl-3 pr-16 py-2 font-mono text-base break-all text-gray-900">
+                                  {(() => {
+                                    const addr = deposit.depositAddress || "";
+                                    return addr ? `${addr.slice(0, 4)}...${addr.slice(-4)}` : "—";
+                                  })()}
+                                </div>
+                                <button
+                                  type="button"
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                                  onClick={async () => {
+                                    try {
+                                      await navigator.clipboard.writeText(deposit.depositAddress || "");
+                                      toast({ title: "Copied", description: "Deposit address copied to clipboard." });
+                                    } catch {
+                                      toast({ variant: "destructive", title: "Copy failed", description: "Could not copy address. Please try again." });
+                                    }
                                   }}
-                                  className="ml-auto"
                                 >
-                                  Retry with another token/chain
-                                </Button>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" className="text-gray-600">
+                                    <path fill="currentColor" d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
+                                  </svg>
+                                  Copy
+                                </button>
+                              </div>
+                              <div className="mt-3 rounded-md border border-orange-200 bg-orange-50 text-orange-800 text-xs px-3 py-2">
+                                Only deposit {selectedFrom?.symbol} from the {String(selectedFrom?.chain || "").toUpperCase()} network. Using another token or network may result in loss of funds.
+                              </div>
+                              {String(status || "").toUpperCase() === "INCOMPLETE_DEPOSIT" ? (
+                                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 text-amber-900 text-xs px-3 py-2">
+                                  <div className="text-sm font-semibold">Partial deposit detected</div>
+                                  <div className="mt-1">
+                                    {(() => {
+                                      const depStr = String(statusData?.swapDetails?.depositedAmountFormatted ?? "");
+                                      const minStr = String(deposit?.minDepositFormatted ?? "");
+                                      const dep = parseFloat(depStr);
+                                      const min = parseFloat(minStr);
+                                      const sym = selectedFrom?.symbol || claim?.to_symbol || "";
+                                      if (Number.isFinite(min) && Number.isFinite(dep)) {
+                                        const remaining = Math.max(min - dep, 0);
+                                        const topUp = roundUpDecimals(remaining, 6);
+                                        return (
+                                          <>
+                                            Deposited: {roundUpDecimals(dep, 6)} {sym} • Minimum required: {roundUpDecimals(min, 6)} {sym} •
+                                            <span className="font-semibold"> Top‑up needed: {topUp} {sym}</span>
+                                          </>
+                                        );
+                                      }
+                                      return <>Top up the difference to reach the minimum required amount.</>;
+                                    })()}
+                                  </div>
+                                  <div className="mt-1">Send the additional amount to the same deposit address before the deadline.</div>
+                                </div>
+                              ) : null}
+                              <div className="mt-3">
+                                {!speedUpOpen ? (
+                                  <button
+                                    type="button"
+                                    className="text-sm text-orange-600 hover:text-orange-500 underline"
+                                    onClick={() => setSpeedUpOpen(true)}
+                                  >
+                                    Already deposited? Speed up processing
+                                  </button>
+                                ) : (
+                                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                    <div className="text-sm font-medium text-gray-800">Submit your transaction hash</div>
+                                    <div className="text-xs text-gray-600">Paste a hash or an explorer link — we’ll extract the hash automatically.</div>
+                                    <div className="mt-2 flex items-center gap-2">
+                                      <Input
+                                        value={txInput}
+                                        onChange={(e) => setTxInput(e.target.value)}
+                                        placeholder="0x... or explorer link"
+                                        className="flex-1"
+                                      />
+                                      <Button
+                                        onClick={onSubmitTxHash}
+                                        disabled={submittingTx || !txInput}
+                                        className="rounded-xl"
+                                        style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+                                      >
+                                        {submittingTx ? "Submitting…" : "Submit"}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                              {deposit.memo ? (
+                                <>
+                                  <div className="mt-3 text-sm text-gray-700">Memo</div>
+                                  <div className="mt-1 font-mono text-sm break-all text-gray-900">{deposit.memo}</div>
+                                </>
+                              ) : null}
+                              {deposit.deadline ? (
+                                <div className="mt-3 text-sm text-gray-700">Deadline: <span className="font-medium">{new Date(deposit.deadline).toLocaleString()}</span></div>
+                              ) : null}
+                              <div className="mt-4 flex gap-2">
+                                <Button variant="outline" onClick={() => {
+                                  setDeposit(null);
+                                  setStatus(null);
+                                  useClaimPayStore.getState().setDeposit(id, null);
+                                  useClaimPayStore.getState().setStatus(id, null);
+                                }} className="ml-auto">Cancel & choose another token</Button>
+                                {selectedFrom?.chain && ["eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism", "bsc", "polygon", "avax", "gnosis", "fantom"].includes(selectedFrom.chain.toLowerCase()) ? (
+                                  <Button disabled variant="outline">Pay now (coming soon)</Button>
+                                ) : null}
                               </div>
                             </div>
                           );
-                        }
-                        return (
-                          <div className="mt-6">
-                            <div className="text-sm text-gray-700">Send exactly</div>
-                            <div className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
-                              <TokenIcon
-                                token={(selectedFrom as any) ?? (destToken as any) ?? undefined}
-                                chain={(selectedFrom?.chain as any) ?? (destToken?.chain as any)}
-                                size={18}
-                              />
-                              <span>
-                                {quote?.amountInFormatted && selectedFrom
-                                  ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                  : `${roundUpDecimals(claim.amount, 6)} ${claim.to_symbol}`}
-                              </span>
-                              <span className="mx-1 text-gray-400">•</span>
-                              <span className="inline-flex items-center gap-1 uppercase text-sm font-medium text-gray-700">
-                                {(() => {
-                                  const chain = (selectedFrom?.chain || destToken?.chain) as string | undefined;
-                                  const src = getChainIcon(chain);
-                                  return src ? (
-                                    <Image src={src} alt="chain" width={14} height={14} sizes="14px" unoptimized={/^https?:\/\//.test(src)} />
-                                  ) : null;
-                                })()}
-                                {String((selectedFrom?.chain || destToken?.chain) || "")}
-                              </span>
-                            </div>
-                            <div className="mt-3 text-sm text-gray-700">Deposit address</div>
-                            <div className="mt-1 relative">
-                              <div className="rounded-lg border border-gray-200 bg-gray-50 pl-3 pr-16 py-2 font-mono text-base break-all text-gray-900">
-                                {(() => {
-                                  const addr = deposit.depositAddress || "";
-                                  return addr ? `${addr.slice(0, 4)}...${addr.slice(-4)}` : "—";
-                                })()}
-                              </div>
-                              <button
-                                type="button"
-                                className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
-                                onClick={async () => {
-                                  try {
-                                    await navigator.clipboard.writeText(deposit.depositAddress || "");
-                                    toast({ title: "Copied", description: "Deposit address copied to clipboard." });
-                                  } catch {
-                                    toast({ variant: "destructive", title: "Copy failed", description: "Could not copy address. Please try again." });
-                                  }
-                                }}
-                              >
-                                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" className="text-gray-600">
-                                  <path fill="currentColor" d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
-                                </svg>
-                                Copy
-                              </button>
-                            </div>
-                            <div className="mt-3 rounded-md border border-orange-200 bg-orange-50 text-orange-800 text-xs px-3 py-2">
-                              Only deposit {selectedFrom?.symbol} from the {String(selectedFrom?.chain || "").toUpperCase()} network. Using another token or network may result in loss of funds.
-                            </div>
-                            {String(status || "").toUpperCase() === "INCOMPLETE_DEPOSIT" ? (
-                              <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 text-amber-900 text-xs px-3 py-2">
-                                <div className="text-sm font-semibold">Partial deposit detected</div>
-                                <div className="mt-1">
-                                  {(() => {
-                                    const depStr = String(statusData?.swapDetails?.depositedAmountFormatted ?? "");
-                                    const minStr = String(deposit?.minDepositFormatted ?? "");
-                                    const dep = parseFloat(depStr);
-                                    const min = parseFloat(minStr);
-                                    const sym = selectedFrom?.symbol || claim?.to_symbol || "";
-                                    if (Number.isFinite(min) && Number.isFinite(dep)) {
-                                      const remaining = Math.max(min - dep, 0);
-                                      const topUp = roundUpDecimals(remaining, 6);
-                                      return (
-                                        <>
-                                          Deposited: {roundUpDecimals(dep, 6)} {sym} • Minimum required: {roundUpDecimals(min, 6)} {sym} •
-                                          <span className="font-semibold"> Top‑up needed: {topUp} {sym}</span>
-                                        </>
-                                      );
-                                    }
-                                    return <>Top up the difference to reach the minimum required amount.</>;
-                                  })()}
-                                </div>
-                                <div className="mt-1">Send the additional amount to the same deposit address before the deadline.</div>
-                              </div>
-                            ) : null}
-                            <div className="mt-3">
-                              {!speedUpOpen ? (
-                                <button
-                                  type="button"
-                                  className="text-sm text-orange-600 hover:text-orange-500 underline"
-                                  onClick={() => setSpeedUpOpen(true)}
-                                >
-                                  Already deposited? Speed up processing
-                                </button>
-                              ) : (
-                                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                                  <div className="text-sm font-medium text-gray-800">Submit your transaction hash</div>
-                                  <div className="text-xs text-gray-600">Paste a hash or an explorer link — we’ll extract the hash automatically.</div>
-                                  <div className="mt-2 flex items-center gap-2">
-                                    <Input
-                                      value={txInput}
-                                      onChange={(e) => setTxInput(e.target.value)}
-                                      placeholder="0x... or explorer link"
-                                      className="flex-1"
-                                    />
-                                    <Button
-                                      onClick={onSubmitTxHash}
-                                      disabled={submittingTx || !txInput}
-                                      className="rounded-xl"
-                                      style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                                    >
-                                      {submittingTx ? "Submitting…" : "Submit"}
-                                    </Button>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                            {deposit.memo ? (
-                              <>
-                                <div className="mt-3 text-sm text-gray-700">Memo</div>
-                                <div className="mt-1 font-mono text-sm break-all text-gray-900">{deposit.memo}</div>
-                              </>
-                            ) : null}
-                            {deposit.deadline ? (
-                              <div className="mt-3 text-sm text-gray-700">Deadline: <span className="font-medium">{new Date(deposit.deadline).toLocaleString()}</span></div>
-                            ) : null}
-                            <div className="mt-4 flex gap-2">
-                              <Button variant="outline" onClick={() => {
-                                setDeposit(null);
-                                setStatus(null);
-                                useClaimPayStore.getState().setDeposit(id, null);
-                                useClaimPayStore.getState().setStatus(id, null);
-                              }} className="ml-auto">Cancel & choose another token</Button>
-                              {selectedFrom?.chain && ["eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism", "bsc", "polygon", "avax", "gnosis", "fantom"].includes(selectedFrom.chain.toLowerCase()) ? (
-                                <Button disabled variant="outline">Pay now (coming soon)</Button>
-                              ) : null}
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </>
-                  )}
-                </>
-              ) : (
-                <div className="text-red-600">Claim not found.</div>
-              )}
+                        })()}
+                      </>
+                    ))}
+                  </>
+                ) : (
+                  <div className="text-red-600">Claim not found.</div>
+                )}
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -592,6 +771,36 @@ function StatusBadge({ status }: { status: string }) {
       {cfg.icon}
       {cfg.label}
     </span>
+  );
+}
+
+function MoneyIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" strokeWidth="2" />
+      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+      <path d="M6 9h0M18 15h0" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ChainIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path d="M10 14l4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <rect x="3" y="9" width="8" height="6" rx="3" stroke="currentColor" strokeWidth="2" />
+      <rect x="13" y="9" width="8" height="6" rx="3" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function ShareIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path d="M4 12v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M12 16V4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M8 8l4-4 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
