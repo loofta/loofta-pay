@@ -343,6 +343,19 @@ export function NearSwapWidget({
 				</div>
 			</div>
 			<div className="px-5 pb-4">
+				{(() => {
+					const same = fromSel?.chain && toSel?.chain && String(fromSel.chain).toLowerCase() === String(toSel.chain).toLowerCase();
+					const evmSet = new Set(["eth", "ethereum", "arb", "arbitrum", "base", "op", "optimism", "bsc", "avax", "avalanche", "polygon", "matic", "fantom", "ftm", "gnosis", "linea", "scroll", "zksync", "zk", "blast", "pol"]);
+					const isEvm = (c?: string) => evmSet.has(String(c || "").toLowerCase());
+					if (same && isEvm(fromSel?.chain) && isEvm(toSel?.chain)) {
+						return (
+							<div className="mb-3 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-sm p-3">
+								Same‑chain EVM swaps are not supported by NEAR Intents. Please use the Biconomy tab.
+							</div>
+						);
+					}
+					return null;
+				})()}
 				{deposit ? (
 					<div className="rounded-2xl bg-gray-50 border border-gray-200 p-4">
 						<div className="text-center text-lg font-semibold text-gray-800">{isSuccess ? "Swap completed" : "Deposit"}</div>

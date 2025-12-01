@@ -8,7 +8,7 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("claims")
-      .select("id, amount, to_symbol, to_chain, status, created_at")
+      .select("id, amount, to_symbol, to_chain, status, created_at, recipient_address")
       .eq("id", params.id)
       .single();
     if (error) return NextResponse.json({ error: error.message }, { status: 404 });

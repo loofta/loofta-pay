@@ -157,7 +157,7 @@ export default function SwapPage() {
               )}
             </div>
           </div>
-          {/* Right: Swap container with provider tabs */}
+          {/* Right: Swap container */}
           <div className="space-y-3">
             <NearSwapWidget tokens={tokens} loadingTokens={loadingTokens} />
           </div>

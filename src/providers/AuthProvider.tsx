@@ -9,7 +9,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		<PrivyProvider
 			appId={appId}
 			config={{
-				loginMethods: ["email"],
+				loginMethods: ["email", "wallet"],
+				embeddedWallets: { createOnLogin: true },
+				walletConnectors: ["metamask", "walletconnect", "coinbase"],
+				requireUserWallets: false,
+				appearance: {
+					theme: "light",
+					logo: "/loofta.svg",
+				},
 			}}
 		>
 			{children}

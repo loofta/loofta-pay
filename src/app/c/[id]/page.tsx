@@ -17,11 +17,13 @@ import Image from "next/image";
 import { getChainIcon } from "@/lib/chains";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
+import { isBiconomySupportedChain, isEvmChainId } from "@/config/biconomy";
+import { ethers } from "ethers";
 
 async function fetchClaim(id: string) {
   const r = await fetch(`/api/claims/${id}`);
   if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || "Claim not found");
-  return (await r.json()).claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string };
+  return (await r.json()).claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string };
 }
 
 async function prepareDeposit(input: {
@@ -88,6 +90,14 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
     if (!Number.isFinite(usd) || !p || p <= 0) return null;
     return usd / p;
   }, [claim?.amount, destToken?.price]);
+  const sameChain = useMemo(() => {
+    if (!selectedFrom || !destToken) return false;
+    return String(selectedFrom.chain || "").toLowerCase() === String(destToken.chain || "").toLowerCase();
+  }, [selectedFrom, destToken]);
+  const biconomyEligible = useMemo(() => {
+    if (!selectedFrom || !destToken) return false;
+    return sameChain && isEvmChainId(selectedFrom.chain) && isBiconomySupportedChain(selectedFrom.chain);
+  }, [selectedFrom, destToken, sameChain]);
   // Derive payer token from status originAsset if available
   const paidToken = useMemo(() => {
     const assetId = statusData?.originAsset as string | undefined;
@@ -182,6 +192,10 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
   }, [id, deposit]);
   async function onPrepare() {
     if (!claim || !selectedFrom) return;
+    // If same-chain EVM and supported by Biconomy, skip deposit flow (use Pay now)
+    if (biconomyEligible) {
+      return;
+    }
     setPreparing(true);
     setDeposit(null);
     try {
@@ -201,6 +215,101 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
       });
     } catch (e: any) {
       toast({ variant: "destructive", title: "Failed to prepare", description: e?.message || "Could not obtain deposit info" });
+    } finally {
+      setPreparing(false);
+    }
+  }
+
+  async function onPayNow() {
+    if (!claim || !selectedFrom || !destToken) return;
+    if (!biconomyEligible) {
+      toast({ variant: "destructive", title: "Not supported", description: "This network is not supported for direct pay." });
+      return;
+    }
+    try {
+      const anyWindow = window as any;
+      if (!anyWindow?.ethereum) {
+        toast({ variant: "destructive", title: "No wallet", description: "Please install an EVM wallet to continue." });
+        return;
+      }
+      const provider = new ethers.BrowserProvider(anyWindow.ethereum);
+      const signer = await provider.getSigner();
+      const ownerAddress = await signer.getAddress();
+      const desiredOut = destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : null;
+      if (!desiredOut) {
+        toast({ variant: "destructive", title: "Invalid amount", description: "Could not compute destination amount." });
+        return;
+      }
+      const recipient = String(claim?.recipient_address || "").trim();
+      if (!recipient) {
+        toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
+        return;
+      }
+      setPreparing(true);
+      setStatus("PROCESSING");
+      // Determine input amount (prefer precise amountIn from claim NEAR quote, else estimate)
+      const amountInHuman = quote?.amountInFormatted
+        ? roundUpDecimals(String(quote.amountInFormatted), selectedFrom.decimals > 6 ? 6 : selectedFrom.decimals)
+        : desiredOut;
+      // Optional: fetch quote first (not strictly needed for payload but good UX)
+      await fetch(`/api/biconomy/quote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, address: selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain },
+          toToken: { tokenId: destToken.tokenId || destToken.address, address: destToken.address, decimals: destToken.decimals, chain: destToken.chain },
+          amountInHuman,
+          recipient,
+          userAddress: ownerAddress,
+        }),
+      }).catch(() => { });
+      // Create payload
+      const r = await fetch(`/api/biconomy/intent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, address: selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain },
+          toToken: { tokenId: destToken.tokenId || destToken.address, address: destToken.address, decimals: destToken.decimals, chain: destToken.chain },
+          amountInHuman,
+          recipient,
+          userAddress: ownerAddress,
+        }),
+      });
+      const payload = await r.json();
+      if (!r.ok) {
+        throw new Error(payload?.error || "Failed to create transaction");
+      }
+      const { to, data, value, chainId, id: intentId } = payload || {};
+      if (!to || !data) {
+        throw new Error("Invalid transaction payload");
+      }
+      if (chainId) {
+        try {
+          const hexChain = typeof chainId === "number" ? "0x" + chainId.toString(16) : chainId;
+          await anyWindow.ethereum.request?.({ method: "wallet_switchEthereumChain", params: [{ chainId: hexChain }] });
+        } catch { }
+      }
+      const tx = await signer.sendTransaction({ to, data, value: value ? BigInt(value) : undefined });
+      // Poll Biconomy status if we have an id
+      if (intentId) {
+        const iv = setInterval(async () => {
+          try {
+            const s = await fetch(`/api/biconomy/status?id=${encodeURIComponent(intentId)}`).then((x) => x.json());
+            const st = String(s?.status || "").toUpperCase();
+            setStatus(st || "PROCESSING");
+            if (["SUCCESS", "FAILED", "CANCELLED"].includes(st)) {
+              clearInterval(iv);
+            }
+          } catch { }
+        }, 3000);
+      } else {
+        await tx.wait();
+        setStatus("SUCCESS");
+      }
+      toast({ title: "Transaction sent", description: `${tx.hash.slice(0, 10)}…` });
+    } catch (e: any) {
+      setStatus("FAILED");
+      toast({ variant: "destructive", title: "Payment failed", description: e?.message || "Could not complete payment" });
     } finally {
       setPreparing(false);
     }
@@ -439,15 +548,25 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
                                     : ""}
                             </div>
                           ) : null}
-                          <div className="mt-4">
-                            <GradientActionButton
+                          <div className="mt-4 flex gap-3">
+
+                            {biconomyEligible ? (
+                              <Button
+                                onClick={onPayNow}
+                                disabled={preparing}
+                                className="rounded-xl"
+                                style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+                              >
+                                {preparing ? "Processing…" : "Pay now"}
+                              </Button>
+                            ) : <GradientActionButton
                               onClick={onPrepare}
-                              disabled={!selectedFrom || preparing}
-                              loading={preparing}
+                              disabled={!selectedFrom || preparing || biconomyEligible}
+                              loading={preparing && !biconomyEligible}
                               loadingText="Preparing…"
                             >
                               Get deposit address
-                            </GradientActionButton>
+                            </GradientActionButton>}
                           </div>
                         </div>
                       </>
@@ -665,8 +784,10 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
                                   useClaimPayStore.getState().setDeposit(id, null);
                                   useClaimPayStore.getState().setStatus(id, null);
                                 }} className="ml-auto">Cancel & choose another token</Button>
-                                {selectedFrom?.chain && ["eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism", "bsc", "polygon", "avax", "gnosis", "fantom"].includes(selectedFrom.chain.toLowerCase()) ? (
-                                  <Button disabled variant="outline">Pay now (coming soon)</Button>
+                                {biconomyEligible ? (
+                                  <Button onClick={onPayNow} disabled={preparing} className="rounded-xl" style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}>
+                                    {preparing ? "Processing…" : "Pay now"}
+                                  </Button>
                                 ) : null}
                               </div>
                             </div>
