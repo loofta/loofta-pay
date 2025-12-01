@@ -10,9 +10,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			appId={appId}
 			config={{
 				loginMethods: ["email", "wallet"],
-				embeddedWallets: { createOnLogin: true },
-				walletConnectors: ["metamask", "walletconnect", "coinbase"],
-				requireUserWallets: false,
+				embeddedWallets: { createOnLogin: "users-without-wallets" },
 				appearance: {
 					theme: "light",
 					logo: "/loofta.svg",
