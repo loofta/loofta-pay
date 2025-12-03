@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type SVGProps } from "react";
+import React, { useEffect, useMemo, useState, type SVGProps } from "react";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import type { TokenSelection } from "@/app/utils/types";
@@ -18,7 +18,9 @@ import { getChainIcon } from "@/lib/chains";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { isBiconomySupportedChain, isEvmChainId } from "@/config/biconomy";
+import { createSupertransaction, getBiconomyStatus } from "@/services/biconomy";
 import { ethers } from "ethers";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
 
 async function fetchClaim(id: string) {
   const r = await fetch(`/api/claims/${id}`);
@@ -40,8 +42,8 @@ async function prepareDeposit(input: {
   return await r.json();
 }
 
-export default function ClaimPayPage({ params }: { params: { id: string } }) {
-  const { id } = params;
+export default function ClaimPayPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = React.use(params);
   const { toast } = useToast();
   const { data: tokens = [], isLoading } = useTokensQuery();
   const claimQuery = useQuery({
@@ -77,6 +79,8 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
   const [speedUpOpen, setSpeedUpOpen] = useState<boolean>(false);
   const [txInput, setTxInput] = useState<string>("");
   const [submittingTx, setSubmittingTx] = useState<boolean>(false);
+  const { logout, login, authenticated, user } = usePrivy();
+  const { wallets } = useWallets();
 
   const selectedFrom = findTokenBySelection(tokens, fromSel || null);
   const destToken = useMemo(() => tokens.find(t => t.symbol === claim?.to_symbol && t.chain === claim?.to_chain), [tokens, claim?.to_symbol, claim?.to_chain]);
@@ -227,86 +231,106 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
       return;
     }
     try {
-      const anyWindow = window as any;
-      if (!anyWindow?.ethereum) {
-        toast({ variant: "destructive", title: "No wallet", description: "Please install an EVM wallet to continue." });
+      const wallet = wallets[0];
+      if (!wallet) {
+        toast({ variant: "destructive", title: "No wallet", description: "Please connect a wallet to continue." });
         return;
       }
-      const provider = new ethers.BrowserProvider(anyWindow.ethereum);
+
+      const ethereumProvider = await wallet.getEthereumProvider();
+      const provider = new ethers.BrowserProvider(ethereumProvider);
       const signer = await provider.getSigner();
       const ownerAddress = await signer.getAddress();
-      const desiredOut = destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : null;
-      if (!desiredOut) {
-        toast({ variant: "destructive", title: "Invalid amount", description: "Could not compute destination amount." });
-        return;
-      }
+
       const recipient = String(claim?.recipient_address || "").trim();
       if (!recipient) {
         toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
         return;
       }
+
+      // Calculate amount to send (use quote if available, else estimate from prices)
+      const amountHuman = quote?.amountInFormatted
+        ? roundUpDecimals(String(quote.amountInFormatted), selectedFrom.decimals > 6 ? 6 : selectedFrom.decimals)
+        : destTokenAmount != null
+          ? roundUpDecimals(String(destTokenAmount), 6)
+          : null;
+
+      if (!amountHuman || parseFloat(amountHuman) === 0) {
+        toast({ variant: "destructive", title: "Quote failed", description: "Could not determine payment amount." });
+        return;
+      }
+
       setPreparing(true);
       setStatus("PROCESSING");
-      // Determine input amount (prefer precise amountIn from claim NEAR quote, else estimate)
-      const amountInHuman = quote?.amountInFormatted
-        ? roundUpDecimals(String(quote.amountInFormatted), selectedFrom.decimals > 6 ? 6 : selectedFrom.decimals)
-        : desiredOut;
-      // Optional: fetch quote first (not strictly needed for payload but good UX)
-      await fetch(`/api/biconomy/quote`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, address: selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain },
-          toToken: { tokenId: destToken.tokenId || destToken.address, address: destToken.address, decimals: destToken.decimals, chain: destToken.chain },
-          amountInHuman,
-          recipient,
-          userAddress: ownerAddress,
-        }),
-      }).catch(() => { });
-      // Create payload
-      const r = await fetch(`/api/biconomy/intent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, address: selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain },
-          toToken: { tokenId: destToken.tokenId || destToken.address, address: destToken.address, decimals: destToken.decimals, chain: destToken.chain },
-          amountInHuman,
-          recipient,
-          userAddress: ownerAddress,
-        }),
+
+      console.log("[Biconomy] Starting payment:", {
+        from: selectedFrom.symbol,
+        to: destToken.symbol,
+        amount: amountHuman,
+        recipient
       });
-      const payload = await r.json();
-      if (!r.ok) {
-        throw new Error(payload?.error || "Failed to create transaction");
-      }
+
+      // Create Biconomy Supertransaction (sponsorship handles fees)
+      const payload = await createSupertransaction({
+        fromToken: {
+          tokenId: selectedFrom.tokenId || selectedFrom.address,
+          address: selectedFrom.address,
+          decimals: selectedFrom.decimals,
+          chain: selectedFrom.chain,
+          symbol: selectedFrom.symbol,
+          name: selectedFrom.name || selectedFrom.symbol
+        },
+        toToken: {
+          tokenId: destToken.tokenId || destToken.address,
+          address: destToken.address,
+          decimals: destToken.decimals,
+          chain: destToken.chain,
+          symbol: destToken.symbol,
+          name: destToken.name || destToken.symbol
+        },
+        amountHuman,
+        recipient,
+        userAddress: ownerAddress,
+      });
+
       const { to, data, value, chainId, id: intentId } = payload || {};
       if (!to || !data) {
         throw new Error("Invalid transaction payload");
       }
+
+      // Switch chain if needed
       if (chainId) {
         try {
-          const hexChain = typeof chainId === "number" ? "0x" + chainId.toString(16) : chainId;
-          await anyWindow.ethereum.request?.({ method: "wallet_switchEthereumChain", params: [{ chainId: hexChain }] });
+          await wallet.switchChain(Number(chainId));
         } catch { }
       }
-      const tx = await signer.sendTransaction({ to, data, value: value ? BigInt(value) : undefined });
-      // Poll Biconomy status if we have an id
+
+      // Send transaction
+      const tx = await signer.sendTransaction({
+        to,
+        data,
+        value: value ? BigInt(value) : undefined
+      });
+
+      // Wait for on-chain confirmation
+      await tx.wait();
+      setStatus("SUCCESS");
+      toast({ title: "Transaction confirmed", description: "Payment successful." });
+
+      // Optional: Poll Biconomy status in background
       if (intentId) {
         const iv = setInterval(async () => {
           try {
-            const s = await fetch(`/api/biconomy/status?id=${encodeURIComponent(intentId)}`).then((x) => x.json());
+            const s = await getBiconomyStatus(intentId);
             const st = String(s?.status || "").toUpperCase();
-            setStatus(st || "PROCESSING");
-            if (["SUCCESS", "FAILED", "CANCELLED"].includes(st)) {
+            if (st === "SUCCESS" || st === "FAILED") {
+              if (st === "FAILED") setStatus("FAILED");
               clearInterval(iv);
             }
-          } catch { }
-        }, 3000);
-      } else {
-        await tx.wait();
-        setStatus("SUCCESS");
+          } catch { clearInterval(iv); }
+        }, 5000);
+        setTimeout(() => clearInterval(iv), 120000);
       }
-      toast({ title: "Transaction sent", description: `${tx.hash.slice(0, 10)}…` });
     } catch (e: any) {
       setStatus("FAILED");
       toast({ variant: "destructive", title: "Payment failed", description: e?.message || "Could not complete payment" });
@@ -551,14 +575,35 @@ export default function ClaimPayPage({ params }: { params: { id: string } }) {
                           <div className="mt-4 flex gap-3">
 
                             {biconomyEligible ? (
-                              <Button
-                                onClick={onPayNow}
-                                disabled={preparing}
-                                className="rounded-xl"
-                                style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                              >
-                                {preparing ? "Processing…" : "Pay now"}
-                              </Button>
+                              <div className="flex w-full gap-2">
+                                {wallets.length === 0 ? (
+                                  <Button
+                                    onClick={login}
+                                    className="rounded-xl w-full"
+                                    style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+                                  >
+                                    Connect Wallet
+                                  </Button>
+                                ) : (
+                                  <>
+                                    <Button
+                                      onClick={onPayNow}
+                                      disabled={preparing}
+                                      className="rounded-xl flex-1"
+                                      style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+                                    >
+                                      {preparing ? "Processing…" : "Pay now"}
+                                    </Button>
+                                    <Button variant="outline" onClick={logout} className="rounded-xl px-3" title="Disconnect Wallet">
+                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                                        <polyline points="16 17 21 12 16 7" />
+                                        <line x1="21" y1="12" x2="9" y2="12" />
+                                      </svg>
+                                    </Button>
+                                  </>
+                                )}
+                              </div>
                             ) : <GradientActionButton
                               onClick={onPrepare}
                               disabled={!selectedFrom || preparing || biconomyEligible}

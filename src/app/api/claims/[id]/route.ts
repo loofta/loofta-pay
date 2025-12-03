@@ -3,7 +3,8 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
+export async function GET(_: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
