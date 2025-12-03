@@ -1,617 +1,451 @@
 'use client'
 
+import Link from "next/link";
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Tweet } from "react-tweet";
+import Lottie, { LottieRefCurrentProps } from "lottie-react";
+import paymentFlowAnimation from "../../public/jitter/paymentflow.json";
+import cardsHomeAnimation from "../../public/jitter/cards_home.json";
+import howItWorksAnimation from "../../public/jitter/howitworks.json";
+import { motion, AnimatePresence, useScroll, useTransform } from "framer-motion";
+import { Suspense, useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, ArrowLeftRight, Send, CheckCircle2 } from 'lucide-react';
-import { useAuth } from "@/hooks/useAuth";
-import { mergeLocalIntoRemote } from "@/lib/history";
-
-import { searchTokens, createTestIntent, type NearToken } from "@/services/nearIntents";
-import { useTokensQuery } from "@/hooks/useTokensQuery";
-import type { TokenSelection } from "@/app/utils/types";
-import { findTokenBySelection } from "@/lib/tokens";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useSwapStore } from "@/store/swap";
-import { useQuote } from "@/hooks/useQuote";
-import { NearSwapWidget } from "@/components/swap/NearSwapWidget";
-import { useDuneStats } from "@/hooks/useDuneStats";
-import { cmcLogoForSymbol } from "@/lib/tokenImages";
-import { useHistoryModal } from "@/contexts/HistoryModalContext";
-import { FAQAccordion } from "@/components/FAQAccordion";
+import Spline from "@splinetool/react-spline";
 
 export default function Home() {
-  // Swap state
-  const { data: tokens = [], isLoading: loadingTokens } = useTokensQuery();
-  const { fromSel, toSel, amount, setFromSel, setToSel, setAmount, hydrated } = useSwapStore();
-  const selectedFrom = useMemo(() => findTokenBySelection(tokens, fromSel), [tokens, fromSel]);
-  const selectedTo = useMemo(() => findTokenBySelection(tokens, toSel), [tokens, toSel]);
+  const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const ctaRef = useRef<HTMLDivElement>(null);
+  const lottieRef = useRef<LottieRefCurrentProps>(null);
 
-  // Landing behaviors
-  const prefersReducedMotion = useReducedMotion();
-  const [openTweetId, setOpenTweetId] = useState<string | null>(null);
-  const handleLogoClick = useCallback((tweetId?: string, fallbackUrl?: string) => {
-    if (tweetId) {
-      setOpenTweetId(tweetId);
-      return;
-    }
-    if (fallbackUrl) {
-      window.open(fallbackUrl, '_blank', 'noopener,noreferrer');
-    }
-  }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpenTweetId(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  const handleAnimationComplete = () => {
+    setTimeout(() => {
+      lottieRef.current?.goToAndPlay(0);
+    }, 2000); // 2 second pause before looping
+  };
 
-  // Dune stats
-  const { data: dune, isLoading: loadingDune, error: duneError } = useDuneStats();
-  const { authenticated, login, email, logout } = useAuth();
-  const { openHistory } = useHistoryModal();
+  const { scrollYProgress } = useScroll({
+    target: ctaRef,
+    offset: ["start end", "end start"]
+  });
 
-  // FR gating removed for now; EN content only
-  useEffect(() => {
-    async function sync() {
-      try {
-        // @ts-ignore
-        const { userId } = require("@/hooks/useAuth").useAuth();
-      } catch { }
-    }
-  }, []);
+  const bgY = useTransform(scrollYProgress, [0, 1], ["0%", "30%"]);
 
-  // Static stats (previously fetched)
-  const displayedStats = { activeUsers: 1200, questsCompleted: 3400, communities: 200 };
-
-  // Quick boost demo state (kept as before)
-  const budgetStops = [20, 50, 100, 200, 300, 500, 1000];
-  const [budgetIndex, setBudgetIndex] = useState<number>(0);
-  const budget = budgetStops[budgetIndex];
-  const [postUrl, setPostUrl] = useState<string>("");
-  // Initialize defaults when tokens are loaded
-  useEffect(() => {
-    if (!hydrated || !tokens.length) return;
-    if (!fromSel) {
-      const df = tokens.find((t: NearToken) => t.symbol === "USDT") || tokens[0];
-      if (df) setFromSel({ symbol: df.symbol, chain: df.chain });
-    }
-    if (!toSel) {
-      const preferred = tokens.find((t: NearToken) => t.symbol === "ETH" && (!fromSel || t.chain !== fromSel.chain));
-      const fallback = tokens.find((t: NearToken) => fromSel ? (t.symbol !== fromSel.symbol || t.chain !== fromSel.chain) : true);
-      const dt = preferred || fallback;
-      if (dt) setToSel({ symbol: dt.symbol, chain: dt.chain });
-    }
-  }, [hydrated, tokens, fromSel, toSel, setFromSel, setToSel]);
+  const faqItems = [
+    {
+      question: "Do I need to connect my wallet to pay?",
+      answer: "Cross-chain: No. You can pay through a deposit wallet address we generate for your payment, and NEAR Intents handles the routing automatically. Same-chain: Yes. Biconomy bundles swap + pay into one transaction you sign once.",
+    },
+    {
+      question: "Can I receive payments privately?",
+      answer: "Yes. You can settle directly in Zcash using shielded or transparent addresses. More private routes (including ETH private pools) are coming soon.",
+    },
+    {
+      question: "What chains  do you support?",
+      answer: "All chains supported by NEAR Intents: EVM Chains (Arbitrum, Aurora, Base, Bera, BNB, Ethereum, Gnosis, Polygon, XLayer, Monad), Bitcoin, Cardano, Solana, MONAD, Zcash, Doge, SUI, Stellar, Tron, XRP, TON, Litecoin. More chains coming soon."
+    },
+    {
+      question: "What are the fees?",
+      answer: "Cross-chain: near-zero (0.0001%). Same-chain via Biconomy: free during beta. A small fee will be added later for private routes and business checkout.",
+    },
+    {
+      question: "Can businesses use Loofta Pay?",
+      answer: "Yes. A checkout SDK and branded checkout are coming so businesses can accept multi-chain payments with a single integration.",
+    },
+  ];
 
   return (
-    <div className=" bg-gradient-to-b from-white to-gray-50 relative">
-      {/* Animated Background Elements */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-orange-100/50 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-red-100/50 rounded-full blur-3xl animate-pulse delay-700"></div>
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-orange-50/50 rounded-full blur-3xl animate-pulse delay-1000"></div>
-      </div>
-
-      <div className="max-w-7xl mx-auto mt-12 px-4 pb-12 relative z-10">
-        {/* Hero Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12 mb-8 md:mb-12 mt-4 md:mt-6 items-start">
-          <div className="space-y-4 md:space-y-6 animate-slide-up text-left">
-            <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold leading-tight px-4">
-              <span className="inline-flex gap-0.5">
-                <motion.span
-                  className="inline-block"
-                  initial={{ opacity: 0, y: -20, scale: 0.5 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{
-                    delay: 0.05,
-                    type: "spring",
-                    stiffness: 300,
-                    damping: 20
-                  }}
-                  whileHover={{
-                    scale: 1.1,
-                    transition: { type: "spring", stiffness: 400 }
-                  }}
-                  style={{
-                    background: 'linear-gradient(to right, #EAB308, #FF0F00)',
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                    backgroundClip: 'text',
-                  }}
-                >
-                  Swap
-                </motion.span>
-              </span>{' '}
-              <span className="text-gray-900">across multiple chains.<br /></span>
-
-            </h1>
-            <p className="text-lg md:text-xl text-gray-600 max-w-3xl px-4">
-              Powered by Near Intents, the easiest way to swap tokens across multiple chains.
-            </p>
-
-            <div className="relative inline-block group">
-              <div className="absolute -inset-3 rounded-3xl bg-gradient-to-r from-orange-400/35 via-orange-500/30 to-red-500/35 blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"></div>
-              {authenticated ? (
-                <Button
-                  style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                  className="relative z-10 mt-4 px-10   py-6 text-lg md:text-xl text-white font-semibold rounded-2xl border-0 transition-transform duration-200 ease-out hover:scale-[1.03] active:scale-95 shadow-[0_20px_60px_-15px_rgba(255,15,0,0.35)] hover:shadow-[0_25px_80px_-20px_rgba(255,15,0,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-400"
-                  onClick={() => openHistory()}
-                >
-                  View History
-                  <ArrowRight className="ml-3 h-6 w-6" />
-                </Button>
-              ) : (
-                <Button
-                  style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                  className="relative z-10 mt-4 px-10   py-6 text-lg md:text-xl text-white font-semibold rounded-2xl border-0 transition-transform duration-200 ease-out hover:scale-[1.03] active:scale-95 shadow-[0_20px_60px_-15px_rgba(255,15,0,0.35)] hover:shadow-[0_25px_80px_-20px_rgba(255,15,0,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-400"
-                  onClick={() => login()}
-                >
-                  Log in for future updates
-                  <ArrowRight className="ml-3 h-6 w-6" />
-                </Button>
-              )}
-            </div>
-          </div>
-          {/* Right: Swap container with provider tabs */}
-          <div className="space-y-3">
-            <NearSwapWidget tokens={tokens} loadingTokens={loadingTokens} />
-          </div>
-        </div>
-
-        {/* End hero */}
-      </div>
-
-      {/* Animated Section Transition */}
-      <motion.div
-        className="w-full mt-6 md:mt-12 mb-12 md:my-16 overflow-hidden relative"
-        initial="hidden"
-        whileInView="visible"
-        viewport={{ once: false, amount: 0.3 }}
-        variants={{
-          hidden: { opacity: 0 },
-          visible: { opacity: 1 }
-        }}
-      >
-        <div className="relative h-px w-full mx-auto max-w-3xl">
-          <motion.div
-            className="absolute inset-0"
+    <div className="bg-gradient-to-b from-white to-gray-50">
+      {/* Hero Section */}
+      <div className="h-auto md:h-screen relative overflow-hidden">
+        {/* Background pulses (kept for visual continuity) */}
+        <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute top-0 left-1/4 w-96 h-96 bg-orange-100/50 rounded-full blur-3xl animate-pulse"></div>
+          {/* Hide this red blob on md+ where Spline takes over */}
+          <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-red-100/50 rounded-full blur-3xl animate-pulse delay-700 md:hidden"></div>
+          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-orange-50/50 rounded-full blur-3xl animate-pulse delay-1000"></div>
+          {/* Spline 3D abstract animation on the right side */}
+          <div
+            className="spline-wrap pointer-events-none hidden md:block absolute top-0 right-[-2vw] w-[65vw] max-w-[1400px] md:h-full h-auto z-0"
             style={{
-              background: 'linear-gradient(to right, transparent, #EAB308, #FF0F00, transparent)',
-              height: '2px'
-            }}
-            initial={{ scaleX: 0 }}
-            whileInView={{ scaleX: 1 }}
-            viewport={{ once: false }}
-            transition={{ duration: 1, ease: "easeInOut" }}
-          />
-
-          {[...Array(3)].map((_, i) => (
-            <motion.div
-              key={i}
-              className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full"
-              style={{
-                background: i % 2 === 0
-                  ? 'linear-gradient(135deg, #EAB308, #FF0F00)'
-                  : 'linear-gradient(135deg, #FF0F00, #EAB308)',
-                left: '50%',
-                transform: 'translateX(-50%) translateY(-50%)'
-              }}
-              animate={{
-                y: [0, -15, 0],
-                opacity: [0.4, 1, 0.4],
-                scale: [1, 1.2, 1]
-              }}
-              transition={{
-                duration: 2,
-                repeat: Infinity,
-                ease: "easeInOut",
-                delay: i * 0.3
-              }}
-            />
-          ))}
-        </div>
-      </motion.div>
-
-      <div className="max-w-7xl mx-auto px-4 pb-12 relative z-10">
-
-
-        {/* Live Analytics (Dune) */}
-        <motion.div
-          id="stats-section"
-          className="rounded-3xl p-6 md:p-8 mt-12 md:mt-24 mb-12 md:mb-24"
-          initial={{ opacity: 0, y: 30 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: false, amount: 0.3 }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
-        >
-          <motion.div
-            className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8"
-            initial="hidden"
-            whileInView="visible"
-            exit="hidden"
-            viewport={{ once: false }}
-            variants={{
-              hidden: { opacity: 0 },
-              visible: {
-                opacity: 1,
-                transition: {
-                  staggerChildren: 0.15
-                }
-              }
+              WebkitMaskImage: 'linear-gradient(to left, black 78%, transparent 98%)',
+              maskImage: 'linear-gradient(to left, black 78%, transparent 98%)',
             }}
           >
-            <motion.div
-              className="group relative overflow-hidden rounded-2xl p-5 shadow-lg hover:shadow-2xl transition-shadow"
-              variants={{
-                hidden: { opacity: 0, y: 20 },
-                visible: { opacity: 1, y: 0 }
-              }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
-            >
-              <div className="absolute -inset-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
-                style={{ background: 'radial-gradient(600px circle at var(--x,50%) var(--y,50%), rgba(234,179,8,0.08), transparent 40%)' }} />
-              <div className="text-lg text-black  font-semibold tracking-wider text-center">Total Volume (All time)</div>
-              <div className="text-3xl md:text-4xl font-extrabold mt-1 text-center" style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-                {loadingDune ? "…" : dune?.totalVolumeUSD != null ? `$${dune.totalVolumeUSD.toLocaleString()}` : "—"}
-              </div>
-            </motion.div>
+            <Suspense fallback={<div className="w-full h-auto md:h-full" />}>
+              <Spline scene="/spline/reeded_liquid_glass_prism_hero_section_concept_copy.spline" />
+            </Suspense>
+          </div>
+        </div>
 
-            <motion.div
-              className="group relative overflow-hidden rounded-2xl p-5 shadow-lg hover:shadow-2xl transition-shadow"
-              variants={{
-                hidden: { opacity: 0, y: 20 },
-                visible: { opacity: 1, y: 0 }
-              }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
-            >
-              <div className="absolute -inset-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
-                style={{ background: 'radial-gradient(600px circle at var(--x,50%) var(--y,50%), rgba(255,15,0,0.08), transparent 40%)' }} />
-              <div className="text-lg text-black  font-semibold tracking-wider text-center">Total Swaps</div>
-              <div className="text-3xl md:text-4xl font-extrabold mt-1 text-center" style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-                {loadingDune ? "…" : dune?.totalSwaps != null ? dune.totalSwaps.toLocaleString() : "—"}
+        <div className="max-w-7xl mx-auto px-4 h-full flex items-start pb-10 relative z-10">
+          {/* Hero (Figma-aligned) */}
+          <motion.div
+            className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-start w-full"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, ease: "easeOut" }}
+          >
+            <div className="order-1 pt-12 md:pt-24  md:order-1">
+              <div
+                className="uppercase tracking-[0.14em] text-[12px] md:text-xs font-semibold"
+                style={{
+                  backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)',
+                  WebkitBackgroundClip: 'text',
+                  backgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  color: 'transparent',
+                }}
+              >
+                multi‑chain • private • non‑custodial • no swaps required
               </div>
-            </motion.div>
-
-            <motion.div
-              className="group relative overflow-hidden rounded-2xl p-5 shadow-lg hover:shadow-2xl transition-shadow"
-              variants={{
-                hidden: { opacity: 0, y: 20 },
-                visible: { opacity: 1, y: 0 }
-              }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
-            >
-              <div className="absolute -inset-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
-                style={{ background: 'radial-gradient(600px circle at var(--x,50%) var(--y,50%), rgba(234,179,8,0.08), transparent 40%)' }} />
-              <div className="text-lg text-black  font-semibold tracking-wider text-center">Unique Users (7D)</div>
-              <div className="text-3xl md:text-4xl font-extrabold mt-1 text-center" style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-                {loadingDune ? "…" : dune?.uniqueUsers7d != null ? dune.uniqueUsers7d.toLocaleString() : "—"}
+              <h1 className="mt-2 text-4xl md:text-6xl lg:text-7xl font-medium leading-[1.05] text-slate-900">
+                Pay & request <br className="hidden md:block" />
+                crypto <span className="font-bold">privately.</span>
+              </h1>
+              <p className="mt-12 md:mt-24 text-xl md:text-2xl text-slate-900/90 max-w-xl">
+                Your payer uses whatever they want.<br className="hidden md:block" />
+                <span className="font-semibold">You always receive exactly what you asked for.</span>
+              </p>
+              <div className="mt-6">
+                <Link href="/claim">
+                  <Button className="rounded-[21px] px-6 py-3 text-base font-semibold text-white border-0 shadow-md hover:scale-[1.02] transition-transform" style={{ background: 'linear-gradient(to right, #FF1301, #EAB308)' }}>
+                    Create a payment
+                  </Button>
+                </Link>
               </div>
-            </motion.div>
+            </div>
+            <div className="order-2 md:order-2 relative h-automd:h-full overflow-visible z-10 flex items-end justify-end">
+              <Lottie
+                lottieRef={lottieRef}
+                animationData={paymentFlowAnimation}
+                loop={false}
+                onComplete={handleAnimationComplete}
+                className="w-[379px] h-[418px]"
+              />
+            </div>
           </motion.div>
-        </motion.div>
 
-        {/* Simple 3‑step intro */}
-        <div className="text-center mt-12 md:mt-24 mb-12 md:mb-24">
-          <h2 className="text-2xl md:text-4xl font-bold tracking-tight">
-            <span style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-              Swap across chains in 3 simple steps
-            </span>
-          </h2>
-          <p className="mt-2 text-base md:text-lg text-gray-600 max-w-3xl mx-auto">
-            Loofta lets you move tokens between chains — fast and easy. We handle the tech behind the scenes (powered by NEAR Intents).
-          </p>
-          {/* FR summary removed for now */}
-          <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-12 text-left max-w-6xl mx-auto">
-            <div className="rounded-xl p-6 bg-white shadow-md hover:shadow-lg transition-shadow">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #FFE8B0, #FFD0B3)' }}>
-                  <ArrowLeftRight className="h-5 w-5 text-orange-700" />
-                </div>
-                <div className="text-base font-semibold text-gray-900">1) Select tokens</div>
-              </div>
-              <div className="text-base md:text-lg text-gray-600">
-                Choose the token you want to send and the token you want to receive. Enter an amount to preview your output.
-              </div>
-            </div>
-            <div className="rounded-xl p-6 bg-white shadow-md hover:shadow-lg transition-shadow">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #FFD1C4, #FFB3B3)' }}>
-                  <Send className="h-5 w-5 text-red-700" />
-                </div>
-                <div className="text-base font-semibold text-gray-900">2) Send</div>
-              </div>
-              <div className="text-base md:text-lg text-gray-600">
-                We generate a one-time deposit address (and memo if required). Send your funds — no wallet connection needed.
-              </div>
-            </div>
-            <div className="rounded-xl p-6 bg-white shadow-md hover:shadow-lg transition-shadow">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #D1FAE5, #BBF7D0)' }}>
-                  <CheckCircle2 className="h-5 w-5 text-emerald-700" />
-                </div>
-                <div className="text-base font-semibold text-gray-900">3) Receive</div>
-              </div>
-              <div className="text-base md:text-lg  text-gray-600">
-                We route your swap and deliver the output to your recipient on the target chain.
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Accordion FAQ (EN only) */}
-        <div className="mt-12 md:mt-24">
-          <h3 className="text-xl md:text-2xl text-center font-bold mb-4">FAQ — Cross‑chain swap</h3>
-          <FAQAccordion
-            items={[
-              {
-                question: "What is a cross‑chain swap?",
-                answer:
-                  "A cross‑chain swap lets you send one token on a source network and receive another token on a different network, in one flow.",
-              },
-              {
-                question: "Is a wallet connection required?",
-                answer:
-                  "No. We generate a one‑time deposit address. Send funds manually and we route them to your recipient.",
-              },
-              {
-                question: "What happens if the swap fails?",
-                answer:
-                  "If it cannot complete in time, we automatically refund to your original address.",
-              },
-            ]}
-          />
-          {/* FAQ JSON-LD */}
-          <script
-            type="application/ld+json"
-            dangerouslySetInnerHTML={{
-              __html: JSON.stringify({
-                "@context": "https://schema.org",
-                "@type": "FAQPage",
-                mainEntity: [
-                  {
-                    "@type": "Question",
-                    name: "What is a cross‑chain swap?",
-                    acceptedAnswer: {
-                      "@type": "Answer",
-                      text:
-                        "A cross‑chain swap lets you send one token on a source network and receive another token on a different network, in one flow.",
-                    },
-                  },
-                  {
-                    "@type": "Question",
-                    name: "Is a wallet connection required?",
-                    acceptedAnswer: {
-                      "@type": "Answer",
-                      text:
-                        "No. We generate a one‑time deposit address. Send funds manually and we route them to your recipient.",
-                    },
-                  },
-                  {
-                    "@type": "Question",
-                    name: "What happens if the swap fails?",
-                    acceptedAnswer: {
-                      "@type": "Answer",
-                      text:
-                        "If it cannot complete in time, we automatically refund to your original address.",
-                    },
-                  },
-                ],
-              }),
-            }}
-          />
-        </div>
-
-
-        {/* Top Traded Tokens Cloud */}
-        <div className="mt-12 md:mt-24 mb-12 md:mb-24">
-          <h3 className="text-center mt-8text-2xl md:text-4xl font-bold tracking-tight mb-8">
-            <span style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-              Top Traded Tokens
-            </span>
-          </h3>
-          <div className="flex flex-wrap justify-center gap-3">
-            {(dune?.topAssetsByVolume || []).slice(0, 5).map((a) => {
-              const src = cmcLogoForSymbol(a.symbol) || "/images/eth.png";
-              return (
-                <div
-                  key={a.key}
-                  className="inline-flex items-center gap-2 rounded-full bg-white shadow-md px-3 py-2 hover:shadow-lg transition-shadow"
-                >
-                  <Image
-                    src={src}
-                    alt={`${a.symbol} logo`}
-                    width={20}
-                    height={20}
-                    sizes="20px"
-                    unoptimized={/^https?:\/\//.test(src)}
-                    className="rounded-full"
-                  />
-                  <span className="text-sm font-semibold text-gray-900">{a.symbol}</span>
-                </div>
-              );
-            })}
-          </div>
         </div>
       </div>
 
-
-
-      {/* Animated Section Transition */}
-      <motion.div
-        className="w-full mt-0 mb-12 md:my-16 overflow-hidden relative"
-        initial="hidden"
-        whileInView="visible"
-        viewport={{ once: false, amount: 0.3 }}
-        variants={{
-          hidden: { opacity: 0 },
-          visible: { opacity: 1 }
-        }}
-      >
-        <div className="relative h-px w-full mx-auto max-w-3xl">
-          <motion.div
-            className="absolute inset-0"
-            style={{
-              background: 'linear-gradient(to right, transparent, #EAB308, #FF0F00, transparent)',
-              height: '2px'
-            }}
-            initial={{ scaleX: 0 }}
-            whileInView={{ scaleX: 1 }}
-            viewport={{ once: false }}
-            transition={{ duration: 1, ease: "easeInOut" }}
-          />
-
-          {[...Array(3)].map((_, i) => (
-            <motion.div
-              key={i}
-              className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full"
-              style={{
-                background: i % 2 === 0
-                  ? 'linear-gradient(135deg, #EAB308, #FF0F00)'
-                  : 'linear-gradient(135deg, #FF0F00, #EAB308)',
-                left: '50%',
-                transform: 'translateX(-50%) translateY(-50%)'
-              }}
-              animate={{
-                y: [0, -15, 0],
-                opacity: [0.4, 1, 0.4],
-                scale: [1, 1.2, 1]
-              }}
-              transition={{
-                duration: 2,
-                repeat: Infinity,
-                ease: "easeInOut",
-                delay: i * 0.3
-              }}
-            />
-          ))}
-        </div>
-      </motion.div>
-
-      {/* CTA after Case Studies */}
-      <motion.div
-        className="max-w-7xl mx-auto px-4 pb-12 relative z-10"
-        initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 24 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true }}
-        transition={{ duration: prefersReducedMotion ? 0 : 0.6, ease: 'easeOut' }}
-      >
+      {/* Section — Dark features block (Figma) */}
+      <section className="mt-0 md:mt-0 bg-[#18181F] relative overflow-hidden">
+        {/* Background image with low opacity - parallax */}
         <div
-          className="rounded-3xl p-8 md:p-12 text-center border border-orange-200"
-          style={{ background: 'linear-gradient(90deg, rgba(234,179,8,0.08), rgba(255,15,0,0.08))' }}
-        >
-          <h3
-            className="text-2xl md:text-4xl font-bold mb-3"
-            style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}
-          >
-            Swap across chains with ease.
-          </h3>
-          <p className="text-sm md:text-base text-gray-600 mb-5"> Questions or issues? Contact us and we’ll take care of you.</p>
-          <div className="inline-block relative group">
-            <div className="absolute -inset-3 rounded-2xl bg-gradient-to-r from-orange-400/35 via-orange-500/30 to-red-500/35 blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none" />
-            <Button
-              style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-              className="relative z-10 px-8 py-4 text-base md:text-lg text-white font-semibold rounded-2xl border-0 transition-transform duration-200 ease-out hover:scale-[1.03] active:scale-95 shadow-[0_20px_60px_-15px_rgba(255,15,0,0.35)] hover:shadow-[0_25px_80px_-20px_rgba(255,15,0,0.55)]"
-              onClick={() => window.open('https://t.me/looftaxyz', '_blank', 'noopener,noreferrer')}
-            >
-              Contact us
-            </Button>
+          className="absolute inset-0 opacity-10 pointer-events-none"
+          style={{
+            backgroundImage: 'url(/bg_section.png)',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundAttachment: 'fixed',
+          }}
+        />
+        <div className="max-w-7xl mx-auto px-4 md:px-8 py-20 md:py-28 relative z-10">
+          <div className="text-center">
+            <h2 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight">
+              The modern way <br className="hidden md:block" />
+              <span
+                style={{
+                  backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)',
+                  WebkitBackgroundClip: 'text',
+                  backgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  color: 'transparent',
+                }}
+              >
+                to get paid in crypto.
+              </span>
+            </h2>
+            <p className="mt-3 text-sm md:text-base text-white/70">
+              Loofta removes all the friction of multi‑chain payments, for you and your users.
+            </p>
+          </div>
+          {/* Desktop: Lottie animation */}
+          <div className="mt-12 md:mt-16 hidden md:flex justify-center">
+            <Lottie
+              animationData={cardsHomeAnimation}
+              loop={true}
+              className="w-full max-w-4xl"
+            />
+          </div>
+
+          {/* Mobile: Cards grid */}
+          <div className="mt-12 md:hidden w-full grid grid-cols-1 gap-6">
+            {[
+              {
+                icon: "/images/icons/share-icon.png",
+                width: 74,
+                height: 74,
+                title: "Any chain. Any token. Zero hassle.",
+                desc: "Accept payments from any blockchain: no bridges, no swaps, nothing to explain.",
+              },
+              {
+                icon: "/images/icons/target-icon.png",
+                width: 70,
+                height: 70,
+                title: "Always receive the exact asset you chose.",
+                desc: "Your payer sends whatever they want. You receive exactly what you configured.",
+              },
+              {
+                icon: "/images/icons/mouse-icon.png",
+                title: "A one‑click flow anyone can complete.",
+                desc: "No wallet requirements. No chain confusion. No technical steps.",
+              },
+              {
+                icon: "/images/icons/shield-icon.png",
+                title: "The payer → receiver trail stays private.",
+                desc: "Accept payments from any blockchain: no bridges, no swaps, nothing to explain.",
+              },
+            ].map((f, index) => (
+              <motion.div
+                key={f.title}
+                initial={{ opacity: 0, y: 40 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: "-50px" }}
+                transition={{ duration: 0.5, delay: index * 0.15 }}
+                className="rounded-[20px] bg-[#1D1D25] border border-white/5 p-6 text-white flex items-start gap-4"
+              >
+                <div className="shrink-0">
+                  <Image
+                    src={f.icon}
+                    alt=""
+                    width={f.width ?? 64}
+                    height={f.height ?? 64}
+                  />
+                </div>
+                <div className="flex flex-col">
+                  <div className="text-lg md:text-xl font-semibold leading-tight">{f.title}</div>
+                  <div className="mt-2 text-sm text-white/60 leading-relaxed">{f.desc}</div>
+                </div>
+              </motion.div>
+            ))}
           </div>
         </div>
-      </motion.div>
+      </section>
 
+      {/* Section — How it works */}
+      <section className="bg-white py-20 md:py-28">
+        <div className="max-w-7xl mx-auto px-4 md:px-8">
+          <h2 className="text-5xl md:text-6xl font-medium font-sans text-slate-900 text-center mb-12 md:mb-16">
+            How it works
+          </h2>
+          {/* Desktop: Lottie animation */}
+          <div className="hidden md:flex justify-center">
+            <Lottie
+              animationData={howItWorksAnimation}
+              loop={true}
+              className="w-full max-w-5xl"
+            />
+          </div>
 
-      {/* Social Links - Footer */}
-      <div className="mt-12 pb-6 text-center">
-        <div className="flex items-center justify-center gap-8">
-          <a
-            href="https://x.com/looftaxyz"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-gray-600 hover:text-orange-600 transition-colors text-sm font-medium"
-          >
-            Twitter (X)
-          </a>
-          <a
-            href="https://t.me/looftaxyz"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-gray-600 hover:text-orange-600 transition-colors text-sm font-medium"
-          >
-            Telegram
-          </a>
-          <a
-            href="https://medium.com/@looftaxyz"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-gray-600 hover:text-orange-600 transition-colors text-sm font-medium"
-          >
-            Medium
-          </a>
+          {/* Mobile: Cards grid with scroll animation */}
+          <div className="grid grid-cols-1 gap-6 md:hidden">
+            {[
+              {
+                number: "1.",
+                title: "Create a Request",
+                desc: "Choose amount, network, privacy.",
+              },
+              {
+                number: "2.",
+                title: "Share a Link",
+                desc: "Send it anywhere — DM, email, chat.",
+              },
+              {
+                number: "3.",
+                title: "Get Paid",
+                desc: "Payer choose payout method, privacy settings, and pay.",
+              },
+            ].map((step, index) => (
+              <motion.div
+                key={step.number}
+                initial={{ opacity: 0, y: 40 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: "-50px" }}
+                transition={{ duration: 0.5, delay: index * 0.15 }}
+                className="rounded-[20px] bg-[#F6F6F8] p-8 shadow-[0px_4px_20px_0px_rgba(15,23,42,0.08)]"
+              >
+                <div
+                  className="text-6xl font-bold mb-4"
+                  style={{
+                    backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)',
+                    WebkitBackgroundClip: 'text',
+                    backgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                    color: 'transparent',
+                  }}
+                >
+                  {step.number}
+                </div>
+                <div className="text-xl font-semibold font-sans text-slate-900 mb-2">
+                  {step.title}
+                </div>
+                <div className="text-md text-slate-500">
+                  {step.desc}
+                </div>
+              </motion.div>
+            ))}
+          </div>
         </div>
-      </div>
+      </section>
 
-      {/* CSS Animations */}
+      {/* Section — FAQ */}
+      <section className="bg-white py-20 md:py-28">
+        <div className="max-w-4xl mx-auto px-4 md:px-8">
+          <h2 className="text-5xl md:text-6xl font-medium font-sans text-slate-900 text-center mb-12 md:mb-16">
+            Frequently asked<br />questions
+          </h2>
+          <div className="flex flex-col gap-4">
+            {faqItems.map((item, index) => (
+              <div
+                key={index}
+                className="rounded-[20px] bg-[#F6F6F8] overflow-hidden"
+              >
+                <button
+                  onClick={() => setOpenFaq(openFaq === index ? null : index)}
+                  className="w-full px-6 py-5 flex items-center justify-between text-left"
+                >
+                  <span className="text-lg md:text-xl font-semibold font-sans text-slate-900">
+                    {item.question}
+                  </span>
+                  <motion.span
+                    className="text-2xl text-slate-900 shrink-0 ml-4"
+                    animate={{ rotate: openFaq === index ? 45 : 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    +
+                  </motion.span>
+                </button>
+                <AnimatePresence initial={false}>
+                  {openFaq === index && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.3, ease: "easeInOut" }}
+                      className="overflow-hidden"
+                    >
+                      <div className="px-6 pb-5">
+                        <p className="text-sm md:text-base text-slate-500">
+                          {item.answer}
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* CTA Section */}
+      <section ref={ctaRef} className="relative z-10 px-4 md:px-8 mb-[-80px]">
+        <div className="max-w-5xl rounded-[40px] mx-auto overflow-hidden">
+          <motion.div
+            className="rounded-[40px] bg-cover bg-opacity-5"
+            style={{
+              backgroundImage: 'url(/bg_footer.png)',
+              backgroundPosition: 'center',
+              backgroundPositionY: bgY,
+            }}
+          >
+            <div
+              className="rounded-[40px]"
+              style={{
+                backgroundImage: 'linear-gradient(to right, rgba(255,19,1,0.85), rgba(234,179,8,0.85))',
+              }}
+            >
+              <div className="flex flex-col items-center py-12 md:py-18 px-8 md:px-16 text-center">
+                <h2 className="text-3xl md:text-6xl font-medium font-sans text-white leading-tight">
+                  Ready to get paid<br />
+                  privately?
+                </h2>
+                <p className="mt-6 text-lg md:text-xl text-white max-w-xl">
+                  Your payer uses whatever they want.<br />
+                  <span className="font-semibold">You always receive exactly what you asked for.</span>
+                </p>
+                <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
+                  <Link
+                    href="/claim"
+                    className="rounded-full px-8 py-4 text-base font-semibold bg-[#0F172A] text-white hover:opacity-90 transition-colors"
+                  >
+                    Create a payment link
+                  </Link>
+                  <a
+                    href="https://t.me/loofta"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-full px-8 py-4 text-base font-semibold bg-white text-red-500 hover:bg-gray-50 transition-colors"
+                  >
+                    Chat on Telegram
+                  </a>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="bg-[#18181F] pt-32 md:pt-40 pb-12">
+        <div className="max-w-7xl mx-auto px-4 md:px-8">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-8 md:gap-12">
+            {/* Logo */}
+            <div className="col-span-2 md:col-span-1">
+              <Image
+                src="/loofta_white.svg"
+                alt="Loofta"
+                width={140}
+                height={40}
+                className="h-10 w-auto"
+              />
+            </div>
+
+            {/* Products */}
+            <div>
+              <h4 className="text-white font-semibold mb-4">Products</h4>
+              <ul className="space-y-2">
+                <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Cross-chain swap</a></li>
+                <li><a href="/claim" className="text-slate-400 hover:text-white transition-colors">Payment request</a></li>
+              </ul>
+            </div>
+
+            {/* Socials */}
+            <div>
+              <h4 className="text-white font-semibold mb-4">Socials</h4>
+              <ul className="space-y-2">
+                <li><a href="https://medium.com/@loofta" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Medium</a></li>
+                <li><a href="https://twitter.com/loofta" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Twitter</a></li>
+                <li><a href="https://t.me/loofta" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Telegram</a></li>
+              </ul>
+            </div>
+
+            {/* Documentation */}
+            <div>
+              <h4 className="text-white font-semibold mb-4">Documentation</h4>
+              <ul className="space-y-2">
+                <li><a href="https://github.com/loofta" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Github</a></li>
+              </ul>
+            </div>
+
+            {/* Routes */}
+            <div>
+              <h4 className="text-white font-semibold mb-4">Routes</h4>
+              <ul className="space-y-2">
+                <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Bridge to Solana</a></li>
+                <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Bridge to Bitcoin</a></li>
+                <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Bridge to Ethereum</a></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </footer>
+
+      {/* Hide Spline watermark (visual only) */}
       <style jsx global>{`
-        @keyframes fade-in {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
-        }
-
-        @keyframes slide-up {
-          from {
-            opacity: 0;
-            transform: translateY(30px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        @keyframes fade-in-up {
-          from {
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        .animate-fade-in {
-          animation: fade-in 1s ease-out;
-        }
-
-        .animate-slide-up {
-          animation: slide-up 1s ease-out;
-        }
-
-        .delay-700 { animation-delay: 0.7s; }
-        .delay-1000 { animation-delay: 1s; }
-
-        /* Clamp tweet text inside react-tweet */
-        .tweet-truncate-150 { font-size: 0.875rem; line-height: 1.35; }
-        .tweet-truncate-150 .react-tweet-text,
-        .tweet-truncate-150 [data-testid="tweet-text"],
-        .tweet-truncate-150 p {
-          display: -webkit-box;
-          -webkit-line-clamp: 5;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-        }
-        .tweet-truncate-150 p, .tweet-truncate-150 span, .tweet-truncate-150 a { font-size: 0.875rem !important; line-height: 1.35 !important; }
+        .spline-wrap a[href*="spline.design"] { display: none !important; }
       `}</style>
     </div>
   );
 }
-
 
