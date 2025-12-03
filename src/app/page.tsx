@@ -113,7 +113,7 @@ export default function Home() {
                 </Link>
               </div>
             </div>
-            <div className="order-2 md:order-2 relative h-automd:h-full overflow-visible z-10 flex items-end justify-end">
+            <div className="order-2 md:order-2 relative h-auto md:h-full overflow-visible z-10 flex items-end justify-end">
               <Lottie
                 lottieRef={lottieRef}
                 animationData={paymentFlowAnimation}
