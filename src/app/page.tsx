@@ -64,13 +64,13 @@ export default function Home() {
           <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-orange-50/50 rounded-full blur-3xl animate-pulse delay-1000"></div>
           {/* Spline 3D abstract animation on the right side */}
           <div
-            className="spline-wrap pointer-events-none hidden md:block absolute top-0 right-[-2vw] w-[65vw] max-w-[1400px] md:h-full h-auto z-0"
+            className="spline-wrap pointer-events-none hidden md:block absolute top-0 right-[-2vw] w-[65vw] max-w-[1400px] h-auto md:h-full  z-0"
             style={{
               WebkitMaskImage: 'linear-gradient(to left, black 78%, transparent 98%)',
               maskImage: 'linear-gradient(to left, black 78%, transparent 98%)',
             }}
           >
-            <Suspense fallback={<div className="w-full h-auto md:h-full" />}>
+            <Suspense fallback={<div className="w-full h-full" />}>
               <Spline scene="/spline/reeded_liquid_glass_prism_hero_section_concept_copy.spline" />
             </Suspense>
           </div>
