@@ -180,7 +180,7 @@ export default function ClaimPage() {
           <div className="flex flex-col md:flex-row items-center justify-center gap-32 min-h-[calc(100vh-7rem)]">
             {/* Left column - text only */}
             <div className="w-full md:w-1/2">
-              <h1 className="text-5xl md:text-6xl font-medium font-display text-white leading-tight mb-8">
+              <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
                 Create a new <br /><span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Payment Link</span>
               </h1>
               <p className="text-gray-100 text-xl mb-8">Joined the thousands of people who have already used Loofta to request payments from friends and paid gigs. You create the link, and they can pay you with ANY token they want.</p>
@@ -233,7 +233,7 @@ export default function ClaimPage() {
                     </div>
                     <div className="mt-4 text-center">
                       <h2 className="text-2xl md:text-3xl text-gray-900 font-semibold">Congrats! Your one‑time payment link is ready</h2>
-                      <p className="mt-1 text-lg md:text-xl text-gray-700 font-medium font-display">Share this link with your recipient.</p>
+                      <p className="mt-1 text-lg md:text-xl text-gray-700 font-medium font-sans">Share this link with your recipient.</p>
                     </div>
                     <div className="mt-5">
                       <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm flex items-center justify-between gap-3">

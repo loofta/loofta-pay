@@ -442,7 +442,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
           <div className="flex flex-col md:flex-row items-center justify-center gap-32 min-h-[calc(100vh-7rem)]">
             {/* Left column - text/summary */}
             <div className="w-full md:w-1/2">
-              <h1 className="text-5xl md:text-6xl font-medium font-display text-white leading-tight mb-8">
+              <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
                 Complete your <span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>payment</span>
               </h1>
               <p className="text-gray-300 text-xl mb-8">Loofta ensures your funds are securely deposited and your payment is completed. Send exactly the amount shown to the deposit address. </p>
