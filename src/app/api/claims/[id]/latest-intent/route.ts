@@ -3,9 +3,9 @@
  import { NextResponse } from "next/server";
  import { getSupabaseAdmin } from "@/lib/supabaseServer";
  
- export async function GET(_req: Request, { params }: { params: { id: string } }) {
-  try {
-    const id = params?.id;
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+ try {
+   const { id } = await params;
     if (!id) {
       return NextResponse.json({ error: "Missing id" }, { status: 400 });
     }

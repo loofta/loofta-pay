@@ -10,19 +10,8 @@ const nextConfig = {
       { protocol: 'https', hostname: 'ipfs.sintral.me' },
     ],
   },
-  webpack: (config) => {
-    config.resolve.fallback = { 
-      ...config.resolve.fallback,
-      fs: false, 
-      net: false, 
-      tls: false 
-    };
-    config.experiments = {
-      ...config.experiments,
-      asyncWebAssembly: true,
-    };
-    return config;
-  }
+  // Turbopack handles fs/net/tls fallbacks and WebAssembly natively
+  turbopack: {},
 };
 
 export default nextConfig;
