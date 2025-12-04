@@ -147,8 +147,8 @@ function getOrCreateSignerKey(userAddress: string): `0x${string}` {
 	if (storedKeys[key]) {
 		console.log("[Rhinestone] Using stored signer key for user:", userAddress);
 		return storedKeys[key];
-	}
-	
+}
+
 	// Generate new signer key
 	const pk = generatePrivateKey();
 	saveSignerKeyToStorage(userAddress, pk);
@@ -441,8 +441,8 @@ export async function createRhinestoneTransaction(input: {
 			});
 	} catch (e) {
 			console.warn("[Rhinestone] Could not check companion balance:", e);
-		}
-		
+	}
+
 		// Calculate how much more funding is needed (if any)
 		const additionalFundingNeeded = companionBalance >= sourceAmountWei 
 			? BigInt(0) 
@@ -477,7 +477,7 @@ export async function createRhinestoneTransaction(input: {
 		// Store for executeRhinestoneIntent
 		(globalThis as any).__rhinestoneIntents = (globalThis as any).__rhinestoneIntents || {};
 		(globalThis as any).__rhinestoneIntents[companionAddress] = intentData;
-
+	
 		// Calculate total source amount used (for display purposes)
 		const totalSourceAmountHuman = (Number(swapAmountWei) / Math.pow(10, fromToken.decimals || 18)).toFixed(6);
 
@@ -536,7 +536,7 @@ export async function createRhinestoneTransaction(input: {
 				to: fromAddr || ZERO_ADDRESS,
 				data: transferData,
 				value: "0",
-				chainId,
+		chainId,
 				companionAddress,
 				fundingAmount: additionalFundingNeeded.toString(),
 				fundingToken: fromToken.symbol,
@@ -564,7 +564,7 @@ export async function executeRhinestoneIntent(input: {
 	signerPk: `0x${string}`;
 }): Promise<{ txHash: string; status: string }> {
 	const { companionAddress, signerPk } = input;
-
+	
 	// Retrieve stored intent data
 	const intentData = (globalThis as any).__rhinestoneIntents?.[companionAddress];
 	if (!intentData) {
@@ -675,7 +675,7 @@ export async function executeRhinestoneIntent(input: {
 			gas: true,
 			bridging: true,
 			swaps: true,
-		},
+			},
 	});
 
 	console.log("[Rhinestone] Intent submitted:", transaction);

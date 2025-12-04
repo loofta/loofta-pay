@@ -80,6 +80,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const [speedUpOpen, setSpeedUpOpen] = useState<boolean>(false);
   const [txInput, setTxInput] = useState<string>("");
   const [submittingTx, setSubmittingTx] = useState<boolean>(false);
+  const [showPrivacyTutorial, setShowPrivacyTutorial] = useState<boolean>(false);
+  const [tutorialStep, setTutorialStep] = useState<number>(0);
   const { logout, login, authenticated, user } = usePrivy();
   const { wallets } = useWallets();
 
@@ -99,6 +101,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     if (!selectedFrom || !destToken) return false;
     return String(selectedFrom.chain || "").toLowerCase() === String(destToken.chain || "").toLowerCase();
   }, [selectedFrom, destToken]);
+  // Check if same token AND same chain (direct transfer, no swap needed)
+  const sameTokenAndChain = useMemo(() => {
+    if (!selectedFrom || !destToken || !sameChain) return false;
+    return String(selectedFrom.symbol || "").toLowerCase() === String(destToken.symbol || "").toLowerCase();
+  }, [selectedFrom, destToken, sameChain]);
   // Check if direct pay via swap provider is available
   const swapEligibility = useMemo(() => {
     if (!selectedFrom || !destToken) return { eligible: false, provider: null as SwapProvider | null };
@@ -127,6 +134,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     if (entry?.status) setStatus(entry.status);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
 
   // Hydrate from latest-intent cache
   useEffect(() => {
@@ -210,6 +218,22 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     setDeposit(null);
     try {
       useClaimPayStore.getState().setFromSel(id, { symbol: selectedFrom.symbol, chain: selectedFrom.chain } as any);
+
+      // If same token AND same chain, use recipient address directly (no swap needed)
+      if (sameTokenAndChain && claim.recipient_address) {
+        const directDeposit = {
+          depositAddress: claim.recipient_address,
+          memo: undefined,
+          deadline: undefined,
+          quoteId: undefined,
+          minDepositFormatted: destTokenAmount ? String(destTokenAmount) : claim.amount,
+        };
+        setDeposit({ ...directDeposit, isDirect: true });
+        useClaimPayStore.getState().setDeposit(id, directDeposit);
+        toast({ title: "Direct transfer", description: "Same token & chain - send directly to recipient" });
+        return;
+      }
+
       const res = await prepareDeposit({
         claimId: id,
         fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain },
@@ -529,41 +553,168 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
   return (
     <>
+      {/* Privacy Tutorial Modal */}
+      {showPrivacyTutorial && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => { setShowPrivacyTutorial(false); setTutorialStep(0); }}>
+          <div
+            className="bg-white rounded-[20px] w-full max-w-sm shadow-2xl overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Progress bar */}
+            <div className="flex gap-1.5 p-4 pb-0">
+              {[0, 1, 2, 3].map(i => (
+                <div key={i} className="flex-1 h-1 rounded-full bg-gray-200 overflow-hidden">
+                  <div className={`h-full transition-all duration-300 ${tutorialStep >= i ? 'w-full' : 'w-0'}`} style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }} />
+                </div>
+              ))}
+            </div>
+
+            {/* Content - fixed height */}
+            <div className="relative h-[360px] overflow-hidden">
+              {/* Step 0: Intro */}
+              <div className={`absolute inset-0 p-6 flex flex-col items-center justify-center text-center transition-all duration-300 ${tutorialStep === 0 ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
+                <Image src="/images/icons/shield-icon.png" alt="" width={64} height={64} className="mb-5" />
+                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-3">Private Settlement</h3>
+                <p className="text-slate-500">Convert your payment to ZEC for complete privacy</p>
+              </div>
+
+              {/* Step 1: Get Wallet */}
+              <div className={`absolute inset-0 p-6 flex flex-col items-center justify-center text-center transition-all duration-300 ${tutorialStep === 1 ? 'opacity-100 translate-x-0' : tutorialStep < 1 ? 'opacity-0 translate-x-full pointer-events-none' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
+                <Image src="/images/icons/wallet.png" alt="" width={128} height={128} className="mb-5" />
+                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-3">Get a Wallet</h3>
+                <p className="text-slate-500 mb-5">Download Zashi to get your shielded address</p>
+                <a
+                  href="https://zashi.app"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-white font-medium hover:opacity-90 transition-opacity"
+                  style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                >
+                  Get Zashi →
+                </a>
+              </div>
+
+              {/* Step 2: How it works */}
+              <div className={`absolute inset-0 p-6 flex flex-col transition-all duration-300 ${tutorialStep === 2 ? 'opacity-100 translate-x-0' : tutorialStep < 2 ? 'opacity-0 translate-x-full pointer-events-none' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
+                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-6 text-center">How it works</h3>
+                <div className="flex-1 flex flex-col justify-center space-y-4">
+                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
+                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>1.</span>
+                    <span className="text-slate-700 pt-1">Enter your Zcash shielded address</span>
+                  </div>
+                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
+                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>2.</span>
+                    <span className="text-slate-700 pt-1">We swap your funds to ZEC</span>
+                  </div>
+                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
+                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>3.</span>
+                    <span className="text-slate-700 pt-1">Receive ZEC privately in your wallet</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 3: Benefits */}
+              <div className={`absolute inset-0 p-6 flex flex-col transition-all duration-300 ${tutorialStep === 3 ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-full pointer-events-none'}`}>
+                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-6 text-center">Why private?</h3>
+                <div className="flex-1 flex flex-col justify-center space-y-4">
+                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
+                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>✓</span>
+                    <span className="text-slate-700 pt-1">No one can see your balance</span>
+                  </div>
+                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
+                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>✓</span>
+                    <span className="text-slate-700 pt-1">Transaction history is hidden</span>
+                  </div>
+                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
+                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>✓</span>
+                    <span className="text-slate-700 pt-1">Swap back to 120+ tokens anytime</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Navigation */}
+            <div className="p-4 border-t border-gray-100">
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    if (tutorialStep === 0) {
+                      setShowPrivacyTutorial(false);
+                      setTutorialStep(0);
+                    } else {
+                      setTutorialStep(s => s - 1);
+                    }
+                  }}
+                  className="flex-1 py-3 rounded-[12px] font-medium text-slate-500 hover:text-slate-700 transition-colors"
+                >
+                  {tutorialStep === 0 ? 'Skip' : 'Back'}
+                </button>
+                <button
+                  onClick={() => tutorialStep < 3 ? setTutorialStep(s => s + 1) : (setShowPrivacyTutorial(false), setTutorialStep(0))}
+                  className="flex-1 py-3 rounded-[12px] font-medium text-white hover:opacity-90 transition-opacity"
+                  style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                >
+                  {tutorialStep === 3 ? 'Get Started' : 'Next'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="fixed inset-0 -z-10 bg-[#18181F]" />
       <div className="min-h-screen text-white">
         <div className="max-w-7xl mx-auto px-4 pb-12">
           <div className="flex flex-col md:flex-row items-center justify-center gap-32 min-h-[calc(100vh-7rem)]">
             {/* Left column - text/summary */}
             <div className="w-full md:w-1/2">
-              <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
-                Complete your <span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>payment</span>
-              </h1>
-              <p className="text-gray-300 text-xl mb-8">Loofta ensures your funds are securely deposited and your payment is completed. Send exactly the amount shown to the deposit address. </p>
-              <ul className="mt-6 space-y-4">
-                <li className="flex items-start gap-3">
-                  <MoneyIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                  <span className="text-gray-300 text-xl">
-                    Amount due:{" "}
-                    {(loadingClaim || !claim) ? (
-                      <span className="align-middle inline-block">
-                        <Skeleton className="h-5 w-28 rounded-md" />
+              {String(status || "").toUpperCase() === "SUCCESS" ? (
+                <>
+                  <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
+                    Want to request <span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>payment?</span>
+                  </h1>
+                  <p className="text-gray-300 text-xl mb-8">Create your own payment link and get paid in any token you want.</p>
+                  <a
+                    href="/claim"
+                    className="inline-flex items-center gap-2 rounded-full px-8 py-4 text-base font-semibold text-white hover:opacity-90 transition-opacity"
+                    style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                  >
+                    Create your pay link
+                  </a>
+                </>
+              ) : (
+                <>
+                  <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
+                    Complete your <span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>payment</span>
+                  </h1>
+                  <p className="text-gray-300 text-xl mb-8">Loofta ensures your funds are securely deposited and your payment is completed. Send exactly the amount shown to the deposit address. </p>
+                  <ul className="mt-6 space-y-4">
+                    <li className="flex items-start gap-3">
+                      <MoneyIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                      <span className="text-gray-300 text-xl">
+                        Amount due:{" "}
+                        {(loadingClaim || !claim) ? (
+                          <span className="align-middle inline-block">
+                            <Skeleton className="h-5 w-28 rounded-md" />
+                          </span>
+                        ) : (
+                          <span className="text-white font-semibold">
+                            {destUSD != null ? `$${destUSD.toFixed(2)}` : `${claim.amount} ${claim.to_symbol}`}
+                          </span>
+                        )}
                       </span>
-                    ) : (
-                      <span className="text-white font-semibold">
-                        {destUSD != null ? `$${destUSD.toFixed(2)}` : `${claim.amount} ${claim.to_symbol}`}
-                      </span>
-                    )}
-                  </span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <ChainIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                  <span className="text-gray-300 text-xl">Choose which token you want to pay with</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <ShareIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                  <span className="text-gray-300 text-xl">Send exactly the amount shown to the deposit address</span>
-                </li>
-              </ul>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <ChainIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                      <span className="text-gray-300 text-xl">Choose which token you want to pay with</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <ShareIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                      <span className="text-gray-300 text-xl">Send exactly the amount shown to the deposit address</span>
+                    </li>
+                  </ul>
+                </>
+              )}
             </div>
 
             {/* Right column - card */}
@@ -620,19 +771,20 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             </div>
                           </div>
                         </div>
+
                       </>
                     ) : (
                       <>
                         <div className="mb-3 flex items-start justify-between">
-                          <div className="text-sm font-medium text-gray-700">Payment request</div>
+                          <div className="text-base font-medium text-gray-700">Payment request</div>
                           {deposit?.depositAddress ? <StatusBadge status={status || "PENDING_DEPOSIT"} /> : null}
                         </div>
-                        <div className="text-sm text-gray-700">Amount requested</div>
+                        <div className="text-base text-gray-700">Amount requested</div>
                         <div className="mt-1 flex items-baseline justify-between">
                           <div className="text-3xl md:text-4xl font-semibold text-gray-900 leading-none">
                             {destUSD != null ? `$${destUSD.toFixed(2)}` : `—`}
                           </div>
-                          <div className="text-sm text-gray-500">
+                          <div className="text-base text-gray-500">
                             <span className="inline-flex items-center gap-1">
                               <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
                               {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol}
@@ -644,8 +796,34 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
                     {String(status || "").toUpperCase() !== "SUCCESS" && (!deposit ? (
                       <>
-                        <div className="mt-6">
-                          <div className="text-sm font-medium text-gray-700 mb-2">Pay with</div>
+                        {/* Standard/Private Toggle */}
+                        <div className="mt-5">
+                          <div className="flex gap-2 rounded-xl bg-gray-100 p-1.5">
+                            <button
+                              type="button"
+                              className="flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all bg-orange-500 text-white"
+                            >
+                              Standard
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                toast({ title: "Coming Soon", description: "Private payments with ZEC will be available soon!" });
+                              }}
+                              className="flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 bg-transparent text-gray-400 cursor-not-allowed"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="opacity-60">
+                                <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" fill="currentColor" />
+                              </svg>
+                              Private
+                              <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">Soon</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Pay with section */}
+                        <div className="mt-5">
+                          <div className="text-base font-medium text-gray-700 mb-2">Pay with</div>
                           <TokenCombobox
                             tokens={tokens}
                             value={fromSel}
@@ -654,6 +832,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
                             className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none focus:border-orange-400 transition-colors"
                           />
+
                           {selectedFrom ? (
                             <div className="mt-2 text-sm text-gray-700">
                               {quote?.amountInFormatted
@@ -692,7 +871,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                       </div>
                                       <button
                                         onClick={logout}
-                                        className="text-red-500 hover:text-red-700 text-xs font-medium"
+                                        className="text-red-500 hover:text-red-700 text-sm  font-medium"
                                       >
                                         Disconnect
                                       </button>
@@ -747,13 +926,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                         <span className="inline-flex items-center gap-1">
                                           <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={24} />
                                           {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol}
-                                          <span className="mx-1 text-gray-400">•</span>
-                                          {(() => {
-                                            const chain = destToken?.chain;
-                                            const src = getChainIcon(chain);
-                                            return src ? <Image src={src} alt="chain" width={24} height={24} sizes="24px" unoptimized={/^https?:\/\//.test(src)} /> : null;
-                                          })()}
-                                          {String(destToken?.chain || "")}
+
                                         </span>
                                       </span>
                                     </div>
@@ -785,7 +958,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   <div className="text-sm font-semibold text-red-700">
                                     {s === "FAILED" ? "Deposit failed." : "Deposit was refunded."}
                                   </div>
-                                  <div className="text-xs text-red-700/80 mt-1">
+                                  <div className="text-sm  text-red-700/80 mt-1">
                                     Please try again with a different token or network.
                                   </div>
                                 </div>
@@ -842,7 +1015,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                 </div>
                                 <button
                                   type="button"
-                                  className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
                                   onClick={async () => {
                                     try {
                                       await navigator.clipboard.writeText(deposit.depositAddress || "");
@@ -858,11 +1031,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   Copy
                                 </button>
                               </div>
-                              <div className="mt-3 rounded-md border border-orange-200 bg-orange-50 text-orange-800 text-xs px-3 py-2">
+                              <div className="mt-3 rounded-md border border-orange-200 bg-orange-50 text-orange-800 text-sm px-3 py-2">
                                 Only deposit {selectedFrom?.symbol} from the {String(selectedFrom?.chain || "").toUpperCase()} network. Using another token or network may result in loss of funds.
                               </div>
                               {String(status || "").toUpperCase() === "INCOMPLETE_DEPOSIT" ? (
-                                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 text-amber-900 text-xs px-3 py-2">
+                                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 text-amber-900 text-sm  px-3 py-2">
                                   <div className="text-sm font-semibold">Partial deposit detected</div>
                                   <div className="mt-1">
                                     {(() => {
@@ -899,7 +1072,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                 ) : (
                                   <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                                     <div className="text-sm font-medium text-gray-800">Submit your transaction hash</div>
-                                    <div className="text-xs text-gray-600">Paste a hash or an explorer link — we’ll extract the hash automatically.</div>
+                                    <div className="text-sm  text-gray-600">Paste a hash or an explorer link — we’ll extract the hash automatically.</div>
                                     <div className="mt-2 flex items-center gap-2">
                                       <Input
                                         value={txInput}
@@ -1095,7 +1268,7 @@ function CompanionDebugSection({ wallets }: { wallets: any[] }) {
         )}
 
         {hasStoredKey !== null && (
-          <div className={`text-xs mt-2 p-2 rounded border ${hasStoredKey ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800"}`}>
+          <div className={`text-sm  mt-2 p-2 rounded border ${hasStoredKey ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800"}`}>
             <strong>{hasStoredKey ? "✅ Signer Key Found" : "⚠️ No Signer Key Found"}</strong><br />
             {hasStoredKey
               ? "You can withdraw from companions created in this browser session."
@@ -1104,7 +1277,7 @@ function CompanionDebugSection({ wallets }: { wallets: any[] }) {
           </div>
         )}
 
-        <div className="text-xs text-gray-500 mt-2 p-2 bg-gray-100 rounded">
+        <div className="text-sm  text-gray-500 mt-2 p-2 bg-gray-100 rounded">
           <strong>Known stuck companions (keys lost):</strong><br />
           • 0x7f86c6D89D715082Ca64bbA78eF9d7421052F641<br />
           • 0x9353C0f04F8B4781ed2a8F67FC5037e51738B855<br /><br />

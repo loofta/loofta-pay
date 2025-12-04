@@ -345,8 +345,10 @@ export default function Home() {
             className="rounded-[40px] bg-cover bg-opacity-2"
             style={{
               backgroundImage: 'url(/bg_footer.png)',
+              backgroundColor: 'rgba(255, 255, 255, 0.5)',
+              backgroundBlendMode: 'lighten',
               backgroundPosition: 'center',
-              backgroundPositionY: bgY,
+              backgroundPositionY: '60%',
             }}
           >
             <div

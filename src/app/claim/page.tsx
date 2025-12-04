@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import { findTokenBySelection } from "@/lib/tokens";
 import { maskLink } from "@/lib/format";
+import { isValidZcashShielded } from "@/lib/zcash";
+import { useClaimStore } from "@/store/claim";
 
 async function createClaim(formData: {
   amount: string;
@@ -49,12 +51,11 @@ export default function ClaimPage() {
   const [amount, setAmount] = useState<string>("");
   const [recipient, setRecipient] = useState<string>("");
   const [creating, setCreating] = useState(false);
-  const [link, setLink] = useState<string>("");
   const [notifyChecked, setNotifyChecked] = useState<boolean>(Boolean(userEmail));
   const [notifyEmail, setNotifyEmail] = useState<string>(userEmail || "");
   const [amountMode, setAmountMode] = useState<"USD" | "TOKEN">("USD");
   const [showConfetti, setShowConfetti] = useState<boolean>(false);
-  const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
+  const { isPrivateMode, setIsPrivateMode, createdLink, setCreatedLink, clearLink, hydrated: claimHydrated } = useClaimStore();
   const [zcashAddress, setZcashAddress] = useState<string>("");
   const [showPrivacyInfo, setShowPrivacyInfo] = useState<boolean>(false);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
@@ -116,6 +117,16 @@ export default function ClaimPage() {
     }
   }, [showPrivacyInfo]);
 
+  // Auto-select ZEC token when entering private mode
+  useEffect(() => {
+    if (isPrivateMode && tokens.length > 0) {
+      const zcashToken = tokens.find(t => t.symbol.toLowerCase() === 'zec');
+      if (zcashToken) {
+        setToSel({ symbol: zcashToken.symbol, chain: zcashToken.chain });
+      }
+    }
+  }, [isPrivateMode, tokens]);
+
   function sanitizeNumberInput(v: string, maxDecimals: number = 9) {
     // keep digits and one dot, convert comma to dot
     let s = String(v || "").replace(/,/g, ".");
@@ -155,8 +166,11 @@ export default function ClaimPage() {
     setAmountMode(next);
   }
 
-  async function onCreate() {
-    if (!selectedTo || !amount || !recipient) {
+  async function onCreate(overrides?: { recipient?: string; toSel?: TokenSelection }) {
+    const finalRecipient = overrides?.recipient || recipient;
+    const finalToSel = overrides?.toSel ? findTokenBySelection(tokens, overrides.toSel) : selectedTo;
+
+    if (!finalToSel || !amount || !finalRecipient) {
       toast({ variant: "destructive", title: "Missing fields", description: "Amount, destination token and recipient are required." });
       return;
     }
@@ -164,21 +178,22 @@ export default function ClaimPage() {
     try {
       // Always store USD on the backend
       let amountUsdStr = amount;
+      const price = typeof finalToSel.price === "number" ? finalToSel.price : tokenPriceUSD;
       if (amountMode === "TOKEN") {
-        if (!tokenPriceUSD || tokenPriceUSD <= 0) {
+        if (!price || price <= 0) {
           throw new Error("Cannot convert token to USD without a valid token price");
         }
-        const usd = parseFloat(amount) * tokenPriceUSD;
+        const usd = parseFloat(amount) * price;
         amountUsdStr = toFixedTrim(usd, 2);
       }
       const res = await createClaim({
         amount: amountUsdStr,
-        toSel: { symbol: selectedTo.symbol, chain: selectedTo.chain },
-        recipient,
+        toSel: { symbol: finalToSel.symbol, chain: finalToSel.chain },
+        recipient: finalRecipient,
         // Only include email if user opted in and a valid email is present
         notifyEmailTo: notifyChecked && notifyEmail ? notifyEmail : undefined,
       } as any);
-      setLink(res.link);
+      setCreatedLink(res.link);
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 2500);
       toast({ title: "Payment link created", description: "Share the link with your recipient." });
@@ -237,14 +252,14 @@ export default function ClaimPage() {
               {/* Step 2: How it works */}
               <div className={`absolute inset-0 p-6 flex flex-col transition-all duration-300 ${tutorialStep === 2 ? 'opacity-100 translate-x-0' : tutorialStep < 2 ? 'opacity-0 translate-x-full pointer-events-none' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
                 <h3 className="text-2xl font-sans font-medium text-slate-900 mb-6 text-center">How it works</h3>
-                <div className="flex-1 flex flex-col justify-center space-y-4">
+                <div className="flex-1 flex  flex-col justify-center space-y-4">
                   <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
                     <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>1.</span>
                     <span className="text-slate-700 pt-1">Create your private link</span>
                   </div>
                   <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
                     <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>2.</span>
-                    <span className="text-slate-700 pt-1">They pay with any token</span>
+                    <span className="text-slate-700  pt-1">They pay with any token</span>
                   </div>
                   <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
                     <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>3.</span>
@@ -258,15 +273,17 @@ export default function ClaimPage() {
                 <h3 className="text-2xl font-sans font-medium text-slate-900 mb-6 text-center">Use your ZEC</h3>
                 <div className="flex-1 flex flex-col justify-center space-y-4">
                   <a href="https://z.cash/pay-with-zcash" target="_blank" rel="noopener noreferrer" className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8] hover:bg-gray-100 transition-colors">
-                    <span className="text-3xl font-medium" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>1.</span>
-                    <span className="text-slate-700 pt-1">Pay at merchants</span>
+                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>1.</span>
+                    <span className="text-slate-700 pt-1">Swap to 120+ tokens on loofta</span>
+
                   </a>
                   <a href="/swap" className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8] hover:bg-gray-100 transition-colors">
-                    <span className="text-3xl font-medium" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>2.</span>
-                    <span className="text-slate-700 pt-1">Swap to 120+ tokens</span>
+                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>2.</span>
+                    <span className="text-slate-700 pt-1">Pay at merchants</span>
+
                   </a>
                   <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
-                    <span className="text-3xl font-medium" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>3.</span>
+                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>3.</span>
                     <span className="text-slate-700 pt-1">Hold in private pool</span>
                   </div>
                 </div>
@@ -308,7 +325,30 @@ export default function ClaimPage() {
           <div className="flex flex-col md:flex-row items-center justify-center gap-16 min-h-[calc(100vh-7rem)]">
             {/* Left column - changes based on mode */}
             <div className="w-full md:w-1/2">
-              {isPrivateMode ? (
+              {createdLink ? (
+                /* Success state left content */
+                <>
+                  <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
+                    Link <br /><span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Created!</span>
+                  </h1>
+                  <p className="text-gray-100 text-xl mb-8">
+                    Your payment link is ready. Share it anywhere to get paid.
+                  </p>
+                  <button
+                    type="button"
+                    className="mt-8 inline-flex items-center gap-2 rounded-full px-8 py-4 text-base font-semibold text-white hover:opacity-90 transition-opacity"
+                    style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                    onClick={() => {
+                      clearLink();
+                      setAmount("");
+                      setRecipient("");
+                      setZcashAddress("");
+                    }}
+                  >
+                    Create New Payment
+                  </button>
+                </>
+              ) : isPrivateMode ? (
                 /* Private mode left content */
                 <>
                   <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
@@ -373,9 +413,9 @@ export default function ClaimPage() {
             </div>
 
             {/* Right column - toggle + card */}
-            <div className="w-full md:w-[420px]">
+            <div className={`w-full ${createdLink ? 'md:w-[480px]' : 'md:w-[420px]'} transition-all`}>
               {/* Mode Toggle - OUTSIDE card */}
-              {!link && !creating && (
+              {!createdLink && !creating && (
                 <div className="flex gap-2 mb-4">
                   <button
                     type="button"
@@ -417,28 +457,28 @@ export default function ClaimPage() {
                     </div>
                     <div className="mt-4 text-sm text-gray-700">Creating your payment link…</div>
                   </div>
-                ) : link ? (
+                ) : createdLink ? (
                   <div>
                     <div className="flex justify-center">
-                      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-400/30 shadow">
+                      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-orange-500/15 text-orange-500 border border-orange-400/30 shadow">
                         <CheckIcon className="h-12 w-12" />
                       </div>
                     </div>
                     <div className="mt-4 text-center">
-                      <h2 className="text-2xl md:text-3xl text-gray-900 font-semibold">Congrats! Your one‑time payment link is ready</h2>
+                      <h2 className="text-2xl md:text-3xl text-gray-900 font-semibold">Congrats! Your payment link is ready</h2>
                       <p className="mt-1 text-lg md:text-xl text-gray-700 font-medium font-sans">Share this link with your recipient.</p>
                     </div>
                     <div className="mt-5">
                       <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm flex items-center justify-between gap-3">
-                        <a className="text-gray-900 underline decoration-gray-400 hover:decoration-gray-700 break-all" href={link} target="_blank" rel="noreferrer">
-                          {maskLink(link)}
+                        <a className="text-gray-900 underline decoration-gray-400 hover:decoration-gray-700 break-all" href={createdLink} target="_blank" rel="noreferrer">
+                          {maskLink(createdLink)}
                         </a>
                         <button
                           type="button"
                           className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
                           onClick={async () => {
                             try {
-                              await navigator.clipboard.writeText(link);
+                              await navigator.clipboard.writeText(createdLink);
                               toast({ title: "Copied", description: "Payment link copied to clipboard." });
                             } catch {
                               toast({ variant: "destructive", title: "Copy failed", description: "Could not copy link. Please try again." });
@@ -454,7 +494,7 @@ export default function ClaimPage() {
                     </div>
                     <div className="mt-6 flex flex-wrap items-center gap-3">
                       {(() => {
-                        const url = encodeURIComponent(link);
+                        const url = encodeURIComponent(createdLink);
                         const text = encodeURIComponent("Pay me securely on Loofta with any token using this link:");
                         return (
                           <>
@@ -599,7 +639,17 @@ export default function ClaimPage() {
                             type="text"
                             value={recipient}
                             onChange={(e) => setRecipient(e.target.value)}
-                            placeholder="0x..."
+                            placeholder={(() => {
+                              const chain = String(selectedTo?.chain || '').toLowerCase();
+                              if (['solana', 'sol'].includes(chain)) return 'So1ana...';
+                              if (['near'].includes(chain)) return 'account.near';
+                              if (['bitcoin', 'btc'].includes(chain)) return 'bc1...';
+                              if (['zec', 'zcash'].includes(chain)) return 'zs1... or t1...';
+                              if (['cosmos', 'atom'].includes(chain)) return 'cosmos1...';
+                              if (['tron', 'trx'].includes(chain)) return 'T...';
+                              // Default to EVM format
+                              return '0x...';
+                            })()}
                             className="h-12 text-gray-900 placeholder:text-gray-400 border-gray-200 focus:border-orange-400"
                             autoCapitalize="none"
                             autoCorrect="off"
@@ -645,14 +695,15 @@ export default function ClaimPage() {
                     {isPrivateMode ? (
                       <button
                         onClick={() => {
-                          setRecipient(zcashAddress);
                           const zcashToken = tokens.find(t => t.symbol.toLowerCase() === 'zec');
                           if (zcashToken) {
-                            setToSel({ symbol: zcashToken.symbol, chain: zcashToken.chain });
+                            onCreate({
+                              recipient: zcashAddress,
+                              toSel: { symbol: zcashToken.symbol, chain: zcashToken.chain }
+                            });
                           }
-                          onCreate();
                         }}
-                        disabled={creating || !(parsedAmount > 0) || !zcashAddress.startsWith('zs1')}
+                        disabled={creating || !(parsedAmount > 0) || !isValidZcashShielded(zcashAddress)}
                         className="w-full py-3 rounded-lg font-semibold text-gray-900 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-500 hover:to-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
                       >
                         {creating ? (
@@ -669,7 +720,7 @@ export default function ClaimPage() {
                       </button>
                     ) : (
                       <GradientActionButton
-                        onClick={onCreate}
+                        onClick={() => onCreate()}
                         disabled={creating || !(parsedAmount > 0 && !!selectedTo && !!(recipient || "").trim())}
                         loading={creating}
                         loadingText="Creating…"

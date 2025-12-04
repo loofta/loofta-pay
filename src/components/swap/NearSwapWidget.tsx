@@ -23,6 +23,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { upsertLocal } from "@/lib/history";
 import { getClientGeo } from "@/lib/geo";
 import { Switch } from "@/components/ui/switch";
+import { isValidZcashShielded } from "@/lib/zcash";
 
 export function NearSwapWidget({
 	tokens,
@@ -114,13 +115,6 @@ export function NearSwapWidget({
 			return false;
 		}
 		if (fam === "dogecoin") return /^D[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(v);
-		return false;
-	}
-	function isValidZcashShielded(addr: string): boolean {
-		const v = (addr || "").trim();
-		// Accept Zcash Unified Address (starts with 'u', long, lowercase base charset) or Sapling 'zs...'
-		if (/^u[0-9a-z]{60,220}$/.test(v)) return true;
-		if (/^zs[0-9a-z]{60,200}$/i.test(v)) return true;
 		return false;
 	}
 	// Reset shielded toggle if destination stops being ZEC
