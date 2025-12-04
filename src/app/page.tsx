@@ -200,7 +200,7 @@ export default function Home() {
             <Lottie
               lottieRef={cardsLottieRef}
               animationData={cardsHomeAnimation}
-              loop={true}
+              loop={false}
               autoplay={false}
               className="w-full max-w-4xl"
             />
@@ -271,7 +271,7 @@ export default function Home() {
             <Lottie
               lottieRef={howItWorksLottieRef}
               animationData={howItWorksAnimation}
-              loop={true}
+              loop={false}
               autoplay={false}
               className="w-full max-w-5xl"
             />
