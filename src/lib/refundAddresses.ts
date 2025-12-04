@@ -1,6 +1,8 @@
 export function getRefundToForChain(chain: string): string {
 	const key = String(chain || "").toLowerCase();
 	// EVM family
+
+	//@TODO this is STRICTLY FOR MVP TO BE REMOVED LATER
 	console.log("key", key);
 	const evmSet = new Set([
 		"eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism",
