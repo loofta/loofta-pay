@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, type SVGProps, useRef, useEffect } from "react";
+import Image from "next/image";
 import { useAuth } from "@/hooks/useAuth";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenCombobox } from "@/components/TokenCombobox";
@@ -56,6 +57,8 @@ export default function ClaimPage() {
   const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
   const [zcashAddress, setZcashAddress] = useState<string>("");
   const [showPrivacyInfo, setShowPrivacyInfo] = useState<boolean>(false);
+  const [tutorialStep, setTutorialStep] = useState<number>(0);
+  const [hasSeenPrivateTutorial, setHasSeenPrivateTutorial] = useState<boolean>(false);
 
   const selectedTo = findTokenBySelection(tokens, toSel || null);
 
@@ -101,6 +104,17 @@ export default function ClaimPage() {
     const rect = el.getBoundingClientRect();
     setInputWidthPx(Math.ceil(rect.width));
   }, [displayAmount, amountFontPx]);
+
+  // Play audio when privacy modal opens
+  useEffect(() => {
+    if (showPrivacyInfo) {
+      const audio = document.getElementById('privacy-audio') as HTMLAudioElement;
+      if (audio) {
+        audio.volume = 0.5;
+        audio.play().catch(() => { }); // Ignore autoplay errors
+      }
+    }
+  }, [showPrivacyInfo]);
 
   function sanitizeNumberInput(v: string, maxDecimals: number = 9) {
     // keep digits and one dot, convert comma to dot
@@ -177,129 +191,113 @@ export default function ClaimPage() {
 
   return (
     <>
-      {/* Privacy Info Modal */}
+      {/* Privacy Tutorial Modal - Story Style */}
       {showPrivacyInfo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setShowPrivacyInfo(false)}>
-          <div className="bg-white rounded-2xl p-6 max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            {/* Header */}
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 flex items-center justify-center">
-                  <ShieldIcon className="w-6 h-6 text-white" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => { setShowPrivacyInfo(false); setTutorialStep(0); }}>
+          {/* Audio element */}
+          <audio id="privacy-audio" src="/sounds/privacy.mp3" preload="auto" />
+          <div
+            className="bg-white rounded-[20px] w-full max-w-sm shadow-2xl overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Progress bar */}
+            <div className="flex gap-1.5 p-4 pb-0">
+              {[0, 1, 2, 3].map(i => (
+                <div key={i} className="flex-1 h-1 rounded-full bg-gray-200 overflow-hidden">
+                  <div className={`h-full transition-all duration-300 ${tutorialStep >= i ? 'w-full' : 'w-0'}`} style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }} />
                 </div>
-                <div>
-                  <h3 className="text-xl font-bold text-gray-900">Private Payments</h3>
-                  <p className="text-gray-500">Powered by Zcash</p>
-                </div>
+              ))}
+            </div>
+
+            {/* Content - fixed height */}
+            <div className="relative h-[360px] overflow-hidden">
+              {/* Step 0: Intro */}
+              <div className={`absolute inset-0 p-6 flex flex-col items-center justify-center text-center transition-all duration-300 ${tutorialStep === 0 ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
+                <Image src="/images/icons/shield-icon.png" alt="" width={64} height={64} className="mb-5" />
+                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-3">Receive Privately</h3>
+                <p className="text-slate-500">Get paid without anyone seeing how much or who paid you</p>
               </div>
-              <button onClick={() => setShowPrivacyInfo(false)} className="text-gray-400 hover:text-gray-600">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
 
-            {/* How it works */}
-            <div className="mb-6">
-              <h4 className="font-semibold text-gray-900 mb-3">How it works</h4>
-              <div className="space-y-3">
-                <div className="flex gap-3 items-start">
-                  <div className="w-6 h-6 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-sm font-bold shrink-0">1</div>
-                  <p className="text-gray-600">Create a private payment link with your <strong>shielded Zcash address</strong></p>
-                </div>
-                <div className="flex gap-3 items-start">
-                  <div className="w-6 h-6 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-sm font-bold shrink-0">2</div>
-                  <p className="text-gray-600">Sender pays with <strong>any token</strong> — it gets swapped to ZEC automatically</p>
-                </div>
-                <div className="flex gap-3 items-start">
-                  <div className="w-6 h-6 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-sm font-bold shrink-0">3</div>
-                  <p className="text-gray-600">You receive ZEC privately — <strong>amount & addresses are encrypted</strong></p>
-                </div>
+              {/* Step 1: Get Wallet */}
+              <div className={`absolute inset-0 p-6 flex flex-col items-center justify-center text-center transition-all duration-300 ${tutorialStep === 1 ? 'opacity-100 translate-x-0' : tutorialStep < 1 ? 'opacity-0 translate-x-full pointer-events-none' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
+                <Image src="/images/icons/wallet.png" alt="" width={128} height={128} className="mb-5" />
+                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-3">Get a Wallet</h3>
+                <p className="text-slate-500 mb-5">Download Zashi to get your shielded address</p>
+                <a
+                  href="https://zashi.app"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-white font-medium hover:opacity-90 transition-opacity"
+                  style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                >
+                  Get Zashi →
+                </a>
               </div>
-            </div>
 
-            {/* Get a wallet */}
-            <div className="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200">
-              <h4 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                <WalletIcon className="w-5 h-5 text-amber-600" />
-                Get a Zcash Wallet
-              </h4>
-              <p className="text-gray-600 mb-3">
-                To receive private payments, you need a Zcash wallet that supports shielded addresses.
-              </p>
-              <a
-                href="https://zashi.app"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500 text-white font-semibold hover:bg-amber-600 transition-colors"
-              >
-                Download Zashi Wallet
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-              </a>
-            </div>
-
-            {/* Use your ZEC */}
-            <div className="mb-6">
-              <h4 className="font-semibold text-gray-900 mb-3">What can you do with your ZEC?</h4>
-              <div className="space-y-3">
-                <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-lg">🛒</span>
-                    <span className="font-medium text-gray-900">Pay at merchants</span>
+              {/* Step 2: How it works */}
+              <div className={`absolute inset-0 p-6 flex flex-col transition-all duration-300 ${tutorialStep === 2 ? 'opacity-100 translate-x-0' : tutorialStep < 2 ? 'opacity-0 translate-x-full pointer-events-none' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
+                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-6 text-center">How it works</h3>
+                <div className="flex-1 flex flex-col justify-center space-y-4">
+                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
+                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>1.</span>
+                    <span className="text-slate-700 pt-1">Create your private link</span>
                   </div>
-                  <p className="text-gray-500 text-sm">Use ZEC at hundreds of merchants worldwide</p>
-                  <a href="https://z.cash/pay-with-zcash" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:text-orange-600 text-sm font-medium">
-                    See all merchants →
+                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
+                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>2.</span>
+                    <span className="text-slate-700 pt-1">They pay with any token</span>
+                  </div>
+                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
+                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>3.</span>
+                    <span className="text-slate-700 pt-1">You receive ZEC privately</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 3: Use your ZEC */}
+              <div className={`absolute inset-0 p-6 flex flex-col transition-all duration-300 ${tutorialStep === 3 ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-full pointer-events-none'}`}>
+                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-6 text-center">Use your ZEC</h3>
+                <div className="flex-1 flex flex-col justify-center space-y-4">
+                  <a href="https://z.cash/pay-with-zcash" target="_blank" rel="noopener noreferrer" className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8] hover:bg-gray-100 transition-colors">
+                    <span className="text-3xl font-medium" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>1.</span>
+                    <span className="text-slate-700 pt-1">Pay at merchants</span>
                   </a>
-                </div>
-                <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-lg">🔄</span>
-                    <span className="font-medium text-gray-900">Swap to 120+ tokens</span>
-                  </div>
-                  <p className="text-gray-500 text-sm">Use Loofta to swap your ZEC to any of our supported tokens & chains</p>
-                  <a href="/swap" className="text-orange-500 hover:text-orange-600 text-sm font-medium">
-                    Go to Loofta Swap →
+                  <a href="/swap" className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8] hover:bg-gray-100 transition-colors">
+                    <span className="text-3xl font-medium" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>2.</span>
+                    <span className="text-slate-700 pt-1">Swap to 120+ tokens</span>
                   </a>
-                </div>
-                <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-lg">🔒</span>
-                    <span className="font-medium text-gray-900">Keep it private</span>
+                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
+                    <span className="text-3xl font-medium" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>3.</span>
+                    <span className="text-slate-700 pt-1">Hold in private pool</span>
                   </div>
-                  <p className="text-gray-500 text-sm">Your shielded address works like a private pool — hold, send, or receive anytime</p>
                 </div>
               </div>
             </div>
 
-            {/* Privacy guarantees */}
-            <div className="p-4 rounded-xl bg-green-50 border border-green-200 mb-6">
-              <h4 className="font-semibold text-gray-900 mb-2">Privacy Guarantees</h4>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-gray-600">
-                  <span className="text-green-500">✓</span>
-                  <span>Transaction amounts are encrypted</span>
-                </div>
-                <div className="flex items-center gap-2 text-gray-600">
-                  <span className="text-green-500">✓</span>
-                  <span>Sender & recipient addresses are hidden</span>
-                </div>
-                <div className="flex items-center gap-2 text-gray-600">
-                  <span className="text-green-500">✓</span>
-                  <span>No metadata exposed on blockchain</span>
-                </div>
+            {/* Navigation */}
+            <div className="p-4 border-t border-gray-100">
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    if (tutorialStep === 0) {
+                      setShowPrivacyInfo(false);
+                      setTutorialStep(0);
+                    } else {
+                      setTutorialStep(s => s - 1);
+                    }
+                  }}
+                  className="flex-1 py-3 rounded-[12px] font-medium text-slate-500 hover:text-slate-700 transition-colors"
+                >
+                  {tutorialStep === 0 ? 'Skip' : 'Back'}
+                </button>
+                <button
+                  onClick={() => tutorialStep < 3 ? setTutorialStep(s => s + 1) : (setShowPrivacyInfo(false), setTutorialStep(0))}
+                  className="flex-1 py-3 rounded-[12px] font-medium text-white hover:opacity-90 transition-opacity"
+                  style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                >
+                  {tutorialStep === 3 ? 'Get Started' : 'Next'}
+                </button>
               </div>
             </div>
-
-            {/* CTA */}
-            <button
-              onClick={() => setShowPrivacyInfo(false)}
-              className="w-full py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 transition-all"
-            >
-              Got it, let's create my link
-            </button>
           </div>
         </div>
       )}
@@ -391,7 +389,13 @@ export default function ClaimPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setIsPrivateMode(true)}
+                    onClick={() => {
+                      setIsPrivateMode(true);
+                      if (!hasSeenPrivateTutorial) {
+                        setShowPrivacyInfo(true);
+                        setHasSeenPrivateTutorial(true);
+                      }
+                    }}
                     className={`flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 ${isPrivateMode
                       ? 'bg-amber-500 text-gray-900'
                       : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
