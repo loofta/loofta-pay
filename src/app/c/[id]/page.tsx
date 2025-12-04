@@ -17,8 +17,9 @@ import Image from "next/image";
 import { getChainIcon } from "@/lib/chains";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { isBiconomySupportedChain, isEvmChainId } from "@/config/biconomy";
-import { createSupertransaction, getBiconomyStatus } from "@/services/biconomy";
+import { isEvmChainId } from "@/config/biconomy";
+import { createSwapTransaction, getSwapStatus, checkSwapEligibility } from "@/services/swapProvider";
+import { ACTIVE_SWAP_PROVIDER, getProviderDisplayName, type SwapProvider } from "@/config/swapProvider";
 import { ethers } from "ethers";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 
@@ -98,10 +99,15 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     if (!selectedFrom || !destToken) return false;
     return String(selectedFrom.chain || "").toLowerCase() === String(destToken.chain || "").toLowerCase();
   }, [selectedFrom, destToken]);
-  const biconomyEligible = useMemo(() => {
-    if (!selectedFrom || !destToken) return false;
-    return sameChain && isEvmChainId(selectedFrom.chain) && isBiconomySupportedChain(selectedFrom.chain);
+  // Check if direct pay via swap provider is available
+  const swapEligibility = useMemo(() => {
+    if (!selectedFrom || !destToken) return { eligible: false, provider: null as SwapProvider | null };
+    if (!sameChain) return { eligible: false, provider: null as SwapProvider | null };
+    if (!isEvmChainId(selectedFrom.chain)) return { eligible: false, provider: null as SwapProvider | null };
+    return checkSwapEligibility({ fromToken: selectedFrom, toToken: destToken });
   }, [selectedFrom, destToken, sameChain]);
+  const swapProviderEligible = swapEligibility.eligible;
+  const activeProvider = swapEligibility.provider;
   // Derive payer token from status originAsset if available
   const paidToken = useMemo(() => {
     const assetId = statusData?.originAsset as string | undefined;
@@ -197,7 +203,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   async function onPrepare() {
     if (!claim || !selectedFrom) return;
     // If same-chain EVM and supported by Biconomy, skip deposit flow (use Pay now)
-    if (biconomyEligible) {
+    if (swapProviderEligible) {
       return;
     }
     setPreparing(true);
@@ -226,7 +232,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
   async function onPayNow() {
     if (!claim || !selectedFrom || !destToken) return;
-    if (!biconomyEligible) {
+    if (!swapProviderEligible || !activeProvider) {
       toast({ variant: "destructive", title: "Not supported", description: "This network is not supported for direct pay." });
       return;
     }
@@ -234,13 +240,30 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       const wallet = wallets[0];
       if (!wallet) {
         toast({ variant: "destructive", title: "No wallet", description: "Please connect a wallet to continue." });
+        login(); // Trigger login if no wallet
         return;
       }
+
+      console.log("🔐 [Wallet] Using wallet from Privy:", {
+        walletAddress: wallet.address,
+        walletType: wallet.walletClientType,
+        chainId: wallet.chainId,
+      });
 
       const ethereumProvider = await wallet.getEthereumProvider();
       const provider = new ethers.BrowserProvider(ethereumProvider);
       const signer = await provider.getSigner();
       const ownerAddress = await signer.getAddress();
+
+      console.log("🔐 [Wallet] Signer address:", ownerAddress);
+
+      // Verify wallet address matches
+      if (wallet.address?.toLowerCase() !== ownerAddress.toLowerCase()) {
+        console.warn("⚠️ [Wallet] Address mismatch!", {
+          privyWallet: wallet.address,
+          signerAddress: ownerAddress,
+        });
+      }
 
       const recipient = String(claim?.recipient_address || "").trim();
       if (!recipient) {
@@ -263,22 +286,30 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       setPreparing(true);
       setStatus("PROCESSING");
 
-      console.log("[Biconomy] Starting payment:", {
+      const providerName = getProviderDisplayName(activeProvider);
+      console.log(`[${providerName}] Starting payment:`, {
         from: selectedFrom.symbol,
         to: destToken.symbol,
         amount: amountHuman,
-        recipient
+        recipient,
+        provider: activeProvider,
       });
 
-      // Create Biconomy Supertransaction (sponsorship handles fees)
-      const payload = await createSupertransaction({
+      // Calculate destination amount (what recipient should receive)
+      const destinationAmount = destTokenAmount != null
+        ? String(destTokenAmount)
+        : undefined;
+
+      // Create swap transaction via unified provider
+      const payload = await createSwapTransaction({
         fromToken: {
           tokenId: selectedFrom.tokenId || selectedFrom.address,
           address: selectedFrom.address,
           decimals: selectedFrom.decimals,
           chain: selectedFrom.chain,
           symbol: selectedFrom.symbol,
-          name: selectedFrom.name || selectedFrom.symbol
+          name: selectedFrom.name || selectedFrom.symbol,
+          price: selectedFrom.price,
         },
         toToken: {
           tokenId: destToken.tokenId || destToken.address,
@@ -286,15 +317,19 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
           decimals: destToken.decimals,
           chain: destToken.chain,
           symbol: destToken.symbol,
-          name: destToken.name || destToken.symbol
+          name: destToken.name || destToken.symbol,
+          price: destToken.price,
         },
         amountHuman,
+        destinationAmountHuman: destinationAmount, // Amount recipient should receive
         recipient,
         userAddress: ownerAddress,
+        forceProvider: activeProvider,
+        ethereumProvider, // Pass provider for Rhinestone signing
       });
 
-      const { to, data, value, chainId, id: intentId } = payload || {};
-      if (!to || !data) {
+      const { to, data, value, chainId, id: intentId, provider: usedProvider, meta } = payload || {};
+      if (!to) {
         throw new Error("Invalid transaction payload");
       }
 
@@ -305,23 +340,66 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         } catch { }
       }
 
-      // Send transaction
-      const tx = await signer.sendTransaction({
-        to,
-        data,
-        value: value ? BigInt(value) : undefined
-      });
+      // For Rhinestone 1-click deposit: check if we can skip funding
+      if (meta?.type === "1-click-deposit" && meta?.companionAddress && meta?.signerPk) {
 
-      // Wait for on-chain confirmation
-      await tx.wait();
-      setStatus("SUCCESS");
-      toast({ title: "Transaction confirmed", description: "Payment successful." });
+        // If skip-funding, companion already has enough - go directly to intent execution
+        if (meta?.step === "skip-funding") {
+          console.log("[Rhinestone] Companion already funded, executing intent directly...");
+          toast({ title: "Companion funded", description: "Executing swap + transfer..." });
+        } else {
+          // Need to fund the companion first
+          console.log("[Rhinestone] Funding companion account...");
+          toast({ title: "Funding companion", description: "Please approve the transfer..." });
 
-      // Optional: Poll Biconomy status in background
+          const tx = await signer.sendTransaction({
+            to,
+            data: data || "0x",
+            value: value && value !== "0" ? BigInt(value) : undefined
+          });
+
+          await tx.wait();
+          console.log("[Rhinestone] Funding transaction confirmed on-chain");
+          toast({ title: "Funding confirmed ✓", description: "Waiting for balance to sync..." });
+
+          // Wait for balance to be indexed (Rhinestone needs this)
+          // Per docs: "You might need to wait a few seconds between funding and executing"
+          console.log("[Rhinestone] Waiting 5 seconds for balance sync...");
+          await new Promise(resolve => setTimeout(resolve, 5000));
+
+          toast({ title: "Balance synced ✓", description: "Executing swap + transfer..." });
+        }
+
+        // Execute the intent
+        console.log("[Rhinestone] Starting intent execution...");
+        const { executeRhinestoneIntent } = await import("@/services/rhinestone");
+
+        const result = await executeRhinestoneIntent({
+          companionAddress: meta.companionAddress,
+          signerPk: meta.signerPk,
+        });
+
+        console.log("[Rhinestone] Intent executed:", result);
+        setStatus("SUCCESS");
+        toast({ title: "Payment complete!", description: `Swap + transfer successful via Rhinestone.` });
+      } else {
+        // Non-Rhinestone flow (Biconomy or others)
+        const tx = await signer.sendTransaction({
+          to,
+          data: data || "0x",
+          value: value ? BigInt(value) : undefined
+        });
+
+        await tx.wait();
+        setStatus("SUCCESS");
+        toast({ title: "Transaction confirmed", description: `Payment successful via ${getProviderDisplayName(usedProvider)}.` });
+      }
+
+      // Optional: Poll status in background
       if (intentId) {
         const iv = setInterval(async () => {
           try {
-            const s = await getBiconomyStatus(intentId);
+            const s = await getSwapStatus(intentId, usedProvider);
             const st = String(s?.status || "").toUpperCase();
             if (st === "SUCCESS" || st === "FAILED") {
               if (st === "FAILED") setStatus("FAILED");
@@ -574,9 +652,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                           ) : null}
                           <div className="mt-4 flex gap-3">
 
-                            {biconomyEligible ? (
-                              <div className="flex w-full gap-2">
-                                {wallets.length === 0 ? (
+                            {swapProviderEligible ? (
+                              <div className="flex flex-col w-full gap-2">
+                                {wallets.length === 0 || !authenticated ? (
                                   <Button
                                     onClick={login}
                                     className="rounded-xl w-full"
@@ -586,28 +664,41 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   </Button>
                                 ) : (
                                   <>
-                                    <Button
-                                      onClick={onPayNow}
-                                      disabled={preparing}
-                                      className="rounded-xl flex-1"
-                                      style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                                    >
-                                      {preparing ? "Processing…" : "Pay now"}
-                                    </Button>
-                                    <Button variant="outline" onClick={logout} className="rounded-xl px-3" title="Disconnect Wallet">
-                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                                        <polyline points="16 17 21 12 16 7" />
-                                        <line x1="21" y1="12" x2="9" y2="12" />
-                                      </svg>
-                                    </Button>
+                                    {/* Show connected wallet */}
+                                    <div className="flex items-center justify-between p-2 rounded-lg bg-gray-100 text-sm">
+                                      <div className="flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                        <span className="text-gray-600">Connected:</span>
+                                        <span className="font-mono text-gray-900">
+                                          {wallets[0]?.address
+                                            ? `${wallets[0].address.slice(0, 6)}...${wallets[0].address.slice(-4)}`
+                                            : "Unknown"}
+                                        </span>
+                                      </div>
+                                      <button
+                                        onClick={logout}
+                                        className="text-red-500 hover:text-red-700 text-xs font-medium"
+                                      >
+                                        Disconnect
+                                      </button>
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <Button
+                                        onClick={onPayNow}
+                                        disabled={preparing}
+                                        className="rounded-xl flex-1"
+                                        style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+                                      >
+                                        {preparing ? "Processing…" : "Pay now"}
+                                      </Button>
+                                    </div>
                                   </>
                                 )}
                               </div>
                             ) : <GradientActionButton
                               onClick={onPrepare}
-                              disabled={!selectedFrom || preparing || biconomyEligible}
-                              loading={preparing && !biconomyEligible}
+                              disabled={!selectedFrom || preparing || swapProviderEligible}
+                              loading={preparing && !swapProviderEligible}
                               loadingText="Preparing…"
                             >
                               Get deposit address
@@ -829,7 +920,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   useClaimPayStore.getState().setDeposit(id, null);
                                   useClaimPayStore.getState().setStatus(id, null);
                                 }} className="ml-auto">Cancel & choose another token</Button>
-                                {biconomyEligible ? (
+                                {swapProviderEligible ? (
                                   <Button onClick={onPayNow} disabled={preparing} className="rounded-xl" style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}>
                                     {preparing ? "Processing…" : "Pay now"}
                                   </Button>
@@ -849,7 +940,163 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
           </div>
         </div>
       </div>
+
+      {/* Debug Section - Rhinestone Companion Account Recovery */}
+      {process.env.NODE_ENV === "development" && (
+        <CompanionDebugSection wallets={wallets} />
+      )}
     </>
+  );
+}
+
+function CompanionDebugSection({ wallets }: { wallets: any[] }) {
+  const [companionAddress, setCompanionAddress] = useState("");
+  const [companionBalance, setCompanionBalance] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [hasStoredKey, setHasStoredKey] = useState<boolean | null>(null);
+  const { toast } = useToast();
+
+  // Check for stored signer key on mount
+  useEffect(() => {
+    if (wallets[0]?.address) {
+      try {
+        const stored = localStorage.getItem("rhinestone_signer_keys");
+        const keys = stored ? JSON.parse(stored) : {};
+        setHasStoredKey(!!keys[wallets[0].address.toLowerCase()]);
+      } catch {
+        setHasStoredKey(false);
+      }
+    }
+  }, [wallets]);
+
+  const checkBalance = async () => {
+    if (!companionAddress) return;
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const { getCompanionBalance } = await import("@/services/rhinestone");
+      const balance = await getCompanionBalance(companionAddress, 8453);
+      setCompanionBalance(balance.eth);
+      setMessage({ type: "success", text: `Balance: ${balance.eth} ETH` });
+    } catch (e: any) {
+      setMessage({ type: "error", text: e?.message || "Failed to check balance" });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const withdrawFunds = async () => {
+    if (!companionAddress || !wallets[0]) {
+      toast({ variant: "destructive", title: "Error", description: "Connect wallet and enter companion address" });
+      return;
+    }
+
+    setWithdrawing(true);
+    setMessage(null);
+    try {
+      const ethereumProvider = await wallets[0].getEthereumProvider();
+      const { withdrawFromCompanion } = await import("@/services/rhinestone");
+
+      const result = await withdrawFromCompanion({
+        companionAddress,
+        userAddress: wallets[0].address,
+        ethereumProvider,
+        recipient: wallets[0].address,
+        chainId: 8453,
+      });
+
+      setMessage({ type: "success", text: `Withdrawal successful! TX: ${result.txHash.slice(0, 10)}...` });
+      toast({ title: "Withdrawal successful!", description: "Funds sent to your wallet" });
+
+      // Refresh balance
+      await checkBalance();
+    } catch (e: any) {
+      setMessage({ type: "error", text: e?.message || "Withdrawal failed" });
+      toast({ variant: "destructive", title: "Withdrawal failed", description: e?.message });
+    } finally {
+      setWithdrawing(false);
+    }
+  };
+
+  const getCurrentCompanion = async () => {
+    if (!wallets[0]) return;
+    try {
+      const { getCompanionAddress } = await import("@/services/rhinestone");
+      const addr = await getCompanionAddress(wallets[0].address);
+      setCompanionAddress(addr);
+      toast({ title: "Current Companion", description: addr });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Error", description: e?.message });
+    }
+  };
+
+  return (
+    <div className="mt-8 mb-24 mx-auto max-w-xl p-4 border-2 border-dashed border-red-300 rounded-lg bg-red-50">
+      <h3 className="text-lg font-bold text-red-800 mb-2">🔧 Debug: Companion Account Recovery</h3>
+      <p className="text-sm text-red-600 mb-4">
+        Use this to withdraw funds from any Rhinestone companion account you own.
+      </p>
+
+      <div className="space-y-3">
+        <div>
+          <label className="text-sm font-medium text-gray-700">Companion Address</label>
+          <div className="flex gap-2 mt-1">
+            <Input
+              value={companionAddress}
+              onChange={(e) => setCompanionAddress(e.target.value)}
+              placeholder="0x7f86c6D89D..."
+              className="flex-1 font-mono text-sm"
+            />
+            <Button variant="outline" size="sm" onClick={getCurrentCompanion}>
+              Get Current
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={checkBalance}
+            disabled={isLoading || !companionAddress}
+            className="flex-1"
+          >
+            {isLoading ? "Checking..." : "Check Balance"}
+          </Button>
+          <Button
+            onClick={withdrawFunds}
+            disabled={withdrawing || !companionAddress}
+            className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+          >
+            {withdrawing ? "Withdrawing..." : "Withdraw All ETH"}
+          </Button>
+        </div>
+
+        {message && (
+          <div className={`p-2 rounded text-sm ${message.type === "success" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+            {message.text}
+          </div>
+        )}
+
+        {hasStoredKey !== null && (
+          <div className={`text-xs mt-2 p-2 rounded border ${hasStoredKey ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800"}`}>
+            <strong>{hasStoredKey ? "✅ Signer Key Found" : "⚠️ No Signer Key Found"}</strong><br />
+            {hasStoredKey
+              ? "You can withdraw from companions created in this browser session."
+              : "Companions created in previous sessions may not be recoverable."
+            }
+          </div>
+        )}
+
+        <div className="text-xs text-gray-500 mt-2 p-2 bg-gray-100 rounded">
+          <strong>Known stuck companions (keys lost):</strong><br />
+          • 0x7f86c6D89D715082Ca64bbA78eF9d7421052F641<br />
+          • 0x9353C0f04F8B4781ed2a8F67FC5037e51738B855<br /><br />
+          <strong>To recover:</strong> Contact <a href="https://t.me/kurt_larsen" className="underline text-blue-600">Rhinestone support</a>
+        </div>
+      </div>
+    </div>
   );
 }
 

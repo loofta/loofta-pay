@@ -342,7 +342,7 @@ export default function Home() {
       <section ref={ctaRef} className="relative z-10 px-4 md:px-8 mb-[-80px]">
         <div className="max-w-5xl rounded-[40px] mx-auto overflow-hidden">
           <motion.div
-            className="rounded-[40px] bg-cover bg-opacity-5"
+            className="rounded-[40px] bg-cover bg-opacity-2"
             style={{
               backgroundImage: 'url(/bg_footer.png)',
               backgroundPosition: 'center',
