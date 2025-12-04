@@ -381,6 +381,21 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
         console.log("[Rhinestone] Intent executed:", result);
         setStatus("SUCCESS");
+
+        // Update statusData with the paid amount for display
+        // Use totalSourceAmount which represents the actual ETH used for the swap
+        const paidAmount = (payload as any)?.totalSourceAmount || amountHuman;
+        console.log("[Rhinestone] Payment summary:", { paidAmount, token: selectedFrom?.symbol });
+
+        setStatusData((prev: any) => ({
+          ...prev,
+          swapDetails: {
+            ...(prev?.swapDetails || {}),
+            depositedAmountFormatted: paidAmount,
+            amountInFormatted: paidAmount,
+          },
+        }));
+
         toast({ title: "Payment complete!", description: `Swap + transfer successful via Rhinestone.` });
       } else {
         // Non-Rhinestone flow (Biconomy or others)

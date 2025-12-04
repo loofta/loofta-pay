@@ -34,6 +34,7 @@ export type RhinestoneIntentResponse = {
 	companionAddress?: string;
 	fundingAmount?: string;
 	fundingToken?: string;
+	totalSourceAmount?: string; // Human-readable amount of source token used
 };
 
 export type RhinestoneStatusResponse = {
@@ -477,6 +478,9 @@ export async function createRhinestoneTransaction(input: {
 		(globalThis as any).__rhinestoneIntents = (globalThis as any).__rhinestoneIntents || {};
 		(globalThis as any).__rhinestoneIntents[companionAddress] = intentData;
 
+		// Calculate total source amount used (for display purposes)
+		const totalSourceAmountHuman = (Number(swapAmountWei) / Math.pow(10, fromToken.decimals || 18)).toFixed(6);
+
 		// If companion already has enough funds, skip funding step
 		if (additionalFundingNeeded === BigInt(0)) {
 			console.log("[Rhinestone] Companion has enough funds, skipping funding step");
@@ -489,6 +493,7 @@ export async function createRhinestoneTransaction(input: {
 				companionAddress,
 				fundingAmount: "0",
 				fundingToken: fromToken.symbol,
+				totalSourceAmount: totalSourceAmountHuman, // Amount of source token used for swap
 				meta: {
 					type: "1-click-deposit",
 					step: "skip-funding", // Signal to execute intent directly
@@ -506,10 +511,11 @@ export async function createRhinestoneTransaction(input: {
 				to: companionAddress,
 				data: "0x",
 				value: additionalFundingNeeded.toString(),
-		chainId,
+				chainId,
 				companionAddress,
 				fundingAmount: additionalFundingNeeded.toString(),
 				fundingToken: fromToken.symbol,
+				totalSourceAmount: totalSourceAmountHuman, // Amount of source token used for swap
 				meta: {
 					type: "1-click-deposit",
 					step: "fund-companion",
@@ -534,6 +540,7 @@ export async function createRhinestoneTransaction(input: {
 				companionAddress,
 				fundingAmount: additionalFundingNeeded.toString(),
 				fundingToken: fromToken.symbol,
+				totalSourceAmount: totalSourceAmountHuman, // Amount of source token used for swap
 				meta: {
 					type: "1-click-deposit",
 					step: "fund-companion",
