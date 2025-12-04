@@ -6,19 +6,54 @@ import Lottie, { LottieRefCurrentProps } from "lottie-react";
 import paymentFlowAnimation from "../../public/jitter/paymentflow.json";
 import cardsHomeAnimation from "../../public/jitter/cards_home.json";
 import howItWorksAnimation from "../../public/jitter/howitworks.json";
-import { motion, AnimatePresence, useScroll, useTransform } from "framer-motion";
-import { Suspense, useState, useRef } from "react";
+import { motion, AnimatePresence, useScroll, useTransform, useInView } from "framer-motion";
+import { Suspense, useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import Spline from "@splinetool/react-spline";
 
 export default function Home() {
   const [openFaq, setOpenFaq] = useState<number | null>(0);
   const ctaRef = useRef<HTMLDivElement>(null);
-  const lottieRef = useRef<LottieRefCurrentProps>(null);
 
-  const handleAnimationComplete = () => {
+  // Lottie refs
+  const heroLottieRef = useRef<LottieRefCurrentProps>(null);
+  const cardsLottieRef = useRef<LottieRefCurrentProps>(null);
+  const howItWorksLottieRef = useRef<LottieRefCurrentProps>(null);
+
+  // Container refs for scroll detection
+  const heroAnimationRef = useRef<HTMLDivElement>(null);
+  const cardsAnimationRef = useRef<HTMLDivElement>(null);
+  const howItWorksAnimationRef = useRef<HTMLDivElement>(null);
+
+  // In-view detection
+  const isHeroInView = useInView(heroAnimationRef, { once: true, margin: "-100px" });
+  const isCardsInView = useInView(cardsAnimationRef, { once: true, margin: "-100px" });
+  const isHowItWorksInView = useInView(howItWorksAnimationRef, { once: true, margin: "-100px" });
+
+  // Start hero animation when in view
+  useEffect(() => {
+    if (isHeroInView && heroLottieRef.current) {
+      heroLottieRef.current.play();
+    }
+  }, [isHeroInView]);
+
+  // Start cards animation when in view
+  useEffect(() => {
+    if (isCardsInView && cardsLottieRef.current) {
+      cardsLottieRef.current.play();
+    }
+  }, [isCardsInView]);
+
+  // Start how it works animation when in view
+  useEffect(() => {
+    if (isHowItWorksInView && howItWorksLottieRef.current) {
+      howItWorksLottieRef.current.play();
+    }
+  }, [isHowItWorksInView]);
+
+  const handleHeroAnimationComplete = () => {
     setTimeout(() => {
-      lottieRef.current?.goToAndPlay(0);
+      heroLottieRef.current?.goToAndPlay(0);
     }, 2000); // 2 second pause before looping
   };
 
@@ -113,12 +148,13 @@ export default function Home() {
                 </Link>
               </div>
             </div>
-            <div className="order-2 md:order-2 relative h-auto md:h-full overflow-visible z-10 flex items-end justify-end">
+            <div ref={heroAnimationRef} className="order-2 md:order-2 relative h-auto md:h-full overflow-visible z-10 flex items-end justify-end">
               <Lottie
-                lottieRef={lottieRef}
+                lottieRef={heroLottieRef}
                 animationData={paymentFlowAnimation}
                 loop={false}
-                onComplete={handleAnimationComplete}
+                autoplay={false}
+                onComplete={handleHeroAnimationComplete}
                 className="w-[379px] h-[418px]"
               />
             </div>
@@ -160,10 +196,12 @@ export default function Home() {
             </p>
           </div>
           {/* Desktop: Lottie animation */}
-          <div className="mt-12 md:mt-16 hidden md:flex justify-center">
+          <div ref={cardsAnimationRef} className="mt-12 md:mt-16 hidden md:flex justify-center">
             <Lottie
+              lottieRef={cardsLottieRef}
               animationData={cardsHomeAnimation}
               loop={true}
+              autoplay={false}
               className="w-full max-w-4xl"
             />
           </div>
@@ -229,10 +267,12 @@ export default function Home() {
             How it works
           </h2>
           {/* Desktop: Lottie animation */}
-          <div className="hidden md:flex justify-center">
+          <div ref={howItWorksAnimationRef} className="hidden md:flex justify-center">
             <Lottie
+              lottieRef={howItWorksLottieRef}
               animationData={howItWorksAnimation}
               loop={true}
+              autoplay={false}
               className="w-full max-w-5xl"
             />
           </div>
