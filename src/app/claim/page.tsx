@@ -53,6 +53,9 @@ export default function ClaimPage() {
   const [notifyEmail, setNotifyEmail] = useState<string>(userEmail || "");
   const [amountMode, setAmountMode] = useState<"USD" | "TOKEN">("USD");
   const [showConfetti, setShowConfetti] = useState<boolean>(false);
+  const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
+  const [zcashAddress, setZcashAddress] = useState<string>("");
+  const [showPrivacyInfo, setShowPrivacyInfo] = useState<boolean>(false);
 
   const selectedTo = findTokenBySelection(tokens, toSel || null);
 
@@ -76,10 +79,10 @@ export default function ClaimPage() {
   })();
   // Continuous font sizing: start large and step down per extra digit beyond 5
   function computeFontPx(digits: number) {
-    const maxPx = 84; // ~text-7xl
-    const minPx = 26; // lower bound to keep readable
+    const maxPx = 80; // ~text-7xl
+    const minPx = 24; // lower bound to keep readable
     const startDigits = 5;
-    const stepPerDigit = 6; // px reduction per extra digit
+    const stepPerDigit = 8; // px reduction per extra digit (more aggressive)
     const delta = Math.max(0, digits - startDigits) * stepPerDigit;
     const size = Math.max(minPx, maxPx - delta);
     return size;
@@ -174,46 +177,232 @@ export default function ClaimPage() {
 
   return (
     <>
-      <div className="fixed inset-0 -z-10 bg-[#18181F]" />
-      <div className="min-h-screen text-white">
-        <div className="max-w-7xl mx-auto px-4 pb-12">
-          <div className="flex flex-col md:flex-row items-center justify-center gap-32 min-h-[calc(100vh-7rem)]">
-            {/* Left column - text only */}
-            <div className="w-full md:w-1/2">
-              <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
-                Create a new <br /><span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Payment Link</span>
-              </h1>
-              <p className="text-gray-100 text-xl mb-8">Joined the thousands of people who have already used Loofta to request payments from friends and paid gigs. You create the link, and they can pay you with ANY token they want.</p>
+      {/* Privacy Info Modal */}
+      {showPrivacyInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setShowPrivacyInfo(false)}>
+          <div className="bg-white rounded-2xl p-6 max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 flex items-center justify-center">
+                  <ShieldIcon className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-gray-900">Private Payments</h3>
+                  <p className="text-gray-500">Powered by Zcash</p>
+                </div>
+              </div>
+              <button onClick={() => setShowPrivacyInfo(false)} className="text-gray-400 hover:text-gray-600">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
 
-              <ul className="mt-6 space-y-4">
-                <li className="flex items-start gap-3">
-                  <MoneyIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                  <span className="text-gray-300 text-xl">Set your amount</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <ChainIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                  <span className="text-gray-300 text-xl">Pick your preferred chain/token</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <ShareIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                  <span className="text-gray-300 text-xl">Share the link — they can pay you with ANY token they want</span>
-                </li>
-              </ul>
-              <div className="mt-8 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 px-8 py-4 bg-white text-[#FF0F00] font-bold rounded-2xl text-lg hover:bg-gray-100 transition-all duration-200 shadow-lg"
-                  onClick={() => (typeof login === 'function' ? login() : undefined)}
-                >
-                  Create an account
-                </button>
-
+            {/* How it works */}
+            <div className="mb-6">
+              <h4 className="font-semibold text-gray-900 mb-3">How it works</h4>
+              <div className="space-y-3">
+                <div className="flex gap-3 items-start">
+                  <div className="w-6 h-6 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-sm font-bold shrink-0">1</div>
+                  <p className="text-gray-600">Create a private payment link with your <strong>shielded Zcash address</strong></p>
+                </div>
+                <div className="flex gap-3 items-start">
+                  <div className="w-6 h-6 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-sm font-bold shrink-0">2</div>
+                  <p className="text-gray-600">Sender pays with <strong>any token</strong> — it gets swapped to ZEC automatically</p>
+                </div>
+                <div className="flex gap-3 items-start">
+                  <div className="w-6 h-6 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center text-sm font-bold shrink-0">3</div>
+                  <p className="text-gray-600">You receive ZEC privately — <strong>amount & addresses are encrypted</strong></p>
+                </div>
               </div>
             </div>
 
-            {/* Right column - card with form / loader / success */}
+            {/* Get a wallet */}
+            <div className="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200">
+              <h4 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                <WalletIcon className="w-5 h-5 text-amber-600" />
+                Get a Zcash Wallet
+              </h4>
+              <p className="text-gray-600 mb-3">
+                To receive private payments, you need a Zcash wallet that supports shielded addresses.
+              </p>
+              <a
+                href="https://zashi.app"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500 text-white font-semibold hover:bg-amber-600 transition-colors"
+              >
+                Download Zashi Wallet
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+            </div>
+
+            {/* Use your ZEC */}
+            <div className="mb-6">
+              <h4 className="font-semibold text-gray-900 mb-3">What can you do with your ZEC?</h4>
+              <div className="space-y-3">
+                <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-lg">🛒</span>
+                    <span className="font-medium text-gray-900">Pay at merchants</span>
+                  </div>
+                  <p className="text-gray-500 text-sm">Use ZEC at hundreds of merchants worldwide</p>
+                  <a href="https://z.cash/pay-with-zcash" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:text-orange-600 text-sm font-medium">
+                    See all merchants →
+                  </a>
+                </div>
+                <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-lg">🔄</span>
+                    <span className="font-medium text-gray-900">Swap to 120+ tokens</span>
+                  </div>
+                  <p className="text-gray-500 text-sm">Use Loofta to swap your ZEC to any of our supported tokens & chains</p>
+                  <a href="/swap" className="text-orange-500 hover:text-orange-600 text-sm font-medium">
+                    Go to Loofta Swap →
+                  </a>
+                </div>
+                <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-lg">🔒</span>
+                    <span className="font-medium text-gray-900">Keep it private</span>
+                  </div>
+                  <p className="text-gray-500 text-sm">Your shielded address works like a private pool — hold, send, or receive anytime</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Privacy guarantees */}
+            <div className="p-4 rounded-xl bg-green-50 border border-green-200 mb-6">
+              <h4 className="font-semibold text-gray-900 mb-2">Privacy Guarantees</h4>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-gray-600">
+                  <span className="text-green-500">✓</span>
+                  <span>Transaction amounts are encrypted</span>
+                </div>
+                <div className="flex items-center gap-2 text-gray-600">
+                  <span className="text-green-500">✓</span>
+                  <span>Sender & recipient addresses are hidden</span>
+                </div>
+                <div className="flex items-center gap-2 text-gray-600">
+                  <span className="text-green-500">✓</span>
+                  <span>No metadata exposed on blockchain</span>
+                </div>
+              </div>
+            </div>
+
+            {/* CTA */}
+            <button
+              onClick={() => setShowPrivacyInfo(false)}
+              className="w-full py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 transition-all"
+            >
+              Got it, let's create my link
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="fixed inset-0 -z-10 bg-[#18181F]" />
+      <div className="min-h-screen text-white">
+        <div className="max-w-7xl mx-auto px-4 pb-12">
+          <div className="flex flex-col md:flex-row items-center justify-center gap-16 min-h-[calc(100vh-7rem)]">
+            {/* Left column - changes based on mode */}
             <div className="w-full md:w-1/2">
-              <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              {isPrivateMode ? (
+                /* Private mode left content */
+                <>
+                  <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
+                    Receive <br /><span className="text-amber-400">Privately</span>
+                  </h1>
+                  <p className="text-gray-100 text-xl mb-8">
+                    Get paid with complete financial privacy using Zcash shielded transactions.
+                  </p>
+                  <ul className="mt-6 space-y-4">
+                    <li className="flex items-start gap-3">
+                      <ShieldIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                      <span className="text-gray-300 text-xl">Amount hidden on-chain</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <LockIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                      <span className="text-gray-300 text-xl">Sender & recipient encrypted</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <EyeOffIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                      <span className="text-gray-300 text-xl">No transaction metadata exposed</span>
+                    </li>
+                  </ul>
+                  <button
+                    type="button"
+                    onClick={() => setShowPrivacyInfo(true)}
+                    className="mt-8 text-amber-400 hover:text-amber-300 text-lg flex items-center gap-2"
+                  >
+                    <InfoIcon className="w-5 h-5" />
+                    How does private payment work?
+                  </button>
+                </>
+              ) : (
+                /* Standard mode left content */
+                <>
+                  <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
+                    Create a new <br /><span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Payment Link</span>
+                  </h1>
+                  <p className="text-gray-100 text-xl mb-8">Joined the thousands who get paid with ANY token they want.</p>
+                  <ul className="mt-6 space-y-4">
+                    <li className="flex items-start gap-3">
+                      <MoneyIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                      <span className="text-gray-300 text-xl">Set your amount</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <ChainIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                      <span className="text-gray-300 text-xl">Pick your preferred chain/token</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <ShareIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                      <span className="text-gray-300 text-xl">Share the link — they pay with ANY token</span>
+                    </li>
+                  </ul>
+                  <button
+                    type="button"
+                    className="mt-8 inline-flex items-center gap-2 rounded-full px-8 py-4 text-base font-semibold bg-white text-red-500 hover:bg-gray-50 transition-colors"
+                    onClick={() => (typeof login === 'function' ? login() : undefined)}
+                  >
+                    Create an account
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* Right column - toggle + card */}
+            <div className="w-full md:w-[420px]">
+              {/* Mode Toggle - OUTSIDE card */}
+              {!link && !creating && (
+                <div className="flex gap-2 mb-4">
+                  <button
+                    type="button"
+                    onClick={() => setIsPrivateMode(false)}
+                    className={`flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all ${!isPrivateMode
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                      }`}
+                  >
+                    Standard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsPrivateMode(true)}
+                    className={`flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 ${isPrivateMode
+                      ? 'bg-amber-500 text-gray-900'
+                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                      }`}
+                  >
+                    <ShieldIcon className="w-4 h-4" />
+                    Private
+                  </button>
+                </div>
+              )}
+              <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-6  px-12 shadow-sm">
                 {showConfetti ? <ConfettiCanvas /> : null}
                 {creating ? (
                   <div className="flex flex-col items-center justify-center py-16">
@@ -311,121 +500,170 @@ export default function ClaimPage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-6 max-w-sm mx-auto">
+                  <div className="space-y-5">
+                    {/* Amount Input - with digit sizing */}
                     <div>
-                      <div className="text-sm font-medium text-gray-700">Amount you receive</div>
-                      {/* Big amount input with suffix */}
-                      <div className="mt-4 overflow-visible">
-                        <div className="flex items-baseline justify-start gap-0 whitespace-nowrap">
-                          {/* Mirror for precise width measurement */}
-                          <span
-                            ref={mirrorRef}
-                            aria-hidden="true"
-                            className="invisible absolute -z-50 font-semibold tracking-tight tabular-nums"
-                            style={{ fontSize: `${amountFontPx}px`, lineHeight: 1.1 }}
-                          >
-                            {displayAmount}
-                          </span>
-                          <input
-                            inputMode="decimal"
-                            value={amount}
-                            onChange={(e) => onChangeAmount(e.target.value)}
-                            placeholder="0"
-                            className={`text-left font-semibold tracking-tight border-0 bg-transparent shadow-none outline-none focus-visible:ring-0 placeholder:text-gray-300 text-gray-900 tabular-nums p-0 m-0 appearance-none`}
-                            style={{ fontSize: `${amountFontPx}px`, lineHeight: 1.1, width: `${inputWidthPx + amountGapPx}px` }}
-                          />
-                          <span className={`font-semibold text-gray-400 ml-0`} style={{ fontSize: `${suffixFontPx}px`, lineHeight: 1.1 }}>
-                            {amountMode === "USD" ? "USD" : (selectedTo?.symbol || "TOKEN")}
-                          </span>
-                        </div>
-                        {/* Converter line - click to switch mode */}
-                        {selectedTo ? (
-                          <button
-                            type="button"
-                            onClick={() => switchMode(amountMode === "USD" ? "TOKEN" : "USD")}
-                            className="mt-6 inline-flex items-center gap-2 text-[15px] font-medium text-orange-400 hover:text-orange-300"
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
-                              <path d="M7 7h10M7 7l3-3M7 7l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                              <path d="M17 17H7m10 0-3-3m3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                            {amountMode === "USD" ? (
-                              tokenValue != null
-                                ? <span>{toFixedTrim(tokenValue || 0, 6)} {selectedTo?.symbol}</span>
-                                : <span>—</span>
-                            ) : (
-                              usdValue != null
-                                ? <span>{toFixedTrim(usdValue || 0, 2)} USD</span>
-                                : <span>—</span>
-                            )}
-                          </button>
-                        ) : (
-                          <div className="mt-6 text-gray-500 text-sm">Select a token to see conversion</div>
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-gray-700">Destination token</label>
-                      <div className="mt-1 w-full">
-                        <TokenCombobox
-                          tokens={tokens}
-                          value={toSel}
-                          onChange={setToSel}
-                          placeholder="Select token"
-                          onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                          className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50 w-full text-lg text-center h-14 focus:ring-0 focus-visible:ring-0 focus:outline-none focus:border-orange-400 transition-colors"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-gray-700">Recipient address</label>
-                      <Input
-                        type="text"
-                        value={recipient}
-                        onChange={(e) => setRecipient(e.target.value)}
-                        placeholder="Paste wallet address to receive funds"
-                        className="text-lg text-gray-900 placeholder:text-lg placeholder:text-gray-400 bg-white text-left h-14 focus:ring-0 focus-visible:ring-0 focus:outline-none focus:border-orange-400 transition-colors"
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                        spellCheck={false}
-                        onPaste={(e) => {
-                          try {
-                            const pasted = e.clipboardData?.getData('text/plain') || '';
-                            if (pasted) {
-                              e.preventDefault();
-                              setRecipient(pasted.trim());
-                            }
-                          } catch { }
-                        }}
-                      />
-                    </div>
-                    <div className="rounded-lg border border-orange-200 bg-orange-50 p-3">
-                      <div className="flex items-center gap-2">
+                      <div className="text-gray-600 mb-2">Amount you receive</div>
+                      <div className="flex items-baseline gap-0">
+                        <span
+                          ref={mirrorRef}
+                          aria-hidden="true"
+                          className="invisible absolute -z-50 font-semibold tracking-tight tabular-nums"
+                          style={{ fontSize: `${amountFontPx}px`, lineHeight: 1.1 }}
+                        >
+                          {displayAmount}
+                        </span>
                         <input
-                          id="notify"
-                          type="checkbox"
-                          className="h-5 w-5 rounded-md border-2 border-orange-400 bg-white accent-orange-500 transition-all focus:outline-none focus:ring-2 focus:ring-orange-300 hover:shadow-[0_0_0_3px_rgba(234,179,8,0.20)]"
-                          checked={notifyChecked}
-                          onChange={(e) => setNotifyChecked(e.target.checked)}
+                          inputMode="decimal"
+                          value={amount}
+                          onChange={(e) => onChangeAmount(e.target.value)}
+                          placeholder="0"
+                          className="text-gray-900 placeholder:text-gray-300 font-semibold tracking-tight border-0 bg-transparent outline-none tabular-nums p-0 m-0"
+                          style={{ fontSize: `${amountFontPx}px`, lineHeight: 1.1, width: `${inputWidthPx + amountGapPx}px` }}
                         />
-                        <label htmlFor="notify" className="text-sm font-medium text-orange-500">Email me payment status updates</label>
+                        <span className="font-semibold text-gray-400" style={{ fontSize: `${suffixFontPx}px`, lineHeight: 1.1 }}>
+                          USD
+                        </span>
                       </div>
-                      {notifyChecked ? (
-                        <div className="mt-2">
-                          <Input
-                            type="email"
-                            placeholder="your@email.com"
-                            value={notifyEmail}
-                            onChange={(e) => setNotifyEmail(e.target.value)}
-                            className="text-base text-gray-900 placeholder:text-base placeholder:text-gray-400 bg-white text-left py-5 focus:ring-0 focus-visible:ring-0 focus:outline-none focus:border-orange-400 transition-colors"
-                          />
-                          <div className="mt-1 text-xs text-gray-500">Optional. We’ll only email about this claim’s status.</div>
-                        </div>
-                      ) : (
-                        <div className="mt-1 text-xs text-gray-500">Optional. Add an email if you want notifications. You can skip this.</div>
-                      )}
                     </div>
-                    <div>
+
+                    {/* Token display / selection based on mode */}
+                    {isPrivateMode ? (
+                      <>
+                        {/* Fixed Zcash token display */}
+                        <div>
+                          <label className="text-gray-600 mb-1 block">You will receive</label>
+                          <div className="h-12 px-4 rounded-lg border border-amber-300 bg-amber-50 flex items-center gap-3">
+                            <img src="static/icons/network/zec.svg" alt="Zcash" className="w-5 h-5" />
+                            <span className="font-semibold text-gray-900">Zcash (ZEC)</span>
+                            <span className="ml-auto text-amber-600 text-sm">Private</span>
+                          </div>
+                        </div>
+                        {/* Shielded address input */}
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <LockIcon className="w-4 h-4 text-amber-500" />
+                            <label className="text-gray-600">Shielded Address</label>
+                          </div>
+                          <div className="relative">
+                            <Input
+                              type="text"
+                              value={zcashAddress}
+                              onChange={(e) => setZcashAddress(e.target.value)}
+                              placeholder="zs1..."
+                              className="h-12 font-mono text-gray-900 placeholder:text-gray-400 border-gray-200 focus:border-amber-500"
+                              autoCapitalize="none"
+                              autoCorrect="off"
+                              spellCheck={false}
+                              onPaste={(e) => {
+                                try {
+                                  const pasted = e.clipboardData?.getData('text/plain') || '';
+                                  if (pasted) {
+                                    e.preventDefault();
+                                    setZcashAddress(pasted.trim());
+                                  }
+                                } catch { }
+                              }}
+                            />
+                            {zcashAddress.startsWith('zs1') && (
+                              <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                <CheckIcon className="w-5 h-5 text-green-500" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="mt-1 text-gray-500 text-sm">
+                            Starts with <span className="text-amber-600 font-mono">zs1</span>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          <label className="text-gray-600 mb-1 block">Token to receive</label>
+                          <TokenCombobox
+                            tokens={tokens}
+                            value={toSel}
+                            onChange={setToSel}
+                            placeholder="Select token"
+                            onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                            className="bg-white text-gray-900 border border-gray-200 hover:border-orange-300 w-full h-12"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-gray-600 mb-1 block">Recipient address</label>
+                          <Input
+                            type="text"
+                            value={recipient}
+                            onChange={(e) => setRecipient(e.target.value)}
+                            placeholder="0x..."
+                            className="h-12 text-gray-900 placeholder:text-gray-400 border-gray-200 focus:border-orange-400"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            spellCheck={false}
+                            onPaste={(e) => {
+                              try {
+                                const pasted = e.clipboardData?.getData('text/plain') || '';
+                                if (pasted) {
+                                  e.preventDefault();
+                                  setRecipient(pasted.trim());
+                                }
+                              } catch { }
+                            }}
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    {/* Email notification - compact */}
+                    <div className="flex items-center gap-2 py-1">
+                      <input
+                        id="notify"
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-gray-300 accent-orange-500"
+                        checked={notifyChecked}
+                        onChange={(e) => setNotifyChecked(e.target.checked)}
+                      />
+                      <label htmlFor="notify" className="text-gray-600">
+                        Email notifications
+                      </label>
+                    </div>
+                    {notifyChecked && (
+                      <Input
+                        type="email"
+                        placeholder="your@email.com"
+                        value={notifyEmail}
+                        onChange={(e) => setNotifyEmail(e.target.value)}
+                        className="h-10 text-gray-900 placeholder:text-gray-400 border-gray-200"
+                      />
+                    )}
+
+                    {/* Create Button */}
+                    {isPrivateMode ? (
+                      <button
+                        onClick={() => {
+                          setRecipient(zcashAddress);
+                          const zcashToken = tokens.find(t => t.symbol.toLowerCase() === 'zec');
+                          if (zcashToken) {
+                            setToSel({ symbol: zcashToken.symbol, chain: zcashToken.chain });
+                          }
+                          onCreate();
+                        }}
+                        disabled={creating || !(parsedAmount > 0) || !zcashAddress.startsWith('zs1')}
+                        className="w-full py-3 rounded-lg font-semibold text-gray-900 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-500 hover:to-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                      >
+                        {creating ? (
+                          <>
+                            <span className="w-4 h-4 border-2 border-gray-900/30 border-t-gray-900 rounded-full animate-spin" />
+                            Creating…
+                          </>
+                        ) : (
+                          <>
+                            <ShieldIcon className="w-5 h-5" />
+                            Create Private Link
+                          </>
+                        )}
+                      </button>
+                    ) : (
                       <GradientActionButton
                         onClick={onCreate}
                         disabled={creating || !(parsedAmount > 0 && !!selectedTo && !!(recipient || "").trim())}
@@ -434,7 +672,7 @@ export default function ClaimPage() {
                       >
                         Create payment link
                       </GradientActionButton>
-                    </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -571,4 +809,64 @@ function ShareIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+function ShieldIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path
+        d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6l-8-4z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="currentColor"
+        fillOpacity="0.1"
+      />
+      <path
+        d="M9 12l2 2 4-4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function LockIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <rect x="5" y="11" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="2" />
+      <path d="M8 11V7a4 4 0 1 1 8 0v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="12" cy="16" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+function EyeOffIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function InfoIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
+      <path d="M12 16v-4M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function WalletIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <rect x="2" y="6" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2" />
+      <path d="M2 10h20" stroke="currentColor" strokeWidth="2" />
+      <circle cx="16" cy="14" r="1.5" fill="currentColor" />
+    </svg>
+  );
+}
 
