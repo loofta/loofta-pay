@@ -10,7 +10,6 @@ const nextConfig = {
       { protocol: 'https', hostname: 'ipfs.sintral.me' },
     ],
   },
-  transpilePackages: ['@splinetool/react-spline', '@splinetool/runtime'],
   webpack: (config) => {
     config.resolve.fallback = { 
       ...config.resolve.fallback,
@@ -22,15 +21,10 @@ const nextConfig = {
       ...config.experiments,
       asyncWebAssembly: true,
     };
-    // Handle ESM packages
-    config.module.rules.push({
-      test: /\.m?js$/,
-      include: /node_modules\/@splinetool/,
-      type: 'javascript/auto',
-      resolve: {
-        fullySpecified: false,
-      },
-    });
+    // Suppress Spline critical dependency warnings
+    config.ignoreWarnings = [
+      { module: /@splinetool/ },
+    ];
     return config;
   }
 };
