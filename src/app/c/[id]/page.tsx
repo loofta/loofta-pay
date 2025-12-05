@@ -22,6 +22,10 @@ import { createSwapTransaction, getSwapStatus, checkSwapEligibility } from "@/se
 import { ACTIVE_SWAP_PROVIDER, getProviderDisplayName, type SwapProvider } from "@/config/swapProvider";
 import { ethers } from "ethers";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { isDemoMode } from "@/config/demoMode";
+
+// Check demo mode at module level for consistent behavior
+const DEMO_MODE = isDemoMode();
 
 async function fetchClaim(id: string) {
   const r = await fetch(`/api/claims/${id}`);
@@ -33,6 +37,7 @@ async function prepareDeposit(input: {
   claimId: string;
   fromToken: { tokenId: string; decimals: number; chain: string };
   amount: string;
+  userAddress?: string;
 }) {
   const r = await fetch(`/api/claims/deposit`, {
     method: "POST",
@@ -41,6 +46,21 @@ async function prepareDeposit(input: {
   });
   if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || "Failed to prepare deposit");
   return await r.json();
+}
+
+async function updateClaimStatus(claimId: string, status: string, extra?: { txHash?: string; paidWith?: string }) {
+  try {
+    const r = await fetch(`/api/claims/${claimId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, ...extra }),
+    });
+    if (!r.ok) {
+      console.error("[updateClaimStatus] Failed:", await r.text());
+    }
+  } catch (e) {
+    console.error("[updateClaimStatus] Error:", e);
+  }
 }
 
 export default function ClaimPayPage({ params }: { params: Promise<{ id: string }> }) {
@@ -80,6 +100,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const [speedUpOpen, setSpeedUpOpen] = useState<boolean>(false);
   const [txInput, setTxInput] = useState<string>("");
   const [submittingTx, setSubmittingTx] = useState<boolean>(false);
+  const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
   const [showPrivacyTutorial, setShowPrivacyTutorial] = useState<boolean>(false);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
   const { logout, login, authenticated, user } = usePrivy();
@@ -106,6 +127,18 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     if (!selectedFrom || !destToken || !sameChain) return false;
     return String(selectedFrom.symbol || "").toLowerCase() === String(destToken.symbol || "").toLowerCase();
   }, [selectedFrom, destToken, sameChain]);
+
+  // Find ZEC token for private mode
+  const zecToken = useMemo(() => {
+    return tokens.find(t => t.symbol.toUpperCase() === 'ZEC');
+  }, [tokens]);
+
+  // Auto-select ZEC when private mode is enabled
+  useEffect(() => {
+    if (isPrivateMode && zecToken) {
+      setFromSel({ symbol: zecToken.symbol, chain: zecToken.chain });
+    }
+  }, [isPrivateMode, zecToken]);
   // Check if direct pay via swap provider is available
   const swapEligibility = useMemo(() => {
     if (!selectedFrom || !destToken) return { eligible: false, provider: null as SwapProvider | null };
@@ -158,6 +191,18 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestIntentQuery.data]);
+
+  // Hydrate status from claim data (for cross-device support)
+  useEffect(() => {
+    if (!claim?.status) return;
+    const claimStatus = String(claim.status).toUpperCase();
+    // Only hydrate if we don't have a status yet and claim has a meaningful status
+    if (!status && claimStatus && claimStatus !== "PENDING" && claimStatus !== "CREATED") {
+      setStatus(claimStatus);
+      useClaimPayStore.getState().setStatus(id, claimStatus);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claim?.status]);
 
   useEffect(() => {
     (async () => {
@@ -234,10 +279,14 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         return;
       }
 
+      // Get user's wallet address for intents mode
+      const userWalletAddress = wallets[0]?.address;
+
       const res = await prepareDeposit({
         claimId: id,
         fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain },
         amount: claim.amount,
+        userAddress: userWalletAddress,
       });
       setDeposit(res);
       useClaimPayStore.getState().setDeposit(id, {
@@ -309,6 +358,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
       setPreparing(true);
       setStatus("PROCESSING");
+      useClaimPayStore.getState().setStatus(id, "PROCESSING");
+      updateClaimStatus(id, "PROCESSING", { paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}` });
 
       const providerName = getProviderDisplayName(activeProvider);
       console.log(`[${providerName}] Starting payment:`, {
@@ -405,6 +456,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
         console.log("[Rhinestone] Intent executed:", result);
         setStatus("SUCCESS");
+        useClaimPayStore.getState().setStatus(id, "SUCCESS");
+        updateClaimStatus(id, "SUCCESS", { paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}` });
 
         // Update statusData with the paid amount for display
         // Use totalSourceAmount which represents the actual ETH used for the swap
@@ -431,6 +484,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
         await tx.wait();
         setStatus("SUCCESS");
+        useClaimPayStore.getState().setStatus(id, "SUCCESS");
+        updateClaimStatus(id, "SUCCESS", { txHash: tx.hash, paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}` });
         toast({ title: "Transaction confirmed", description: `Payment successful via ${getProviderDisplayName(usedProvider)}.` });
       }
 
@@ -441,7 +496,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
             const s = await getSwapStatus(intentId, usedProvider);
             const st = String(s?.status || "").toUpperCase();
             if (st === "SUCCESS" || st === "FAILED") {
-              if (st === "FAILED") setStatus("FAILED");
+              if (st === "FAILED") {
+                setStatus("FAILED");
+                useClaimPayStore.getState().setStatus(id, "FAILED");
+                updateClaimStatus(id, "FAILED");
+              }
               clearInterval(iv);
             }
           } catch { clearInterval(iv); }
@@ -450,6 +509,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       }
     } catch (e: any) {
       setStatus("FAILED");
+      useClaimPayStore.getState().setStatus(id, "FAILED");
+      updateClaimStatus(id, "FAILED");
       toast({ variant: "destructive", title: "Payment failed", description: e?.message || "Could not complete payment" });
     } finally {
       setPreparing(false);
@@ -720,6 +781,17 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
             {/* Right column - card */}
             <div className="w-full md:w-1/2">
               <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm text-gray-900">
+                {/* Demo Mode Banner */}
+                {DEMO_MODE && (
+                  <div className="mb-4 -mx-6 -mt-6 px-4 py-3 bg-amber-50 border-b border-amber-200 rounded-t-2xl">
+                    <div className="flex items-center gap-2 text-amber-800">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      </svg>
+                      <span className="text-sm font-medium">Demo Mode - Payments are disabled</span>
+                    </div>
+                  </div>
+                )}
                 {loadingClaim ? (
                   <div className="space-y-4">
                     <Skeleton className="h-8 w-1/2" />
@@ -801,22 +873,21 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                           <div className="flex gap-2 rounded-xl bg-gray-100 p-1.5">
                             <button
                               type="button"
+                              onClick={() => setIsPrivateMode(false)}
                               className="flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all bg-orange-500 text-white"
                             >
                               Standard
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
-                                toast({ title: "Coming Soon", description: "Private payments with ZEC will be available soon!" });
-                              }}
-                              className="flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 bg-transparent text-gray-400 cursor-not-allowed"
+                              disabled
+                              className="flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 bg-transparent text-gray-400 cursor-not-allowed opacity-60"
                             >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="opacity-60">
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="opacity-80">
                                 <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" fill="currentColor" />
                               </svg>
                               Private
-                              <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">Soon</span>
+                              <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded ml-1">Soon</span>
                             </button>
                           </div>
                         </div>
@@ -824,14 +895,35 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                         {/* Pay with section */}
                         <div className="mt-5">
                           <div className="text-base font-medium text-gray-700 mb-2">Pay with</div>
-                          <TokenCombobox
-                            tokens={tokens}
-                            value={fromSel}
-                            onChange={setFromSel}
-                            placeholder="Select token to pay with"
-                            onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                            className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none focus:border-orange-400 transition-colors"
-                          />
+
+                          {isPrivateMode ? (
+                            /* Private mode - fixed to ZEC */
+                            <>
+                              <div className="flex items-center gap-3 p-3 h-14 rounded-lg border border-amber-300 bg-amber-50">
+                                <Image src="/images/tokens/zec.png" alt="ZEC" width={28} height={28} className="rounded-full" />
+                                <span className="text-lg font-semibold text-gray-900">ZEC</span>
+                                <span className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-amber-200 text-amber-800 text-xs font-medium">
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                                    <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" fill="currentColor" />
+                                  </svg>
+                                  Private
+                                </span>
+                              </div>
+                              <div className="mt-2 text-sm text-amber-700">
+                                Your payment is shielded and untraceable
+                              </div>
+                            </>
+                          ) : (
+                            /* Standard mode - token selector */
+                            <TokenCombobox
+                              tokens={tokens}
+                              value={fromSel}
+                              onChange={setFromSel}
+                              placeholder="Select token to pay with"
+                              onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                              className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none focus:border-orange-400 transition-colors"
+                            />
+                          )}
 
                           {selectedFrom ? (
                             <div className="mt-2 text-sm text-gray-700">
@@ -879,24 +971,34 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     <div className="flex gap-2">
                                       <Button
                                         onClick={onPayNow}
-                                        disabled={preparing}
+                                        disabled={preparing || DEMO_MODE}
                                         className="rounded-xl flex-1"
-                                        style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+                                        style={{ background: DEMO_MODE ? '#9CA3AF' : 'linear-gradient(to right, #EAB308, #FF0F00)' }}
                                       >
-                                        {preparing ? "Processing…" : "Pay now"}
+                                        {DEMO_MODE ? "Demo Mode" : preparing ? "Processing…" : isPrivateMode ? "Pay Privately" : "Pay now"}
                                       </Button>
                                     </div>
                                   </>
                                 )}
                               </div>
-                            ) : <GradientActionButton
-                              onClick={onPrepare}
-                              disabled={!selectedFrom || preparing || swapProviderEligible}
-                              loading={preparing && !swapProviderEligible}
-                              loadingText="Preparing…"
-                            >
-                              Get deposit address
-                            </GradientActionButton>}
+                            ) : DEMO_MODE ? (
+                              <Button
+                                disabled
+                                className="w-full rounded-xl"
+                                style={{ background: '#9CA3AF' }}
+                              >
+                                Demo Mode - Payments Disabled
+                              </Button>
+                            ) : (
+                              <GradientActionButton
+                                onClick={onPrepare}
+                                disabled={!selectedFrom || preparing || swapProviderEligible}
+                                loading={preparing && !swapProviderEligible}
+                                loadingText="Preparing…"
+                              >
+                                {isPrivateMode ? "Get private deposit address" : "Get deposit address"}
+                              </GradientActionButton>
+                            )}
                           </div>
                         </div>
                       </>

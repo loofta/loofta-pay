@@ -4,6 +4,7 @@ import defaults from "@/config/defaultTokens.json";
 // https://github.com/defuse-protocol/near-intents-examples
 import { OneClickService, QuoteRequest, OpenAPI } from '@defuse-protocol/one-click-sdk-typescript';
 import { ONECLICK_API_BASE } from "@/config/oneClick";
+import { assertNotDemoMode } from "@/config/demoMode";
 const REFERRAL_CODE = (process as any)?.env?.NEXT_PUBLIC_REFERRAL_CODE || (process as any)?.env?.NEXT_PUBLIC_ONECLICK_REFERRAL || undefined;
 const APP_FEE_BPS = Number((process as any)?.env?.NEXT_PUBLIC_APP_FEE_BPS || "");
 const APP_FEE_RECIPIENT = (process as any)?.env?.NEXT_PUBLIC_APP_FEE_RECIPIENT || undefined;
@@ -332,6 +333,9 @@ export async function getDepositInfo(params: {
   userAddress?: string;
   authMethod?: AuthMethod;
 }): Promise<DepositInfo> {
+  // Block deposit creation in demo mode
+  assertNotDemoMode("Deposit address creation");
+
   const { fromToken, toToken, amount, recipient, sender, slippageBps = 100, userAddress, authMethod } = params;
   const toAtomic = (val: string, decimals: number): string => {
     const [i, f = ""] = String(val).split(".");

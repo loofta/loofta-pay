@@ -12,6 +12,7 @@
 
 import type { NearToken } from "@/services/nearIntents";
 import { RhinestoneSDK } from "@rhinestone/sdk";
+import { assertNotDemoMode } from "@/config/demoMode";
 import { encodeFunctionData, erc20Abi, type Chain, createWalletClient, custom, http } from "viem";
 import { base, mainnet, optimism, arbitrum, polygon } from "viem/chains";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
@@ -291,6 +292,9 @@ export async function createRhinestoneTransaction(input: {
 	slippageBps?: number;
 	ethereumProvider?: any;
 }): Promise<RhinestoneIntentResponse> {
+	// Block Rhinestone transactions in demo mode
+	assertNotDemoMode("Rhinestone transactions");
+
 	const { fromToken, toToken, destinationAmountHuman, recipient, userAddress, ethereumProvider } = input;
 
 	const chainId = getRhinestoneChainId(toToken.chain);

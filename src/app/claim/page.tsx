@@ -14,6 +14,7 @@ import { findTokenBySelection } from "@/lib/tokens";
 import { maskLink } from "@/lib/format";
 import { isValidZcashShielded } from "@/lib/zcash";
 import { useClaimStore } from "@/store/claim";
+import { usePrivy } from "@privy-io/react-auth";
 
 async function createClaim(formData: {
   amount: string;
@@ -44,7 +45,8 @@ function CheckIcon(props: SVGProps<SVGSVGElement>) {
 }
 
 export default function ClaimPage() {
-  const { authenticated, email: userEmail, login } = useAuth();
+  const { authenticated, email: userEmail, login, ready } = useAuth();
+  const { login: privyLogin } = usePrivy();
   const { toast } = useToast();
   const { data: tokens = [] } = useTokensQuery();
   const [toSel, setToSel] = useState<TokenSelection | undefined>(undefined);
@@ -60,6 +62,26 @@ export default function ClaimPage() {
   const [showPrivacyInfo, setShowPrivacyInfo] = useState<boolean>(false);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
   const [hasSeenPrivateTutorial, setHasSeenPrivateTutorial] = useState<boolean>(false);
+  const [showAccessRequested, setShowAccessRequested] = useState<boolean>(false);
+  const [pendingAccessRequest, setPendingAccessRequest] = useState<boolean>(false);
+
+  // Handle email-only login for request access
+  const handleRequestAccess = () => {
+    setPendingAccessRequest(true);
+    // Privy login with email only - no wallet option
+    privyLogin({
+      loginMethods: ['email'],
+      disableSignup: false,
+    });
+  };
+
+  // Show success message when user authenticates after requesting access
+  useEffect(() => {
+    if (authenticated && pendingAccessRequest) {
+      setShowAccessRequested(true);
+      setPendingAccessRequest(false);
+    }
+  }, [authenticated, pendingAccessRequest]);
 
   const selectedTo = findTokenBySelection(tokens, toSel || null);
 
@@ -319,6 +341,57 @@ export default function ClaimPage() {
         </div>
       )}
 
+      {/* Access Requested Success Modal */}
+      {showAccessRequested && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowAccessRequested(false)}>
+          <div
+            className="bg-white rounded-[24px] w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-8 text-center">
+              {/* Success Icon */}
+              <div className="flex justify-center mb-6">
+                <div
+                  className="w-20 h-20 rounded-full flex items-center justify-center"
+                  style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.15) 0%, rgba(16,185,129,0.15) 100%)' }}
+                >
+                  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" className="text-green-500">
+                    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Title */}
+              <h2 className="text-2xl font-semibold text-gray-900 mb-3">
+                You're on the list!
+              </h2>
+
+              {/* Message */}
+              <p className="text-gray-600 mb-2">
+                Thanks for your interest in Loofta Pay!
+              </p>
+              <p className="text-gray-500 text-sm mb-6">
+                We'll notify you at <span className="font-medium text-gray-700">{userEmail}</span> as soon as we're ready for you.
+              </p>
+
+              {/* Party emoji decoration */}
+              <div className="flex justify-center gap-2 mb-6">
+                <span className="text-3xl">🎉</span>
+              </div>
+
+              {/* CTA Button */}
+              <button
+                onClick={() => setShowAccessRequested(false)}
+                className="w-full py-3.5 rounded-xl font-semibold text-white transition-all hover:opacity-90"
+                style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+              >
+                Got it!
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="fixed inset-0 -z-10 bg-[#18181F]" />
       <div className="min-h-screen text-white">
         <div className="max-w-7xl mx-auto px-4 pb-12">
@@ -404,9 +477,9 @@ export default function ClaimPage() {
                   <button
                     type="button"
                     className="mt-8 inline-flex items-center gap-2 rounded-full px-8 py-4 text-base font-semibold bg-white text-red-500 hover:bg-gray-50 transition-colors"
-                    onClick={() => (typeof login === 'function' ? login() : undefined)}
+                    onClick={handleRequestAccess}
                   >
-                    Create an account
+                    Request Access
                   </button>
                 </>
               )}
@@ -693,40 +766,63 @@ export default function ClaimPage() {
 
                     {/* Create Button */}
                     {isPrivateMode ? (
-                      <button
-                        onClick={() => {
-                          const zcashToken = tokens.find(t => t.symbol.toLowerCase() === 'zec');
-                          if (zcashToken) {
-                            onCreate({
-                              recipient: zcashAddress,
-                              toSel: { symbol: zcashToken.symbol, chain: zcashToken.chain }
-                            });
-                          }
-                        }}
-                        disabled={creating || !(parsedAmount > 0) || !isValidZcashShielded(zcashAddress)}
-                        className="w-full py-3 rounded-lg font-semibold text-gray-900 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-500 hover:to-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-                      >
-                        {creating ? (
-                          <>
-                            <span className="w-4 h-4 border-2 border-gray-900/30 border-t-gray-900 rounded-full animate-spin" />
-                            Creating…
-                          </>
-                        ) : (
-                          <>
-                            <ShieldIcon className="w-5 h-5" />
-                            Create Private Link
-                          </>
-                        )}
-                      </button>
+                      authenticated && !showAccessRequested ? (
+                        <button
+                          onClick={() => {
+                            const zcashToken = tokens.find(t => t.symbol.toLowerCase() === 'zec');
+                            if (zcashToken) {
+                              onCreate({
+                                recipient: zcashAddress,
+                                toSel: { symbol: zcashToken.symbol, chain: zcashToken.chain }
+                              });
+                            }
+                          }}
+                          disabled={creating || !(parsedAmount > 0) || !isValidZcashShielded(zcashAddress)}
+                          className="w-full py-3 rounded-lg font-semibold text-gray-900 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-500 hover:to-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                        >
+                          {creating ? (
+                            <>
+                              <span className="w-4 h-4 border-2 border-gray-900/30 border-t-gray-900 rounded-full animate-spin" />
+                              Creating…
+                            </>
+                          ) : (
+                            <>
+                              <ShieldIcon className="w-5 h-5" />
+                              Create Private Link
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handleRequestAccess}
+                          className="w-full py-3.5 rounded-lg font-semibold text-gray-900 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-500 hover:to-yellow-500 transition-all flex items-center justify-center gap-2"
+                        >
+                          <LockIcon className="w-5 h-5" />
+                          Login to create your payment link
+                        </button>
+                      )
                     ) : (
-                      <GradientActionButton
-                        onClick={() => onCreate()}
-                        disabled={creating || !(parsedAmount > 0 && !!selectedTo && !!(recipient || "").trim())}
-                        loading={creating}
-                        loadingText="Creating…"
-                      >
-                        Create payment link
-                      </GradientActionButton>
+                      authenticated && !showAccessRequested ? (
+                        <GradientActionButton
+                          onClick={() => onCreate()}
+                          disabled={creating || !(parsedAmount > 0 && !!selectedTo && !!(recipient || "").trim())}
+                          loading={creating}
+                          loadingText="Creating…"
+                        >
+                          Create payment link
+                        </GradientActionButton>
+                      ) : (
+                        <button
+                          onClick={handleRequestAccess}
+                          className="w-full py-3.5 rounded-xl font-semibold text-white transition-all hover:opacity-90"
+                          style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                        >
+                          <span className="flex items-center justify-center gap-2">
+
+                            Login to create your payment link
+                          </span>
+                        </button>
+                      )
                     )}
                   </div>
                 )}

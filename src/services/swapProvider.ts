@@ -7,6 +7,7 @@
 
 import type { NearToken } from "@/services/nearIntents";
 import { ACTIVE_SWAP_PROVIDER, type SwapProvider } from "@/config/swapProvider";
+import { isDemoMode, assertNotDemoMode } from "@/config/demoMode";
 
 // Re-export SwapProvider type for convenience
 export type { SwapProvider } from "@/config/swapProvider";
@@ -141,6 +142,9 @@ export async function createSwapTransaction(input: {
 	forceProvider?: SwapProvider;
 	ethereumProvider?: any; // Privy/wallet provider for Rhinestone
 }): Promise<SwapTransactionResponse> {
+	// Block all swap transactions in demo mode
+	assertNotDemoMode("Swap transactions");
+
 	const { fromToken, toToken, amountHuman, destinationAmountHuman, recipient, userAddress, slippageBps, forceProvider, ethereumProvider } = input;
 
 	// Determine which provider to use

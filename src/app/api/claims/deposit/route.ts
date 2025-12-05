@@ -3,6 +3,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
+import { getRefundToForChain } from "@/lib/refundAddresses";
 
 function getEnv(name: string, fallbacks: string[] = []) {
   const all = [name, ...fallbacks];
@@ -18,10 +19,13 @@ const ONECLICK_JWT = getEnv("ONECLICK_JWT", ["NEXT_PUBLIC_ONECLICK_JWT"]);
 OpenAPI.BASE = ONECLICK_BASE;
 if (ONECLICK_JWT) OpenAPI.TOKEN = ONECLICK_JWT;
 
+// Chains that require INTENTS deposit mode (non-native chains that go through Near intents)
+const INTENTS_ONLY_CHAINS = new Set(['zec', 'zcash', 'btc', 'bitcoin', 'xrp', 'xlm', 'stellar', 'ada', 'cardano', 'ltc', 'litecoin', 'doge', 'dogecoin']);
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { claimId, fromToken, amount } = body || {};
+    const { claimId, fromToken, amount, userAddress } = body || {};
     if (!claimId || !fromToken?.tokenId || !fromToken?.decimals || !amount) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
@@ -43,8 +47,14 @@ export async function POST(request: Request) {
 
     // Destination asset id from claim row (matches 1Click nep141:<chain>.omft.near style in your schema)
     const destinationAsset = claim.to_symbol && claim.to_chain ? `nep141:${claim.to_chain}.omft.near` : "";
+    
+    // Check if origin chain requires INTENTS mode
+    const originChain = String(fromToken?.chain || "").toLowerCase();
+    const useIntentsMode = INTENTS_ONLY_CHAINS.has(originChain);
+    
     // Determine same-chain and choose recipient type accordingly
-    const sameChain = String(fromToken?.chain || "").toLowerCase() === String(claim.to_chain || "").toLowerCase();
+    const sameChain = originChain === String(claim.to_chain || "").toLowerCase();
+    
     // For EXACT_OUTPUT we need destination token decimals to convert human -> atomic
     let destDecimals = 6;
     let destPrice: number | undefined = undefined;
@@ -66,16 +76,57 @@ export async function POST(request: Request) {
       return Math.ceil(destHumanOut * factor) / factor;
     })();
     const amountOutAtomic = toAtomic(String(destHumanOutRoundedUp || "0"), destDecimals);
-    const req: QuoteRequest = {
+    
+    // Get appropriate refund address for the origin chain
+    const refundAddress = getRefundToForChain(originChain);
+    
+    // For intents mode, calculate input amount in origin token atomic units
+    // We need to estimate how much ZEC/BTC etc. to send to get the desired output
+    let originDecimals = Number(fromToken.decimals) || 8;
+    let originPrice: number | undefined = undefined;
+    try {
+      const tokens: any = await (OneClickService as any).getTokens();
+      const arr: any[] = Array.isArray(tokens) ? tokens : (tokens?.tokens || []);
+      const foundOrigin = arr.find((t: any) => String(t?.assetId || t?.tokenId || "").toLowerCase() === String(fromToken.tokenId).toLowerCase());
+      if (foundOrigin && typeof foundOrigin.decimals === "number") originDecimals = foundOrigin.decimals;
+      if (foundOrigin && typeof foundOrigin.price === "number") originPrice = foundOrigin.price;
+    } catch {}
+    
+    // For intents mode with EXACT_INPUT, calculate how much origin token to send
+    const amountInHuman = (Number.isFinite(amountUsd) && typeof originPrice === "number" && originPrice > 0)
+      ? (amountUsd / originPrice)
+      : 0;
+    // Add 2% buffer for slippage
+    const amountInWithBuffer = amountInHuman * 1.02;
+    const amountInAtomic = toAtomic(String(amountInWithBuffer || "0"), originDecimals);
+    
+    // Build request based on deposit mode
+    const req: QuoteRequest = useIntentsMode ? {
+      // INTENTS mode - use EXACT_INPUT like near-intents does
+      dry: false,
+      swapType: "EXACT_INPUT" as any,
+      slippageTolerance: 100,
+      originAsset: fromToken.tokenId,
+      depositType: "INTENTS" as any,
+      destinationAsset,
+      amount: amountInAtomic,
+      refundTo: userAddress || refundAddress,
+      refundType: "INTENTS" as any,
+      recipient: userAddress || claim.recipient_address,
+      recipientType: "INTENTS" as any,
+      deadline: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      quoteWaitingTimeMs: 3000,
+      ...(userAddress ? { authMethod: "evm", userAddress } : {}),
+    } as any : {
+      // Regular mode - use EXACT_OUTPUT
       dry: false,
       swapType: QuoteRequest.swapType.EXACT_OUTPUT,
       slippageTolerance: 100,
       originAsset: fromToken.tokenId,
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
-      // EXACT_OUTPUT expects desired out amount in destination-asset atomic units
       amount: amountOutAtomic,
-      refundTo: fromToken.chain === "near" ? "system.near" : "0xd28d8e18537a6De75900D2eafE8E718aA4A2Df11",
+      refundTo: refundAddress,
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: claim.recipient_address,
       recipientType: sameChain ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN : QuoteRequest.recipientType.DESTINATION_CHAIN,
@@ -84,17 +135,29 @@ export async function POST(request: Request) {
     } as any;
 
     // Debug log (visible in server logs)
+    console.log("[claims/deposit] === FULL REQUEST ===");
+    console.log("[claims/deposit] Input:", { claimId, fromToken, amount, userAddress });
+    console.log("[claims/deposit] Claim:", claim);
+    console.log("[claims/deposit] useIntentsMode:", useIntentsMode);
+    console.log("[claims/deposit] destinationAsset:", destinationAsset);
+    console.log("[claims/deposit] destDecimals:", destDecimals);
+    console.log("[claims/deposit] destPrice:", destPrice);
+    console.log("[claims/deposit] amountOutAtomic:", amountOutAtomic);
+    console.log("[claims/deposit] originDecimals:", originDecimals);
+    console.log("[claims/deposit] originPrice:", originPrice);
+    console.log("[claims/deposit] amountInHuman:", amountInHuman);
+    console.log("[claims/deposit] amountInAtomic:", amountInAtomic);
+    console.log("[claims/deposit] Full quoteRequest:", JSON.stringify(req, null, 2));
+    
+    let raw: any;
     try {
-      console.log("[claims/deposit] quoteRequest", {
-        swapType: req.swapType,
-        depositType: req.depositType,
-        recipientType: req.recipientType,
-        originAsset: req.originAsset,
-        destinationAsset: req.destinationAsset,
-        amount: req.amount,
-      });
-    } catch {}
-    const raw = await OneClickService.getQuote(req);
+      raw = await OneClickService.getQuote(req);
+      console.log("[claims/deposit] Quote response:", JSON.stringify(raw, null, 2));
+    } catch (quoteError: any) {
+      console.error("[claims/deposit] Quote ERROR:", quoteError?.message || quoteError);
+      console.error("[claims/deposit] Quote ERROR body:", quoteError?.body || quoteError?.response);
+      throw quoteError;
+    }
     const q = (raw as any)?.quote || raw || {};
 
     // Upsert claim_intents with deposit info
@@ -125,6 +188,10 @@ export async function POST(request: Request) {
       minAmountInFormatted: q?.minAmountInFormatted,
     }, { status: 200 });
   } catch (e: any) {
+    console.error("[claims/deposit] FATAL ERROR:", e);
+    console.error("[claims/deposit] Error message:", e?.message);
+    console.error("[claims/deposit] Error body:", e?.body);
+    console.error("[claims/deposit] Error response:", e?.response);
     return NextResponse.json({ error: e?.message || "Failed to prepare deposit" }, { status: 500 });
   }
 }
