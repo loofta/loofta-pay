@@ -39,12 +39,12 @@ const nextConfig = {
             value: [
               // Default fallback
               "default-src 'self'",
-              // Scripts - self + Cloudflare Turnstile + inline for Next.js
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com",
+              // Scripts - self + Cloudflare Turnstile + Spline + inline for Next.js
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com https://unpkg.com https://*.spline.design https://*.splinetool.com",
               // Styles - self + inline (required for many UI libraries)
               "style-src 'self' 'unsafe-inline'",
-              // Images - self + data URIs + blob + external image sources
-              "img-src 'self' data: blob: https://raw.githubusercontent.com https://s2.coinmarketcap.com https://assets.coingecko.com https://near-intents.org https://dd.dexscreener.com https://ipfs.sintral.me https://*.walletconnect.com",
+              // Images - self + data URIs + blob + external image sources + Spline
+              "img-src 'self' data: blob: https://raw.githubusercontent.com https://s2.coinmarketcap.com https://assets.coingecko.com https://near-intents.org https://dd.dexscreener.com https://ipfs.sintral.me https://*.walletconnect.com https://*.spline.design https://*.splinetool.com",
               // Fonts
               "font-src 'self' data:",
               // No plugins
@@ -55,13 +55,13 @@ const nextConfig = {
               "form-action 'self'",
               // Prevent embedding (clickjacking protection)
               "frame-ancestors 'none'",
-              // Child frames - Privy + WalletConnect
+              // Child frames - Privy + WalletConnect + Spline
               "child-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org blob:",
               // Iframes - Privy + WalletConnect + Cloudflare
-              "frame-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org https://challenges.cloudflare.com",
-              // API connections - Privy + WalletConnect + your APIs
-              "connect-src 'self' https://auth.privy.io https://*.privy.io wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org https://*.rpc.privy.systems https://explorer-api.walletconnect.com https://1click.chaindefuser.com https://*.defuse.org https://*.near.org https://*.rhinestone.dev https://*.biconomy.io https://api.loom.com https://*.vercel-insights.com https://*.vercel-analytics.com",
-              // Web workers
+              "frame-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org https://challenges.cloudflare.com https://*.spline.design https://*.splinetool.com",
+              // API connections - Privy + WalletConnect + your APIs + Spline
+              "connect-src 'self' https://auth.privy.io https://*.privy.io wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org https://*.rpc.privy.systems https://explorer-api.walletconnect.com https://1click.chaindefuser.com https://*.defuse.org https://*.near.org https://*.rhinestone.dev https://*.biconomy.io https://api.loom.com https://*.vercel-insights.com https://*.vercel-analytics.com https://*.spline.design https://*.splinetool.com https://unpkg.com",
+              // Web workers - allow blob for Spline WASM workers
               "worker-src 'self' blob:",
               // Manifest
               "manifest-src 'self'",
