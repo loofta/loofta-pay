@@ -59,8 +59,8 @@ const nextConfig = {
               "child-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org blob:",
               // Iframes - Privy + WalletConnect + Cloudflare
               "frame-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org https://challenges.cloudflare.com https://*.spline.design https://*.splinetool.com",
-              // API connections - Privy + WalletConnect + your APIs + Spline + Google Fonts
-              "connect-src 'self' https://auth.privy.io https://*.privy.io wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org https://*.rpc.privy.systems https://explorer-api.walletconnect.com https://1click.chaindefuser.com https://*.defuse.org https://*.near.org https://*.rhinestone.dev https://*.biconomy.io https://api.loom.com https://*.vercel-insights.com https://*.vercel-analytics.com https://*.spline.design https://*.splinetool.com https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com",
+              // API connections - Privy + WalletConnect + Web3Modal + your APIs + Spline + Google Fonts
+              "connect-src 'self' https://auth.privy.io https://*.privy.io wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org https://*.rpc.privy.systems https://explorer-api.walletconnect.com https://api.web3modal.com https://api.web3modal.org https://*.walletconnect.com https://*.walletconnect.org https://*.reown.com https://1click.chaindefuser.com https://*.defuse.org https://*.near.org https://*.rhinestone.dev https://*.biconomy.io https://api.loom.com https://*.vercel-insights.com https://*.vercel-analytics.com https://*.spline.design https://*.splinetool.com https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com",
               // Web workers - allow blob for Spline WASM workers
               "worker-src 'self' blob:",
               // Manifest
