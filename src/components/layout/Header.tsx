@@ -71,7 +71,7 @@ export function Header() {
           <div className="flex items-center gap-3">
             {/* Watch Demo Link */}
             <a
-              href="https://www.loom.com/share/c7270a41aa5141d9bba6e58774cad7a1"
+              href="https://www.loom.com/share/fc8337f8a7ed407fa59d68cbdb11fc6f"
               target="_blank"
               rel="noopener noreferrer"
               className="hidden sm:flex items-center gap-1.5 text-gray-600 hover:text-gray-900 font-medium text-sm transition-colors"
