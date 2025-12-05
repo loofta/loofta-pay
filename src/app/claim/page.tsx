@@ -402,7 +402,7 @@ export default function ClaimPage() {
                 /* Success state left content */
                 <>
                   <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
-                    Link <br /><span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Created!</span>
+                    Payment Link <br /><span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Created!</span>
                   </h1>
                   <p className="text-gray-100 text-xl mb-8">
                     Your payment link is ready. Share it anywhere to get paid.
@@ -605,7 +605,7 @@ export default function ClaimPage() {
                     </div>
                     <div className="mt-8 rounded-xl border border-gray-200 bg-gray-50 p-4 text-center space-y-3">
                       <div className="text-lg font-semibold text-gray-900">Create your profile</div>
-                      <div className="text-sm text-gray-600">
+                      <div className="text-base text-gray-600">
                         Claim your username to get a personal payment link and earn points on every payment.
                       </div>
                       <GradientActionButton
