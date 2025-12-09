@@ -50,7 +50,7 @@ export function Header() {
   }, []);
 
   return (
-    <div ref={headerRef} className="fixed inset-x-0 top-0 z-50 bg-transparent">
+    <div ref={headerRef} className="fixed inset-x-0 top-0 z-50" style={{ backdropFilter: 'blur(10px)' }}>
       <div className="max-w-7xl mx-auto px-4 py-6 md:py-8">
         <div className="flex justify-between items-center animate-fade-in">
           <div className="relative inline-block">
