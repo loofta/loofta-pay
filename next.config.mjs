@@ -1,7 +1,13 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Enable Turbopack (default in Next.js 16) - empty config to silence webpack migration warning
-  turbopack: {},
+  // Externalize problematic packages to avoid bundling issues
+  serverExternalPackages: [
+    'pino',
+    'thread-stream',
+    '@walletconnect/sign-client',
+    '@walletconnect/core',
+    '@walletconnect/ethereum-provider',
+  ],
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: 'raw.githubusercontent.com' },
