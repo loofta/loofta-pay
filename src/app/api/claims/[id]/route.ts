@@ -51,20 +51,23 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
     
-    // Also create/update a claim_intent record to track the payment
+    // Update claim_intent status (only update status-related fields, preserve deposit_address etc.)
     if (status === "PROCESSING" || status === "SUCCESS" || status === "FAILED") {
       try {
-        await supabase
+        // Use update instead of upsert to preserve existing deposit_address
+        const { error: intentError } = await supabase
           .from("claim_intents")
-          .upsert({
-            claim_id: params.id,
+          .update({
             status,
             tx_hash: txHash || null,
             paid_with: paidWith || null,
             updated_at: new Date().toISOString(),
-          }, {
-            onConflict: "claim_id",
-          });
+          })
+          .eq("claim_id", params.id);
+        
+        if (intentError) {
+          console.error("[claims/PATCH] Error updating claim_intent:", intentError);
+        }
       } catch (intentError) {
         // Non-critical, just log
         console.error("[claims/PATCH] Error updating claim_intent:", intentError);

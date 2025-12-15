@@ -103,6 +103,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
   const [showPrivacyTutorial, setShowPrivacyTutorial] = useState<boolean>(false);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
+  const hasUpdatedClaimStatus = React.useRef<string | null>(null); // Track if we've already updated DB for this status
   const { logout, login, authenticated, user } = usePrivy();
   const { wallets } = useWallets();
 
@@ -173,6 +174,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   useEffect(() => {
     const d: any = latestIntentQuery.data;
     if (!d) return;
+    // Set deposit if we have a depositAddress and haven't set it yet
     if (d?.depositAddress && !deposit) {
       const dep = {
         depositAddress: d.depositAddress,
@@ -184,13 +186,13 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       setDeposit(dep);
       useClaimPayStore.getState().setDeposit(id, dep as any);
     }
+    // Set status if we have one and haven't set it yet
     if (d?.status && !status) {
       const s = String(d.status);
       setStatus(s);
       useClaimPayStore.getState().setStatus(id, s);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [latestIntentQuery.data]);
+  }, [latestIntentQuery.data, deposit, status, id]);
 
   // Hydrate status from claim data (for cross-device support)
   useEffect(() => {
@@ -201,8 +203,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       setStatus(claimStatus);
       useClaimPayStore.getState().setStatus(id, claimStatus);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [claim?.status]);
+  }, [claim?.status, status, id]);
 
   useEffect(() => {
     (async () => {
@@ -233,26 +234,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     })();
   }, [id, claim, selectedFrom, destToken?.tokenId, destToken?.price, destToken?.decimals]);
 
-  // Try to hydrate deposit from backend so anyone opening the link sees status
-  useEffect(() => {
-    (async () => {
-      if (deposit || !id) return;
-      try {
-        const r = await fetch(`/api/claims/${id}/latest-intent`, { cache: "no-store" });
-        if (!r.ok) return;
-        const d = await r.json();
-        if (d?.depositAddress) {
-          setDeposit({ depositAddress: d.depositAddress, memo: d.memo ?? null, deadline: d.deadline, quoteId: d.quoteId, minDepositFormatted: d.minDepositFormatted });
-          useClaimPayStore.getState().setDeposit(id, { depositAddress: d.depositAddress, memo: d.memo ?? null, deadline: d.deadline, quoteId: d.quoteId, minDepositFormatted: d.minDepositFormatted });
-        }
-        if (d?.status) {
-          const s = String(d.status);
-          setStatus(s);
-          useClaimPayStore.getState().setStatus(id, s);
-        }
-      } catch { }
-    })();
-  }, [id, deposit]);
   async function onPrepare() {
     if (!claim || !selectedFrom) return;
     // If same-chain EVM and supported by Biconomy, skip deposit flow (use Pay now)
@@ -518,11 +499,14 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   }
 
   // Cache and refresh status via TanStack Query
+  const depositAddress = deposit?.depositAddress as string | undefined;
   const statusQuery = useQuery({
-    queryKey: ["status", deposit?.depositAddress],
-    enabled: !!deposit?.depositAddress,
-    queryFn: async () => {
-      const addr = deposit?.depositAddress as string;
+    queryKey: ["status", depositAddress],
+    enabled: !!depositAddress,
+    queryFn: async ({ queryKey }) => {
+      // Use depositAddress from queryKey to avoid stale closure
+      const addr = queryKey[1] as string;
+      if (!addr) throw new Error("No deposit address");
       const r = await fetch(`/api/status?depositAddress=${encodeURIComponent(addr)}`, { cache: "no-store" });
       if (!r.ok) throw new Error("Failed to load status");
       return await r.json();
@@ -541,9 +525,33 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     if (!statusQuery.data) return;
     const s = statusQuery.data?.status || statusQuery.data?.executionStatus || null;
     if (s) {
+      const upperStatus = String(s).toUpperCase();
       setStatus(s);
       useClaimPayStore.getState().setStatus(id, s);
       setStatusData(statusQuery.data || null);
+
+      // When status becomes terminal, update the claim in DB (only once per status)
+      const isTerminalStatus = ["SUCCESS", "FAILED", "REFUNDED"].includes(upperStatus);
+      if (isTerminalStatus && hasUpdatedClaimStatus.current !== upperStatus) {
+        hasUpdatedClaimStatus.current = upperStatus; // Mark as updated to prevent duplicates
+
+        // Update claim in DB then refresh cache
+        (async () => {
+          if (upperStatus === "SUCCESS") {
+            await updateClaimStatus(id, "SUCCESS", {
+              paidWith: paidToken?.symbol
+                ? `${paidToken.symbol} on ${paidToken.chain || selectedFrom?.chain}`
+                : selectedFrom?.symbol
+                  ? `${selectedFrom.symbol} on ${selectedFrom.chain}`
+                  : undefined,
+            });
+          } else {
+            await updateClaimStatus(id, upperStatus);
+          }
+          // Refetch claim after DB is updated
+          claimQuery.refetch();
+        })();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusQuery.data]);
@@ -820,7 +828,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               <span className="text-lg font-semibold text-gray-900">
 
                                 <span className="inline-flex items-center gap-1">
-                                  <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={14} />
+                                  <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={18} />
                                   {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol}
                                 </span>
                               </span>
@@ -834,8 +842,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   const chain = paidToken?.chain || selectedFrom?.chain;
                                   return (
                                     <>
-                                      <TokenIcon token={(paidToken as any) ?? (selectedFrom as any)} chain={(paidToken?.chain as any) ?? (selectedFrom?.chain as any)} size={14} />
-                                      <span>{paid != null ? roundUpDecimals(String(paid), 6) : "—"} {sym || ""}{chain ? ` on ${String(chain)}` : ""}</span>
+                                      <TokenIcon token={(paidToken as any) ?? (selectedFrom as any)} chain={(paidToken?.chain as any) ?? (selectedFrom?.chain as any)} size={18} />
+                                      <span>{paid != null ? roundUpDecimals(String(paid), 6) : "—"} {sym || ""}</span>
                                     </>
                                   );
                                 })()}
@@ -1392,7 +1400,7 @@ function CompanionDebugSection({ wallets }: { wallets: any[] }) {
 
 function StatusBadge({ status }: { status: string }) {
   const s = String(status || "").toUpperCase();
-  const map: Record<string, { label: string; classes: string; icon: JSX.Element }> = {
+  const map: Record<string, { label: string; classes: string; icon: React.ReactNode }> = {
     INCOMPLETE_DEPOSIT: {
       label: "Incomplete deposit",
       classes: "bg-amber-50 text-amber-800 border-amber-200",

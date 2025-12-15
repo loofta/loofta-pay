@@ -696,7 +696,7 @@ export default function ClaimPage() {
                     ) : (
                       <>
                         <div>
-                          <label className="text-gray-600 mb-1 block">Token to receive</label>
+                          <label className="text-gray-600 mb-1 block">Token you want to receive</label>
                           <TokenCombobox
                             tokens={tokens}
                             value={toSel}
@@ -707,7 +707,7 @@ export default function ClaimPage() {
                           />
                         </div>
                         <div>
-                          <label className="text-gray-600 mb-1 block">Recipient address</label>
+                          <label className="text-gray-600 mb-1 block">Your wallet address</label>
                           <Input
                             type="text"
                             value={recipient}
