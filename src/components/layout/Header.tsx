@@ -69,19 +69,13 @@ export function Header() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Watch Demo Link */}
-            <a
-              href="https://www.loom.com/share/fc8337f8a7ed407fa59d68cbdb11fc6f"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hidden sm:flex items-center gap-1.5 text-gray-600 hover:text-gray-900 font-medium text-sm transition-colors"
+            {/* contact us button */}
+            <Button
+              className="bg-gray-900 hover:bg-gray-800 text-white font-semibold px-6 py-2.5 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg"
+              onClick={() => window.open('https://t.me/looftaxyz', '_blank')}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-current">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
-                <path d="M10 8l6 4-6 4V8z" fill="currentColor" />
-              </svg>
-              Watch Demo
-            </a>
+              Contact Us
+            </Button>
 
             {showHistory && (
               <Button
