@@ -486,7 +486,7 @@ export default function Home() {
                       {item.question}
                     </span>
                     <motion.span
-                      className="text-2xl text-slate-900 shrink-0 ml-4"
+                      className="text-4xl text-slate-900 shrink-0 ml-4"
                       animate={{ rotate: openFaq === index ? 45 : 0 }}
                       transition={{ duration: 0.2 }}
                     >
