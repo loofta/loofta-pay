@@ -7,6 +7,7 @@ const nextConfig = {
     '@walletconnect/sign-client',
     '@walletconnect/core',
     '@walletconnect/ethereum-provider',
+    '@supabase/supabase-js',
   ],
   images: {
     remotePatterns: [
