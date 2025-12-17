@@ -107,7 +107,7 @@ function isNativeToken(symbol: string): boolean {
 // Store SDK instance
 let rhinestoneSDK: RhinestoneSDK | null = null;
 
-function getSDK(): RhinestoneSDK {
+export function getSDK(): RhinestoneSDK {
 	if (!rhinestoneSDK) {
 		rhinestoneSDK = new RhinestoneSDK({
 			apiKey: RHINESTONE_API_KEY,
@@ -135,32 +135,90 @@ function saveSignerKeyToStorage(userAddress: string, pk: `0x${string}`): void {
 		const keys = getSignerKeysFromStorage();
 		keys[userAddress.toLowerCase()] = pk;
 		localStorage.setItem(SIGNER_KEYS_STORAGE_KEY, JSON.stringify(keys));
+		console.log("[Rhinestone] ✓ Signer key saved to localStorage");
+		console.log("[Rhinestone] Storage key:", SIGNER_KEYS_STORAGE_KEY);
+		console.log("[Rhinestone] User address:", userAddress);
+		console.log("[Rhinestone] This key allows access to companion wallet");
 	} catch (e) {
 		console.warn("[Rhinestone] Could not save signer key:", e);
 	}
 }
 
-function getOrCreateSignerKey(userAddress: string): `0x${string}` {
+export function getOrCreateSignerKey(userAddress: string): `0x${string}` {
 	const key = userAddress.toLowerCase();
 	
 	// First check localStorage
 	const storedKeys = getSignerKeysFromStorage();
+	console.log("[Rhinestone] =========================================");
+	console.log("[Rhinestone] Looking up signer key for:", userAddress);
+	console.log("[Rhinestone] Stored keys available for:", Object.keys(storedKeys));
+	
 	if (storedKeys[key]) {
-		console.log("[Rhinestone] Using stored signer key for user:", userAddress);
+		console.log("[Rhinestone] ✓ Found existing signer key for:", userAddress);
+		console.log("[Rhinestone] Key hash (first 10 chars):", storedKeys[key].slice(0, 12) + "...");
+		console.log("[Rhinestone] =========================================");
 		return storedKeys[key];
-}
+	}
 
 	// Generate new signer key
+	console.log("[Rhinestone] ⚠️ NO existing key found - generating NEW signer key");
+	console.log("[Rhinestone] ⚠️ This will create a NEW companion wallet!");
 	const pk = generatePrivateKey();
 	saveSignerKeyToStorage(userAddress, pk);
-	console.log("[Rhinestone] Generated and saved new signer key for user:", userAddress);
+	console.log("[Rhinestone] New key hash (first 10 chars):", pk.slice(0, 12) + "...");
+	console.log("[Rhinestone] =========================================");
 	return pk;
 }
 
 /**
+ * Get the best companion wallet (one with highest balance) from all cached wallets
+ * Falls back to creating new one if no wallets have balance
+ */
+export async function getBestCompanionWallet(): Promise<{ address: string; userAddress: string; balance: string } | null> {
+	if (typeof window === "undefined") return null;
+	
+	try {
+		const wallets = await listAllCompanionWallets();
+		if (wallets.length === 0) return null;
+		
+		// Sort by balance descending
+		const sorted = wallets.sort((a, b) => parseFloat(b.balance) - parseFloat(a.balance));
+		const best = sorted[0];
+		
+		if (parseFloat(best.balance) > 0.0001) {
+			console.log("[Rhinestone] Found best companion wallet with balance:", best.balance, "ETH");
+			console.log("[Rhinestone] Companion address:", best.companionAddress);
+			console.log("[Rhinestone] Original owner:", best.userAddress);
+			return { address: best.companionAddress, userAddress: best.userAddress, balance: best.balance };
+		}
+		
+		return null;
+	} catch (e) {
+		console.warn("[Rhinestone] Could not get best companion wallet:", e);
+		return null;
+	}
+}
+
+/**
  * Get the companion account address for a user (deterministic based on signer key)
+ * Uses Zustand store to cache companion wallet addresses
  */
 export async function getCompanionAddress(userAddress: string): Promise<string> {
+	// Check Zustand cache first (only on client side)
+	if (typeof window !== "undefined") {
+		try {
+			const { useCompanionWalletStore } = await import("@/store/companionWallet");
+			const cached = useCompanionWalletStore.getState().getCompanionWallet(userAddress);
+			if (cached?.address) {
+				console.log("[Rhinestone] Using cached companion wallet:", cached.address);
+				return cached.address;
+			}
+		} catch (e) {
+			console.warn("[Rhinestone] Could not access companion wallet store:", e);
+		}
+	}
+
+	// Generate companion wallet address (deterministic based on signer key)
 	const signerPk = getOrCreateSignerKey(userAddress);
 	const signerAccount = privateKeyToAccount(signerPk);
 	const sdk = getSDK();
@@ -184,7 +242,163 @@ export async function getCompanionAddress(userAddress: string): Promise<string> 
 		},
 	});
 	
-	return companionAccount.getAddress();
+	const companionAddress = companionAccount.getAddress();
+	
+	// Cache in Zustand store (only on client side)
+	if (typeof window !== "undefined") {
+		try {
+			const { useCompanionWalletStore } = await import("@/store/companionWallet");
+			useCompanionWalletStore.getState().setCompanionWallet(userAddress, companionAddress);
+		} catch (e) {
+			console.warn("[Rhinestone] Could not cache companion wallet:", e);
+		}
+	}
+	
+	return companionAddress;
+}
+
+/**
+ * List all cached companion wallets with their balances
+ */
+export async function listAllCompanionWallets(): Promise<Array<{
+	userAddress: string;
+	companionAddress: string;
+	balance: string;
+	createdAt: number;
+}>> {
+	if (typeof window === "undefined") return [];
+	
+	try {
+		const { useCompanionWalletStore } = await import("@/store/companionWallet");
+		const wallets = useCompanionWalletStore.getState().wallets;
+		
+		const results = [];
+		for (const [key, wallet] of Object.entries(wallets)) {
+			try {
+				const balance = await getCompanionBalance(wallet.address, 8453);
+				results.push({
+					userAddress: wallet.userAddress,
+					companionAddress: wallet.address,
+					balance: balance.eth,
+					createdAt: wallet.createdAt,
+				});
+			} catch (e) {
+				results.push({
+					userAddress: wallet.userAddress,
+					companionAddress: wallet.address,
+					balance: "0",
+					createdAt: wallet.createdAt,
+				});
+			}
+		}
+		
+		console.log("[Rhinestone] All companion wallets:", results);
+		return results;
+	} catch (e) {
+		console.error("[Rhinestone] Could not list companion wallets:", e);
+		return [];
+	}
+}
+
+/**
+ * Recover funds from a companion wallet to a destination address
+ */
+export async function recoverFundsFromCompanion(input: {
+	companionOwnerAddress: string; // The user address that owns this companion wallet
+	destinationAddress: string; // Where to send the funds
+	leaveForGas?: string; // Amount to leave for gas (default: 0.00001)
+}): Promise<{ success: boolean; txHash?: string; amountSent?: string; error?: string }> {
+	const { companionOwnerAddress, destinationAddress, leaveForGas = "0.00001" } = input;
+	
+	console.log("[Rhinestone] =========================================");
+	console.log("[Rhinestone] Recovering funds from companion wallet");
+	console.log("[Rhinestone] Owner address:", companionOwnerAddress);
+	console.log("[Rhinestone] Destination:", destinationAddress);
+	
+	try {
+		// Get the signer key for this owner
+		const signerPk = getOrCreateSignerKey(companionOwnerAddress);
+		const signerAccount = privateKeyToAccount(signerPk);
+		
+		// Get companion address
+		const companionAddress = await getCompanionAddress(companionOwnerAddress);
+		console.log("[Rhinestone] Companion address:", companionAddress);
+		
+		// Check balance
+		const balance = await getCompanionBalance(companionAddress, 8453);
+		console.log("[Rhinestone] Current balance:", balance.eth, "ETH");
+		
+		const balanceFloat = parseFloat(balance.eth);
+		const gasReserve = parseFloat(leaveForGas);
+		const amountToSend = balanceFloat - gasReserve;
+		
+		if (amountToSend <= 0) {
+			console.log("[Rhinestone] No funds to recover (balance too low)");
+			return { success: false, error: "Balance too low to recover" };
+		}
+		
+		console.log("[Rhinestone] Amount to send:", amountToSend.toFixed(8), "ETH");
+		
+		// Create companion account
+		const sdk = getSDK();
+		const ownerAccount = {
+			address: companionOwnerAddress as `0x${string}`,
+			type: "local" as const,
+			publicKey: "0x" as `0x${string}`,
+			source: "custom" as const,
+			signMessage: async () => { throw new Error("Not needed"); },
+			signTransaction: async () => { throw new Error("Not needed"); },
+			signTypedData: async () => { throw new Error("Not needed"); },
+		};
+		
+		const companionAccount = await sdk.createAccount({
+			account: { type: "nexus" },
+			owners: {
+				type: "ecdsa",
+				accounts: [ownerAccount as any, signerAccount],
+				threshold: 1,
+			},
+		});
+		
+		// Send transaction
+		const amountWei = BigInt(Math.floor(amountToSend * 1e18));
+		
+		const transaction = await companionAccount.sendTransaction({
+			chain: base,
+			calls: [{
+				to: destinationAddress as `0x${string}`,
+				value: amountWei,
+				data: "0x" as `0x${string}`,
+			}],
+			signers: {
+				type: "owner",
+				kind: "ecdsa",
+				accounts: [signerAccount as any],
+			},
+		});
+		
+		console.log("[Rhinestone] Transaction submitted");
+		
+		const result = await companionAccount.waitForExecution(transaction);
+		const txHash = (result as any)?.transactionHash || "";
+		
+		console.log("[Rhinestone] ✓ Funds recovered successfully!");
+		console.log("[Rhinestone] TX hash:", txHash);
+		console.log("[Rhinestone] Amount sent:", amountToSend.toFixed(8), "ETH");
+		console.log("[Rhinestone] Sent to:", destinationAddress);
+		console.log("[Rhinestone] View on Basescan: https://basescan.org/tx/" + txHash);
+		console.log("[Rhinestone] =========================================");
+		
+		return {
+			success: true,
+			txHash,
+			amountSent: amountToSend.toFixed(8),
+			destination: destinationAddress,
+		};
+	} catch (e: any) {
+		console.error("[Rhinestone] Recovery failed:", e?.message);
+		return { success: false, error: e?.message || "Recovery failed" };
+	}
 }
 
 /**

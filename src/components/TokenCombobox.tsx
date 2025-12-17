@@ -94,6 +94,7 @@ export function TokenCombobox({
 
 	const grouped = React.useMemo(() => groupTokensBySymbol(options), [options]);
 	const chains = React.useMemo(() => uniqueChains(options), [options]);
+
 	const visibleGroups = React.useMemo(() => {
 		if (!selectedChain) return grouped;
 		return grouped.filter(g => g.chains[selectedChain!]);

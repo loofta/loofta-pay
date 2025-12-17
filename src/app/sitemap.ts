@@ -9,6 +9,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/swap-history",
     "/history",
     "/claim",
+    "/lottery",
   ];
   const now = new Date();
   return urls.map((path) => ({

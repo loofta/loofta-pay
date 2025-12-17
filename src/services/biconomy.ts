@@ -286,6 +286,118 @@ export async function createSupertransaction(input: {
 	};
 }
 
+/**
+ * Creates a Biconomy Supertransaction for lottery ticket purchase.
+ * Swaps to ETH, then calls ticketAutomator contract with recipient address.
+ * This replicates what Across Protocol does - sends ETH to contract with calldata.
+ */
+export async function createLotteryTransaction(input: {
+	fromToken: NearToken;
+	amountHuman: string;
+	contractAddress: string;
+	contractCalldata: string; // Encoded function call with recipient address
+	userAddress: string;
+	slippageBps?: number;
+}): Promise<BiconomyIntentResponse> {
+	const { fromToken, amountHuman, contractAddress, contractCalldata, userAddress, slippageBps = DEFAULT_SLIPPAGE_BPS } = input;
+
+	const chainId = chainIdFor(fromToken.chain);
+	const fromAddr = extractEvmAddress(fromToken);
+
+	if (!chainId) throw new Error(`Unsupported chain: ${fromToken.chain}`);
+	if (!userAddress) throw new Error("Missing userAddress");
+	if (!contractAddress) throw new Error("Missing contractAddress");
+
+	const amountWei = toWei(amountHuman, fromToken.decimals || 18);
+	if (amountWei === "0") throw new Error("Invalid amount (0)");
+
+	const slippage = Math.max(0, Math.min(1, slippageBps / 10000));
+	const fromIsNative = isNativeToken(fromAddr);
+	
+	const composeFlows: any[] = [];
+
+	// Step 1: Swap to ETH (if not already ETH)
+	if (!fromIsNative) {
+		composeFlows.push({
+			type: "/instructions/intent-simple",
+			data: {
+				srcChainId: chainId,
+				dstChainId: chainId,
+				srcToken: fromAddr,
+				dstToken: ZERO_ADDRESS, // Native ETH
+				amount: amountWei,
+				slippage,
+			}
+		});
+	}
+
+	// Step 2: Call ticketAutomator contract with ETH + calldata
+	// This replicates Across Protocol's behavior - contract receives ETH and calldata with recipient
+	composeFlows.push({
+		type: "/instructions/build",
+		data: {
+			functionSignature: "function()", // Fallback/receive function
+			args: [],
+			to: contractAddress,
+			chainId,
+			value: {
+				type: "runtimeNativeBalance",
+				constraints: { gte: "1" }
+			},
+			// Note: Biconomy might need the calldata in a different format
+			// This is a placeholder - actual implementation depends on Biconomy API
+		}
+	});
+
+	// Add calldata if Biconomy supports it (might need to check API docs)
+	// For now, we'll need to encode it differently or use a different approach
+
+	const fundingAmountWei = fromIsNative 
+		? amountWei
+		: (BigInt(amountWei) * BigInt(1005) / BigInt(1000)).toString(); // +0.5% buffer for swap
+
+	const body: any = {
+		mode: "eoa",
+		ownerAddress: userAddress,
+		fundingTokens: [{
+			tokenAddress: fromIsNative ? ZERO_ADDRESS : fromAddr,
+			chainId,
+			amount: fundingAmountWei,
+		}],
+		composeFlows,
+	};
+
+	console.log("[Biconomy] Lottery transaction request:", body);
+
+	const res = await fetch(`${BICONOMY_API_BASE}/intents/quote`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			...(BICONOMY_API_KEY ? { "x-api-key": BICONOMY_API_KEY } : {}),
+		},
+		body: JSON.stringify(body),
+	});
+
+	const data = await res.json();
+
+	if (!res.ok || data?.error) {
+		throw new Error(data?.error?.message || `Biconomy error: ${res.statusText}`);
+	}
+
+	if (!data?.to || !data?.data) {
+		throw new Error("Invalid response from Biconomy");
+	}
+
+	return {
+		id: data.id || `biconomy-${Date.now()}`,
+		to: data.to,
+		data: contractCalldata || data.data, // Use our calldata if provided
+		value: data.value || "0",
+		chainId: data.chainId || chainId,
+		meta: data,
+	};
+}
+
 export async function getBiconomyStatus(idOrHash: string): Promise<BiconomyStatusResponse> {
 	const res = await fetch(`https://network.biconomy.io/v1/explorer/${idOrHash}`, {
 		headers: authHeaders()
