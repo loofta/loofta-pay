@@ -44,13 +44,31 @@ export type PaymentLog = {
 /**
  * Get or create companion wallet for a recipient address
  * The server manages the signer key
+ * 
+ * Pass numTickets and totalCostETH for background processing support:
+ * Even if user closes browser, cron job will complete the purchase.
  */
 export async function getCompanionWalletForRecipient(
-  recipientAddress: string
+  recipientAddress: string,
+  options?: {
+    numTickets?: number;
+    totalCostETH?: string;
+  }
 ): Promise<CompanionWalletResponse> {
   console.log("[Companion API Client] Getting companion wallet for:", recipientAddress);
   
-  const response = await fetch(`/api/companion?recipient=${encodeURIComponent(recipientAddress)}`);
+  const params = new URLSearchParams({
+    recipient: recipientAddress,
+  });
+  
+  if (options?.numTickets) {
+    params.set("numTickets", options.numTickets.toString());
+  }
+  if (options?.totalCostETH) {
+    params.set("totalCostETH", options.totalCostETH);
+  }
+  
+  const response = await fetch(`/api/companion?${params.toString()}`);
   const data = await response.json();
   
   if (!response.ok) {
@@ -58,6 +76,7 @@ export async function getCompanionWalletForRecipient(
   }
   
   console.log("[Companion API Client] Got companion wallet:", data.companionAddress);
+  console.log("[Companion API Client] Added to background processing queue");
   return data;
 }
 

@@ -2,7 +2,7 @@
  * Companion Wallet API
  * 
  * Server-side management of companion wallets for widget use.
- * Uses Vercel KV (Redis-compatible) for:
+ * Uses Redis for:
  * - Signer key storage
  * - Payment history logging
  * 
@@ -11,24 +11,40 @@
  * - Secure signer key storage
  * - No user wallet signing required
  * - Auto-refund when insufficient funds
+ * 
+ * Setup: Add REDIS_URL to your environment variables
+ * e.g. REDIS_URL=redis://default:password@host:port
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { RhinestoneSDK } from "@rhinestone/sdk";
 import { RHINESTONE_API_KEY } from "@/config/rhinestone";
-import { kv } from "@vercel/kv";
+import { createClient } from "redis";
+
+// Redis client singleton
+let redisClient: ReturnType<typeof createClient> | null = null;
+
+async function getRedis() {
+  if (!redisClient) {
+    redisClient = createClient({ url: process.env.REDIS_URL });
+    await redisClient.connect();
+  }
+  return redisClient;
+}
 
 // Minimum ETH needed for contract interaction (ticket price + gas)
 const MIN_ETH_FOR_CONTRACT = 0.0035; // ~$10 at $2800 ETH + gas buffer
 const GAS_FOR_REFUND = 0.0002; // Gas reserve for refund transaction
 
-// Types for KV storage
+// Types for Redis storage
 type SignerData = {
   privateKey: string;
   recipientAddress: string;
   companionAddress: string;
   createdAt: number;
+  numTickets?: number;
+  totalCostETH?: string;
 };
 
 type PaymentLog = {
@@ -45,10 +61,11 @@ type PaymentLog = {
   updatedAt: number;
 };
 
-// KV key prefixes
+// Redis key prefixes
 const SIGNER_KEY_PREFIX = "companion:signer:";
 const PAYMENT_LOG_PREFIX = "companion:payment:";
 const PAYMENT_LIST_KEY = "companion:payments";
+const PENDING_WALLETS_KEY = "companion:pending"; // Set of pending wallet keys for cron job
 
 // Get SDK instance
 function getSDK(): RhinestoneSDK {
@@ -79,33 +96,43 @@ async function getCompanionBalance(address: string): Promise<{ eth: string; ethW
 
 // Save payment log
 async function savePaymentLog(log: PaymentLog): Promise<void> {
-  await kv.set(`${PAYMENT_LOG_PREFIX}${log.id}`, log);
+  const redis = await getRedis();
+  await redis.set(`${PAYMENT_LOG_PREFIX}${log.id}`, JSON.stringify(log));
   // Add to list for querying
-  await kv.lpush(PAYMENT_LIST_KEY, log.id);
+  await redis.lPush(PAYMENT_LIST_KEY, log.id);
   // Keep only last 1000 payments
-  await kv.ltrim(PAYMENT_LIST_KEY, 0, 999);
+  await redis.lTrim(PAYMENT_LIST_KEY, 0, 999);
 }
 
 // Update payment log
 async function updatePaymentLog(id: string, updates: Partial<PaymentLog>): Promise<void> {
-  const existing = await kv.get<PaymentLog>(`${PAYMENT_LOG_PREFIX}${id}`);
-  if (existing) {
-    await kv.set(`${PAYMENT_LOG_PREFIX}${id}`, {
+  const redis = await getRedis();
+  const existingStr = await redis.get(`${PAYMENT_LOG_PREFIX}${id}`);
+  if (existingStr) {
+    const existing = JSON.parse(existingStr);
+    await redis.set(`${PAYMENT_LOG_PREFIX}${id}`, JSON.stringify({
       ...existing,
       ...updates,
       updatedAt: Date.now(),
-    });
+    }));
   }
 }
 
 /**
- * GET /api/companion?recipient=0x...
+ * GET /api/companion?recipient=0x...&numTickets=1&totalCostETH=0.0035
  * Get or create companion wallet for a recipient address
+ * 
+ * Query params:
+ * - recipient: EVM address where tickets will be minted
+ * - numTickets: Number of tickets to purchase (optional, default 1)
+ * - totalCostETH: Total ETH required for purchase (optional)
  */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const recipientAddress = searchParams.get("recipient");
+    const numTickets = parseInt(searchParams.get("numTickets") || "1");
+    const totalCostETH = searchParams.get("totalCostETH") || undefined;
 
     if (!recipientAddress || !/^0x[0-9a-fA-F]{40}$/.test(recipientAddress)) {
       return NextResponse.json(
@@ -114,11 +141,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const redis = await getRedis();
     const key = recipientAddress.toLowerCase();
-    const kvKey = `${SIGNER_KEY_PREFIX}${key}`;
+    const redisKey = `${SIGNER_KEY_PREFIX}${key}`;
     
     // Check if we have existing signer data
-    let signerData = await kv.get<SignerData>(kvKey);
+    const signerDataStr = await redis.get(redisKey);
+    let signerData: SignerData | null = signerDataStr ? JSON.parse(signerDataStr) : null;
     let isNew = false;
     
     if (!signerData) {
@@ -149,29 +178,37 @@ export async function GET(request: NextRequest) {
 
       const companionAddress = companionAccount.getAddress();
 
+      const now = Date.now();
       signerData = {
         privateKey: signerPk,
         recipientAddress,
         companionAddress,
-        createdAt: Date.now(),
+        createdAt: now,
+        numTickets,
+        totalCostETH,
       };
 
-      // Store in Vercel KV with 7-day expiry
-      await kv.set(kvKey, signerData, { ex: 60 * 60 * 24 * 7 });
+      // Store in Redis with 7-day expiry (604800 seconds)
+      await redis.setEx(redisKey, 604800, JSON.stringify(signerData));
       isNew = true;
+
+      // Add to pending wallets set for cron job to process
+      await redis.sAdd(PENDING_WALLETS_KEY, redisKey);
 
       console.log("[Companion API] Created new signer for:", recipientAddress);
       console.log("[Companion API] Companion wallet:", companionAddress);
+      console.log("[Companion API] Added to pending set for background processing");
 
       // Create initial payment log
-      const paymentId = `${key}_${Date.now()}`;
+      const paymentId = `${key}_${now}`;
       await savePaymentLog({
         id: paymentId,
         recipientAddress,
         companionAddress,
         status: "pending",
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        amountRequired: totalCostETH,
+        createdAt: now,
+        updatedAt: now,
       });
     } else {
       console.log("[Companion API] Using existing signer for:", recipientAddress);
@@ -227,9 +264,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const redis = await getRedis();
     const key = recipientAddress.toLowerCase();
-    const kvKey = `${SIGNER_KEY_PREFIX}${key}`;
-    const signerData = await kv.get<SignerData>(kvKey);
+    const redisKey = `${SIGNER_KEY_PREFIX}${key}`;
+    const signerDataStr = await redis.get(redisKey);
+    const signerData: SignerData | null = signerDataStr ? JSON.parse(signerDataStr) : null;
 
     if (!signerData) {
       return NextResponse.json(
@@ -338,8 +377,9 @@ export async function POST(request: NextRequest) {
         refundTxHash,
       });
 
-      // Clear signer key after refund
-      await kv.del(kvKey);
+      // Remove from pending set and clear signer key
+      await redis.sRem(PENDING_WALLETS_KEY, redisKey);
+      await redis.del(redisKey);
 
       return NextResponse.json({
         success: false,
@@ -382,6 +422,10 @@ export async function POST(request: NextRequest) {
       txHash,
     });
 
+    // Remove from pending set and clear signer key
+    await redis.sRem(PENDING_WALLETS_KEY, redisKey);
+    await redis.del(redisKey);
+
     return NextResponse.json({
       success: true,
       status: "executed",
@@ -421,11 +465,15 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
+    const redis = await getRedis();
     const key = recipientAddress.toLowerCase();
-    const kvKey = `${SIGNER_KEY_PREFIX}${key}`;
+    const redisKey = `${SIGNER_KEY_PREFIX}${key}`;
     
-    const existed = await kv.exists(kvKey);
-    await kv.del(kvKey);
+    const existed = await redis.exists(redisKey);
+    
+    // Remove from pending set and delete signer
+    await redis.sRem(PENDING_WALLETS_KEY, redisKey);
+    await redis.del(redisKey);
 
     console.log("[Companion API] Deleted signer for:", recipientAddress, "existed:", existed);
 
@@ -443,24 +491,26 @@ export async function DELETE(request: NextRequest) {
 }
 
 /**
- * GET /api/companion/payments
+ * PATCH /api/companion
  * Get recent payment logs (admin endpoint)
  */
-export async function PATCH(request: NextRequest) {
+export async function PATCH() {
   try {
+    const redis = await getRedis();
+    
     // Get last 50 payment IDs
-    const paymentIds = await kv.lrange<string>(PAYMENT_LIST_KEY, 0, 49);
+    const paymentIds = await redis.lRange(PAYMENT_LIST_KEY, 0, 49);
     
     if (!paymentIds || paymentIds.length === 0) {
-      return NextResponse.json({ payments: [] });
+      return NextResponse.json({ payments: [], count: 0 });
     }
 
     // Fetch all payment logs
     const payments: PaymentLog[] = [];
     for (const id of paymentIds) {
-      const log = await kv.get<PaymentLog>(`${PAYMENT_LOG_PREFIX}${id}`);
-      if (log) {
-        payments.push(log);
+      const logStr = await redis.get(`${PAYMENT_LOG_PREFIX}${id}`);
+      if (logStr) {
+        payments.push(JSON.parse(logStr));
       }
     }
 

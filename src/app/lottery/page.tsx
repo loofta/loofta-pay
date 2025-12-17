@@ -397,7 +397,12 @@ export default function LotteryPage() {
       setExecutionStep("quote");
       console.log("[Lottery Page] Getting companion wallet for recipient:", finalRecipientAddress);
 
-      const companionWallet = await getCompanionWalletForRecipient(finalRecipientAddress);
+      // Pass numTickets and totalCostETH for background processing
+      // Even if user closes browser, cron job will complete the purchase
+      const companionWallet = await getCompanionWalletForRecipient(finalRecipientAddress, {
+        numTickets: parseFloat(numTickets),
+        totalCostETH: totalCostETH || undefined,
+      });
 
       setCompanionAddress(companionWallet.companionAddress);
 
@@ -414,10 +419,12 @@ export default function LotteryPage() {
       console.log("[Lottery Page] COMPANION WALLET ADDRESS:", companionWallet.companionAddress);
       console.log("[Lottery Page] ✓ Signer key stored securely on server");
       console.log("[Lottery Page] ✓ Keyed by recipient:", finalRecipientAddress);
+      console.log("[Lottery Page] ✓ Background processing enabled (cron job)");
       console.log("[Lottery Page] Is new wallet:", companionWallet.isNew);
       console.log("[Lottery Page] This Rhinestone companion wallet will:");
       console.log("[Lottery Page] 1. Receive ETH from NEAR Intents on Base");
       console.log("[Lottery Page] 2. Call ticketAutomator contract with calldata");
+      console.log("[Lottery Page] 3. If user leaves, cron job will complete purchase");
       console.log("[Lottery Page] =========================================");
 
       // Step 2: Get deposit address from quote
