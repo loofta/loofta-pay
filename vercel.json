@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/process-payments",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/process-claims",
+      "schedule": "* * * * *"
     }
   ]
 }

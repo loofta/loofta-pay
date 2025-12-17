@@ -104,6 +104,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const [showPrivacyTutorial, setShowPrivacyTutorial] = useState<boolean>(false);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
   const hasUpdatedClaimStatus = React.useRef<string | null>(null); // Track if we've already updated DB for this status
+  const userCancelled = React.useRef<boolean>(false); // Track if user manually cancelled to prevent re-hydration
   const { logout, login, authenticated, user } = usePrivy();
   const { wallets } = useWallets();
 
@@ -170,8 +171,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   }, [id]);
 
 
-  // Hydrate from latest-intent cache
+  // Hydrate from latest-intent cache (skip if user manually cancelled)
   useEffect(() => {
+    // Don't re-hydrate if user cancelled
+    if (userCancelled.current) return;
+
     const d: any = latestIntentQuery.data;
     if (!d) return;
     // Set deposit if we have a depositAddress and haven't set it yet
@@ -240,6 +244,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     if (swapProviderEligible) {
       return;
     }
+    // Reset cancelled flag when starting new deposit
+    userCancelled.current = false;
     setPreparing(true);
     setDeposit(null);
     try {
@@ -276,6 +282,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         deadline: res.deadline,
         quoteId: res.quoteId,
         minDepositFormatted: res.minDepositFormatted,
+        minAmountInFormatted: res.minAmountInFormatted, // Add the actual amount to send
       });
     } catch (e: any) {
       toast({ variant: "destructive", title: "Failed to prepare", description: e?.message || "Could not obtain deposit info" });
@@ -1031,8 +1038,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     <div className="flex items-center justify-between">
                                       <span className="text-gray-600">Amount requested</span>
                                       <span className="text-lg font-semibold text-gray-900">
-                                        {destUSD != null ? `$${destUSD.toFixed(2)}` : "—"}
-                                        <span className="mx-1 text-gray-400">•</span>
                                         <span className="inline-flex items-center gap-1">
                                           <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={24} />
                                           {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol}
@@ -1076,10 +1081,14 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   <Button
                                     variant="outline"
                                     onClick={() => {
+                                      // Set flag to prevent re-hydration from cache
+                                      userCancelled.current = true;
                                       setDeposit(null);
                                       setStatus(null);
+                                      setFromSel(undefined);
                                       useClaimPayStore.getState().setDeposit(id, null);
                                       useClaimPayStore.getState().setStatus(id, null);
+                                      useClaimPayStore.getState().setFromSel(id, null as any);
                                     }}
                                     className="ml-auto"
                                   >
@@ -1091,7 +1100,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                           }
                           return (
                             <div className="mt-6">
-                              <div className="text-sm text-gray-700">Send exactly</div>
+                              <div className="text-base text-gray-700">Send exactly</div>
                               <div className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
                                 <TokenIcon
                                   token={(selectedFrom as any) ?? (destToken as any) ?? undefined}
@@ -1099,9 +1108,12 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   size={18}
                                 />
                                 <span>
-                                  {quote?.amountInFormatted && selectedFrom
-                                    ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                    : `${roundUpDecimals(claim.amount, 6)} ${claim.to_symbol}`}
+                                  {/* Use deposit.minAmountInFormatted (from /api/claims/deposit) as it's the actual required amount */}
+                                  {deposit?.minAmountInFormatted && selectedFrom
+                                    ? `${deposit.minAmountInFormatted} ${selectedFrom.symbol}`
+                                    : quote?.amountInFormatted && selectedFrom
+                                      ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                      : `${roundUpDecimals(claim.amount, 6)} ${claim.to_symbol}`}
                                 </span>
                                 <span className="mx-1 text-gray-400">•</span>
                                 <span className="inline-flex items-center gap-1 uppercase text-sm font-medium text-gray-700">
@@ -1213,10 +1225,14 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               ) : null}
                               <div className="mt-4 flex gap-2">
                                 <Button variant="outline" onClick={() => {
+                                  // Set flag to prevent re-hydration from cache
+                                  userCancelled.current = true;
                                   setDeposit(null);
                                   setStatus(null);
+                                  setFromSel(undefined); // Also clear token selection
                                   useClaimPayStore.getState().setDeposit(id, null);
                                   useClaimPayStore.getState().setStatus(id, null);
+                                  useClaimPayStore.getState().setFromSel(id, null as any);
                                 }} className="ml-auto">Cancel & choose another token</Button>
                                 {swapProviderEligible ? (
                                   <Button onClick={onPayNow} disabled={preparing} className="rounded-xl" style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}>

@@ -150,14 +150,10 @@ export async function POST(request: Request) {
           console.error("[claims/deposit] Invalid Solana address format!");
         }
         
-        // ROUTE LIMITATION: Not all chains have liquidity for SOL destinations
-        const SUPPORTED_ORIGIN_CHAINS_FOR_SOL = new Set(['eth', 'ethereum', 'sol', 'solana']);
-        if (!SUPPORTED_ORIGIN_CHAINS_FOR_SOL.has(originChain)) {
-          console.error(`[claims/deposit] Route not supported: ${originChain} → sol`);
-          return NextResponse.json({ 
-            error: "Route not available. Please try another token.",
-            code: "ROUTE_NOT_AVAILABLE"
-          }, { status: 400 });
+        // Check if direct route might not work (non-ETH mainnet to Solana)
+        const DIRECT_ROUTE_CHAINS_FOR_SOL = new Set(['eth', 'ethereum', 'sol', 'solana']);
+        if (!DIRECT_ROUTE_CHAINS_FOR_SOL.has(originChain)) {
+          console.log(`[claims/deposit] Direct route ${originChain} → sol may not work, will try 2-hop if needed`);
         }
       }
     } else {
@@ -254,28 +250,47 @@ export async function POST(request: Request) {
         console.error("[claims/deposit] Amount might be below minimum for this route");
       }
       
-      // If error is "Invalid input data", log more diagnostic info
-      if (errorMsg?.includes("Invalid input") || errorBody?.message?.includes("Invalid input")) {
-        console.error("[claims/deposit] Potential issues:");
-        console.error("[claims/deposit]   - Check if route is supported:", fromToken.tokenId, "->", destinationAsset);
-        console.error("[claims/deposit]   - Check recipient address format:", claim.recipient_address);
-        console.error("[claims/deposit]   - Check amount is above minimum:", amountInAtomic);
-        console.error("[claims/deposit]   - depositType:", req.depositType, "recipientType:", req.recipientType);
+      // If error is "Invalid input data", try 2-hop via companion wallet
+      if (errorMsg?.includes("Invalid input") || errorBody?.message?.includes("Invalid input") || errorMsg?.includes("Failed to get quote")) {
+        console.error("[claims/deposit] Direct route failed, trying 2-hop via ETH mainnet...");
+        console.error("[claims/deposit]   - Route attempted:", fromToken.tokenId, "->", destinationAsset);
         
-        // Try with EXACT_OUTPUT as fallback
-        console.log("[claims/deposit] Trying EXACT_OUTPUT as fallback...");
+        // Try 2-hop via companion wallet (source → ETH mainnet → destination)
         try {
-          const fallbackReq = {
-            ...req,
-            swapType: QuoteRequest.swapType.EXACT_OUTPUT,
-            amount: amountOutAtomic,
-          };
-          console.log("[claims/deposit] Fallback request:", JSON.stringify(fallbackReq, null, 2));
-          raw = await OneClickService.getQuote(fallbackReq);
-          console.log("[claims/deposit] Fallback succeeded:", JSON.stringify(raw, null, 2));
-        } catch (fallbackError: any) {
-          console.error("[claims/deposit] Fallback also failed:", fallbackError?.message);
-          throw quoteError; // Throw original error
+          const companionResponse = await fetch(new URL("/api/claims/companion", request.url).toString(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              claimId,
+              fromToken,
+              destinationAsset,
+              destinationAmount: amountOutAtomic,
+              recipientAddress: claim.recipient_address,
+              amountUsd: Number(claim.amount || 0),
+            }),
+          });
+          
+          const companionData = await companionResponse.json();
+          
+          if (companionResponse.ok && companionData.success) {
+            console.log("[claims/deposit] 2-hop route created successfully");
+            return NextResponse.json({
+              ...companionData,
+              twoHop: true,
+            }, { status: 200 });
+          } else {
+            console.error("[claims/deposit] 2-hop also failed:", companionData.error);
+            return NextResponse.json({ 
+              error: companionData.error || "Route not available. Please try another token.",
+              code: companionData.code || "ROUTE_NOT_AVAILABLE"
+            }, { status: 400 });
+          }
+        } catch (companionError: any) {
+          console.error("[claims/deposit] 2-hop companion error:", companionError?.message);
+          return NextResponse.json({ 
+            error: "Route not available. Please try another token.",
+            code: "ROUTE_NOT_AVAILABLE"
+          }, { status: 400 });
         }
       } else {
         throw quoteError;
@@ -302,13 +317,30 @@ export async function POST(request: Request) {
       // Also set parent claim status to PENDING_DEPOSIT
       await supabase.from("claims").update({ status: "PENDING_DEPOSIT" }).eq("id", claimId);
     } catch {}
+    
+    // Round UP the minAmountIn to avoid INCOMPLETE_DEPOSIT issues
+    const minAmountInRaw = q?.minAmountIn || q?.amountIn;
+    let minAmountInFormatted = q?.minAmountInFormatted || q?.amountInFormatted;
+    
+    if (minAmountInRaw) {
+      // Round UP to 6 decimal places to avoid rounding issues
+      const decimals = Number(fromToken.decimals) || 18;
+      const amountFloat = Number(minAmountInRaw) / Math.pow(10, decimals);
+      minAmountInFormatted = (Math.ceil(amountFloat * 1000000) / 1000000).toFixed(6);
+      
+      console.log("[claims/deposit] Amount rounded up:");
+      console.log("[claims/deposit]   Original:", q?.minAmountInFormatted);
+      console.log("[claims/deposit]   Rounded up:", minAmountInFormatted);
+    }
+    
     return NextResponse.json({
       depositAddress: q?.depositAddress || q?.address,
       memo: q?.memo ?? null,
       deadline: q?.deadline,
       timeEstimate: q?.timeEstimate,
       quoteId: q?.id || q?.quoteId,
-      minAmountInFormatted: q?.minAmountInFormatted,
+      minAmountIn: minAmountInRaw,
+      minAmountInFormatted,
     }, { status: 200 });
   } catch (e: any) {
     console.error("[claims/deposit] FATAL ERROR:", e);

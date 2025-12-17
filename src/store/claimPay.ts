@@ -8,6 +8,7 @@ export type StoredDeposit = {
   deadline?: string;
   quoteId?: string;
   minDepositFormatted?: string;
+  minAmountInFormatted?: string; // The actual amount user needs to send
 };
 
 type ClaimUiState = {
