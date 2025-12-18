@@ -255,6 +255,55 @@ async function processPendingWallet(
 
     await updatePaymentLog(redis, paymentId, { status: "executed", txHash });
 
+    // Sweep dust tokens to treasury after successful purchase
+    try {
+      const finalBalance = await getCompanionBalance(companionAddress);
+      const finalBalanceEth = parseFloat(finalBalance.eth);
+      const minDustThreshold = 0.0001; // Minimum 0.0001 ETH to sweep
+      
+      if (finalBalanceEth > minDustThreshold) {
+        console.log("[Cron] Sweeping dust to treasury:", finalBalanceEth, "ETH");
+        
+        const { LOOFTA_TREASURY_ADDRESSES } = await import("@/config/rhinestoneChains");
+        const treasuryAddress = LOOFTA_TREASURY_ADDRESSES[8453]; // Base chain ID
+        
+        if (treasuryAddress) {
+          // Calculate amount to sweep (balance minus gas for sweep tx)
+          const gasForSweep = 0.0001; // Gas reserve for sweep transaction
+          const amountToSweep = finalBalanceEth - gasForSweep;
+          
+          if (amountToSweep > 0) {
+            const sweepWei = BigInt(Math.floor(amountToSweep * 1e18));
+            
+            const sweepTx = await companionAccount.sendTransaction({
+              chain: base,
+              calls: [{
+                to: treasuryAddress as `0x${string}`,
+                value: sweepWei,
+                data: "0x" as `0x${string}`,
+              }],
+              signers: {
+                type: "owner",
+                kind: "ecdsa",
+                accounts: [signerAccount as any],
+              },
+            });
+            
+            const sweepResult = await companionAccount.waitForExecution(sweepTx);
+            const sweepTxHash = (sweepResult as any)?.transactionHash || "";
+            
+            console.log("[Cron] ✓ Dust swept to treasury:", amountToSweep.toFixed(6), "ETH");
+            console.log("[Cron] Sweep TX:", sweepTxHash);
+          }
+        } else {
+          console.warn("[Cron] ⚠️ Treasury address not configured for Base, skipping dust sweep");
+        }
+      }
+    } catch (sweepError: any) {
+      // Don't fail the purchase if dust sweep fails (non-critical)
+      console.warn("[Cron] Dust sweep failed (non-critical):", sweepError?.message);
+    }
+
     return { status: "executed", txHash, recipientAddress };
 
   } catch (error: any) {
