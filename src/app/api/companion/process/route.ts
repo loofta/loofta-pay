@@ -111,26 +111,25 @@ async function updatePaymentLog(id: string, updates: Partial<PaymentLog>): Promi
 /**
  * Process a single pending companion wallet
  */
-async function processPendingWallet(recipientAddress: string): Promise<{
+async function processPendingWallet(redisKey: string): Promise<{
   processed: boolean;
   status: "executed" | "refunded" | "waiting" | "error";
   txHash?: string;
   error?: string;
 }> {
   const redis = await getRedis();
-  const key = recipientAddress.toLowerCase();
-  const redisKey = `${SIGNER_KEY_PREFIX}${key}`;
   
   // Get signer data
   const signerDataStr = await redis.get(redisKey);
   if (!signerDataStr) {
-    console.log(`[Processor] No signer data for ${recipientAddress}, removing from pending`);
-    await redis.lRem(PENDING_LIST_KEY, 0, key);
+    console.log(`[Processor] No signer data for ${redisKey}, removing from pending`);
+    await redis.sRem(PENDING_WALLETS_KEY, redisKey);
     return { processed: false, status: "error", error: "No signer data" };
   }
 
   const signerData: SignerData = JSON.parse(signerDataStr);
-  const { companionAddress, privateKey, numTickets = 1 } = signerData;
+  const { companionAddress, privateKey, recipientAddress, numTickets = 1 } = signerData;
+  const key = recipientAddress.toLowerCase();
   const paymentId = `${key}_${signerData.createdAt}`;
 
   // Check balance
@@ -181,7 +180,7 @@ async function processPendingWallet(recipientAddress: string): Promise<{
     if (refundAmount <= 0) {
       console.log(`[Processor]   Balance too low even for refund`);
       await updatePaymentLog(paymentId, { status: "failed", error: "Balance too low for refund" });
-      await redis.lRem(PENDING_LIST_KEY, 0, key);
+      await redis.sRem(PENDING_WALLETS_KEY, redisKey);
       await redis.del(redisKey);
       return { processed: true, status: "error", error: "Balance too low for refund" };
     }
@@ -209,7 +208,7 @@ async function processPendingWallet(recipientAddress: string): Promise<{
       console.log(`[Processor]   ✓ Refunded ${refundAmount.toFixed(6)} ETH, TX: ${refundTxHash}`);
 
       await updatePaymentLog(paymentId, { status: "refunded", refundTxHash });
-      await redis.lRem(PENDING_LIST_KEY, 0, key);
+      await redis.sRem(PENDING_WALLETS_KEY, redisKey);
       await redis.del(redisKey);
 
       return { processed: true, status: "refunded", txHash: refundTxHash };
@@ -248,7 +247,7 @@ async function processPendingWallet(recipientAddress: string): Promise<{
     console.log(`[Processor]   ✓ Executed! TX: ${txHash}`);
 
     await updatePaymentLog(paymentId, { status: "executed", txHash });
-    await redis.lRem(PENDING_LIST_KEY, 0, key);
+    await redis.sRem(PENDING_WALLETS_KEY, redisKey);
     await redis.del(redisKey);
 
     return { processed: true, status: "executed", txHash };
@@ -280,10 +279,10 @@ export async function GET(request: NextRequest) {
   try {
     const redis = await getRedis();
     
-    // Get all pending recipient addresses
-    const pendingAddresses = await redis.lRange(PENDING_LIST_KEY, 0, -1);
+    // Get all pending wallet keys from the SET
+    const pendingKeys = await redis.sMembers(PENDING_WALLETS_KEY);
     
-    if (!pendingAddresses || pendingAddresses.length === 0) {
+    if (!pendingKeys || pendingKeys.length === 0) {
       console.log("[Processor] No pending wallets to process");
       return NextResponse.json({
         success: true,
@@ -292,7 +291,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    console.log(`[Processor] Found ${pendingAddresses.length} pending wallet(s)`);
+    console.log(`[Processor] Found ${pendingKeys.length} pending wallet(s)`);
 
     const results = {
       executed: 0,
@@ -302,14 +301,14 @@ export async function GET(request: NextRequest) {
     };
 
     // Process each pending wallet
-    for (const address of pendingAddresses) {
+    for (const redisKey of pendingKeys) {
       try {
-        const result = await processPendingWallet(address);
+        const result = await processPendingWallet(redisKey);
         results[result.status === "executed" ? "executed" : 
                result.status === "refunded" ? "refunded" :
                result.status === "waiting" ? "waiting" : "errors"]++;
       } catch (error: any) {
-        console.error(`[Processor] Error processing ${address}:`, error?.message);
+        console.error(`[Processor] Error processing ${redisKey}:`, error?.message);
         results.errors++;
       }
     }
@@ -322,7 +321,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       ...results,
-      total: pendingAddresses.length,
+      total: pendingKeys.length,
       duration,
     });
   } catch (error: any) {

@@ -393,7 +393,6 @@ export async function recoverFundsFromCompanion(input: {
 			success: true,
 			txHash,
 			amountSent: amountToSend.toFixed(8),
-			destination: destinationAddress,
 		};
 	} catch (e: any) {
 		console.error("[Rhinestone] Recovery failed:", e?.message);

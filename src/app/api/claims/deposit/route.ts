@@ -5,6 +5,11 @@ import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
 import { getRefundToForChain } from "@/lib/refundAddresses";
 import { getDefuseAssetIdFor } from "@/lib/tokenlist";
+import { 
+  isRhinestoneChainSupported, 
+  isRhinestoneSwapSupported,
+  getRhinestoneChainId,
+} from "@/config/rhinestoneChains";
 
 function getEnv(name: string, fallbacks: string[] = []) {
   const all = [name, ...fallbacks];
@@ -82,7 +87,137 @@ export async function POST(request: Request) {
     const useIntentsMode = INTENTS_ONLY_CHAINS.has(originChain);
     
     // Determine same-chain and choose recipient type accordingly
-    const sameChain = originChain === String(claim.to_chain || "").toLowerCase();
+    const destChain = String(claim.to_chain || "").toLowerCase();
+    const sameChain = originChain === destChain;
+    const sameToken = String(fromToken?.symbol || "").toUpperCase() === String(claim.to_symbol || "").toUpperCase();
+    
+    console.log("[claims/deposit] Same-chain analysis:");
+    console.log("[claims/deposit]   Origin:", originChain, fromToken?.symbol);
+    console.log("[claims/deposit]   Dest:", destChain, claim.to_symbol);
+    console.log("[claims/deposit]   Same chain:", sameChain, "Same token:", sameToken);
+    
+    // Handle same-chain scenarios
+    if (sameChain) {
+      // Check if it's non-EVM
+      const NON_EVM_CHAINS = new Set(['sol', 'solana', 'btc', 'bitcoin', 'xrp', 'xlm', 'stellar', 'ton', 'tron', 'sui', 'ada', 'cardano', 'doge', 'dogecoin', 'ltc', 'litecoin', 'zec', 'zcash']);
+      const isNonEvmChain = NON_EVM_CHAINS.has(originChain);
+      
+      if (sameToken) {
+        // Same chain, same token → Direct transfer to recipient (no need for swap)
+        console.log("[claims/deposit] Same chain + same token → Direct transfer to recipient");
+        
+        // Get token price to convert USD → token amount
+        let tokenPrice: number | undefined = undefined;
+        let tokenDecimals = Number(fromToken.decimals) || 18;
+        try {
+          const tokens: any = await (OneClickService as any).getTokens();
+          const arr: any[] = Array.isArray(tokens) ? tokens : (tokens?.tokens || []);
+          const foundToken = arr.find((t: any) => 
+            String(t?.symbol || "").toUpperCase() === String(fromToken.symbol || "").toUpperCase() &&
+            String(t?.chain || t?.chainId || "").toLowerCase().includes(originChain)
+          );
+          if (foundToken && typeof foundToken.price === "number") tokenPrice = foundToken.price;
+          if (foundToken && typeof foundToken.decimals === "number") tokenDecimals = foundToken.decimals;
+        } catch (e) {
+          console.error("[claims/deposit] Error fetching token price:", e);
+        }
+        
+        // Calculate token amount from USD
+        const amountUsd = Number(claim.amount || 0);
+        let tokenAmount = "0";
+        if (Number.isFinite(amountUsd) && typeof tokenPrice === "number" && tokenPrice > 0) {
+          const rawAmount = amountUsd / tokenPrice;
+          // Round up to 6 decimals
+          tokenAmount = (Math.ceil(rawAmount * 1000000) / 1000000).toFixed(6);
+        }
+        
+        console.log("[claims/deposit] Direct transfer - USD:", amountUsd, "Token price:", tokenPrice, "Token amount:", tokenAmount);
+        
+        return NextResponse.json({
+          directTransfer: true,
+          depositAddress: claim.recipient_address,
+          depositToken: fromToken.symbol,
+          depositChain: originChain,
+          amount: tokenAmount,
+          minAmountInFormatted: tokenAmount,
+          message: `Send ${claim.to_symbol} directly to the recipient address.`,
+        }, { status: 200 });
+      }
+      
+      // Same chain, different token
+      if (isNonEvmChain) {
+        // Non-EVM chains: Must use same token (no swap capability)
+        console.log("[claims/deposit] Non-EVM chain + different token → Error");
+        return NextResponse.json({
+          error: `For ${originChain.toUpperCase()} payments, you must pay with ${claim.to_symbol}. Cross-token swaps are only available on EVM chains.`,
+          code: "NON_EVM_SAME_TOKEN_REQUIRED",
+        }, { status: 400 });
+      }
+      
+      // EVM chain, different token → Use companion wallet swap
+      const chainId = getRhinestoneChainId(originChain);
+      if (!chainId) {
+        return NextResponse.json({
+          error: `Chain ${originChain} is not supported for swaps. Supported: Ethereum, Base, Optimism, Arbitrum, Polygon, zkSync.`,
+          code: "CHAIN_NOT_SUPPORTED",
+        }, { status: 400 });
+      }
+      
+      // Check if tokens are supported for swap
+      const fromSymbol = String(fromToken.symbol || "").toUpperCase();
+      const toSymbol = String(claim.to_symbol || "").toUpperCase();
+      
+      if (!isRhinestoneSwapSupported(fromSymbol, toSymbol, chainId)) {
+        return NextResponse.json({
+          error: `Swap ${fromSymbol} → ${toSymbol} not supported on ${originChain}. Supported tokens: ETH, WETH, USDC, USDT.`,
+          code: "TOKENS_NOT_SUPPORTED",
+        }, { status: 400 });
+      }
+      
+      // Create companion swap
+      console.log("[claims/deposit] EVM chain + different token → Companion swap");
+      try {
+        const companionSwapResponse = await fetch(new URL("/api/claims/companion-swap", request.url).toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            claimId,
+            fromToken: {
+              symbol: fromSymbol,
+              chain: originChain,
+              decimals: fromToken.decimals,
+            },
+            toToken: {
+              symbol: toSymbol,
+              chain: destChain,
+              decimals: 6, // Will be updated by swap endpoint
+              amount: String(claim.amount),
+            },
+            recipientAddress: claim.recipient_address,
+            amountUsd: Number(claim.amount || 0),
+          }),
+        });
+        
+        const companionSwapData = await companionSwapResponse.json();
+        
+        if (companionSwapResponse.ok && companionSwapData.success) {
+          console.log("[claims/deposit] Companion swap created successfully");
+          return NextResponse.json(companionSwapData, { status: 200 });
+        } else {
+          console.error("[claims/deposit] Companion swap failed:", companionSwapData.error);
+          return NextResponse.json({
+            error: companionSwapData.error || "Failed to create swap route",
+            code: companionSwapData.code || "SWAP_FAILED",
+          }, { status: 400 });
+        }
+      } catch (swapError: any) {
+        console.error("[claims/deposit] Companion swap error:", swapError?.message);
+        return NextResponse.json({
+          error: "Failed to create swap route. Please try another token.",
+          code: "SWAP_ERROR",
+        }, { status: 500 });
+      }
+    }
     
     // For EXACT_OUTPUT we need destination token decimals to convert human -> atomic
     let destDecimals = 6;
@@ -130,7 +265,7 @@ export async function POST(request: Request) {
     const amountInAtomic = toAtomic(String(amountInWithBuffer || "0"), originDecimals);
     
     // Determine if destination is a non-EVM chain (requires special handling)
-    const destChain = String(claim.to_chain || "").toLowerCase();
+    // destChain is already defined above
     const NON_EVM_DEST_CHAINS = new Set(['sol', 'solana', 'btc', 'bitcoin', 'xrp', 'xlm', 'stellar', 'ton', 'tron', 'sui', 'ada', 'cardano', 'doge', 'dogecoin', 'ltc', 'litecoin', 'zec', 'zcash']);
     const isNonEvmDestination = NON_EVM_DEST_CHAINS.has(destChain);
     
@@ -293,7 +428,7 @@ export async function POST(request: Request) {
           }, { status: 400 });
         }
       } else {
-        throw quoteError;
+      throw quoteError;
       }
     }
     const q = (raw as any)?.quote || raw || {};

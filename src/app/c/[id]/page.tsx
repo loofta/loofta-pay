@@ -23,6 +23,11 @@ import { ACTIVE_SWAP_PROVIDER, getProviderDisplayName, type SwapProvider } from 
 import { ethers } from "ethers";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { isDemoMode } from "@/config/demoMode";
+import {
+  isRhinestoneChainSupported,
+  getSupportedTokensForChain,
+  getRhinestoneChainId,
+} from "@/config/rhinestoneChains";
 
 // Check demo mode at module level for consistent behavior
 const DEMO_MODE = isDemoMode();
@@ -35,7 +40,7 @@ async function fetchClaim(id: string) {
 
 async function prepareDeposit(input: {
   claimId: string;
-  fromToken: { tokenId: string; decimals: number; chain: string };
+  fromToken: { tokenId: string; decimals: number; chain: string; symbol?: string };
   amount: string;
   userAddress?: string;
 }) {
@@ -44,7 +49,12 @@ async function prepareDeposit(input: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || "Failed to prepare deposit");
+  if (!r.ok) {
+    const errData = await r.json().catch(() => ({}));
+    const err = new Error(errData?.error || "Failed to prepare deposit") as any;
+    err.code = errData?.code;
+    throw err;
+  }
   return await r.json();
 }
 
@@ -129,6 +139,54 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     if (!selectedFrom || !destToken || !sameChain) return false;
     return String(selectedFrom.symbol || "").toLowerCase() === String(destToken.symbol || "").toLowerCase();
   }, [selectedFrom, destToken, sameChain]);
+
+  // Check if destination chain supports Rhinestone companion swaps
+  const destChainSupportsSwap = useMemo(() => {
+    if (!destToken?.chain) return false;
+    return isRhinestoneChainSupported(destToken.chain);
+  }, [destToken?.chain]);
+
+  // Get supported tokens for same-chain swaps on destination chain
+  const supportedSwapTokens = useMemo(() => {
+    if (!destToken?.chain) return [];
+    return getSupportedTokensForChain(destToken.chain);
+  }, [destToken?.chain]);
+
+  // Filter tokens to show: 
+  // - For same-chain EVM: only show supported tokens (ETH, WETH, USDC, USDT)
+  // - For non-EVM same-chain: only show the destination token (same token required)
+  // - For cross-chain: show all tokens
+  const filteredTokens = useMemo(() => {
+    if (!destToken?.chain || !destToken?.symbol) return tokens;
+
+    const destChainLower = String(destToken.chain).toLowerCase();
+    const isNonEvmDest = ['sol', 'solana', 'btc', 'bitcoin', 'zec', 'zcash', 'xrp', 'xlm', 'ton', 'sui'].includes(destChainLower);
+
+    return tokens.map(t => {
+      const tokenChainLower = String(t.chain || "").toLowerCase();
+      const isSameChain = tokenChainLower === destChainLower;
+
+      if (isSameChain) {
+        // Same chain scenario
+        if (isNonEvmDest) {
+          // Non-EVM: Must use same token
+          const isSameToken = String(t.symbol || "").toUpperCase() === String(destToken.symbol || "").toUpperCase();
+          if (!isSameToken) {
+            // Mark as unsupported but keep in list with warning
+            return { ...t, _unsupported: true, _reason: `Only ${destToken.symbol} accepted on ${destToken.chain}` };
+          }
+        } else if (destChainSupportsSwap) {
+          // EVM with swap support: only supported tokens
+          const isSupported = supportedSwapTokens.includes(String(t.symbol || "").toUpperCase());
+          if (!isSupported) {
+            return { ...t, _unsupported: true, _reason: `${t.symbol} not supported for swap. Use ETH, WETH, USDC, or USDT.` };
+          }
+        }
+      }
+
+      return t;
+    });
+  }, [tokens, destToken, destChainSupportsSwap, supportedSwapTokens]);
 
   // Find ZEC token for private mode
   const zecToken = useMemo(() => {
@@ -240,10 +298,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
   async function onPrepare() {
     if (!claim || !selectedFrom) return;
-    // If same-chain EVM and supported by Biconomy, skip deposit flow (use Pay now)
-    if (swapProviderEligible) {
-      return;
-    }
     // Reset cancelled flag when starting new deposit
     userCancelled.current = false;
     setPreparing(true);
@@ -271,11 +325,33 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
       const res = await prepareDeposit({
         claimId: id,
-        fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain },
+        fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain, symbol: selectedFrom.symbol },
         amount: claim.amount,
         userAddress: userWalletAddress,
       });
-      setDeposit(res);
+
+      // Handle different response types
+      if (res.directTransfer) {
+        // Same chain, same token - direct to recipient
+        setDeposit({
+          ...res,
+          isDirect: true,
+          minAmountInFormatted: res.amount,
+        });
+        toast({ title: "Direct transfer", description: "Same token & chain - send directly to recipient" });
+      } else if (res.sameChainSwap) {
+        // Same chain, different token - companion wallet swap
+        setDeposit({
+          ...res,
+          isCompanionSwap: true,
+          minAmountInFormatted: res.estimatedTotal,
+        });
+        toast({ title: "Swap enabled", description: `Send ${res.depositToken} to companion wallet. We'll swap to ${claim.to_symbol} for you.` });
+      } else {
+        // Cross-chain via NEAR Intents
+        setDeposit(res);
+      }
+
       useClaimPayStore.getState().setDeposit(id, {
         depositAddress: res.depositAddress,
         memo: res.memo ?? null,
@@ -285,7 +361,21 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         minAmountInFormatted: res.minAmountInFormatted, // Add the actual amount to send
       });
     } catch (e: any) {
-      toast({ variant: "destructive", title: "Failed to prepare", description: e?.message || "Could not obtain deposit info" });
+      // Handle specific error codes with better messages
+      const errorCode = e?.code || "";
+      let errorMessage = e?.message || "Could not obtain deposit info";
+
+      if (errorCode === "NON_EVM_SAME_TOKEN_REQUIRED") {
+        errorMessage = `For this network, you must pay with ${claim?.to_symbol}. Cross-token swaps are only available on EVM chains.`;
+      } else if (errorCode === "TOKENS_NOT_SUPPORTED") {
+        errorMessage = "This token pair is not supported for swaps. Try ETH, WETH, USDC, or USDT.";
+      } else if (errorCode === "CHAIN_NOT_SUPPORTED") {
+        errorMessage = "This chain is not supported for swaps. Supported: Ethereum, Base, Optimism, Arbitrum, Polygon, zkSync.";
+      } else if (errorCode === "ROUTE_NOT_AVAILABLE") {
+        errorMessage = "Route not available. Please try another token or network.";
+      }
+
+      toast({ variant: "destructive", title: "Failed to prepare", description: errorMessage });
     } finally {
       setPreparing(false);
     }
@@ -931,11 +1021,23 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                           ) : (
                             /* Standard mode - token selector */
                             <TokenCombobox
-                              tokens={tokens}
+                              tokens={filteredTokens as any}
                               value={fromSel}
-                              onChange={setFromSel}
+                              onChange={(sel) => {
+                                // Check if token is unsupported
+                                const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
+                                if (selected?._unsupported) {
+                                  toast({
+                                    variant: "destructive",
+                                    title: "Token not supported",
+                                    description: selected._reason || "This token cannot be used for this payment."
+                                  });
+                                  return;
+                                }
+                                setFromSel(sel);
+                              }}
                               placeholder="Select token to pay with"
-                              onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                              onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
                               className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none focus:border-orange-400 transition-colors"
                             />
                           )}
@@ -952,51 +1054,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             </div>
                           ) : null}
                           <div className="mt-4 flex gap-3">
-
-                            {swapProviderEligible ? (
-                              <div className="flex flex-col w-full gap-2">
-                                {wallets.length === 0 || !authenticated ? (
-                                  <Button
-                                    onClick={login}
-                                    className="rounded-xl w-full"
-                                    style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                                  >
-                                    Connect Wallet
-                                  </Button>
-                                ) : (
-                                  <>
-                                    {/* Show connected wallet */}
-                                    <div className="flex items-center justify-between p-2 rounded-lg bg-gray-100 text-sm">
-                                      <div className="flex items-center gap-2">
-                                        <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                                        <span className="text-gray-600">Connected:</span>
-                                        <span className="font-mono text-gray-900">
-                                          {wallets[0]?.address
-                                            ? `${wallets[0].address.slice(0, 6)}...${wallets[0].address.slice(-4)}`
-                                            : "Unknown"}
-                                        </span>
-                                      </div>
-                                      <button
-                                        onClick={logout}
-                                        className="text-red-500 hover:text-red-700 text-sm  font-medium"
-                                      >
-                                        Disconnect
-                                      </button>
-                                    </div>
-                                    <div className="flex gap-2">
-                                      <Button
-                                        onClick={onPayNow}
-                                        disabled={preparing || DEMO_MODE}
-                                        className="rounded-xl flex-1"
-                                        style={{ background: DEMO_MODE ? '#9CA3AF' : 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                                      >
-                                        {DEMO_MODE ? "Demo Mode" : preparing ? "Processing…" : isPrivateMode ? "Pay Privately" : "Pay now"}
-                                      </Button>
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            ) : DEMO_MODE ? (
+                            {DEMO_MODE ? (
                               <Button
                                 disabled
                                 className="w-full rounded-xl"
@@ -1007,8 +1065,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             ) : (
                               <GradientActionButton
                                 onClick={onPrepare}
-                                disabled={!selectedFrom || preparing || swapProviderEligible}
-                                loading={preparing && !swapProviderEligible}
+                                disabled={!selectedFrom || preparing}
+                                loading={preparing}
                                 loadingText="Preparing…"
                               >
                                 {isPrivateMode ? "Get private deposit address" : "Get deposit address"}
@@ -1153,9 +1211,36 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   Copy
                                 </button>
                               </div>
-                              <div className="mt-3 rounded-md border border-orange-200 bg-orange-50 text-orange-800 text-sm px-3 py-2">
-                                Only deposit {selectedFrom?.symbol} from the {String(selectedFrom?.chain || "").toUpperCase()} network. Using another token or network may result in loss of funds.
-                              </div>
+                              {deposit?.isCompanionSwap ? (
+                                <div className="mt-3 rounded-md border border-blue-200 bg-blue-50 text-blue-800 text-sm px-3 py-2">
+                                  <div className="flex items-center gap-2 font-medium">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                    </svg>
+                                    Same-chain swap enabled
+                                  </div>
+                                  <div className="mt-1">
+                                    Send {selectedFrom?.symbol} to this address. We'll automatically swap to {claim?.to_symbol} and send to the recipient.
+                                    {deposit?.fee && <span className="ml-1">({deposit.fee} service fee)</span>}
+                                  </div>
+                                </div>
+                              ) : deposit?.isDirect ? (
+                                <div className="mt-3 rounded-md border border-green-200 bg-green-50 text-green-800 text-sm px-3 py-2">
+                                  <div className="flex items-center gap-2 font-medium">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                    Direct transfer
+                                  </div>
+                                  <div className="mt-1">
+                                    Send {selectedFrom?.symbol} directly to the recipient's wallet. Same token, same chain - no swap needed.
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="mt-3 rounded-md border border-orange-200 bg-orange-50 text-orange-800 text-sm px-3 py-2">
+                                  Only deposit {selectedFrom?.symbol} from the {String(selectedFrom?.chain || "").toUpperCase()} network. Using another token or network may result in loss of funds.
+                                </div>
+                              )}
                               {String(status || "").toUpperCase() === "INCOMPLETE_DEPOSIT" ? (
                                 <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 text-amber-900 text-sm  px-3 py-2">
                                   <div className="text-sm font-semibold">Partial deposit detected</div>
@@ -1234,11 +1319,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   useClaimPayStore.getState().setStatus(id, null);
                                   useClaimPayStore.getState().setFromSel(id, null as any);
                                 }} className="ml-auto">Cancel & choose another token</Button>
-                                {swapProviderEligible ? (
-                                  <Button onClick={onPayNow} disabled={preparing} className="rounded-xl" style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}>
-                                    {preparing ? "Processing…" : "Pay now"}
-                                  </Button>
-                                ) : null}
                               </div>
                             </div>
                           );

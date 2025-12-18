@@ -14,6 +14,7 @@ import { createWalletClient, http, parseEther } from "viem";
 import { mainnet } from "viem/chains";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
 import { getRefundToForChain } from "@/lib/refundAddresses";
+import { withLock } from "@/lib/redis-lock";
 
 // Initialize 1Click SDK
 const ONECLICK_BASE = process.env.ONECLICK_API_BASE || process.env.NEXT_PUBLIC_ONECLICK_API_BASE || "https://1click.chaindefuser.com";
@@ -128,38 +129,51 @@ export async function GET(request: NextRequest) {
     
     console.log(`[cron/process-claims] Processing claim ${claimId}, status: ${data.status}`);
     
-    // Check if expired (24h)
-    if (Date.now() - data.createdAt > 24 * 60 * 60 * 1000) {
-      console.log(`[cron/process-claims] Claim ${claimId} expired`);
-      await updateCompanionData(redisKey, { status: "failed", error: "Expired after 24 hours" });
-      await redis.sRem(CLAIM_PENDING_KEY, redisKey);
-      results.push({ claimId, action: "expired", success: false, error: "Expired" });
-      continue;
-    }
-    
-    try {
-      // Check companion wallet balance
-      const balance = await getEthBalance(data.companionAddress);
-      console.log(`[cron/process-claims] Companion ${data.companionAddress} balance: ${balance.eth} ETH`);
+    // Use distributed lock to prevent concurrent processing
+    const lockKey = `claim:${claimId}`;
+    const processed = await withLock(lockKey, async () => {
+      // Re-read data after acquiring lock
+      const freshDataStr = await redis.get(redisKey);
+      if (!freshDataStr) return null;
+      const freshData: ClaimCompanionData = JSON.parse(freshDataStr);
       
-      if (data.status === "pending_first_deposit") {
-        // Check if companion has received ETH
-        if (balance.eth >= MIN_ETH_FUNDED) {
-          console.log(`[cron/process-claims] Companion funded with ${balance.eth} ETH`);
-          await updateCompanionData(redisKey, { 
-            status: "first_received", 
-            amountReceivedETH: balance.eth.toFixed(8) 
-          });
-          data.status = "first_received";
-          data.amountReceivedETH = balance.eth.toFixed(8);
-        } else {
-          console.log(`[cron/process-claims] Still waiting for first deposit...`);
-          results.push({ claimId, action: "waiting", success: true });
-          continue;
-        }
+      // IDEMPOTENCY: Check if already has transaction hash
+      if (freshData.finalTxHash && freshData.status === "completed") {
+        console.log(`[cron/process-claims] Claim ${claimId} already completed with TX ${freshData.finalTxHash}`);
+        await redis.sRem(CLAIM_PENDING_KEY, redisKey);
+        return { claimId, action: "already_completed", success: true };
       }
       
-      if (data.status === "first_received") {
+      // Check if expired (24h)
+      if (Date.now() - freshData.createdAt > 24 * 60 * 60 * 1000) {
+        console.log(`[cron/process-claims] Claim ${claimId} expired`);
+        await updateCompanionData(redisKey, { status: "failed", error: "Expired after 24 hours" });
+        await redis.sRem(CLAIM_PENDING_KEY, redisKey);
+        return { claimId, action: "expired", success: false, error: "Expired" };
+      }
+      
+      try {
+        // Check companion wallet balance
+        const balance = await getEthBalance(freshData.companionAddress);
+        console.log(`[cron/process-claims] Companion ${freshData.companionAddress} balance: ${balance.eth} ETH`);
+        
+        if (freshData.status === "pending_first_deposit") {
+          // Check if companion has received ETH
+          if (balance.eth >= MIN_ETH_FUNDED) {
+            console.log(`[cron/process-claims] Companion funded with ${balance.eth} ETH`);
+            await updateCompanionData(redisKey, { 
+              status: "first_received", 
+              amountReceivedETH: balance.eth.toFixed(8) 
+            });
+            freshData.status = "first_received";
+            freshData.amountReceivedETH = balance.eth.toFixed(8);
+          } else {
+            console.log(`[cron/process-claims] Still waiting for first deposit...`);
+            return { claimId, action: "waiting", success: true };
+          }
+        }
+        
+        if (freshData.status === "first_received") {
         // Create final intent (ETH → destination token)
         console.log(`[cron/process-claims] Creating final intent...`);
         
@@ -167,8 +181,7 @@ export async function GET(request: NextRequest) {
         const ethToSend = balance.eth - GAS_RESERVE;
         if (ethToSend <= 0) {
           console.log(`[cron/process-claims] Not enough ETH after gas reserve`);
-          results.push({ claimId, action: "insufficient_balance", success: false });
-          continue;
+          return { claimId, action: "insufficient_balance", success: false };
         }
         
         // Create the final intent quote with EXACT_OUTPUT
@@ -178,11 +191,11 @@ export async function GET(request: NextRequest) {
           slippageTolerance: 100,
           originAsset: ETH_MAINNET_ASSET,
           depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
-          destinationAsset: data.destinationAsset,
-          amount: data.destinationAmount, // EXACT_OUTPUT
-          refundTo: data.companionAddress, // Refund back to companion if fails
+          destinationAsset: freshData.destinationAsset,
+          amount: freshData.destinationAmount, // EXACT_OUTPUT
+          refundTo: freshData.companionAddress, // Refund back to companion if fails
           refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
-          recipient: data.recipientAddress,
+          recipient: freshData.recipientAddress,
           recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
           deadline: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
           quoteWaitingTimeMs: 5000,
@@ -195,90 +208,93 @@ export async function GET(request: NextRequest) {
         try {
           finalQuote = await OneClickService.getQuote(finalIntentRequest as any);
           console.log(`[cron/process-claims] Final intent quote:`, JSON.stringify(finalQuote, null, 2));
-        } catch (err: any) {
-          console.error(`[cron/process-claims] Final intent quote failed:`, err?.message);
-          await updateCompanionData(redisKey, { status: "failed", error: `Final intent failed: ${err?.message}` });
-          await redis.sRem(CLAIM_PENDING_KEY, redisKey);
-          results.push({ claimId, action: "final_intent_failed", success: false, error: err?.message });
-          continue;
-        }
-        
-        const quote = (finalQuote as any)?.quote || finalQuote;
-        const depositAddress = quote?.depositAddress;
-        const requiredEth = parseFloat(quote?.minAmountInFormatted || quote?.amountInFormatted || "0");
-        
-        if (!depositAddress) {
-          console.error(`[cron/process-claims] No deposit address in final intent`);
-          await updateCompanionData(redisKey, { status: "failed", error: "No deposit address for final intent" });
-          await redis.sRem(CLAIM_PENDING_KEY, redisKey);
-          results.push({ claimId, action: "no_deposit_address", success: false });
-          continue;
-        }
-        
-        // Check if we have enough ETH
-        if (ethToSend < requiredEth) {
-          console.error(`[cron/process-claims] Insufficient ETH: have ${ethToSend}, need ${requiredEth}`);
-          // Could implement refund logic here
-          await updateCompanionData(redisKey, { 
-            status: "failed", 
-            error: `Insufficient ETH: have ${ethToSend.toFixed(6)}, need ${requiredEth.toFixed(6)}` 
-          });
-          await redis.sRem(CLAIM_PENDING_KEY, redisKey);
-          results.push({ claimId, action: "insufficient_eth", success: false });
-          continue;
-        }
-        
-        // Store final intent info
-        await updateCompanionData(redisKey, {
-          finalIntentQuoteId: quote?.id || quote?.quoteId,
-          finalIntentDepositAddress: depositAddress,
-          finalIntentDeadline: quote?.deadline,
-        });
-        
-        // Send ETH from companion to final intent deposit address
-        console.log(`[cron/process-claims] Sending ${requiredEth} ETH to ${depositAddress}`);
-        
-        const account = privateKeyToAccount(data.companionPrivateKey as `0x${string}`);
-        const client = createWalletClient({
-          account,
-          chain: mainnet,
-          transport: http(process.env.ETH_RPC_URL || "https://eth.llamarpc.com"),
-        });
-        
-        try {
-          const txHash = await client.sendTransaction({
-            to: depositAddress as `0x${string}`,
-            value: parseEther(requiredEth.toFixed(8)),
-          });
+          } catch (err: any) {
+            console.error(`[cron/process-claims] Final intent quote failed:`, err?.message);
+            await updateCompanionData(redisKey, { status: "failed", error: `Final intent failed: ${err?.message}` });
+            await redis.sRem(CLAIM_PENDING_KEY, redisKey);
+            return { claimId, action: "final_intent_failed", success: false, error: err?.message };
+          }
           
-          console.log(`[cron/process-claims] Transaction sent: ${txHash}`);
+          const quote = (finalQuote as any)?.quote || finalQuote;
+          const depositAddress = quote?.depositAddress;
+          const requiredEth = parseFloat(quote?.minAmountInFormatted || quote?.amountInFormatted || "0");
           
+          if (!depositAddress) {
+            console.error(`[cron/process-claims] No deposit address in final intent`);
+            await updateCompanionData(redisKey, { status: "failed", error: "No deposit address for final intent" });
+            await redis.sRem(CLAIM_PENDING_KEY, redisKey);
+            return { claimId, action: "no_deposit_address", success: false };
+          }
+          
+          // Check if we have enough ETH
+          if (ethToSend < requiredEth) {
+            console.error(`[cron/process-claims] Insufficient ETH: have ${ethToSend}, need ${requiredEth}`);
+            await updateCompanionData(redisKey, { 
+              status: "failed", 
+              error: `Insufficient ETH: have ${ethToSend.toFixed(6)}, need ${requiredEth.toFixed(6)}` 
+            });
+            await redis.sRem(CLAIM_PENDING_KEY, redisKey);
+            return { claimId, action: "insufficient_eth", success: false };
+          }
+          
+          // Store final intent info
           await updateCompanionData(redisKey, {
-            status: "second_sent",
-            finalTxHash: txHash,
+            finalIntentQuoteId: quote?.id || quote?.quoteId,
+            finalIntentDepositAddress: depositAddress,
+            finalIntentDeadline: quote?.deadline,
           });
           
-          results.push({ claimId, action: "second_hop_sent", success: true });
-        } catch (err: any) {
-          console.error(`[cron/process-claims] Transaction failed:`, err?.message);
-          await updateCompanionData(redisKey, { status: "failed", error: `TX failed: ${err?.message}` });
-          await redis.sRem(CLAIM_PENDING_KEY, redisKey);
-          results.push({ claimId, action: "tx_failed", success: false, error: err?.message });
+          // Send ETH from companion to final intent deposit address
+          console.log(`[cron/process-claims] Sending ${requiredEth} ETH to ${depositAddress}`);
+          
+          const account = privateKeyToAccount(freshData.companionPrivateKey as `0x${string}`);
+          const client = createWalletClient({
+            account,
+            chain: mainnet,
+            transport: http(process.env.ETH_RPC_URL || "https://eth.llamarpc.com"),
+          });
+          
+          try {
+            const txHash = await client.sendTransaction({
+              to: depositAddress as `0x${string}`,
+              value: parseEther(requiredEth.toFixed(8)),
+            });
+            
+            console.log(`[cron/process-claims] Transaction sent: ${txHash}`);
+            
+            await updateCompanionData(redisKey, {
+              status: "second_sent",
+              finalTxHash: txHash,
+            });
+            
+            return { claimId, action: "second_hop_sent", success: true };
+          } catch (err: any) {
+            console.error(`[cron/process-claims] Transaction failed:`, err?.message);
+            await updateCompanionData(redisKey, { status: "failed", error: `TX failed: ${err?.message}` });
+            await redis.sRem(CLAIM_PENDING_KEY, redisKey);
+            return { claimId, action: "tx_failed", success: false, error: err?.message };
+          }
         }
+        
+        if (freshData.status === "second_sent") {
+          // Check if final intent completed by polling status
+          // For now, we'll consider it done and let user check status manually
+          console.log(`[cron/process-claims] Second hop sent, marking as completed`);
+          await updateCompanionData(redisKey, { status: "completed" });
+          await redis.sRem(CLAIM_PENDING_KEY, redisKey);
+          return { claimId, action: "completed", success: true };
+        }
+        
+        return { claimId, action: "waiting", success: true };
+        
+      } catch (err: any) {
+        console.error(`[cron/process-claims] Error processing ${claimId}:`, err?.message);
+        return { claimId, action: "error", success: false, error: err?.message };
       }
-      
-      if (data.status === "second_sent") {
-        // Check if final intent completed by polling status
-        // For now, we'll consider it done and let user check status manually
-        console.log(`[cron/process-claims] Second hop sent, marking as completed`);
-        await updateCompanionData(redisKey, { status: "completed" });
-        await redis.sRem(CLAIM_PENDING_KEY, redisKey);
-        results.push({ claimId, action: "completed", success: true });
-      }
-      
-    } catch (err: any) {
-      console.error(`[cron/process-claims] Error processing ${claimId}:`, err?.message);
-      results.push({ claimId, action: "error", success: false, error: err?.message });
+    }, 300); // 5 minute lock
+    
+    if (processed) {
+      results.push(processed);
     }
   }
   

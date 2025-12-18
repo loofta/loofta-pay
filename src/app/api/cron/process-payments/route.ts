@@ -20,6 +20,7 @@ import { RhinestoneSDK } from "@rhinestone/sdk";
 import { RHINESTONE_API_KEY } from "@/config/rhinestone";
 import { encodeTicketPurchase, getTicketAutomatorAddress } from "@/services/lottery";
 import { base } from "viem/chains";
+import { withLock } from "@/lib/redis-lock";
 
 // Redis client
 let redisClient: ReturnType<typeof createClient> | null = null;
@@ -49,6 +50,13 @@ type SignerData = {
   createdAt: number;
   numTickets?: number;
   totalCostETH?: string;
+};
+
+// Minimal shape of a payment log for idempotency checks
+type PaymentLog = {
+  status: "pending" | "funded" | "executed" | "refunded" | "failed";
+  txHash?: string;
+  refundTxHash?: string;
 };
 
 // Get SDK instance
@@ -162,11 +170,25 @@ async function processPendingWallet(
       },
     });
 
-    const key = recipientAddress.toLowerCase();
-    const paymentId = `${key}_${createdAt}`;
+  const key = recipientAddress.toLowerCase();
+  const paymentId = `${key}_${createdAt}`;
 
-    // INSUFFICIENT FUNDS - Refund
-    if (balanceEth < requiredEth) {
+  // IDEMPOTENCY CHECK: Check if already processed
+  const existingLogStr = await redis.get(`${PAYMENT_LOG_PREFIX}${paymentId}`);
+  if (existingLogStr) {
+    const existingLog: PaymentLog = JSON.parse(existingLogStr);
+    if (existingLog.status === "executed" && existingLog.txHash) {
+      console.log(`[Cron] Payment ${paymentId} already executed with TX ${existingLog.txHash}, skipping`);
+      return { status: "executed", txHash: existingLog.txHash, recipientAddress };
+    }
+    if (existingLog.status === "refunded" && existingLog.refundTxHash) {
+      console.log(`[Cron] Payment ${paymentId} already refunded with TX ${existingLog.refundTxHash}, skipping`);
+      return { status: "refunded", txHash: existingLog.refundTxHash, recipientAddress };
+    }
+  }
+
+  // INSUFFICIENT FUNDS - Refund
+  if (balanceEth < requiredEth) {
       console.log("[Cron] ⚠️ Insufficient balance, refunding");
       console.log("[Cron]   Has:", balanceEth, "ETH, needs:", requiredEth, "ETH");
       
@@ -283,17 +305,36 @@ export async function GET(request: NextRequest) {
       details: [] as any[],
     };
 
-    // Process each pending wallet
+    // Process each pending wallet with distributed lock to prevent double processing
     for (const redisKey of pendingKeys) {
       results.processed++;
 
-      const result = await processPendingWallet(redis, redisKey);
+      // Use distributed lock to prevent concurrent processing
+      const lockKey = `payment:${redisKey}`;
+      const result = await withLock(lockKey, async () => {
+        // Double-check: verify still in pending set (another instance might have processed it)
+        const stillPending = await redis.sIsMember(PENDING_WALLETS_KEY, redisKey);
+        if (!stillPending) {
+          console.log(`[Cron] ${redisKey} already processed by another instance, skipping`);
+          return { status: "waiting" as const, recipientAddress: undefined };
+        }
+
+        return await processPendingWallet(redis, redisKey);
+      }, 300); // 5 minute lock
+
+      if (!result) {
+        // Lock not acquired - another instance is processing
+        results.waiting++;
+        continue;
+      }
+
       results.details.push({
         key: redisKey,
         ...result,
       });
 
       // Remove from pending set if processed (not waiting)
+      // Only remove if we successfully processed it (not if lock failed)
       if (result.status !== "waiting") {
         await redis.sRem(PENDING_WALLETS_KEY, redisKey);
         // Also delete the signer data
