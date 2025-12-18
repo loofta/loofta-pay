@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { RhinestoneSDK } from "@rhinestone/sdk";
 import { RHINESTONE_API_KEY } from "@/config/rhinestone";
+import { LOOFTA_TREASURY_ADDRESSES } from "@/config/rhinestoneChains";
 import { createClient } from "redis";
 
 // Redis client singleton
@@ -70,9 +71,22 @@ const PENDING_WALLETS_KEY = "companion:pending"; // Set of pending wallet keys f
 // Get SDK instance
 function getSDK(): RhinestoneSDK {
   if (!RHINESTONE_API_KEY) {
+    console.error("[Companion API] ❌ RHINESTONE_API_KEY is missing!");
     throw new Error("Missing RHINESTONE_API_KEY");
   }
-  return new RhinestoneSDK({ apiKey: RHINESTONE_API_KEY });
+  
+  // Log API key status (first 8 chars only for security)
+  const apiKeyPreview = RHINESTONE_API_KEY.substring(0, 8) + "...";
+  console.log("[Companion API] Initializing SDK with API key:", apiKeyPreview);
+  
+  try {
+    const sdk = new RhinestoneSDK({ apiKey: RHINESTONE_API_KEY });
+    console.log("[Companion API] ✓ SDK initialized successfully");
+    return sdk;
+  } catch (error: any) {
+    console.error("[Companion API] ❌ Failed to initialize SDK:", error?.message || error);
+    throw new Error(`Failed to initialize Rhinestone SDK: ${error?.message || "Unknown error"}`);
+  }
 }
 
 // Get companion wallet balance via RPC
@@ -299,9 +313,12 @@ export async function POST(request: NextRequest) {
     });
 
     const signerAccount = privateKeyToAccount(signerData.privateKey as `0x${string}`);
+    
+    console.log("[Companion API] Getting SDK instance...");
     const sdk = getSDK();
 
     // Recreate companion account
+    console.log("[Companion API] Creating companion account...");
     const dummyOwner = {
       address: recipientAddress as `0x${string}`,
       type: "local" as const,
@@ -312,14 +329,26 @@ export async function POST(request: NextRequest) {
       signTypedData: async () => { throw new Error("Not used"); },
     };
 
-    const companionAccount = await sdk.createAccount({
-      account: { type: "nexus" },
-      owners: {
-        type: "ecdsa",
-        accounts: [dummyOwner as any, signerAccount],
-        threshold: 1,
-      },
-    });
+    let companionAccount;
+    try {
+      companionAccount = await sdk.createAccount({
+        account: { type: "nexus" },
+        owners: {
+          type: "ecdsa",
+          accounts: [dummyOwner as any, signerAccount],
+          threshold: 1,
+        },
+      });
+      console.log("[Companion API] ✓ Companion account created:", companionAccount.getAddress());
+    } catch (error: any) {
+      console.error("[Companion API] ❌ Failed to create companion account:", error);
+      console.error("[Companion API] Error details:", {
+        message: error?.message,
+        cause: error?.cause,
+        stack: error?.stack,
+      });
+      throw new Error(`Failed to create companion account: ${error?.message || "Unknown error"}`);
+    }
 
     const { base } = await import("viem/chains");
 
@@ -351,21 +380,33 @@ export async function POST(request: NextRequest) {
       const refundWei = BigInt(Math.floor(refundAmount * 1e18));
 
       // Execute refund
-      const refundTx = await companionAccount.sendTransaction({
-        chain: base,
-        calls: [{
-          to: recipientAddress as `0x${string}`,
-          value: refundWei,
-          data: "0x" as `0x${string}`,
-        }],
-        signers: {
-          type: "owner",
-          kind: "ecdsa",
-          accounts: [signerAccount as any],
-        },
-      });
+      let refundTx;
+      try {
+        refundTx = await companionAccount.sendTransaction({
+          chain: base,
+          calls: [{
+            to: recipientAddress as `0x${string}`,
+            value: refundWei,
+            data: "0x" as `0x${string}`,
+          }],
+          signers: {
+            type: "owner",
+            kind: "ecdsa",
+            accounts: [signerAccount as any],
+          },
+        });
+      } catch (error: any) {
+        console.error("[Companion API] ❌ Failed to send refund transaction:", error);
+        throw new Error(`Failed to send refund: ${error?.message || "Unknown error"}`);
+      }
 
-      const refundResult = await companionAccount.waitForExecution(refundTx);
+      let refundResult;
+      try {
+        refundResult = await companionAccount.waitForExecution(refundTx);
+      } catch (error: any) {
+        console.error("[Companion API] ❌ Failed to wait for refund execution:", error);
+        throw new Error(`Failed to execute refund: ${error?.message || "Unknown error"}`);
+      }
       const refundTxHash = (refundResult as any)?.transactionHash || "";
 
       console.log("[Companion API] ✓ REFUND COMPLETE");
@@ -396,21 +437,44 @@ export async function POST(request: NextRequest) {
     // SUFFICIENT BALANCE - Execute contract call
     console.log("[Companion API] ✓ Balance sufficient, executing contract call");
 
-    const transaction = await companionAccount.sendTransaction({
-      chain: base,
-      calls: [{
-        to: to as `0x${string}`,
-        value: BigInt(value || "0"),
-        data: (data || "0x") as `0x${string}`,
-      }],
-      signers: {
-        type: "owner",
-        kind: "ecdsa",
-        accounts: [signerAccount as any],
-      },
-    });
+    let transaction;
+    try {
+      transaction = await companionAccount.sendTransaction({
+        chain: base,
+        calls: [{
+          to: to as `0x${string}`,
+          value: BigInt(value || "0"),
+          data: (data || "0x") as `0x${string}`,
+        }],
+        signers: {
+          type: "owner",
+          kind: "ecdsa",
+          accounts: [signerAccount as any],
+        },
+      });
+      console.log("[Companion API] ✓ Transaction sent, waiting for execution...");
+    } catch (error: any) {
+      console.error("[Companion API] ❌ Failed to send transaction:", error);
+      console.error("[Companion API] Error details:", {
+        message: error?.message,
+        cause: error?.cause,
+        stack: error?.stack,
+      });
+      throw new Error(`Failed to send transaction: ${error?.message || "Unknown error"}`);
+    }
 
-    const result = await companionAccount.waitForExecution(transaction);
+    let result;
+    try {
+      result = await companionAccount.waitForExecution(transaction);
+    } catch (error: any) {
+      console.error("[Companion API] ❌ Failed to wait for execution:", error);
+      console.error("[Companion API] Error details:", {
+        message: error?.message,
+        cause: error?.cause,
+        stack: error?.stack,
+      });
+      throw new Error(`Failed to wait for execution: ${error?.message || "Unknown error"}`);
+    }
     const txHash = (result as any)?.transactionHash || "";
 
     console.log("[Companion API] ✓ Transaction executed!");
@@ -450,8 +514,106 @@ export async function POST(request: NextRequest) {
 }
 
 /**
+ * PUT /api/companion?companionAddress=0x...
+ * Manually trigger execution for a funded companion wallet
+ * Useful when companion wallet is funded but transaction didn't execute automatically
+ */
+export async function PUT(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const companionAddress = searchParams.get("companionAddress");
+    
+    if (!companionAddress || !/^0x[0-9a-fA-F]{40}$/.test(companionAddress)) {
+      return NextResponse.json(
+        { error: "Invalid companion address" },
+        { status: 400 }
+      );
+    }
+
+    const redis = await getRedis();
+    
+    // Search all signer keys to find the one matching this companion address
+    const keys = await redis.keys(`${SIGNER_KEY_PREFIX}*`);
+    let foundSignerData: SignerData | null = null;
+    let foundKey: string | null = null;
+
+    for (const key of keys) {
+      const signerDataStr = await redis.get(key);
+      if (signerDataStr) {
+        const signerData: SignerData = JSON.parse(signerDataStr);
+        if (signerData.companionAddress.toLowerCase() === companionAddress.toLowerCase()) {
+          foundSignerData = signerData;
+          foundKey = key;
+          break;
+        }
+      }
+    }
+
+    if (!foundSignerData || !foundKey) {
+      return NextResponse.json(
+        { error: `No signer data found for companion wallet ${companionAddress}` },
+        { status: 404 }
+      );
+    }
+
+    const { recipientAddress, numTickets = 1, totalCostETH } = foundSignerData;
+    const { encodeTicketPurchase, getTicketAutomatorAddress } = await import("@/services/lottery");
+    
+    console.log("[Companion API] Manual trigger for companion:", companionAddress);
+    console.log("[Companion API]   Recipient:", recipientAddress);
+    console.log("[Companion API]   Tickets:", numTickets);
+    console.log("[Companion API]   Total cost:", totalCostETH, "ETH");
+
+    // Check balance
+    const balance = await getCompanionBalance(companionAddress);
+    const requiredEth = totalCostETH ? parseFloat(totalCostETH) : MIN_ETH_FOR_CONTRACT;
+    
+    console.log("[Companion API]   Balance:", balance.eth, "ETH");
+    console.log("[Companion API]   Required:", requiredEth, "ETH");
+
+    if (parseFloat(balance.eth) < requiredEth * 0.95) {
+      return NextResponse.json({
+        success: false,
+        error: `Insufficient balance. Has ${balance.eth} ETH but needs ${requiredEth} ETH`,
+        balance: balance.eth,
+        required: requiredEth.toString(),
+      }, { status: 400 });
+    }
+
+    // Calculate ticket cost (without gas buffer)
+    const ticketCostETH = totalCostETH ? (parseFloat(totalCostETH) * 0.95).toString() : "0.0035";
+    const ethAmountWei = BigInt(Math.floor(parseFloat(ticketCostETH) * 1e18)).toString();
+    
+    // Encode contract call
+    const calldata = encodeTicketPurchase(recipientAddress, numTickets);
+    const ticketAutomatorAddress = getTicketAutomatorAddress();
+
+    // Execute transaction using existing POST logic
+    const response = await POST(new NextRequest(request.url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipientAddress,
+        to: ticketAutomatorAddress,
+        value: ethAmountWei,
+        data: calldata,
+        minRequired: totalCostETH || MIN_ETH_FOR_CONTRACT.toString(),
+      }),
+    }));
+
+    return response;
+  } catch (error: any) {
+    console.error("[Companion API] Manual trigger error:", error);
+    return NextResponse.json(
+      { error: error?.message || "Failed to trigger execution" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
  * DELETE /api/companion?recipient=0x...
- * Clear signer key for a recipient (after emptying wallet)
+ * Sweep dust tokens to treasury and clear signer key for a recipient
  */
 export async function DELETE(request: NextRequest) {
   try {
@@ -469,7 +631,87 @@ export async function DELETE(request: NextRequest) {
     const key = recipientAddress.toLowerCase();
     const redisKey = `${SIGNER_KEY_PREFIX}${key}`;
     
-    const existed = await redis.exists(redisKey);
+    // Get signer data before deleting (needed for dust sweep)
+    const signerDataStr = await redis.get(redisKey);
+    const signerData: SignerData | null = signerDataStr ? JSON.parse(signerDataStr) : null;
+    
+    const existed = signerData !== null;
+    
+    // Sweep dust to treasury if companion wallet exists and has balance
+    if (signerData) {
+      try {
+        const companionAddress = signerData.companionAddress;
+        const balance = await getCompanionBalance(companionAddress);
+        const balanceEth = parseFloat(balance.eth);
+        const minDustThreshold = 0.0001; // Minimum 0.0001 ETH to sweep
+        
+        if (balanceEth > minDustThreshold) {
+          console.log("[Companion API] Sweeping dust to treasury:", balanceEth, "ETH");
+          
+          // Get Loofta treasury address for Base chain
+          const treasuryAddress = LOOFTA_TREASURY_ADDRESSES[8453]; // Base chain ID
+          if (!treasuryAddress) {
+            console.warn("[Companion API] ⚠️ Treasury address not configured for Base, skipping dust sweep");
+          } else {
+            const signerAccount = privateKeyToAccount(signerData.privateKey as `0x${string}`);
+            const sdk = getSDK();
+            
+            // Recreate companion account
+            const dummyOwner = {
+              address: recipientAddress as `0x${string}`,
+              type: "local" as const,
+              publicKey: "0x" as `0x${string}`,
+              source: "custom" as const,
+              signMessage: async () => { throw new Error("Not used"); },
+              signTransaction: async () => { throw new Error("Not used"); },
+              signTypedData: async () => { throw new Error("Not used"); },
+            };
+            
+            const companionAccount = await sdk.createAccount({
+              account: { type: "nexus" },
+              owners: {
+                type: "ecdsa",
+                accounts: [dummyOwner as any, signerAccount],
+                threshold: 1,
+              },
+            });
+            
+            const { base } = await import("viem/chains");
+            
+            // Calculate amount to sweep (balance minus gas for sweep tx)
+            const gasForSweep = 0.0001; // Gas reserve for sweep transaction
+            const amountToSweep = balanceEth - gasForSweep;
+            
+            if (amountToSweep > 0) {
+              const sweepWei = BigInt(Math.floor(amountToSweep * 1e18));
+              
+              const sweepTx = await companionAccount.sendTransaction({
+                chain: base,
+                calls: [{
+                  to: treasuryAddress as `0x${string}`,
+                  value: sweepWei,
+                  data: "0x" as `0x${string}`,
+                }],
+                signers: {
+                  type: "owner",
+                  kind: "ecdsa",
+                  accounts: [signerAccount as any],
+                },
+              });
+              
+              const sweepResult = await companionAccount.waitForExecution(sweepTx);
+              const sweepTxHash = (sweepResult as any)?.transactionHash || "";
+              
+              console.log("[Companion API] ✓ Dust swept to treasury:", amountToSweep.toFixed(6), "ETH");
+              console.log("[Companion API] Sweep TX:", sweepTxHash);
+            }
+          }
+        }
+      } catch (sweepError: any) {
+        // Don't fail the delete if dust sweep fails (non-critical)
+        console.warn("[Companion API] Dust sweep failed (non-critical):", sweepError?.message);
+      }
+    }
     
     // Remove from pending set and delete signer
     await redis.sRem(PENDING_WALLETS_KEY, redisKey);
@@ -479,7 +721,7 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      deleted: existed > 0,
+      deleted: existed,
     });
   } catch (error: any) {
     console.error("[Companion API] Delete error:", error);
@@ -493,8 +735,19 @@ export async function DELETE(request: NextRequest) {
 /**
  * PATCH /api/companion
  * Get recent payment logs (admin endpoint)
+ * Note: Use PUT with ?companionAddress=0x... to manually trigger execution
  */
-export async function PATCH() {
+export async function PATCH(request: NextRequest) {
+  // Check if this is a manual trigger request
+  const { searchParams } = new URL(request.url);
+  const companionAddress = searchParams.get("companionAddress");
+  
+  if (companionAddress) {
+    // This is a manual trigger request - delegate to PUT handler
+    return PUT(request);
+  }
+  
+  // Otherwise, fetch payment logs (admin endpoint)
   try {
     const redis = await getRedis();
     

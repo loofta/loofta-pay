@@ -8,17 +8,25 @@
  */
 
 export const RHINESTONE_API_BASE: string =
-	(process as any)?.env?.RHINESTONE_API_BASE ||
-	(process as any)?.env?.NEXT_PUBLIC_RHINESTONE_API_BASE ||
+	process.env.RHINESTONE_API_BASE ||
+	process.env.NEXT_PUBLIC_RHINESTONE_API_BASE ||
 	"https://v1.orchestrator.rhinestone.dev";
 
 export const RHINESTONE_API_KEY: string | undefined =
-	(process as any)?.env?.RHINESTONE_API_KEY ||
-	(process as any)?.env?.NEXT_PUBLIC_RHINESTONE_API_KEY ||
+	process.env.RHINESTONE_API_KEY ||
+	process.env.NEXT_PUBLIC_RHINESTONE_API_KEY ||
   undefined;
   
-  console.log("RHINESTONE_API_BASE", RHINESTONE_API_BASE);
-  console.log("RHINESTONE_API_KEY", RHINESTONE_API_KEY);
+// Log API key status (first 8 chars only for security)
+if (typeof window === "undefined") {
+  // Server-side only
+  if (RHINESTONE_API_KEY) {
+    console.log("[Rhinestone Config] ✓ API key loaded:", RHINESTONE_API_KEY.substring(0, 8) + "...");
+  } else {
+    console.warn("[Rhinestone Config] ⚠️ RHINESTONE_API_KEY is not set!");
+  }
+  console.log("[Rhinestone Config] API Base:", RHINESTONE_API_BASE);
+}
 
 // Rhinestone supported chains with their chain IDs and supported tokens
 // Source: https://docs.rhinestone.dev/
