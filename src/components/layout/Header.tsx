@@ -15,13 +15,15 @@ export function Header() {
   const { openHistory } = useHistoryModal();
   const pathname = usePathname();
   const showHistory = pathname?.startsWith('/swap') === true;
+  // Check if we're on a dark background page
+  const isDarkPage = pathname?.startsWith('/claim') === true || pathname?.startsWith('/c/') === true;
   const headerRef = useRef<HTMLDivElement | null>(null);
   const [showAccessRequested, setShowAccessRequested] = useState(false);
   const [pendingAccessRequest, setPendingAccessRequest] = useState(false);
 
   // Handle email-only login for request access
   const handleRequestAccess = () => {
-    setPendingAccessRequest(true);
+    //setPendingAccessRequest(true);
     privyLogin({
       loginMethods: ['email'],
       disableSignup: false,
@@ -69,22 +71,56 @@ export function Header() {
             </span>
           </Link>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1">
+            {/* Make a payment link */}
+            <Link
+              href="/claim"
+              prefetch
+              className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isDarkPage
+                ? 'text-white/90 hover:text-white hover:bg-white/10'
+                : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+            >
+              Request a payment
+            </Link>
+            {/* Separator */}
+            <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
+            {/* B2B Checkout link */}
+            <Link
+              href="/checkout/b2b"
+              prefetch
+              className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isDarkPage
+                ? 'text-white/90 hover:text-white hover:bg-white/10'
+                : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+            >
+              B2B Checkout
+            </Link>
+            {/* Separator */}
+            <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
             {/* contact us link */}
             <a
               href="https://t.me/looftaxyz"
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden sm:flex items-center gap-1.5 text-gray-600 hover:text-gray-900 font-medium text-sm transition-colors"
+              className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isDarkPage
+                ? 'text-white/90 hover:text-white hover:bg-white/10'
+                : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
+                }`}
             >
               Contact Us
             </a>
+            {/* Separator */}
+            <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
             {/* Watch Demo Link */}
             <a
               href="https://www.loom.com/share/fc8337f8a7ed407fa59d68cbdb11fc6f"
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden sm:flex items-center gap-1.5 text-gray-600 hover:text-gray-900 font-medium text-sm transition-colors"
+              className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isDarkPage
+                ? 'text-white/90 hover:text-white hover:bg-white/10'
+                : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
+                }`}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-current">
                 <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
@@ -94,12 +130,14 @@ export function Header() {
             </a>
 
             {showHistory && (
-              <Button
-                className="bg-gray-900 hover:bg-gray-800 text-white font-semibold px-6 py-2.5 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg"
-                onClick={openHistory}
-              >
-                History
-              </Button>
+              <>
+                <Button
+                  className="bg-gray-900 hover:bg-gray-800 text-white font-semibold px-6 py-2.5 rounded-xl transition-all duration-300 hover:scale-105 shadow-lg"
+                  onClick={openHistory}
+                >
+                  History
+                </Button>
+              </>
             )}
             {!authenticated ? (
               <Button
@@ -107,19 +145,20 @@ export function Header() {
                 style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
                 onClick={handleRequestAccess}
               >
-                Request Access
+                Log In
               </Button>
             ) : (
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-gray-700">{email}</span>
+              <>
+                <span className={`hidden sm:block text-sm px-4 py-2 ${isDarkPage ? 'text-white/90' : 'text-gray-700'}`}>{email}</span>
+                <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
                 <Button
                   variant="outline"
-                  className="border-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-xl"
+                  className="font-semibold px-4 py-2 rounded-xl border-gray-300 text-gray-800 hover:bg-gray-100"
                   onClick={() => logout()}
                 >
                   Log out
                 </Button>
-              </div>
+              </>
             )}
           </div>
         </div>

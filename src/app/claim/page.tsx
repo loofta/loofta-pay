@@ -67,7 +67,7 @@ export default function ClaimPage() {
 
   // Handle email-only login for request access
   const handleRequestAccess = () => {
-    setPendingAccessRequest(true);
+    //setPendingAccessRequest(true);
     // Privy login with email only - no wallet option
     privyLogin({
       loginMethods: ['email'],

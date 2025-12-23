@@ -263,7 +263,7 @@ export default function Home() {
         </div>
 
         {/* Section — Dark features block (Figma) */}
-        <section className="mt-0 md:mt-0 bg-[#18181F] relative overflow-hidden">
+        <section className="mt-0 md:mt-0 bg-[#18181F] relative">
           {/* Background image with low opacity - parallax */}
           <div
             className="absolute inset-0 opacity-10 pointer-events-none"
