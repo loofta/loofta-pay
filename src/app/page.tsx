@@ -224,15 +224,21 @@ export default function Home() {
                   <span className="font-semibold">You always receive exactly what you asked for.</span>
                 </p>
                 <div className="mt-6 flex items-center gap-4">
-                  <Link href="/claim" prefetch>
-                    <Button className="rounded-[21px] px-12 py-4 text-base font-medium text-white border-0 shadow-md hover:scale-[1.02] transition-transform" style={{ background: 'linear-gradient(to right, #FF1301, #EAB308)' }}>
-                      Create a payment
-                    </Button>
+                  <Link
+                    href="/claim"
+                    prefetch={true}
+                    className="rounded-[21px] px-12 py-2 text-base font-medium text-white border-0 shadow-md hover:scale-[1.02] transition-transform inline-flex items-center justify-center"
+                    style={{ background: 'linear-gradient(to right, #FF1301, #EAB308)' }}
+                  >
+                    Create a payment
                   </Link>
-                  <Link href="https://loofta.gitbook.io/docs" target="_blank" rel="noopener noreferrer">
-                    <Button variant="outline" className="rounded-[21px] px-12 py-4 text-base font-medium border-2 shadow-md hover:scale-[1.02] transition-transform">
-                      Learn more
-                    </Button>
+                  <Link
+                    href="https://loofta.gitbook.io/docs"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-[21px] px-12 py-2 text-base font-medium border-2 border-slate-300 bg-white text-slate-900 shadow-md hover:scale-[1.02] transition-transform hover:bg-slate-50 inline-flex items-center justify-center"
+                  >
+                    Learn more
                   </Link>
                 </div>
               </div>

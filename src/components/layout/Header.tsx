@@ -1,6 +1,7 @@
 'use client'
 
 import Image from "next/image";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useHistoryModal } from "@/contexts/HistoryModalContext";
@@ -53,10 +54,10 @@ export function Header() {
     <div ref={headerRef} className="fixed inset-x-0 top-0 z-50" style={{ backdropFilter: 'blur(10px)' }}>
       <div className="max-w-7xl mx-auto px-4 py-6 md:py-8">
         <div className="flex justify-between items-center animate-fade-in">
-          <div className="relative inline-block">
+          <Link href="/" prefetch className="relative inline-block hover:opacity-90 transition-opacity">
             <Image
               src="/loofta.svg"
-              alt="Loofta"
+              alt="Loofta Pay"
               width={120}
               height={44}
             />
@@ -66,7 +67,7 @@ export function Header() {
             >
               pay
             </span>
-          </div>
+          </Link>
 
           <div className="flex items-center gap-3">
             {/* contact us link */}
