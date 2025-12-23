@@ -31,7 +31,8 @@ export async function POST(request: Request) {
       amountNeeded, // Amount in fromToken (human-readable)
       totalCostETH, // Total ETH needed on Base (human-readable)
       companionAddress, // Rhinestone companion wallet address
-      userAddress 
+      userAddress,
+      orgReferral // Organization referral code (optional)
     } = body || {};
     
     if (!fromToken?.tokenId || !toToken?.tokenId || !amountNeeded || !totalCostETH || !companionAddress) {
@@ -100,7 +101,9 @@ export async function POST(request: Request) {
       quoteWaitingTimeMs: 3000,
     } as any;
 
-    if (REFERRAL_CODE) (req as any).referral = REFERRAL_CODE;
+    // Use orgReferral if provided, otherwise fallback to env REFERRAL_CODE
+    const referralCode = orgReferral || REFERRAL_CODE;
+    if (referralCode) (req as any).referral = referralCode;
 
     console.log("[lottery/deposit] Quote request:", JSON.stringify(req, null, 2));
 

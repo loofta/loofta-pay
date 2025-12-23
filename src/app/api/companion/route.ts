@@ -46,6 +46,7 @@ type SignerData = {
   createdAt: number;
   numTickets?: number;
   totalCostETH?: string;
+  orgReferral?: string; // Organization referral code for tracking
 };
 
 type PaymentLog = {
@@ -58,6 +59,7 @@ type PaymentLog = {
   txHash?: string;
   refundTxHash?: string;
   error?: string;
+  orgReferral?: string; // Organization referral code for tracking
   createdAt: number;
   updatedAt: number;
 };
@@ -147,6 +149,7 @@ export async function GET(request: NextRequest) {
     const recipientAddress = searchParams.get("recipient");
     const numTickets = parseInt(searchParams.get("numTickets") || "1");
     const totalCostETH = searchParams.get("totalCostETH") || undefined;
+    const orgReferral = searchParams.get("orgReferral") || undefined;
 
     if (!recipientAddress || !/^0x[0-9a-fA-F]{40}$/.test(recipientAddress)) {
       return NextResponse.json(
@@ -200,6 +203,7 @@ export async function GET(request: NextRequest) {
         createdAt: now,
         numTickets,
         totalCostETH,
+        orgReferral,
       };
 
       // Store in Redis with 7-day expiry (604800 seconds)
@@ -221,6 +225,7 @@ export async function GET(request: NextRequest) {
         companionAddress,
         status: "pending",
         amountRequired: totalCostETH,
+        orgReferral,
         createdAt: now,
         updatedAt: now,
       });

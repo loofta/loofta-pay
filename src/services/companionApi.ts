@@ -53,6 +53,7 @@ export async function getCompanionWalletForRecipient(
   options?: {
     numTickets?: number;
     totalCostETH?: string;
+    orgReferral?: string;
   }
 ): Promise<CompanionWalletResponse> {
   console.log("[Companion API Client] Getting companion wallet for:", recipientAddress);
@@ -66,6 +67,9 @@ export async function getCompanionWalletForRecipient(
   }
   if (options?.totalCostETH) {
     params.set("totalCostETH", options.totalCostETH);
+  }
+  if (options?.orgReferral) {
+    params.set("orgReferral", options.orgReferral);
   }
   
   const response = await fetch(`/api/companion?${params.toString()}`);

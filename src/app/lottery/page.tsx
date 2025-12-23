@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +49,11 @@ export default function LotteryPage() {
   const { ready: privyReady, user, connectWallet } = usePrivy();
   const { toast } = useToast();
   const { data: tokens = [], isLoading: loadingTokens } = useTokensQuery();
+  const searchParams = useSearchParams();
+
+  // Get organization referral from query params (passed from checkout page)
+  const orgReferral = searchParams.get("orgReferral") || undefined;
+  const organizationId = searchParams.get("organizationId") || undefined;
 
   const [numTickets, setNumTickets] = useState<string>("1");
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
@@ -402,6 +408,7 @@ export default function LotteryPage() {
       const companionWallet = await getCompanionWalletForRecipient(finalRecipientAddress, {
         numTickets: parseFloat(numTickets),
         totalCostETH: totalCostETH || undefined,
+        orgReferral: orgReferral,
       });
 
       setCompanionAddress(companionWallet.companionAddress);
@@ -449,6 +456,7 @@ export default function LotteryPage() {
           totalCostETH: totalCostETH,
           companionAddress: companionWallet.companionAddress,
           userAddress: finalRecipientAddress, // Use recipient as the key
+          orgReferral: orgReferral, // Pass organization referral code
         }),
       });
 

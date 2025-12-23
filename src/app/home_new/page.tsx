@@ -48,7 +48,7 @@ export default function Home() {
     },
     {
       question: "Can businesses use Loofta Pay?",
-      answer: "Yes. A checkout SDK and branded checkout are coming so businesses can accept multi-chain payments with a single integration.",
+      answer: "Yes. A checkout SDK and branded checkout are available so businesses can accept multi-chain payments with a single integration.",
     },
   ];
 

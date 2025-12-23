@@ -152,7 +152,7 @@ export default function Home() {
     },
     {
       question: "Can businesses use Loofta Pay?",
-      answer: "Yes. A checkout SDK and branded checkout are coming so businesses can accept multi-chain payments with a single integration.",
+      answer: "Yes. A checkout SDK and branded checkout are available so businesses can accept multi-chain payments with a single integration.",
     },
   ];
 
@@ -273,10 +273,15 @@ export default function Home() {
                   Your payer uses whatever they want.<br className="hidden md:block" />
                   <span className="font-semibold">You always receive exactly what you asked for.</span>
                 </p>
-                <div className="mt-6">
+                <div className="mt-6 flex items-center gap-4">
                   <Link href="/claim">
-                    <Button className="rounded-[21px] px-6 py-3 text-base font-semibold text-white border-0 shadow-md hover:scale-[1.02] transition-transform" style={{ background: 'linear-gradient(to right, #FF1301, #EAB308)' }}>
+                    <Button className="rounded-[21px] px-12 py-4 text-base font-medium text-white border-0 shadow-md hover:scale-[1.02] transition-transform" style={{ background: 'linear-gradient(to right, #FF1301, #EAB308)' }}>
                       Create a payment
+                    </Button>
+                  </Link>
+                  <Link href="https://loofta.gitbook.io/docs" target="_blank" rel="noopener noreferrer">
+                    <Button variant="outline" className="rounded-[21px] px-12 py-4 text-base font-medium border-2 shadow-md hover:scale-[1.02] transition-transform">
+                      Learn more
                     </Button>
                   </Link>
                 </div>
@@ -326,7 +331,7 @@ export default function Home() {
                   to get paid in crypto.
                 </span>
               </h2>
-              <p className="mt-3 text-sm md:text-base text-white/70">
+              <p className="mt-3 text-base md:text-base text-white/70">
                 Loofta removes all the friction of multi‑chain payments, for you and your users.
               </p>
             </div>
@@ -389,7 +394,7 @@ export default function Home() {
                   </div>
                   <div className="flex flex-col">
                     <div className="text-lg md:text-xl font-semibold leading-tight">{f.title}</div>
-                    <div className="mt-2 text-sm text-white/60 leading-relaxed">{f.desc}</div>
+                    <div className="mt-2 text-base text-white/60 leading-relaxed">{f.desc}</div>
                   </div>
                 </motion.div>
               ))}
@@ -503,7 +508,7 @@ export default function Home() {
                         className="overflow-hidden"
                       >
                         <div className="px-6 pb-5">
-                          <p className="text-sm md:text-base text-slate-500">
+                          <p className="text-base md:text-base text-slate-500">
                             {item.answer}
                           </p>
                         </div>

@@ -474,13 +474,13 @@ export default function ClaimPage() {
                       <span className="text-gray-300 text-xl">Share the link — they pay with ANY token</span>
                     </li>
                   </ul>
-                  <button
-                    type="button"
-                    className="mt-8 inline-flex items-center gap-2 rounded-full px-8 py-4 text-base font-semibold bg-white text-red-500 hover:bg-gray-50 transition-colors"
+
+
+                  <Button variant="outline" className="mt-8 inline-flex items-center gap-2 rounded-[21px] text-slate-900/90 px-12 py-4 text-base font-medium border-2 shadow-md hover:scale-[1.02] transition-transform"
                     onClick={handleRequestAccess}
                   >
                     Request Access
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
@@ -528,7 +528,7 @@ export default function ClaimPage() {
                       <span className="absolute inset-0 rounded-full border-2 border-gray-300" />
                       <span className="absolute inset-1 rounded-full border-t-2 border-yellow-500 animate-spin" />
                     </div>
-                    <div className="mt-4 text-sm text-gray-700">Creating your payment link…</div>
+                    <div className="mt-4 text-base text-gray-700">Creating your payment link…</div>
                   </div>
                 ) : createdLink ? (
                   <div>

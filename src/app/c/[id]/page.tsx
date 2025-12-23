@@ -35,7 +35,7 @@ const DEMO_MODE = isDemoMode();
 async function fetchClaim(id: string) {
   const r = await fetch(`/api/claims/${id}`);
   if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || "Claim not found");
-  return (await r.json()).claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string };
+  return (await r.json()).claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string };
 }
 
 async function prepareDeposit(input: {
@@ -686,6 +686,16 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       toast({ variant: "destructive", title: "Invalid hash", description: "Paste a valid transaction hash or explorer link." });
       return;
     }
+
+    // Optimistic UI: immediately set status to PROCESSING
+    setStatus("PROCESSING");
+    useClaimPayStore.getState().setStatus(id, "PROCESSING");
+
+    // Update claim status in database
+    updateClaimStatus(id, "PROCESSING", { txHash: hash }).catch((e) => {
+      console.error("[onSubmitTxHash] Failed to update claim status:", e);
+    });
+
     setSubmittingTx(true);
     try {
       const token = (process as any)?.env?.NEXT_PUBLIC_ONECLICK_JWT;
@@ -712,6 +722,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       setSpeedUpOpen(false);
     } catch (e: any) {
       toast({ variant: "destructive", title: "Submit failed", description: e?.message || "Could not submit tx hash" });
+      // Note: We keep the PROCESSING status even on error for optimistic UI
+      // The status query will eventually sync with the actual status
     } finally {
       setSubmittingTx(false);
     }
@@ -946,6 +958,22 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                 })()}
                               </span>
                             </div>
+                            {claim.created_at && (
+                              <div className="flex items-center justify-between pt-2 border-t border-gray-200 mt-2">
+                                <span className="text-gray-600">Created</span>
+                                <span className="text-sm text-gray-700">
+                                  {new Date(claim.created_at).toLocaleString()}
+                                </span>
+                              </div>
+                            )}
+                            {claim.paid_at && (
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600">Paid</span>
+                                <span className="text-sm text-gray-700">
+                                  {new Date(claim.paid_at).toLocaleString()}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         </div>
 

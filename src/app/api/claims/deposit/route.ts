@@ -31,7 +31,7 @@ const INTENTS_ONLY_CHAINS = new Set(['zec', 'zcash', 'btc', 'bitcoin', 'xrp', 'x
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { claimId, fromToken, amount, userAddress } = body || {};
+    const { claimId, fromToken, amount, userAddress, orgReferral } = body || {};
     if (!claimId || !fromToken?.tokenId || !fromToken?.decimals || !amount) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
@@ -340,7 +340,7 @@ export async function POST(request: Request) {
         : QuoteRequest.recipientType.DESTINATION_CHAIN,
       deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
       quoteWaitingTimeMs: 5000, // Increased to 5s for better quote response
-      referral: "loofta", // Add referral for tracking
+      referral: orgReferral || "loofta", // Use orgReferral if provided, otherwise default to "loofta"
     } as any;
 
     // Debug log (visible in server logs)

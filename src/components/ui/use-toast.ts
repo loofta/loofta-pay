@@ -173,16 +173,36 @@ function toast({ ...props }: Toast) {
 
 function useToast() {
   const [state, setState] = React.useState<State>(memoryState)
+  const setStateRef = React.useRef(setState)
+  const listenerRef = React.useRef<((state: State) => void) | null>(null)
+
+  // Keep setState ref in sync
+  React.useEffect(() => {
+    setStateRef.current = setState
+  })
 
   React.useEffect(() => {
-    listeners.push(setState)
-    return () => {
-      const index = listeners.indexOf(setState)
-      if (index > -1) {
-        listeners.splice(index, 1)
+    // Create listener only once
+    if (!listenerRef.current) {
+      listenerRef.current = (newState: State) => {
+        setStateRef.current(newState)
       }
     }
-  }, [state])
+    
+    // Register listener
+    if (listenerRef.current && !listeners.includes(listenerRef.current)) {
+      listeners.push(listenerRef.current)
+    }
+    
+    return () => {
+      if (listenerRef.current) {
+        const index = listeners.indexOf(listenerRef.current)
+        if (index > -1) {
+          listeners.splice(index, 1)
+        }
+      }
+    }
+  }, []) // Empty deps - only register once
 
   return {
     ...state,

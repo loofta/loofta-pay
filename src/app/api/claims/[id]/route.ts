@@ -9,7 +9,7 @@ export async function GET(_: Request, props: { params: Promise<{ id: string }> }
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("claims")
-      .select("id, amount, to_symbol, to_chain, status, created_at, recipient_address")
+      .select("id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address")
       .eq("id", params.id)
       .single();
     if (error) return NextResponse.json({ error: error.message }, { status: 404 });
@@ -36,14 +36,17 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     
     // Update claim status
     const updateData: Record<string, any> = { status };
-    if (txHash) updateData.tx_hash = txHash;
-    if (paidWith) updateData.paid_with = paidWith;
+    
+    // Set paid_at timestamp when status becomes SUCCESS
+    if (status === "SUCCESS") {
+      updateData.paid_at = new Date().toISOString();
+    }
     
     const { data, error } = await supabase
       .from("claims")
       .update(updateData)
       .eq("id", params.id)
-      .select("id, status")
+      .select("id, status, created_at, paid_at")
       .single();
       
     if (error) {
