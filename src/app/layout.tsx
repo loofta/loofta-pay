@@ -133,7 +133,7 @@ export default function RootLayout({
               url: SITE_URL,
               description: "Multi-chain crypto payment platform enabling private payments and payment requests across 20+ blockchains",
               sameAs: [
-                "https://x.com/looftaxyz",
+                "https://x.com/looftapay",
                 "https://t.me/looftaxyz",
                 "https://medium.com/@looftaxyz",
               ],

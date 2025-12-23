@@ -455,7 +455,7 @@ export default function SwapPage() {
       <div className="mt-12 pb-6 text-center">
         <div className="flex items-center justify-center gap-8">
           <a
-            href="https://x.com/looftaxyz"
+            href="https://x.com/looftapay"
             target="_blank"
             rel="noopener noreferrer"
             className="text-gray-600 hover:text-orange-600 transition-colors text-sm font-medium"
