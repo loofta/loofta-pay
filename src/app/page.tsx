@@ -219,7 +219,7 @@ export default function Home() {
                   Pay & request <br className="hidden md:block" />
                   crypto <span className="font-bold">privately.</span>
                 </h1>
-                <p className="mt-12 md:mt-24 text-xl md:text-2xl text-slate-900/90 max-w-xl">
+                <p className="mt-8 text-xl md:text-2xl text-slate-900/90 max-w-xl">
                   Your payer uses whatever they want.<br className="hidden md:block" />
                   <span className="font-semibold">You always receive exactly what you asked for.</span>
                 </p>
