@@ -21,9 +21,8 @@ const PRELOAD_IMAGES = [
 ];
 
 export default function Home() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadProgress, setLoadProgress] = useState(0);
   const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const [isClient, setIsClient] = useState(false);
   const ctaRef = useRef<HTMLDivElement>(null);
   const splineLoaded = useRef(false);
 
@@ -46,47 +45,25 @@ export default function Home() {
   const [cardsAnimationData, setCardsAnimationData] = useState<object | null>(null);
   const [howItWorksAnimationData, setHowItWorksAnimationData] = useState<object | null>(null);
 
-  // Preload all critical assets on mount
+  // Mark as client-side only to prevent hydration mismatch
   useEffect(() => {
-    const loadedAssets = new Set<string>();
-    const totalAssets = PRELOAD_IMAGES.length + 1; // images + hero animation
+    setIsClient(true);
+  }, []);
 
-    const checkComplete = () => {
-      const progress = Math.round((loadedAssets.size / totalAssets) * 100);
-      setLoadProgress(progress);
-
-      if (loadedAssets.size >= totalAssets) {
-        setTimeout(() => setIsLoading(false), 300);
-      }
-    };
-
-    // Preload images
-    PRELOAD_IMAGES.forEach((src) => {
-      const img = new window.Image();
-      img.onload = () => {
-        loadedAssets.add(src);
-        checkComplete();
-      };
-      img.onerror = () => {
-        loadedAssets.add(src); // Count errors too
-        checkComplete();
-      };
-      img.src = src;
-    });
-
-    // Load hero animation
+  // Optimized: Load hero animation immediately but don't block page render
+  useEffect(() => {
+    // Load hero animation without blocking
     import("../../public/jitter/paymentflow.json").then((mod) => {
       setHeroAnimationData(mod.default);
-      loadedAssets.add('hero');
-      checkComplete();
+    }).catch(() => {
+      // Silently fail - animation is not critical
     });
 
-    // Fallback: max 3s wait then show page anyway
-    const fallbackTimeout = setTimeout(() => {
-      setIsLoading(false);
-    }, 3000);
-
-    return () => clearTimeout(fallbackTimeout);
+    // Preload images in background (non-blocking)
+    PRELOAD_IMAGES.forEach((src) => {
+      const img = new window.Image();
+      img.src = src;
+    });
   }, []);
 
   // Spline loaded callback (for future use)
@@ -94,30 +71,61 @@ export default function Home() {
     splineLoaded.current = true;
   }, []);
 
-  // Load cards animation when approaching viewport
+  // Load cards animation when approaching viewport - use requestIdleCallback for better INP
   useEffect(() => {
     if (isCardsInView && !cardsAnimationData) {
-      import("../../public/jitter/cards_home.json").then((mod) => {
-        setCardsAnimationData(mod.default);
-      });
+      const loadAnimation = () => {
+        import("../../public/jitter/cards_home.json").then((mod) => {
+          setCardsAnimationData(mod.default);
+        }).catch(() => {
+          // Silently fail
+        });
+      };
+
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(loadAnimation, { timeout: 2000 });
+      } else {
+        setTimeout(loadAnimation, 100);
+      }
     }
   }, [isCardsInView, cardsAnimationData]);
 
-  // Load how it works animation when approaching viewport
+  // Load how it works animation when approaching viewport - use requestIdleCallback for better INP
   useEffect(() => {
     if (isHowItWorksInView && !howItWorksAnimationData) {
-      import("../../public/jitter/howitworks.json").then((mod) => {
-        setHowItWorksAnimationData(mod.default);
-      });
+      const loadAnimation = () => {
+        import("../../public/jitter/howitworks.json").then((mod) => {
+          setHowItWorksAnimationData(mod.default);
+        }).catch(() => {
+          // Silently fail
+        });
+      };
+
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(loadAnimation, { timeout: 2000 });
+      } else {
+        setTimeout(loadAnimation, 100);
+      }
     }
   }, [isHowItWorksInView, howItWorksAnimationData]);
 
-  // Start hero animation when data loaded and in view
+  // Start hero animation when data loaded and in view - defer for better INP
   useEffect(() => {
-    if (!isLoading && isHeroInView && heroAnimationData && heroLottieRef.current) {
-      heroLottieRef.current.play();
+    if (isHeroInView && heroAnimationData && heroLottieRef.current) {
+      // Defer animation start to avoid blocking main thread
+      const startAnimation = () => {
+        if (heroLottieRef.current) {
+          heroLottieRef.current.play();
+        }
+      };
+
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(startAnimation, { timeout: 1000 });
+      } else {
+        setTimeout(startAnimation, 50);
+      }
     }
-  }, [isLoading, isHeroInView, heroAnimationData]);
+  }, [isHeroInView, heroAnimationData]);
 
 
   const handleHeroAnimationComplete = () => {
@@ -158,65 +166,7 @@ export default function Home() {
 
   return (
     <>
-      {/* Full Page Loader */}
-      <AnimatePresence>
-        {isLoading && (
-          <motion.div
-            initial={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.5, ease: "easeOut" }}
-            className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-white"
-          >
-            {/* Background gradient blobs */}
-            <div className="absolute inset-0 overflow-hidden">
-              <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-orange-100/60 rounded-full blur-3xl animate-pulse" />
-              <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-red-100/60 rounded-full blur-3xl animate-pulse delay-500" />
-            </div>
-
-            {/* Centered content */}
-            <div className="relative z-10 flex flex-col items-center">
-              {/* Logo with pulse animation */}
-              <motion.div
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ duration: 0.5, ease: "easeOut" }}
-              >
-                <Image
-                  src="/loofta.svg"
-                  alt="Loofta"
-                  width={180}
-                  height={60}
-                  priority
-                  className="h-14 md:h-16 w-auto"
-                />
-              </motion.div>
-
-              {/* Loading bar */}
-              <div className="mt-10 w-48 h-1 bg-gray-200 rounded-full overflow-hidden">
-                <motion.div
-                  className="h-full rounded-full"
-                  style={{
-                    background: 'linear-gradient(to right, #FF0F00, #EAB308)',
-                  }}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${loadProgress}%` }}
-                  transition={{ duration: 0.3, ease: "easeOut" }}
-                />
-              </div>
-
-              {/* Loading text */}
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.3 }}
-                className="mt-4 text-xl text-slate-400"
-              >
-                Loading experience...
-              </motion.p>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Removed full page loader - it was blocking LCP. Content renders immediately. */}
 
       <div className="bg-gradient-to-b from-white to-gray-50">
         {/* Hero Section */}
@@ -227,31 +177,30 @@ export default function Home() {
             {/* Hide this red blob on md+ where Spline takes over */}
             <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-red-100/50 rounded-full blur-3xl animate-pulse delay-700 md:hidden"></div>
             <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-orange-50/50 rounded-full blur-3xl animate-pulse delay-1000"></div>
-            {/* Spline 3D abstract animation on the right side */}
+            {/* Spline 3D abstract animation on the right side - Defer loading for better INP */}
             <div
-              className="spline-wrap pointer-events-none hidden md:block absolute top-0 right-[-2vw] w-[65vw] max-w-[1400px] h-auto md:h-full  z-0"
+              className="spline-wrap pointer-events-none hidden md:block absolute top-0 right-[-2vw] w-[65vw] max-w-[1400px] h-auto md:h-full z-0"
               style={{
                 WebkitMaskImage: 'linear-gradient(to left, black 78%, transparent 98%)',
                 maskImage: 'linear-gradient(to left, black 78%, transparent 98%)',
+                minHeight: '100vh', // Prevent CLS
               }}
             >
-              <Suspense fallback={<div className="w-full h-full" />}>
-                <Spline
-                  scene="/spline/reeded_liquid_glass_prism_hero_section_concept_copy.spline"
-                  onLoad={handleSplineLoad}
-                />
-              </Suspense>
+              {/* Defer Spline loading until after page is interactive - client-side only to prevent hydration error */}
+              {isClient && (
+                <Suspense fallback={<div className="w-full h-full min-h-screen" />}>
+                  <Spline
+                    scene="/spline/reeded_liquid_glass_prism_hero_section_concept_copy.spline"
+                    onLoad={handleSplineLoad}
+                  />
+                </Suspense>
+              )}
             </div>
           </div>
 
           <div className="max-w-7xl mx-auto px-4 h-full flex items-start pb-10 relative z-10">
-            {/* Hero (Figma-aligned) */}
-            <motion.div
-              className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-start w-full"
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, ease: "easeOut" }}
-            >
+            {/* Hero (Figma-aligned) - Removed motion wrapper for faster LCP */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-start w-full">
               <div className="order-1 pt-12 md:pt-24  md:order-1">
                 <div
                   className="uppercase tracking-[0.14em] text-[12px] md:text-xs font-semibold"
@@ -265,6 +214,7 @@ export default function Home() {
                 >
                   multi‑chain • private • non‑custodial • no swaps required
                 </div>
+                {/* Critical LCP element - render immediately without animation wrapper */}
                 <h1 className="mt-2 text-4xl md:text-6xl lg:text-7xl font-medium leading-[1.05] text-slate-900">
                   Pay & request <br className="hidden md:block" />
                   crypto <span className="font-bold">privately.</span>
@@ -274,7 +224,7 @@ export default function Home() {
                   <span className="font-semibold">You always receive exactly what you asked for.</span>
                 </p>
                 <div className="mt-6 flex items-center gap-4">
-                  <Link href="/claim">
+                  <Link href="/claim" prefetch>
                     <Button className="rounded-[21px] px-12 py-4 text-base font-medium text-white border-0 shadow-md hover:scale-[1.02] transition-transform" style={{ background: 'linear-gradient(to right, #FF1301, #EAB308)' }}>
                       Create a payment
                     </Button>
@@ -287,18 +237,21 @@ export default function Home() {
                 </div>
               </div>
               <div ref={heroAnimationRef} className="order-2 md:order-2 relative h-auto md:h-full overflow-visible z-10 flex items-end justify-end">
-                {heroAnimationData && (
-                  <Lottie
-                    lottieRef={heroLottieRef}
-                    animationData={heroAnimationData}
-                    loop={false}
-                    autoplay={false}
-                    onComplete={handleHeroAnimationComplete}
-                    className="w-[379px] h-[418px]"
-                  />
-                )}
+                {/* Reserve space for animation to prevent CLS */}
+                <div className="w-[379px] h-[418px] flex items-center justify-center">
+                  {heroAnimationData && (
+                    <Lottie
+                      lottieRef={heroLottieRef}
+                      animationData={heroAnimationData}
+                      loop={false}
+                      autoplay={false}
+                      onComplete={handleHeroAnimationComplete}
+                      className="w-[379px] h-[418px]"
+                    />
+                  )}
+                </div>
               </div>
-            </motion.div>
+            </div>
 
           </div>
         </div>
@@ -484,7 +437,13 @@ export default function Home() {
                   className="rounded-[20px] bg-[#F6F6F8] overflow-hidden"
                 >
                   <button
-                    onClick={() => setOpenFaq(openFaq === index ? null : index)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      // Use requestAnimationFrame for better INP
+                      requestAnimationFrame(() => {
+                        setOpenFaq(openFaq === index ? null : index);
+                      });
+                    }}
                     className="w-full px-6 py-5 flex items-center justify-between text-left"
                   >
                     <span className="text-lg md:text-xl font-semibold font-sans text-slate-900">
@@ -591,7 +550,7 @@ export default function Home() {
               <div>
                 <h4 className="text-white font-semibold mb-4">Products</h4>
                 <ul className="space-y-2">
-                  <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Cross-chain swap</a></li>
+                  <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Cross-chain Swaps</a></li>
                   <li><a href="/claim" className="text-slate-400 hover:text-white transition-colors">Payment request</a></li>
                 </ul>
               </div>

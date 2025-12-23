@@ -29,9 +29,9 @@ export function Footer() {
           <div>
             <h4 className="text-white font-semibold mb-4">Socials</h4>
             <ul className="space-y-2">
-              <li><a href="https://medium.com/@loofta" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Medium</a></li>
-              <li><a href="https://twitter.com/loofta" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Twitter</a></li>
-              <li><a href="https://t.me/loofta" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Telegram</a></li>
+              <li><a href="https://medium.com/@looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Medium</a></li>
+              <li><a href="https://twitter.com/looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Twitter</a></li>
+              <li><a href="https://t.me/looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Telegram</a></li>
             </ul>
           </div>
 
@@ -39,7 +39,7 @@ export function Footer() {
           <div>
             <h4 className="text-white font-semibold mb-4">Documentation</h4>
             <ul className="space-y-2">
-              <li><a href="https://github.com/loofta" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Github</a></li>
+              <li><a href="https://loofta.gitbook.io/docs" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Github</a></li>
             </ul>
           </div>
 
@@ -53,7 +53,7 @@ export function Footer() {
             </ul>
           </div>
         </div>
-        
+
         {/* Copyright */}
         <div className="mt-12 pt-6 border-t border-gray-800">
           <p className="text-slate-500 text-sm text-center">

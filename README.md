@@ -143,7 +143,7 @@ npm run lint     # Run ESLint
 
 - **Website**: [loofta.com](https://loofta.xyz)
 - **Twitter**: [@loofta](https://x.com/lisabeyy)
-- **Telegram**: [t.me/loofta](https://t.me/looftaxyz)
+- **Telegram**: [t.me/looftaxyz](https://t.me/looftaxyz)
 
 
 ## License

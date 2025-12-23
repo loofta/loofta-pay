@@ -372,7 +372,7 @@ export default function Home() {
                     Create a payment link
                   </Link>
                   <a
-                    href="https://t.me/loofta"
+                    href="https://t.me/looftaxyz"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="rounded-full px-8 py-4 text-base font-semibold bg-white text-red-500 hover:bg-gray-50 transition-colors"
@@ -414,9 +414,9 @@ export default function Home() {
             <div>
               <h4 className="text-white font-semibold mb-4">Socials</h4>
               <ul className="space-y-2">
-                <li><a href="https://medium.com/@loofta" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Medium</a></li>
-                <li><a href="https://twitter.com/loofta" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Twitter</a></li>
-                <li><a href="https://t.me/loofta" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Telegram</a></li>
+                <li><a href="https://medium.com/@looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Medium</a></li>
+                <li><a href="https://twitter.com/looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Twitter</a></li>
+                <li><a href="https://t.me/looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Telegram</a></li>
               </ul>
             </div>
 
