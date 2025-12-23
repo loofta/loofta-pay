@@ -187,13 +187,15 @@ export default function Home() {
               }}
             >
               {/* Defer Spline loading until after page is interactive - client-side only to prevent hydration error */}
-              {isClient && (
-                <Suspense fallback={<div className="w-full h-full min-h-screen" />}>
+              {isClient ? (
+                <Suspense fallback={<div className="w-full h-full" style={{ minHeight: '100vh' }} />}>
                   <Spline
                     scene="/spline/reeded_liquid_glass_prism_hero_section_concept_copy.spline"
                     onLoad={handleSplineLoad}
                   />
                 </Suspense>
+              ) : (
+                <div className="w-full h-full" style={{ minHeight: '100vh' }} />
               )}
             </div>
           </div>
@@ -219,11 +221,11 @@ export default function Home() {
                   Pay & request <br className="hidden md:block" />
                   crypto <span className="font-bold">privately.</span>
                 </h1>
-                <p className="mt-8 text-xl md:text-2xl text-slate-900/90 max-w-xl">
+                <p className="mt-12 text-xl md:text-2xl text-slate-900/90 max-w-xl">
                   Your payer uses whatever they want.<br className="hidden md:block" />
                   <span className="font-semibold">You always receive exactly what you asked for.</span>
                 </p>
-                <div className="mt-6 flex items-center gap-4">
+                <div className="mt-6 flex pb-24 items-center gap-4">
                   <Link
                     href="/claim"
                     prefetch={true}
@@ -245,7 +247,7 @@ export default function Home() {
               <div ref={heroAnimationRef} className="order-2 md:order-2 relative h-auto md:h-full overflow-visible z-10 flex items-end justify-end">
                 {/* Reserve space for animation to prevent CLS */}
                 <div className="w-[379px] h-[418px] flex items-center justify-center">
-                  {heroAnimationData && (
+                  {heroAnimationData ? (
                     <Lottie
                       lottieRef={heroLottieRef}
                       animationData={heroAnimationData}
@@ -254,6 +256,8 @@ export default function Home() {
                       onComplete={handleHeroAnimationComplete}
                       className="w-[379px] h-[418px]"
                     />
+                  ) : (
+                    <div className="w-[379px] h-[418px]" />
                   )}
                 </div>
               </div>
@@ -295,14 +299,16 @@ export default function Home() {
               </p>
             </div>
             {/* Desktop: Lottie animation */}
-            <div ref={cardsAnimationRef} className="mt-12 md:mt-16 hidden md:flex justify-center min-h-[400px]">
-              {cardsAnimationData && (
+            <div ref={cardsAnimationRef} className="mt-12 md:mt-16 hidden md:flex justify-center" style={{ minHeight: '400px', height: '400px' }}>
+              {cardsAnimationData ? (
                 <Lottie
                   animationData={cardsAnimationData}
                   loop={false}
                   autoplay={true}
                   className="w-full max-w-4xl"
                 />
+              ) : (
+                <div className="w-full max-w-4xl h-[400px]" />
               )}
             </div>
 
@@ -325,11 +331,15 @@ export default function Home() {
                 },
                 {
                   icon: "/images/icons/mouse-icon.png",
+                  width: 64,
+                  height: 64,
                   title: "A one‑click flow anyone can complete.",
                   desc: "No wallet requirements. No chain confusion. No technical steps.",
                 },
                 {
                   icon: "/images/icons/shield-icon.png",
+                  width: 64,
+                  height: 64,
                   title: "The payer → receiver trail stays private.",
                   desc: "Accept payments from any blockchain: no bridges, no swaps, nothing to explain.",
                 },
@@ -368,14 +378,16 @@ export default function Home() {
               How it works
             </h2>
             {/* Desktop: Lottie animation */}
-            <div ref={howItWorksAnimationRef} className="hidden md:flex justify-center min-h-[300px]">
-              {howItWorksAnimationData && (
+            <div ref={howItWorksAnimationRef} className="hidden md:flex justify-center" style={{ minHeight: '300px', height: '300px' }}>
+              {howItWorksAnimationData ? (
                 <Lottie
                   animationData={howItWorksAnimationData}
                   loop={false}
                   autoplay={true}
                   className="w-full max-w-5xl"
                 />
+              ) : (
+                <div className="w-full max-w-5xl h-[300px]" />
               )}
             </div>
 
@@ -441,6 +453,7 @@ export default function Home() {
                 <div
                   key={index}
                   className="rounded-[20px] bg-[#F6F6F8] overflow-hidden"
+                  style={{ minHeight: index === 0 ? 'auto' : undefined }}
                 >
                   <button
                     onClick={(e) => {
@@ -488,7 +501,7 @@ export default function Home() {
 
         {/* CTA Section */}
         <section ref={ctaRef} className="relative z-10 px-4 md:px-8 mb-[-80px]">
-          <div className="max-w-5xl rounded-[40px] mx-auto overflow-hidden">
+          <div className="max-w-5xl rounded-[40px] mx-auto overflow-hidden" style={{ minHeight: '280px' }}>
             <motion.div
               className="rounded-[40px] bg-cover bg-opacity-2"
               style={{
@@ -497,15 +510,17 @@ export default function Home() {
                 backgroundBlendMode: 'lighten',
                 backgroundPosition: 'center',
                 backgroundPositionY: '60%',
+                minHeight: '280px',
               }}
             >
               <div
                 className="rounded-[40px]"
                 style={{
                   backgroundImage: 'linear-gradient(to right, rgba(255,19,1,0.85), rgba(234,179,8,0.85))',
+                  minHeight: '280px',
                 }}
               >
-                <div className="flex flex-col items-center py-12 md:py-18 px-8 md:px-16 text-center">
+                <div className="flex flex-col items-center py-12 md:py-18 px-8 md:px-16 text-center" style={{ minHeight: '280px' }}>
                   <h2 className="text-3xl md:text-6xl font-medium font-sans text-white leading-tight">
                     Ready to get paid<br />
                     privately?
