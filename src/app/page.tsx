@@ -144,7 +144,7 @@ export default function Home() {
   const faqItems = [
     {
       question: "Do I need to connect my wallet to pay?",
-      answer: "Cross-chain: No. You can pay through a deposit wallet address we generate for your payment, and NEAR Intents handles the routing automatically. Same-chain: Yes. Biconomy bundles swap + pay into one transaction you sign once.",
+      answer: " No. You can pay through a deposit wallet address we generate for your payment, and Loofta Pay handles the routing automatically.",
     },
     {
       question: "Can I receive payments privately?",
@@ -290,7 +290,7 @@ export default function Home() {
                   to get paid in crypto.
                 </span>
               </h2>
-              <p className="mt-3 text-base md:text-base text-white/70">
+              <p className="mt-3 text-lg text-white/70">
                 Loofta removes all the friction of multi‑chain payments, for you and your users.
               </p>
             </div>
@@ -473,7 +473,7 @@ export default function Home() {
                         className="overflow-hidden"
                       >
                         <div className="px-6 pb-5">
-                          <p className="text-base md:text-base text-slate-500">
+                          <p className="text-lg  text-slate-500">
                             {item.answer}
                           </p>
                         </div>
