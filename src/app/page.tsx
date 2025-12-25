@@ -225,11 +225,11 @@ export default function Home() {
                   Your payer uses whatever they want.<br className="hidden md:block" />
                   <span className="font-semibold">You always receive exactly what you asked for.</span>
                 </p>
-                <div className="mt-6 flex pb-24 items-center gap-4">
+                <div className="mt-6 flex flex-col sm:flex-row pb-24 items-center gap-4">
                   <Link
                     href="/claim"
                     prefetch={true}
-                    className="rounded-[21px] px-12 py-2 text-base font-medium text-white border-0 shadow-md hover:scale-[1.02] transition-transform inline-flex items-center justify-center"
+                    className="rounded-[21px] px-6 sm:px-12 py-2.5 text-sm sm:text-base font-medium text-white border-0 shadow-md hover:scale-[1.02] transition-transform inline-flex items-center justify-center text-center w-full sm:w-auto"
                     style={{ background: 'linear-gradient(to right, #FF1301, #EAB308)' }}
                   >
                     Create a payment
@@ -238,7 +238,7 @@ export default function Home() {
                     href="https://loofta.gitbook.io/docs"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="rounded-[21px] px-12 py-2 text-base font-medium border-2 border-slate-300 bg-white text-slate-900 shadow-md hover:scale-[1.02] transition-transform hover:bg-slate-50 inline-flex items-center justify-center"
+                    className="rounded-[21px] px-6 sm:px-12 py-2.5 text-sm sm:text-base font-medium border-2 border-slate-300 bg-white text-slate-900 shadow-md hover:scale-[1.02] transition-transform hover:bg-slate-50 inline-flex items-center justify-center text-center w-full sm:w-auto"
                   >
                     Learn more
                   </Link>
@@ -362,8 +362,8 @@ export default function Home() {
                     />
                   </div>
                   <div className="flex flex-col">
-                    <div className="text-lg md:text-xl font-semibold leading-tight">{f.title}</div>
-                    <div className="mt-2 text-base text-white/60 leading-relaxed">{f.desc}</div>
+                    <div className="text-xl font-semibold leading-tight">{f.title}</div>
+                    <div className="mt-2 text-lg text-white/60 leading-relaxed">{f.desc}</div>
                   </div>
                 </motion.div>
               ))}
@@ -433,7 +433,7 @@ export default function Home() {
                   <div className="text-xl font-semibold font-sans text-slate-900 mb-2">
                     {step.title}
                   </div>
-                  <div className="text-md text-slate-500">
+                  <div className="text-lg text-slate-500">
                     {step.desc}
                   </div>
                 </motion.div>
@@ -527,7 +527,7 @@ export default function Home() {
                   </h2>
                   <p className="mt-6 text-lg md:text-xl text-white max-w-xl">
                     Your payer uses whatever they want.<br />
-                    <span className="font-semibold">You always receive exactly what you asked for.</span>
+                    <span className="font-medium">You always receive exactly what you asked for.</span>
                   </p>
                   <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
                     <Link

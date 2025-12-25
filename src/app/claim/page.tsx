@@ -798,7 +798,7 @@ export default function ClaimPage() {
                           className="w-full py-3.5 rounded-lg font-semibold text-gray-900 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-500 hover:to-yellow-500 transition-all flex items-center justify-center gap-2"
                         >
                           <LockIcon className="w-5 h-5" />
-                          Login to create your payment link
+                          Login to create your link
                         </button>
                       )
                     ) : (
@@ -819,7 +819,7 @@ export default function ClaimPage() {
                         >
                           <span className="flex items-center justify-center gap-2">
 
-                            Login to create your payment link
+                            Login to create your  link
                           </span>
                         </button>
                       )
