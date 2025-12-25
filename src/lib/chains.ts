@@ -53,6 +53,10 @@ export function getChainIcon(chain?: string): string | undefined {
 		ton: "/static/icons/network/ton.svg",
 		aptos: "/static/icons/network/aptos.svg",
 		monad: "/static/icons/network/monad.svg",
+		starknet: "/static/icons/network/starknet.svg",
+		bch: "/static/icons/network/bitcoincash.svg",
+		xlayer: "/static/icons/network/layerx.svg",
+		adi: "/static/icons/network/adi.svg",
 	};
 	const local = map[key];
 	if (local) return local;
@@ -85,6 +89,9 @@ export function getChainIcon(chain?: string): string | undefined {
 		litecoin: "LTC",
 		zcash: "ZEC",
 		berachain: "BERA",
+		starknet: "STRK",
+		bch: "BCH",
+		xlayer: "XLAYER",
 	};
 	const sym = chainToSymbol[key];
 	if (sym) {
