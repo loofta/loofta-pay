@@ -446,6 +446,9 @@ export async function POST(request: Request) {
           time_estimate: typeof q?.timeEstimate === "number" ? q.timeEstimate : null,
           status: "PENDING_DEPOSIT",
           last_status_payload: null,
+          // Store route information for timing analysis
+          from_chain: String(fromToken?.chain || "").toLowerCase() || null,
+          to_chain: String(claim.to_chain || "").toLowerCase() || null,
         })
         .select("id")
         .single();

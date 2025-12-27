@@ -17,6 +17,9 @@ import Image from "next/image";
 import { getChainIcon } from "@/lib/chains";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
+import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
+import { QRCodeSVG } from "qrcode.react";
+import { motion } from "framer-motion";
 import { isEvmChainId } from "@/config/biconomy";
 import { createSwapTransaction, getSwapStatus, checkSwapEligibility } from "@/services/swapProvider";
 import { ACTIVE_SWAP_PROVIDER, getProviderDisplayName, type SwapProvider } from "@/config/swapProvider";
@@ -35,7 +38,11 @@ const DEMO_MODE = isDemoMode();
 async function fetchClaim(id: string) {
   const r = await fetch(`/api/claims/${id}`);
   if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || "Claim not found");
-  return (await r.json()).claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string };
+  const data = await r.json();
+  return {
+    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string },
+    latestIntent: data.latestIntent || null,
+  };
 }
 
 async function prepareDeposit(input: {
@@ -58,7 +65,7 @@ async function prepareDeposit(input: {
   return await r.json();
 }
 
-async function updateClaimStatus(claimId: string, status: string, extra?: { txHash?: string; paidWith?: string }) {
+async function updateClaimStatus(claimId: string, status: string, extra?: { txHash?: string; paidWith?: string; depositReceivedAt?: string; originAsset?: string; destinationAsset?: string }) {
   try {
     const r = await fetch(`/api/claims/${claimId}`, {
       method: "PATCH",
@@ -86,21 +93,13 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     refetchOnMount: false,
     retry: 1,
   });
-  const claim = claimQuery.data as any;
+  const claimData = claimQuery.data as any;
+  const claim = claimData?.claim;
   const loadingClaim = claimQuery.isLoading;
-  // Cache latest intent for initial status/deposit hydration
-  const latestIntentQuery = useQuery({
-    queryKey: ["latest-intent", id],
-    queryFn: async () => {
-      const r = await fetch(`/api/claims/${id}/latest-intent`, { cache: "no-store" });
-      if (!r.ok) return null;
-      return await r.json();
-    },
-    enabled: !!id,
-    staleTime: 30_000,
-    gcTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
-  });
+  // Extract latest intent from claim query (merged into main GET endpoint)
+  const latestIntentData = useMemo(() => {
+    return claimData?.latestIntent || null;
+  }, [claimData]);
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
   const [deposit, setDeposit] = useState<any>(null);
   const [preparing, setPreparing] = useState(false);
@@ -234,7 +233,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     // Don't re-hydrate if user cancelled
     if (userCancelled.current) return;
 
-    const d: any = latestIntentQuery.data;
+    const d: any = latestIntentData;
     if (!d) return;
     // Set deposit if we have a depositAddress and haven't set it yet
     if (d?.depositAddress && !deposit) {
@@ -254,7 +253,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       setStatus(s);
       useClaimPayStore.getState().setStatus(id, s);
     }
-  }, [latestIntentQuery.data, deposit, status, id]);
+  }, [latestIntentData, deposit, status, id]);
 
   // Hydrate status from claim data (for cross-device support)
   useEffect(() => {
@@ -435,9 +434,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       }
 
       setPreparing(true);
-      setStatus("PROCESSING");
-      useClaimPayStore.getState().setStatus(id, "PROCESSING");
-      updateClaimStatus(id, "PROCESSING", { paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}` });
+      // Don't set status to PROCESSING yet - wait until deposit is actually received
+      // For Rhinestone: deposit happens when funding tx confirms
+      // For Biconomy: deposit happens when transaction is sent
 
       const providerName = getProviderDisplayName(activeProvider);
       console.log(`[${providerName}] Starting payment:`, {
@@ -500,6 +499,16 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         if (meta?.step === "skip-funding") {
           console.log("[Rhinestone] Companion already funded, executing intent directly...");
           toast({ title: "Companion funded", description: "Executing swap + transfer..." });
+
+          // Skip-funding: companion already funded, deposit happened earlier
+          // Use current time as deposit received (or we could track when companion was funded)
+          const depositReceivedAt = new Date().toISOString();
+          setStatus("PROCESSING");
+          useClaimPayStore.getState().setStatus(id, "PROCESSING");
+          updateClaimStatus(id, "PROCESSING", {
+            paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}`,
+            depositReceivedAt
+          });
         } else {
           // Need to fund the companion first
           console.log("[Rhinestone] Funding companion account...");
@@ -513,6 +522,16 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
           await tx.wait();
           console.log("[Rhinestone] Funding transaction confirmed on-chain");
+
+          // Deposit is received when funding transaction confirms
+          const depositReceivedAt = new Date().toISOString();
+          setStatus("PROCESSING");
+          useClaimPayStore.getState().setStatus(id, "PROCESSING");
+          updateClaimStatus(id, "PROCESSING", {
+            paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}`,
+            depositReceivedAt // Pass deposit time to API
+          });
+
           toast({ title: "Funding confirmed ✓", description: "Waiting for balance to sync..." });
 
           // Wait for balance to be indexed (Rhinestone needs this)
@@ -554,6 +573,15 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         toast({ title: "Payment complete!", description: `Swap + transfer successful via Rhinestone.` });
       } else {
         // Non-Rhinestone flow (Biconomy or others)
+        // Deposit happens when transaction is sent (before confirmation)
+        const depositReceivedAt = new Date().toISOString();
+        setStatus("PROCESSING");
+        useClaimPayStore.getState().setStatus(id, "PROCESSING");
+        updateClaimStatus(id, "PROCESSING", {
+          paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}`,
+          depositReceivedAt
+        });
+
         const tx = await signer.sendTransaction({
           to,
           data: data || "0x",
@@ -596,7 +624,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   }
 
   // Cache and refresh status via TanStack Query
-  const depositAddress = deposit?.depositAddress as string | undefined;
+  // Get deposit address from multiple sources
+  const depositAddress: string | undefined = deposit?.depositAddress
+    || statusData?.quoteResponse?.quote?.depositAddress
+    || statusData?.depositAddress
+    || undefined;
   const statusQuery = useQuery({
     queryKey: ["status", depositAddress],
     enabled: !!depositAddress,
@@ -623,9 +655,33 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     const s = statusQuery.data?.status || statusQuery.data?.executionStatus || null;
     if (s) {
       const upperStatus = String(s).toUpperCase();
+      const previousStatus = status ? String(status).toUpperCase() : null;
+
       setStatus(s);
       useClaimPayStore.getState().setStatus(id, s);
       setStatusData(statusQuery.data || null);
+
+      // When status first becomes PROCESSING (from NEAR Intents deposit detection), set deposit_received_at
+      if (upperStatus === "PROCESSING" && previousStatus !== "PROCESSING") {
+        // Extract route information from status data if available
+        const originAsset = statusQuery.data?.originAsset;
+        const destinationAsset = statusQuery.data?.destinationAsset;
+
+        // Deposit was just detected - record the time
+        updateClaimStatus(id, "PROCESSING", {
+          paidWith: paidToken?.symbol
+            ? `${paidToken.symbol} on ${paidToken.chain || selectedFrom?.chain}`
+            : selectedFrom?.symbol
+              ? `${selectedFrom.symbol} on ${selectedFrom.chain}`
+              : undefined,
+          depositReceivedAt: new Date().toISOString(), // Record when deposit was detected
+          // Store route info from 1-click API response
+          originAsset,
+          destinationAsset,
+        }).catch((e) => {
+          console.error("[statusQuery] Failed to update deposit_received_at:", e);
+        });
+      }
 
       // When status becomes terminal, update the claim in DB (only once per status)
       const isTerminalStatus = ["SUCCESS", "FAILED", "REFUNDED"].includes(upperStatus);
@@ -843,60 +899,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       <div className="fixed inset-0 -z-10 bg-[#18181F]" />
       <div className="min-h-screen text-white">
         <div className="max-w-7xl mx-auto px-4 pb-12">
-          <div className="flex flex-col md:flex-row items-center justify-center gap-32 min-h-[calc(100vh-7rem)]">
-            {/* Left column - text/summary */}
-            <div className="w-full md:w-1/2">
-              {String(status || "").toUpperCase() === "SUCCESS" ? (
-                <>
-                  <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
-                    Want to request <span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>payment?</span>
-                  </h1>
-                  <p className="text-gray-300 text-xl mb-8">Create your own payment link and get paid in any token you want.</p>
-                  <a
-                    href="/claim"
-                    className="inline-flex items-center gap-2 rounded-full px-8 py-4 text-base font-semibold text-white hover:opacity-90 transition-opacity"
-                    style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
-                  >
-                    Create your pay link
-                  </a>
-                </>
-              ) : (
-                <>
-                  <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
-                    Complete your <span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>payment</span>
-                  </h1>
-                  <p className="text-gray-300 text-xl mb-8">Loofta ensures your funds are securely deposited and your payment is completed. Send exactly the amount shown to the deposit address. </p>
-                  <ul className="mt-6 space-y-4">
-                    <li className="flex items-start gap-3">
-                      <MoneyIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                      <span className="text-gray-300 text-xl">
-                        Amount due:{" "}
-                        {(loadingClaim || !claim) ? (
-                          <span className="align-middle inline-block">
-                            <Skeleton className="h-5 w-28 rounded-md" />
-                          </span>
-                        ) : (
-                          <span className="text-white font-semibold">
-                            {destUSD != null ? `$${destUSD.toFixed(2)}` : `${claim.amount} ${claim.to_symbol}`}
-                          </span>
-                        )}
-                      </span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                      <ChainIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                      <span className="text-gray-300 text-xl">Choose which token you want to pay with</span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                      <ShareIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                      <span className="text-gray-300 text-xl">Send exactly the amount shown to the deposit address</span>
-                    </li>
-                  </ul>
-                </>
-              )}
-            </div>
-
-            {/* Right column - card */}
-            <div className="w-full md:w-1/2">
+          <div className="flex items-center justify-center min-h-[calc(100vh-7rem)]">
+            {/* Centered card - full width */}
+            <div className="w-full max-w-2xl">
               <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm text-gray-900">
                 {/* Demo Mode Banner */}
                 {DEMO_MODE && (
@@ -918,16 +923,16 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                   <>
                     {String(status || "").toUpperCase() === "SUCCESS" ? (
                       <>
-                        <div className="flex justify-center">
-                          <div className="flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-400/30 shadow">
-                            <svg className="h-12 w-12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                              <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          </div>
-                        </div>
-                        <div className="mt-4 text-center">
-                          <h2 className="text-2xl md:text-3xl text-gray-900 font-semibold">Payment completed</h2>
-                          <p className="mt-1 text-lg md:text-xl text-gray-700 font-medium">Funds were paid successfully.</p>
+                        <div className="mt-6">
+                          <PaymentStatusTracker
+                            status={status}
+                            statusData={statusData}
+                            depositReceivedAt={latestIntentData?.depositReceivedAt || statusData?.updatedAt}
+                            startedAt={claim.created_at}
+                            fromChain={selectedFrom?.chain}
+                            toChain={destToken?.chain}
+                            depositAddress={deposit?.depositAddress}
+                          />
                         </div>
                         <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
                           <div className="text-base font-medium text-gray-800 mb-2">Payment summary</div>
@@ -1108,17 +1113,45 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                         {(() => {
                           const s = String(status || "").toUpperCase();
                           const isTerminal = s === "FAILED" || s === "REFUNDED";
-                          if (s === "PROCESSING") {
+
+                          // Get deposit address from multiple sources - ALWAYS show for PENDING_DEPOSIT/INCOMPLETE_DEPOSIT
+                          const depositAddr = deposit?.depositAddress
+                            || statusData?.quoteResponse?.quote?.depositAddress
+                            || statusData?.depositAddress
+                            || latestIntentData?.depositAddress;
+                          const amountToSend = deposit?.minAmountInFormatted
+                            || statusData?.quoteResponse?.quote?.amountInFormatted
+                            || quote?.amountInFormatted;
+                          const timeEstimate = statusData?.quoteResponse?.quote?.timeEstimate
+                            || deposit?.timeEstimate;
+
+                          // Debug log
+                          if (!depositAddr && statusData) {
+                            console.log('[DEBUG] No deposit address found. statusData:', {
+                              hasQuoteResponse: !!statusData?.quoteResponse,
+                              hasQuote: !!statusData?.quoteResponse?.quote,
+                              depositAddress: statusData?.quoteResponse?.quote?.depositAddress,
+                              statusDataKeys: Object.keys(statusData || {}),
+                            });
+                          }
+
+                          // Show status tracker for active payment states (PROCESSING/KNOWN_DEPOSIT_TX only)
+                          if (s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX") {
                             return (
                               <>
-                                <div className="mt-6 flex flex-col items-center justify-center py-6">
-                                  <div className="relative h-10 w-10">
-                                    <span className="absolute inset-0 rounded-full border-2 border-gray-300" />
-                                    <span className="absolute inset-1 rounded-full border-t-2 border-blue-500 animate-spin" />
-                                  </div>
-                                  <div className="mt-4 text-base text-gray-700">Payment is processing…</div>
+                                <div className="mt-6">
+                                  <PaymentStatusTracker
+                                    status={status}
+                                    statusData={statusData}
+                                    depositReceivedAt={latestIntentData?.depositReceivedAt || statusData?.updatedAt}
+                                    startedAt={deposit?.deadline ? new Date(deposit.deadline).toISOString() : undefined}
+                                    fromChain={selectedFrom?.chain}
+                                    toChain={destToken?.chain}
+                                    depositAddress={depositAddr}
+                                    timeEstimate={timeEstimate}
+                                  />
                                 </div>
-                                <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                                <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
                                   <div className="text-lg font-semibold text-gray-900 mb-2">Payment summary</div>
                                   <div className="text-base text-gray-700 space-y-1">
                                     <div className="flex items-center justify-between">
@@ -1163,191 +1196,333 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     Please try again with a different token or network.
                                   </div>
                                 </div>
-                                <div className="mt-2 flex justify-end">
-                                  <Button
-                                    variant="outline"
-                                    onClick={() => {
-                                      // Set flag to prevent re-hydration from cache
-                                      userCancelled.current = true;
-                                      setDeposit(null);
-                                      setStatus(null);
-                                      setFromSel(undefined);
-                                      useClaimPayStore.getState().setDeposit(id, null);
-                                      useClaimPayStore.getState().setStatus(id, null);
-                                      useClaimPayStore.getState().setFromSel(id, null as any);
-                                    }}
-                                    className="ml-auto"
-                                  >
-                                    Retry with another token/chain
-                                  </Button>
-                                </div>
                               </>
                             );
                           }
+
+                          // For PENDING_DEPOSIT and INCOMPLETE_DEPOSIT - show deposit info FIRST, then status tracker
                           return (
                             <div className="mt-6">
-                              <div className="text-base text-gray-700">Send exactly</div>
-                              <div className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
-                                <TokenIcon
-                                  token={(selectedFrom as any) ?? (destToken as any) ?? undefined}
-                                  chain={(selectedFrom?.chain as any) ?? (destToken?.chain as any)}
-                                  size={18}
-                                />
-                                <span>
-                                  {/* Use deposit.minAmountInFormatted (from /api/claims/deposit) as it's the actual required amount */}
-                                  {deposit?.minAmountInFormatted && selectedFrom
-                                    ? `${deposit.minAmountInFormatted} ${selectedFrom.symbol}`
-                                    : quote?.amountInFormatted && selectedFrom
-                                      ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                      : `${roundUpDecimals(claim.amount, 6)} ${claim.to_symbol}`}
-                                </span>
-                                <span className="mx-1 text-gray-400">•</span>
-                                <span className="inline-flex items-center gap-1 uppercase text-sm font-medium text-gray-700">
-                                  {(() => {
-                                    const chain = (selectedFrom?.chain || destToken?.chain) as string | undefined;
-                                    const src = getChainIcon(chain);
-                                    return src ? (
-                                      <Image src={src} alt="chain" width={14} height={14} sizes="14px" unoptimized={/^https?:\/\//.test(src)} />
-                                    ) : null;
-                                  })()}
-                                  {String((selectedFrom?.chain || destToken?.chain) || "")}
-                                </span>
-                              </div>
-                              <div className="mt-3 text-sm text-gray-700">Deposit address</div>
-                              <div className="mt-1 relative">
-                                <div className="rounded-lg border border-gray-200 bg-gray-50 pl-3 pr-16 py-2 font-mono text-base break-all text-gray-900">
-                                  {(() => {
-                                    const addr = deposit.depositAddress || "";
-                                    return addr ? `${addr.slice(0, 4)}...${addr.slice(-4)}` : "—";
-                                  })()}
-                                </div>
-                                <button
-                                  type="button"
-                                  className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-                                  onClick={async () => {
-                                    try {
-                                      await navigator.clipboard.writeText(deposit.depositAddress || "");
-                                      toast({ title: "Copied", description: "Deposit address copied to clipboard." });
-                                    } catch {
-                                      toast({ variant: "destructive", title: "Copy failed", description: "Could not copy address. Please try again." });
-                                    }
-                                  }}
-                                >
-                                  <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" className="text-gray-600">
-                                    <path fill="currentColor" d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
-                                  </svg>
-                                  Copy
-                                </button>
-                              </div>
-                              {deposit?.isCompanionSwap ? (
-                                <div className="mt-3 rounded-md border border-blue-200 bg-blue-50 text-blue-800 text-sm px-3 py-2">
-                                  <div className="flex items-center gap-2 font-medium">
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                                    </svg>
-                                    Same-chain swap enabled
-                                  </div>
-                                  <div className="mt-1">
-                                    Send {selectedFrom?.symbol} to this address. We'll automatically swap to {claim?.to_symbol} and send to the recipient.
-                                    {deposit?.fee && <span className="ml-1">({deposit.fee} service fee)</span>}
-                                  </div>
-                                </div>
-                              ) : deposit?.isDirect ? (
-                                <div className="mt-3 rounded-md border border-green-200 bg-green-50 text-green-800 text-sm px-3 py-2">
-                                  <div className="flex items-center gap-2 font-medium">
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                    </svg>
-                                    Direct transfer
-                                  </div>
-                                  <div className="mt-1">
-                                    Send {selectedFrom?.symbol} directly to the recipient's wallet. Same token, same chain - no swap needed.
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="mt-3 rounded-md border border-orange-200 bg-orange-50 text-orange-800 text-sm px-3 py-2">
-                                  Only deposit {selectedFrom?.symbol} from the {String(selectedFrom?.chain || "").toUpperCase()} network. Using another token or network may result in loss of funds.
-                                </div>
-                              )}
-                              {String(status || "").toUpperCase() === "INCOMPLETE_DEPOSIT" ? (
-                                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 text-amber-900 text-sm  px-3 py-2">
-                                  <div className="text-sm font-semibold">Partial deposit detected</div>
-                                  <div className="mt-1">
-                                    {(() => {
-                                      const depStr = String(statusData?.swapDetails?.depositedAmountFormatted ?? "");
-                                      const minStr = String(deposit?.minDepositFormatted ?? "");
-                                      const dep = parseFloat(depStr);
-                                      const min = parseFloat(minStr);
-                                      const sym = selectedFrom?.symbol || claim?.to_symbol || "";
-                                      if (Number.isFinite(min) && Number.isFinite(dep)) {
-                                        const remaining = Math.max(min - dep, 0);
-                                        const topUp = roundUpDecimals(remaining, 6);
-                                        return (
-                                          <>
-                                            Deposited: {roundUpDecimals(dep, 6)} {sym} • Minimum required: {roundUpDecimals(min, 6)} {sym} •
-                                            <span className="font-semibold"> Top‑up needed: {topUp} {sym}</span>
-                                          </>
-                                        );
-                                      }
-                                      return <>Top up the difference to reach the minimum required amount.</>;
-                                    })()}
-                                  </div>
-                                  <div className="mt-1">Send the additional amount to the same deposit address before the deadline.</div>
-                                </div>
-                              ) : null}
-                              <div className="mt-3">
-                                {!speedUpOpen ? (
-                                  <button
-                                    type="button"
-                                    className="text-sm text-orange-600 hover:text-orange-500 underline"
-                                    onClick={() => setSpeedUpOpen(true)}
-                                  >
-                                    Already deposited? Speed up processing
-                                  </button>
-                                ) : (
-                                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                                    <div className="text-sm font-medium text-gray-800">Submit your transaction hash</div>
-                                    <div className="text-sm  text-gray-600">Paste a hash or an explorer link — we’ll extract the hash automatically.</div>
-                                    <div className="mt-2 flex items-center gap-2">
-                                      <Input
-                                        value={txInput}
-                                        onChange={(e) => setTxInput(e.target.value)}
-                                        placeholder="0x... or explorer link"
-                                        className="flex-1"
-                                      />
-                                      <Button
-                                        onClick={onSubmitTxHash}
-                                        disabled={submittingTx || !txInput}
-                                        className="rounded-xl"
-                                        style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                                      >
-                                        {submittingTx ? "Submitting…" : "Submit"}
-                                      </Button>
+                              {depositAddr ? (
+                                <>
+                                  {/* Amount to Pay - AT THE TOP */}
+                                  <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                                    <div className="text-base text-gray-700 space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-gray-600">Amount to pay</span>
+                                        <span className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
+                                          <TokenIcon
+                                            token={(selectedFrom as any) ?? (destToken as any) ?? undefined}
+                                            chain={(selectedFrom?.chain as any) ?? (destToken?.chain as any)}
+                                            size={24}
+                                          />
+                                          <span>
+                                            {amountToSend && selectedFrom
+                                              ? `${roundUpDecimals(amountToSend, 6)} ${selectedFrom.symbol}`
+                                              : quote?.amountInFormatted && selectedFrom
+                                                ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                                : `${roundUpDecimals(claim.amount, 6)} ${claim.to_symbol}`}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors ml-2"
+                                            onClick={async () => {
+                                              try {
+                                                const amountToCopy = amountToSend && selectedFrom
+                                                  ? roundUpDecimals(amountToSend, 6)
+                                                  : quote?.amountInFormatted && selectedFrom
+                                                    ? roundUpDecimals(quote.amountInFormatted, 6)
+                                                    : roundUpDecimals(claim.amount, 6);
+                                                await navigator.clipboard.writeText(amountToCopy);
+                                                toast({ title: "Copied", description: "Amount copied to clipboard." });
+                                              } catch {
+                                                toast({ variant: "destructive", title: "Copy failed", description: "Could not copy amount. Please try again." });
+                                              }
+                                            }}
+                                            title="Copy amount"
+                                          >
+                                            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+                                              <path d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
+                                            </svg>
+                                          </button>
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-gray-600">Deposit address</span>
+                                        <span className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
+                                          <span className="font-mono text-sm break-all">
+                                            {depositAddr}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors ml-2"
+                                            onClick={async () => {
+                                              try {
+                                                await navigator.clipboard.writeText(depositAddr);
+                                                toast({ title: "Copied", description: "Deposit address copied to clipboard." });
+                                              } catch {
+                                                toast({ variant: "destructive", title: "Copy failed", description: "Could not copy address. Please try again." });
+                                              }
+                                            }}
+                                            title="Copy address"
+                                          >
+                                            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+                                              <path d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
+                                            </svg>
+                                          </button>
+                                        </span>
+                                      </div>
                                     </div>
                                   </div>
-                                )}
-                              </div>
-                              {deposit.memo ? (
-                                <>
-                                  <div className="mt-3 text-sm text-gray-700">Memo</div>
-                                  <div className="mt-1 font-mono text-sm break-all text-gray-900">{deposit.memo}</div>
+
+                                  {/* Companion Swap, Direct Transfer, Incomplete Deposit, Speed Up, Memo, Deadline - BELOW AMOUNT/DEPOSIT */}
+                                  {deposit?.isCompanionSwap ? (
+                                    <div className="mt-3 rounded-md border border-blue-200 bg-blue-50 text-blue-800 text-sm px-3 py-2">
+                                      <div className="flex items-center gap-2 font-medium">
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                        </svg>
+                                        Same-chain swap enabled
+                                      </div>
+                                      <div className="mt-1">
+                                        Send {selectedFrom?.symbol} to this address. We'll automatically swap to {claim?.to_symbol} and send to the recipient.
+                                        {deposit?.fee && <span className="ml-1">({deposit.fee} service fee)</span>}
+                                      </div>
+                                    </div>
+                                  ) : deposit?.isDirect ? (
+                                    <div className="mt-3 rounded-md border border-green-200 bg-green-50 text-green-800 text-sm px-3 py-2">
+                                      <div className="flex items-center gap-2 font-medium">
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        Direct transfer
+                                      </div>
+                                      <div className="mt-1">
+                                        Send {selectedFrom?.symbol} directly to the recipient's wallet. Same token, same chain - no swap needed.
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="mt-3 rounded-md border border-orange-200 bg-orange-50 text-orange-800 text-sm px-3 py-2">
+                                      Only deposit {selectedFrom?.symbol} from the {String(selectedFrom?.chain || "").toUpperCase()} network. Using another token or network may result in loss of funds.
+                                    </div>
+                                  )}
+                                  {String(status || "").toUpperCase() === "INCOMPLETE_DEPOSIT" ? (
+                                    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 text-amber-900 text-sm  px-3 py-2">
+                                      <div className="text-sm font-semibold">Partial deposit detected</div>
+                                      <div className="mt-1">
+                                        {(() => {
+                                          const depStr = String(statusData?.swapDetails?.depositedAmountFormatted ?? "");
+                                          const minStr = String(deposit?.minDepositFormatted ?? "");
+                                          const dep = parseFloat(depStr);
+                                          const min = parseFloat(minStr);
+                                          const sym = selectedFrom?.symbol || claim?.to_symbol || "";
+                                          if (Number.isFinite(min) && Number.isFinite(dep)) {
+                                            const remaining = Math.max(min - dep, 0);
+                                            const topUp = roundUpDecimals(remaining, 6);
+                                            return (
+                                              <>
+                                                Deposited: {roundUpDecimals(dep, 6)} {sym} • Minimum required: {roundUpDecimals(min, 6)} {sym} •
+                                                <span className="font-semibold"> Top‑up needed: {topUp} {sym}</span>
+                                              </>
+                                            );
+                                          }
+                                          return <>Top up the difference to reach the minimum required amount.</>;
+                                        })()}
+                                      </div>
+                                      <div className="mt-1">Send the additional amount to the same deposit address before the deadline.</div>
+                                    </div>
+                                  ) : null}
+                                  <div className="mt-3">
+                                    {!speedUpOpen ? (
+                                      <button
+                                        type="button"
+                                        className="text-sm text-orange-600 hover:text-orange-500 underline"
+                                        onClick={() => setSpeedUpOpen(true)}
+                                      >
+                                        Already deposited? Speed up processing
+                                      </button>
+                                    ) : (
+                                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                        <div className="text-sm font-medium text-gray-800">Submit your transaction hash</div>
+                                        <div className="text-sm  text-gray-600">Paste a hash or an explorer link — we'll extract the hash automatically.</div>
+                                        <div className="mt-2 flex items-center gap-2">
+                                          <Input
+                                            value={txInput}
+                                            onChange={(e) => setTxInput(e.target.value)}
+                                            placeholder="0x... or explorer link"
+                                            className="flex-1"
+                                          />
+                                          <Button
+                                            onClick={onSubmitTxHash}
+                                            disabled={submittingTx || !txInput}
+                                            className="rounded-xl"
+                                            style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+                                          >
+                                            {submittingTx ? "Submitting…" : "Submit"}
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {deposit?.memo ? (
+                                    <>
+                                      <div className="mt-3 text-sm text-gray-700">Memo</div>
+                                      <div className="mt-1 font-mono text-sm break-all text-gray-900">{deposit.memo}</div>
+                                    </>
+                                  ) : null}
+
+                                  {/* Animated Character and Status Message - ABOVE QR CODE */}
+                                  {(() => {
+                                    const s = String(status || "PENDING_DEPOSIT").toUpperCase();
+                                    let statusTitle = "Waiting for Deposit";
+                                    let statusSubtitle = "Send the exact amount to the deposit address shown below.";
+                                    const isProcessing = s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX";
+                                    const isSuccess = s === "SUCCESS";
+                                    const isWaiting = s === "PENDING_DEPOSIT" || !status;
+
+                                    if (s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX") {
+                                      statusTitle = "Processing Your Payment";
+                                      statusSubtitle = "We're routing your funds and executing the swap. This usually takes 1-2 minutes.";
+                                    } else if (s === "INCOMPLETE_DEPOSIT") {
+                                      statusTitle = "Incomplete Deposit";
+                                      statusSubtitle = "Please send the remaining amount to complete your payment.";
+                                    } else if (s === "SUCCESS") {
+                                      statusTitle = "Payment Complete! 🎉";
+                                      statusSubtitle = "Your funds have been successfully sent to the recipient.";
+                                    } else if (s === "REFUNDED") {
+                                      statusTitle = "Payment Refunded";
+                                      statusSubtitle = "Your deposit has been refunded. Please check your wallet.";
+                                    } else if (s === "FAILED") {
+                                      statusTitle = "Payment Failed";
+                                      statusSubtitle = "The payment could not be completed. Your funds may be refunded.";
+                                    }
+
+                                    return (
+                                      <div className="mb-6 text-center">
+                                        {/* Animated Character */}
+                                        <div className="mb-4 flex justify-center">
+                                          {isProcessing ? (
+                                            <motion.div
+                                              animate={{ rotate: [0, 10, -10, 10, -10, 0] }}
+                                              transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                                              className="text-6xl"
+                                            >
+                                              ⚡
+                                            </motion.div>
+                                          ) : isSuccess ? (
+                                            <motion.div
+                                              initial={{ scale: 0 }}
+                                              animate={{ scale: [0, 1.2, 1] }}
+                                              transition={{ duration: 0.5 }}
+                                              className="text-6xl"
+                                            >
+                                              🎉
+                                            </motion.div>
+                                          ) : isWaiting ? (
+                                            <motion.div
+                                              animate={{ y: [0, -10, 0] }}
+                                              transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                                              className="text-6xl"
+                                            >
+                                              💳
+                                            </motion.div>
+                                          ) : (
+                                            <div className="text-6xl">💳</div>
+                                          )}
+                                        </div>
+
+                                        {/* Status Message */}
+                                        <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                                          {statusTitle}
+                                        </h3>
+                                        <p className="text-gray-600 text-base">
+                                          {statusSubtitle}
+                                        </p>
+                                      </div>
+                                    );
+                                  })()}
+
+                                  {/* Progress Bar and Step Counter - BELOW QR CODE */}
+                                  {(() => {
+                                    // Calculate steps and progress based on status
+                                    const s = String(status || "PENDING_DEPOSIT").toUpperCase();
+                                    let completedSteps = 0;
+                                    const totalSteps = 5; // deposit, routing, processing, sending, success
+
+                                    if (s === 'SUCCESS') {
+                                      completedSteps = 5;
+                                    } else if (s === 'PROCESSING' || s === 'KNOWN_DEPOSIT_TX') {
+                                      completedSteps = 1; // Deposit completed, routing active
+                                    } else if (s === 'INCOMPLETE_DEPOSIT') {
+                                      completedSteps = 0; // Deposit active but incomplete
+                                    } else {
+                                      completedSteps = 0; // PENDING_DEPOSIT
+                                    }
+
+                                    const progress = (completedSteps / (totalSteps - 1)) * 100; // -1 because success step doesn't count
+
+                                    return (
+                                      <div className="mb-6">
+                                        {/* Progress Bar */}
+                                        <div className="mb-2">
+                                          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                                            <motion.div
+                                              initial={{ width: 0 }}
+                                              animate={{ width: `${progress}%` }}
+                                              transition={{ duration: 0.5, ease: 'easeOut' }}
+                                              className="h-full rounded-full"
+                                              style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                                            />
+                                          </div>
+                                        </div>
+                                        {/* Step Counter */}
+                                        <div className="text-center text-sm text-gray-500">
+                                          Step {completedSteps} of {totalSteps - 1}
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
+
+                                  {/* QR Code and Deposit Address - BELOW STATUS MESSAGE */}
+                                  <div className="mb-6">
+                                    <div className="text-base font-medium text-gray-700 mb-4">Scan to pay</div>
+                                    <div className="flex flex-col items-center gap-6">
+                                      {/* QR Code */}
+                                      <div className="flex items-center justify-center p-6 bg-white rounded-xl border-2 border-gray-200 shadow-sm">
+                                        <QRCodeSVG
+                                          value={depositAddr}
+                                          size={100}
+                                          level="M"
+                                          includeMargin={true}
+                                          fgColor="#000000"
+                                          bgColor="#ffffff"
+                                        />
+                                      </div>
+
+
+                                    </div>
+                                  </div>
+
+
+                                  {/* Timeline/Steps - BELOW PROGRESS BAR */}
+                                  <div className="mb-6">
+                                    <PaymentStatusTracker
+                                      status={status || "PENDING_DEPOSIT"}
+                                      statusData={statusData}
+                                      depositReceivedAt={latestIntentData?.depositReceivedAt || (status === "PROCESSING" ? statusData?.updatedAt : null)}
+                                      startedAt={deposit?.deadline ? new Date(deposit.deadline).toISOString() : undefined}
+                                      fromChain={selectedFrom?.chain}
+                                      toChain={destToken?.chain}
+                                      depositAddress={depositAddr}
+                                      timeEstimate={timeEstimate}
+                                    />
+                                  </div>
                                 </>
                               ) : null}
-                              {deposit.deadline ? (
+                              {/* Deadline at the very bottom */}
+                              {deposit?.deadline ? (
                                 <div className="mt-3 text-sm text-gray-700">Deadline: <span className="font-medium">{new Date(deposit.deadline).toLocaleString()}</span></div>
                               ) : null}
-                              <div className="mt-4 flex gap-2">
-                                <Button variant="outline" onClick={() => {
-                                  // Set flag to prevent re-hydration from cache
-                                  userCancelled.current = true;
-                                  setDeposit(null);
-                                  setStatus(null);
-                                  setFromSel(undefined); // Also clear token selection
-                                  useClaimPayStore.getState().setDeposit(id, null);
-                                  useClaimPayStore.getState().setStatus(id, null);
-                                  useClaimPayStore.getState().setFromSel(id, null as any);
-                                }} className="ml-auto">Cancel & choose another token</Button>
-                              </div>
                             </div>
                           );
                         })()}
