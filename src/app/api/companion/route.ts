@@ -139,14 +139,59 @@ async function updatePaymentLog(id: string, updates: Partial<PaymentLog>): Promi
  * GET /api/companion?recipient=0x...&numTickets=1&totalCostETH=0.0035
  * Get or create companion wallet for a recipient address
  * 
+ * GET /api/companion?logs=true
+ * Get recent payment logs (admin endpoint)
+ * 
  * Query params:
  * - recipient: EVM address where tickets will be minted
  * - numTickets: Number of tickets to purchase (optional, default 1)
  * - totalCostETH: Total ETH required for purchase (optional)
+ * - logs: If true, fetch payment logs (admin only)
  */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
+    
+    // Check if this is a payment logs request
+    if (searchParams.get("logs") === "true") {
+      // Admin-only endpoint for payment logs
+      const userId = request.headers.get("x-privy-user-id");
+      if (!userId) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+      
+      const { isAdmin } = await import("@/lib/admin");
+      const adminStatus = await isAdmin(userId);
+      if (!adminStatus) {
+        return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+      }
+
+      const redis = await getRedis();
+      
+      // Get last 50 payment IDs
+      const paymentIds = await redis.lRange(PAYMENT_LIST_KEY, 0, 49);
+      
+      if (!paymentIds || paymentIds.length === 0) {
+        return NextResponse.json({ payments: [], count: 0 });
+      }
+
+      // Fetch all payment logs
+      const payments: PaymentLog[] = [];
+      for (const id of paymentIds) {
+        const logStr = await redis.get(`${PAYMENT_LOG_PREFIX}${id}`);
+        if (logStr) {
+          payments.push(JSON.parse(logStr));
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        payments,
+        count: payments.length,
+      });
+    }
+    
+    // Original GET logic for companion wallet
     const recipientAddress = searchParams.get("recipient");
     const numTickets = parseInt(searchParams.get("numTickets") || "1");
     const totalCostETH = searchParams.get("totalCostETH") || undefined;
@@ -901,51 +946,3 @@ export async function DELETE(request: NextRequest) {
   }
 }
 
-/**
- * PATCH /api/companion
- * Get recent payment logs (admin endpoint)
- * Note: Use PUT with ?companionAddress=0x... to manually trigger execution
- */
-export async function PATCH(request: NextRequest) {
-  // Check if this is a manual trigger request
-  const { searchParams } = new URL(request.url);
-  const companionAddress = searchParams.get("companionAddress");
-  
-  if (companionAddress) {
-    // This is a manual trigger request - delegate to PUT handler
-    return PUT(request);
-  }
-  
-  // Otherwise, fetch payment logs (admin endpoint)
-  try {
-    const redis = await getRedis();
-    
-    // Get last 50 payment IDs
-    const paymentIds = await redis.lRange(PAYMENT_LIST_KEY, 0, 49);
-    
-    if (!paymentIds || paymentIds.length === 0) {
-      return NextResponse.json({ payments: [], count: 0 });
-    }
-
-    // Fetch all payment logs
-    const payments: PaymentLog[] = [];
-    for (const id of paymentIds) {
-      const logStr = await redis.get(`${PAYMENT_LOG_PREFIX}${id}`);
-      if (logStr) {
-        payments.push(JSON.parse(logStr));
-      }
-    }
-
-    return NextResponse.json({
-      success: true,
-      payments,
-      count: payments.length,
-    });
-  } catch (error: any) {
-    console.error("[Companion API] Error fetching payments:", error);
-    return NextResponse.json(
-      { error: error?.message || "Failed to fetch payments" },
-      { status: 500 }
-    );
-  }
-}
