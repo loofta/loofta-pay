@@ -311,7 +311,9 @@ export async function POST(request: Request) {
       amount: amountInAtomic,
       refundTo: userAddress || refundAddress,
       refundType: "INTENTS" as any,
-      recipient: userAddress || claim.recipient_address,
+      // CRITICAL: recipient must be the claim's recipient_address, NOT userAddress
+      // userAddress is only for refunds, not for where the payment should go
+      recipient: claim.recipient_address,
       recipientType: "INTENTS" as any,
       deadline: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
       quoteWaitingTimeMs: 3000,

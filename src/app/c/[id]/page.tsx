@@ -40,7 +40,7 @@ async function fetchClaim(id: string) {
   if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || "Claim not found");
   const data = await r.json();
   return {
-    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string },
+    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -987,7 +987,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                       <>
                         <div className="mb-3 flex items-start justify-between">
                           <div className="text-base font-medium text-gray-700">Payment request</div>
-                          {deposit?.depositAddress ? <StatusBadge status={status || "PENDING_DEPOSIT"} /> : null}
+                          {claim?.creator_email ? (
+                            <div className="text-sm text-gray-600">
+                              {claim.creator_email}
+                            </div>
+                          ) : null}
                         </div>
                         <div className="text-base text-gray-700">Amount requested</div>
                         <div className="mt-1 flex items-baseline justify-between">
@@ -1113,6 +1117,29 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                         {(() => {
                           const s = String(status || "").toUpperCase();
                           const isTerminal = s === "FAILED" || s === "REFUNDED";
+
+                          // Check if deadline has expired (only for PENDING_DEPOSIT/INCOMPLETE_DEPOSIT)
+                          const isExpired = (s === "PENDING_DEPOSIT" || s === "INCOMPLETE_DEPOSIT") && deposit?.deadline
+                            ? new Date(deposit.deadline).getTime() < Date.now()
+                            : false;
+
+                          // If expired, show expired message
+                          if (isExpired) {
+                            return (
+                              <div className="mt-6 text-center py-12">
+                                <div className="mb-4 text-6xl">🔗</div>
+                                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                                  Payment Link Expired
+                                </h3>
+                                <p className="text-gray-600 text-base mb-4">
+                                  This payment link has expired. The deadline was {deposit.deadline ? new Date(deposit.deadline).toLocaleString() : 'not set'}.
+                                </p>
+                                <p className="text-sm text-gray-500">
+                                  Please request a new payment link from the sender.
+                                </p>
+                              </div>
+                            );
+                          }
 
                           // Get deposit address from multiple sources - ALWAYS show for PENDING_DEPOSIT/INCOMPLETE_DEPOSIT
                           const depositAddr = deposit?.depositAddress

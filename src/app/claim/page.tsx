@@ -20,6 +20,8 @@ async function createClaim(formData: {
   amount: string;
   toSel: TokenSelection;
   recipient: string;
+  userId?: string;
+  userEmail?: string;
 }): Promise<{ id: string; link: string }> {
   const r = await fetch("/api/claims/create", {
     method: "POST",
@@ -212,9 +214,9 @@ export default function ClaimPage() {
         amount: amountUsdStr,
         toSel: { symbol: finalToSel.symbol, chain: finalToSel.chain },
         recipient: finalRecipient,
-        // Only include email if user opted in and a valid email is present
-        notifyEmailTo: notifyChecked && notifyEmail ? notifyEmail : undefined,
-      } as any);
+        userId: authenticated ? userId : undefined,
+        userEmail: authenticated && userEmail ? userEmail : undefined,
+      });
       setCreatedLink(res.link);
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 2500);

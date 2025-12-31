@@ -9,10 +9,10 @@ export async function GET(_: Request, props: { params: Promise<{ id: string }> }
   try {
     const supabase = getSupabaseAdmin();
     
-    // Get claim data
+    // Get claim data with creator email
     const { data: claim, error: claimError } = await supabase
       .from("claims")
-      .select("id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address")
+      .select("id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, creator_email")
       .eq("id", params.id)
       .single();
     

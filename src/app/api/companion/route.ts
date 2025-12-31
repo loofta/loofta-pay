@@ -18,6 +18,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { base } from "viem/chains";
 import { RhinestoneSDK } from "@rhinestone/sdk";
 import { RHINESTONE_API_KEY } from "@/config/rhinestone";
 import { LOOFTA_TREASURY_ADDRESSES } from "@/config/rhinestoneChains";
@@ -513,6 +514,169 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       { error: error?.message || "Transaction failed" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * PATCH /api/companion/recover
+ * Admin-only endpoint to recover funds from a companion wallet
+ * 
+ * Body: {
+ *   companionAddress: string,
+ *   destinationAddress: string, // Where to send the funds
+ *   leaveForGas?: string,        // Amount to leave for gas (default: 0.0001)
+ * }
+ */
+export async function PATCH(request: NextRequest) {
+  try {
+    // Check admin access
+    const userId = request.headers.get("x-privy-user-id");
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    
+    const { isAdmin } = await import("@/lib/admin");
+    const adminStatus = await isAdmin(userId);
+    if (!adminStatus) {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
+
+    const body = await request.json();
+    const { companionAddress, destinationAddress, leaveForGas = "0.0001" } = body;
+
+    if (!companionAddress || !/^0x[0-9a-fA-F]{40}$/.test(companionAddress)) {
+      return NextResponse.json(
+        { error: "Invalid companion address" },
+        { status: 400 }
+      );
+    }
+
+    if (!destinationAddress || !/^0x[0-9a-fA-F]{40}$/.test(destinationAddress)) {
+      return NextResponse.json(
+        { error: "Invalid destination address" },
+        { status: 400 }
+      );
+    }
+
+    const redis = await getRedis();
+    
+    // Search all signer keys to find the one matching this companion address
+    const keys = await redis.keys(`${SIGNER_KEY_PREFIX}*`);
+    let foundSignerData: SignerData | null = null;
+
+    for (const key of keys) {
+      const signerDataStr = await redis.get(key);
+      if (signerDataStr) {
+        const signerData: SignerData = JSON.parse(signerDataStr);
+        if (signerData.companionAddress.toLowerCase() === companionAddress.toLowerCase()) {
+          foundSignerData = signerData;
+          break;
+        }
+      }
+    }
+
+    if (!foundSignerData) {
+      return NextResponse.json(
+        { 
+          error: `No signer data found for companion wallet ${companionAddress}`,
+          hint: "This companion wallet may have been created through a different flow or the signer key may have expired."
+        },
+        { status: 404 }
+      );
+    }
+
+    console.log("[Companion Recovery] Recovering funds from:", companionAddress);
+    console.log("[Companion Recovery] Destination:", destinationAddress);
+    console.log("[Companion Recovery] Original recipient:", foundSignerData.recipientAddress);
+
+    // Check balance
+    const balance = await getCompanionBalance(companionAddress);
+    const balanceEth = parseFloat(balance.eth);
+    const gasReserve = parseFloat(leaveForGas);
+    const amountToSend = balanceEth - gasReserve;
+
+    if (amountToSend <= 0) {
+      return NextResponse.json({
+        success: false,
+        error: `Balance too low to recover. Balance: ${balance.eth} ETH, Gas reserve: ${gasReserve} ETH`,
+        balance: balance.eth,
+      }, { status: 400 });
+    }
+
+    console.log("[Companion Recovery] Balance:", balance.eth, "ETH");
+    console.log("[Companion Recovery] Amount to send:", amountToSend.toFixed(8), "ETH");
+
+    // Create companion account and send funds
+    const signerAccount = privateKeyToAccount(foundSignerData.privateKey as `0x${string}`);
+    const sdk = getSDK();
+
+    const dummyOwner = {
+      address: foundSignerData.recipientAddress as `0x${string}`,
+      type: "local" as const,
+      publicKey: "0x" as `0x${string}`,
+      source: "custom" as const,
+      signMessage: async () => { throw new Error("Not used"); },
+      signTransaction: async () => { throw new Error("Not used"); },
+      signTypedData: async () => { throw new Error("Not used"); },
+    };
+
+    const companionAccount = await sdk.createAccount({
+      account: { type: "nexus" },
+      owners: {
+        type: "ecdsa",
+        accounts: [dummyOwner as any, signerAccount],
+        threshold: 1,
+      },
+    });
+
+    const recreatedAddress = companionAccount.getAddress();
+    if (recreatedAddress.toLowerCase() !== companionAddress.toLowerCase()) {
+      return NextResponse.json({
+        success: false,
+        error: `Address mismatch. Expected ${companionAddress}, got ${recreatedAddress}`,
+      }, { status: 500 });
+    }
+
+    // Send transaction
+    const amountWei = BigInt(Math.floor(amountToSend * 1e18));
+
+    const transaction = await companionAccount.sendTransaction({
+      chain: base,
+      calls: [{
+        to: destinationAddress as `0x${string}`,
+        value: amountWei,
+        data: "0x" as `0x${string}`,
+      }],
+      signers: {
+        type: "owner",
+        kind: "ecdsa",
+        accounts: [signerAccount as any],
+      },
+    });
+
+    console.log("[Companion Recovery] Transaction submitted:", transaction);
+
+    const result = await companionAccount.waitForExecution(transaction);
+    const txHash = (result as any)?.transactionHash || "";
+
+    console.log("[Companion Recovery] ✓ Funds recovered successfully!");
+    console.log("[Companion Recovery] TX hash:", txHash);
+    console.log("[Companion Recovery] View on Basescan: https://basescan.org/tx/" + txHash);
+
+    return NextResponse.json({
+      success: true,
+      txHash,
+      amountSent: amountToSend.toFixed(8),
+      destinationAddress,
+      companionAddress,
+      originalRecipient: foundSignerData.recipientAddress,
+    });
+  } catch (error: any) {
+    console.error("[Companion Recovery] Error:", error);
+    return NextResponse.json(
+      { error: error?.message || "Failed to recover funds" },
       { status: 500 }
     );
   }
