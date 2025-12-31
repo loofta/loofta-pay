@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
-import { trimDecimals, roundUpDecimals } from "@/lib/format";
+import { trimDecimals, roundUpDecimals, formatUTCTimestamp } from "@/lib/format";
 import { findTokenBySelection } from "@/lib/tokens";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { useClaimPayStore } from "@/store/claimPay";
@@ -934,7 +934,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                           </p>
                           {claim.paid_at && (
                             <p className="text-sm text-gray-500">
-                              Completed on {new Date(claim.paid_at).toLocaleString()}
+                              Completed on {formatUTCTimestamp(claim.paid_at)}
                             </p>
                           )}
                         </div>
@@ -983,7 +983,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               <div className="flex items-center justify-between pt-2 border-t border-gray-200 mt-2">
                                 <span className="text-gray-600">Created</span>
                                 <span className="text-sm text-gray-700">
-                                  {new Date(claim.created_at).toLocaleString()}
+                                  {formatUTCTimestamp(claim.created_at)}
                                 </span>
                               </div>
                             )}
@@ -991,7 +991,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               <div className="flex items-center justify-between">
                                 <span className="text-gray-600">Paid</span>
                                 <span className="text-sm text-gray-700">
-                                  {new Date(claim.paid_at).toLocaleString()}
+                                  {formatUTCTimestamp(claim.paid_at)}
                                 </span>
                               </div>
                             )}
@@ -1148,7 +1148,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   Payment Link Expired
                                 </h3>
                                 <p className="text-gray-600 text-base mb-4">
-                                  This payment link has expired. The deadline was {deposit.deadline ? new Date(deposit.deadline).toLocaleString() : 'not set'}.
+                                  This payment link has expired. The deadline was {deposit.deadline ? formatUTCTimestamp(deposit.deadline) : 'not set'}.
                                 </p>
                                 <p className="text-sm text-gray-500">
                                   Please request a new payment link from the sender.
@@ -1557,7 +1557,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               ) : null}
                               {/* Deadline at the very bottom */}
                               {deposit?.deadline ? (
-                                <div className="mt-3 text-sm text-gray-700">Deadline: <span className="font-medium">{new Date(deposit.deadline).toLocaleString()}</span></div>
+                                <div className="mt-3 text-sm text-gray-700">Deadline: <span className="font-medium">{formatUTCTimestamp(deposit.deadline)}</span></div>
                               ) : null}
                             </div>
                           );
