@@ -47,7 +47,7 @@ function CheckIcon(props: SVGProps<SVGSVGElement>) {
 }
 
 export default function ClaimPage() {
-  const { authenticated, email: userEmail, login, ready } = useAuth();
+  const { authenticated, email: userEmail, userId, login, ready } = useAuth();
   const { login: privyLogin } = usePrivy();
   const { toast } = useToast();
   const { data: tokens = [] } = useTokensQuery();
