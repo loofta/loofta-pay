@@ -19,7 +19,7 @@ export async function POST(request: Request) {
         to_chain: String(toSel.chain),
         recipient_address: String(recipient),
         created_by: userId ? String(userId) : null, // Store Privy user ID who created the claim
-        creator_email: userEmail ? String(userEmail) : null, // Store creator's email directly
+        creator_email: userEmail ? String(userEmail) : null, // Store creator's email
         status: "OPEN",
       })
       .select("id")

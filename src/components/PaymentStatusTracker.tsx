@@ -331,14 +331,27 @@ function TimeEstimate({
   }, [depositReceivedAt, startedAt, shouldStartTimer]);
 
   // Calculate actual elapsed time for SUCCESS status
+  // Use depositReceivedAt to paidAt if available, otherwise use startedAt to paidAt
   const actualElapsedTime = useMemo(() => {
-    if (upperStatus === 'SUCCESS' && depositReceivedAt && paidAt) {
-      const depositTime = new Date(depositReceivedAt).getTime();
-      const paidTime = new Date(paidAt).getTime();
-      return Math.floor((paidTime - depositTime) / 1000);
+    if (upperStatus === 'SUCCESS' && paidAt) {
+      let startTime: number | null = null;
+      
+      // Prefer depositReceivedAt (time from when deposit was received to completion)
+      if (depositReceivedAt) {
+        startTime = new Date(depositReceivedAt).getTime();
+      } else if (startedAt) {
+        // Fallback to startedAt (time from claim creation to completion)
+        startTime = new Date(startedAt).getTime();
+      }
+      
+      if (startTime) {
+        const paidTime = new Date(paidAt).getTime();
+        const elapsed = Math.floor((paidTime - startTime) / 1000);
+        return elapsed > 0 ? elapsed : null;
+      }
     }
     return null;
-  }, [upperStatus, depositReceivedAt, paidAt]);
+  }, [upperStatus, depositReceivedAt, paidAt, startedAt]);
 
   useEffect(() => {
     // For SUCCESS status, use actual elapsed time from timestamps
@@ -386,15 +399,21 @@ function TimeEstimate({
 
   if (upperStatus === 'SUCCESS') {
     // Calculate elapsed time: from deposit received to payment completed
-    const totalSeconds = elapsed > 0 ? elapsed : 0;
+    // Use actualElapsedTime if available (calculated from timestamps), otherwise use elapsed state
+    const totalSeconds = actualElapsedTime !== null ? actualElapsedTime : (elapsed > 0 ? elapsed : 0);
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
+    
+    // Format: show "Xm Ys" or just "Ys" if less than a minute
+    const timeDisplay = minutes > 0 
+      ? `${minutes}m ${seconds}s`
+      : `${seconds}s`;
     
     return (
       <div className="text-center mt-4">
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-50 text-emerald-700 text-sm font-medium">
           <CheckCircle2 className="w-4 h-4" />
-          Completed in {minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`}
+          Completed in {timeDisplay}
         </div>
       </div>
     );
