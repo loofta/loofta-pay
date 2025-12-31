@@ -923,6 +923,21 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                   <>
                     {String(status || "").toUpperCase() === "SUCCESS" ? (
                       <>
+                        {/* Payment Complete Message */}
+                        <div className="mt-6 text-center py-12">
+                          <div className="mb-4 text-6xl">✅</div>
+                          <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                            Payment Complete
+                          </h3>
+                          <p className="text-gray-600 text-base mb-4">
+                            Your payment has been successfully processed and sent to the recipient.
+                          </p>
+                          {claim.paid_at && (
+                            <p className="text-sm text-gray-500">
+                              Completed on {new Date(claim.paid_at).toLocaleString('en-US', { timeZone: 'UTC' })}
+                            </p>
+                          )}
+                        </div>
                         <div className="mt-6">
                           <PaymentStatusTracker
                             status={status}
@@ -932,6 +947,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             fromChain={selectedFrom?.chain}
                             toChain={destToken?.chain}
                             depositAddress={deposit?.depositAddress}
+                            paidAt={claim.paid_at}
                           />
                         </div>
                         <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -967,7 +983,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               <div className="flex items-center justify-between pt-2 border-t border-gray-200 mt-2">
                                 <span className="text-gray-600">Created</span>
                                 <span className="text-sm text-gray-700">
-                                  {new Date(claim.created_at).toLocaleString()}
+                                  {new Date(claim.created_at).toLocaleString('en-US', { timeZone: 'UTC' })}
                                 </span>
                               </div>
                             )}
@@ -975,7 +991,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               <div className="flex items-center justify-between">
                                 <span className="text-gray-600">Paid</span>
                                 <span className="text-sm text-gray-700">
-                                  {new Date(claim.paid_at).toLocaleString()}
+                                  {new Date(claim.paid_at).toLocaleString('en-US', { timeZone: 'UTC' })}
                                 </span>
                               </div>
                             )}
@@ -1132,7 +1148,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   Payment Link Expired
                                 </h3>
                                 <p className="text-gray-600 text-base mb-4">
-                                  This payment link has expired. The deadline was {deposit.deadline ? new Date(deposit.deadline).toLocaleString() : 'not set'}.
+                                  This payment link has expired. The deadline was {deposit.deadline ? new Date(deposit.deadline).toLocaleString('en-US', { timeZone: 'UTC' }) : 'not set'}.
                                 </p>
                                 <p className="text-sm text-gray-500">
                                   Please request a new payment link from the sender.
@@ -1541,7 +1557,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               ) : null}
                               {/* Deadline at the very bottom */}
                               {deposit?.deadline ? (
-                                <div className="mt-3 text-sm text-gray-700">Deadline: <span className="font-medium">{new Date(deposit.deadline).toLocaleString()}</span></div>
+                                <div className="mt-3 text-sm text-gray-700">Deadline: <span className="font-medium">{new Date(deposit.deadline).toLocaleString('en-US', { timeZone: 'UTC' })}</span></div>
                               ) : null}
                             </div>
                           );

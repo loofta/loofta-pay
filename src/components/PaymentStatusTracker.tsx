@@ -33,6 +33,7 @@ interface PaymentStatusTrackerProps {
   toChain?: string | null;
   depositAddress?: string | null; // For fetching transaction data from 1-click API
   timeEstimate?: number | null; // Time estimate from NEAR Intents quote (in seconds)
+  paidAt?: string | null; // Timestamp when payment was completed
 }
 
 const STEP_CONFIG: Record<string, Omit<PaymentStep, 'status'>> = {
@@ -299,7 +300,8 @@ function TimeEstimate({
   depositReceivedAt,
   averagePaymentTime,
   fromChain,
-  toChain
+  toChain,
+  paidAt
 }: {
   status: PaymentStatus | null;
   startedAt?: string | null;
@@ -307,6 +309,7 @@ function TimeEstimate({
   averagePaymentTime?: number | null;
   fromChain?: string | null;
   toChain?: string | null;
+  paidAt?: string | null;
 }) {
   const [elapsed, setElapsed] = useState(0);
   const upperStatus = String(status || '').toUpperCase();
@@ -327,7 +330,23 @@ function TimeEstimate({
     return Date.now();
   }, [depositReceivedAt, startedAt, shouldStartTimer]);
 
+  // Calculate actual elapsed time for SUCCESS status
+  const actualElapsedTime = useMemo(() => {
+    if (upperStatus === 'SUCCESS' && depositReceivedAt && paidAt) {
+      const depositTime = new Date(depositReceivedAt).getTime();
+      const paidTime = new Date(paidAt).getTime();
+      return Math.floor((paidTime - depositTime) / 1000);
+    }
+    return null;
+  }, [upperStatus, depositReceivedAt, paidAt]);
+
   useEffect(() => {
+    // For SUCCESS status, use actual elapsed time from timestamps
+    if (upperStatus === 'SUCCESS' && actualElapsedTime !== null) {
+      setElapsed(actualElapsedTime);
+      return;
+    }
+
     // Stop timer for terminal states
     const isTerminal = upperStatus === 'SUCCESS' || upperStatus === 'FAILED' || upperStatus === 'REFUNDED';
     if (isTerminal || !shouldStartTimer || !startTime) {
@@ -340,7 +359,7 @@ function TimeEstimate({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [startTime, upperStatus, shouldStartTimer]);
+  }, [startTime, upperStatus, shouldStartTimer, actualElapsedTime]);
 
   const getEstimatedTimeRemaining = () => {
     if (upperStatus === 'SUCCESS') return null;
@@ -366,11 +385,16 @@ function TimeEstimate({
   const estimatedRemaining = getEstimatedTimeRemaining();
 
   if (upperStatus === 'SUCCESS') {
+    // Calculate elapsed time: from deposit received to payment completed
+    const totalSeconds = elapsed > 0 ? elapsed : 0;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    
     return (
       <div className="text-center mt-4">
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-50 text-emerald-700 text-sm font-medium">
           <CheckCircle2 className="w-4 h-4" />
-          Completed in {Math.floor(elapsed / 60)}m {elapsed % 60}s
+          Completed in {minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`}
         </div>
       </div>
     );
@@ -378,14 +402,15 @@ function TimeEstimate({
 
   if (!estimatedRemaining && estimatedRemaining !== 0) return null;
 
-  const minutes = Math.floor(estimatedRemaining / 60);
-  const seconds = estimatedRemaining % 60;
+  // Show elapsed time during processing
+  const elapsedMinutes = Math.floor(elapsed / 60);
+  const elapsedSeconds = elapsed % 60;
 
   return (
     <div className="text-center mt-4">
       <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-50 text-blue-700 text-sm font-medium">
         <Clock className="w-4 h-4" />
-        {minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`} remaining
+        {elapsedMinutes > 0 ? `${elapsedMinutes}m ${elapsedSeconds}s` : `${elapsedSeconds}s`} elapsed
       </div>
     </div>
   );
@@ -400,6 +425,7 @@ export function PaymentStatusTracker({
   toChain,
   depositAddress,
   timeEstimate,
+  paidAt,
 }: PaymentStatusTrackerProps) {
   const [averagePaymentTime, setAveragePaymentTime] = useState<number | null>(null);
   const [loadingAverages, setLoadingAverages] = useState(false);
@@ -560,6 +586,7 @@ export function PaymentStatusTracker({
         averagePaymentTime={averagePaymentTime}
         fromChain={fromChain}
         toChain={toChain}
+        paidAt={paidAt}
       />
 
       {/* Additional Info for Processing */}
