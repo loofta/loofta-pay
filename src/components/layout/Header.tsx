@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useHistoryModal } from "@/contexts/HistoryModalContext";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePrivy } from "@privy-io/react-auth";
 
 export function Header() {
@@ -210,9 +211,9 @@ export function Header() {
         </div>
       </div>
 
-      {/* Mobile Menu Modal */}
-      {isMobileMenuOpen && (
-        <div className="fixed inset-0 z-[60] bg-white animate-in fade-in duration-200">
+      {/* Mobile Menu Modal - Rendered via Portal to escape header stacking context */}
+      {isMobileMenuOpen && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-white animate-in fade-in duration-200">
           <div className="flex flex-col h-full">
             {/* Header with close button */}
             <div className="flex justify-between items-center p-4 border-b border-gray-200">
@@ -327,7 +328,8 @@ export function Header() {
               </nav>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Access Requested Success Modal */}
