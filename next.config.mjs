@@ -17,6 +17,8 @@ const nextConfig = {
       { protocol: 'https', hostname: 'near-intents.org' },
       { protocol: 'https', hostname: 'dd.dexscreener.com' },
       { protocol: 'https', hostname: 'ipfs.sintral.me' },
+      { protocol: 'https', hostname: '*.supabase.co' },
+      { protocol: 'https', hostname: '*.supabase.in' },
     ],
   },
   webpack: (config) => {
@@ -52,8 +54,8 @@ const nextConfig = {
               "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com https://unpkg.com https://*.spline.design https://*.splinetool.com",
               // Styles - self + inline + Google Fonts + Fontshare
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com https://cdn.fontshare.com",
-              // Images - self + data URIs + blob + external image sources + Spline
-              "img-src 'self' data: blob: https://raw.githubusercontent.com https://s2.coinmarketcap.com https://assets.coingecko.com https://near-intents.org https://dd.dexscreener.com https://ipfs.sintral.me https://*.walletconnect.com https://*.spline.design https://*.splinetool.com",
+              // Images - self + data URIs + blob + external image sources + Spline + Supabase Storage
+              "img-src 'self' data: blob: https://raw.githubusercontent.com https://s2.coinmarketcap.com https://assets.coingecko.com https://near-intents.org https://dd.dexscreener.com https://ipfs.sintral.me https://*.walletconnect.com https://*.spline.design https://*.splinetool.com https://*.supabase.co https://*.supabase.in",
               // Fonts - Google Fonts + Fontshare
               "font-src 'self' data: https://fonts.gstatic.com https://fonts.googleapis.com https://cdn.fontshare.com https://api.fontshare.com",
               // No plugins

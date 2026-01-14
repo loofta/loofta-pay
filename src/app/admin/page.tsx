@@ -56,9 +56,14 @@ export default function AdminPage() {
   }, [ready, authenticated, userId]);
 
   const loadPayments = useCallback(async () => {
+    if (!userId) {
+      console.warn("Cannot load payments: userId not available");
+      return;
+    }
+
     try {
       setLoading(true);
-      const data = await getPaymentHistory();
+      const data = await getPaymentHistory(userId);
       setPayments(data.payments || []);
     } catch (error: any) {
       console.error("Failed to load payments:", error);
@@ -70,7 +75,7 @@ export default function AdminPage() {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, userId]);
 
   useEffect(() => {
     if (ready && !authenticated) {
@@ -84,10 +89,10 @@ export default function AdminPage() {
   }, [ready, authenticated]); // Remove login and toast from deps to prevent infinite loop
 
   useEffect(() => {
-    if (ready && authenticated && isAuthorized) {
+    if (ready && authenticated && isAuthorized && userId) {
       loadPayments();
     }
-  }, [ready, authenticated, isAuthorized, loadPayments]);
+  }, [ready, authenticated, isAuthorized, userId, loadPayments]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -99,8 +104,11 @@ export default function AdminPage() {
     });
   };
 
-  // Show loading state while checking auth
-  if (!ready || checkingAuth) {
+  // Show loading state while:
+  // 1. Auth system is not ready
+  // 2. We're still checking admin status
+  // 3. User is authenticated but userId hasn't loaded yet
+  if (!ready || checkingAuth || (authenticated && !userId)) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
@@ -108,7 +116,8 @@ export default function AdminPage() {
     );
   }
 
-  // Show access denied if not authorized
+  // Only show access denied after we've properly loaded the user and checked auth
+  // At this point: ready is true, checkingAuth is false, and user state is fully loaded
   if (!authenticated || !isAuthorized) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">

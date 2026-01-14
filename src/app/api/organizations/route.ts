@@ -126,7 +126,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { id, name, logo_url, checkout_status, organization_id } = body;
+    const { id, name, logo_url, checkout_status, organization_id, recipient_wallet, token_symbol, token_chain, bg_color } = body;
 
     if (!id) {
       return NextResponse.json({ error: "Missing required field: id" }, { status: 400 });
@@ -139,6 +139,10 @@ export async function PUT(request: NextRequest) {
     if (logo_url !== undefined) updateData.logo_url = logo_url;
     if (checkout_status !== undefined) updateData.checkout_status = checkout_status;
     if (organization_id !== undefined) updateData.organization_id = organization_id;
+    if (recipient_wallet !== undefined) updateData.recipient_wallet = recipient_wallet || null;
+    if (token_symbol !== undefined) updateData.token_symbol = token_symbol || null;
+    if (token_chain !== undefined) updateData.token_chain = token_chain || null;
+    if (bg_color !== undefined) updateData.bg_color = bg_color || null;
 
     const { data, error } = await supabase
       .from("organizations")

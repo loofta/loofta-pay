@@ -13,11 +13,13 @@ function ShellContent({ children }: { children: ReactNode }) {
   const showHistory = pathname?.startsWith('/swap') === true;
   // Don't show footer on homepage (it has its own footer with different styling)
   const isHomepage = pathname === '/';
+  // Don't show header/footer on checkout page (Stripe-like design)
+  const isCheckoutPage = pathname?.startsWith('/checkout') === true;
   return (
     <>
-      <Header />
+      {!isCheckoutPage && <Header />}
       {children}
-      {!isHomepage && <Footer />}
+      {!isHomepage && !isCheckoutPage && <Footer />}
       {showHistory && <HistoryModal open={open} onOpenChange={setOpen} />}
     </>
   );

@@ -180,12 +180,20 @@ export async function getCompanionBalanceFromApi(
 
 /**
  * Get payment history (admin endpoint)
+ * Requires userId to be passed for authentication
  */
-export async function getPaymentHistory(): Promise<{ payments: PaymentLog[]; count: number }> {
+export async function getPaymentHistory(userId: string): Promise<{ payments: PaymentLog[]; count: number }> {
+  if (!userId) {
+    throw new Error("User ID is required to fetch payment history");
+  }
+  
   console.log("[Companion API Client] Fetching payment history...");
   
-  const response = await fetch("/api/companion", {
-    method: "PATCH", // Using PATCH for admin endpoint
+  const response = await fetch("/api/companion?logs=true", {
+    method: "GET",
+    headers: {
+      "x-privy-user-id": userId,
+    },
   });
   
   const data = await response.json();
