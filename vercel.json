@@ -5,5 +5,27 @@
       "path": "/api/cron/process-all",
       "schedule": "* * * * *"
     }
+  ],
+  "redirects": [
+    {
+      "source": "/checkout",
+      "destination": "https://checkout.loofta.xyz",
+      "permanent": false
+    },
+    {
+      "source": "/checkout/:path*",
+      "destination": "https://checkout.loofta.xyz/:path*",
+      "permanent": false
+    },
+    {
+      "source": "/swap",
+      "destination": "https://swap.loofta.xyz",
+      "permanent": false
+    },
+    {
+      "source": "/swap/:path*",
+      "destination": "https://swap.loofta.xyz/:path*",
+      "permanent": false
+    }
   ]
 }

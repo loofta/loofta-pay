@@ -18,6 +18,9 @@ export function Header() {
   const showHistory = pathname?.startsWith('/swap') === true;
   // Check if we're on a dark background page
   const isDarkPage = pathname?.startsWith('/claim') === true || pathname?.startsWith('/c/') === true;
+
+  // Helper to check if a link is active
+  const isActive = (href: string) => pathname?.startsWith(href) === true;
   const headerRef = useRef<HTMLDivElement | null>(null);
   const [showAccessRequested, setShowAccessRequested] = useState(false);
   const [pendingAccessRequest, setPendingAccessRequest] = useState(false);
@@ -87,13 +90,30 @@ export function Header() {
 
           <div className="flex items-center gap-1">
             {/* Desktop menu items */}
+            {/* Swap link */}
+            <Link
+              href="/swap"
+              prefetch
+              className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isActive('/swap')
+                ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm'
+                : isDarkPage
+                  ? 'text-white/90 hover:text-white hover:bg-white/10'
+                  : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+            >
+              Swap
+            </Link>
+            {/* Separator */}
+            <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
             {/* Make a payment link */}
             <Link
               href="/claim"
               prefetch
-              className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isDarkPage
-                ? 'text-white/90 hover:text-white hover:bg-white/10'
-                : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
+              className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isActive('/claim')
+                ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm'
+                : isDarkPage
+                  ? 'text-white/90 hover:text-white hover:bg-white/10'
+                  : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
                 }`}
             >
               Request a payment
@@ -102,11 +122,13 @@ export function Header() {
             <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
             {/* B2B Checkout link */}
             <Link
-              href="/checkout/b2b"
+              href="/b2b"
               prefetch
-              className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isDarkPage
-                ? 'text-white/90 hover:text-white hover:bg-white/10'
-                : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
+              className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isActive('/b2b')
+                ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm'
+                : isDarkPage
+                  ? 'text-white/90 hover:text-white hover:bg-white/10'
+                  : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
                 }`}
             >
               B2B Checkout
@@ -239,19 +261,37 @@ export function Header() {
             <div className="flex-1 overflow-y-auto px-4 py-6">
               <nav className="flex flex-col gap-1">
                 <Link
+                  href="/swap"
+                  prefetch
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${isActive('/swap')
+                    ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
+                    : 'text-gray-900 hover:bg-gray-100'
+                    }`}
+                >
+                  Swap
+                </Link>
+
+                <Link
                   href="/claim"
                   prefetch
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-900 font-medium hover:bg-gray-100 transition-colors"
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${isActive('/claim')
+                    ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
+                    : 'text-gray-900 hover:bg-gray-100'
+                    }`}
                 >
                   Request a payment
                 </Link>
 
                 <Link
-                  href="/checkout/b2b"
+                  href="/b2b"
                   prefetch
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-900 font-medium hover:bg-gray-100 transition-colors"
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${isActive('/b2b')
+                    ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
+                    : 'text-gray-900 hover:bg-gray-100'
+                    }`}
                 >
                   B2B Checkout
                 </Link>

@@ -62,9 +62,9 @@ export function NearSwapWidget({
 		const n = parseFloat(amount);
 		return Number.isFinite(n) ? n : 0;
 	}, [amount]);
-	const swapDisabled = !(amountNum > 0) || !selectedFrom || !selectedTo || !!quoteError || !recipient || !!recipientError || (
-		fromSel?.symbol === toSel?.symbol && fromSel?.chain === toSel?.chain
-	);
+	// Check if same network (cross-chain only)
+	const isSameNetwork = fromSel?.chain && toSel?.chain && String(fromSel.chain).toLowerCase() === String(toSel.chain).toLowerCase();
+	const swapDisabled = !(amountNum > 0) || !selectedFrom || !selectedTo || !!quoteError || !recipient || !!recipientError || isSameNetwork;
 	function flip() {
 		const prevFrom = fromSel;
 		setFromSel(toSel);
@@ -337,19 +337,14 @@ export function NearSwapWidget({
 				</div>
 			</div>
 			<div className="px-5 pb-4">
-				{(() => {
-					const same = fromSel?.chain && toSel?.chain && String(fromSel.chain).toLowerCase() === String(toSel.chain).toLowerCase();
-					const evmSet = new Set(["eth", "ethereum", "arb", "arbitrum", "base", "op", "optimism", "bsc", "avax", "avalanche", "polygon", "matic", "fantom", "ftm", "gnosis", "linea", "scroll", "zksync", "zk", "blast", "pol"]);
-					const isEvm = (c?: string) => evmSet.has(String(c || "").toLowerCase());
-					if (same && isEvm(fromSel?.chain) && isEvm(toSel?.chain)) {
-						return (
-							<div className="mb-3 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-sm p-3">
-								Same‑chain EVM swaps are not supported by NEAR Intents. Please use the Biconomy tab.
+				{isSameNetwork && (
+					<div className="mb-3 rounded-md bg-red-50 border border-red-200 text-red-700 text-sm p-3 flex items-center gap-2">
+						<svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+							<path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+						</svg>
+						<span><strong>Cross-chain only:</strong> Sell and Buy tokens must be on different networks. Select a different chain for one of them.</span>
 							</div>
-						);
-					}
-					return null;
-				})()}
+				)}
 				{deposit ? (
 					<div className="rounded-2xl bg-gray-50 border border-gray-200 p-4">
 						<div className="text-center text-lg font-semibold text-gray-800">{isSuccess ? "Swap completed" : "Deposit"}</div>

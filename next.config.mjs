@@ -9,6 +9,14 @@ const nextConfig = {
     '@walletconnect/ethereum-provider',
     '@supabase/supabase-js',
   ],
+  // Turbopack configuration (used in dev with --turbopack)
+  turbopack: {
+    resolveAlias: {
+      fs: { browser: './empty-module.js' },
+      net: { browser: './empty-module.js' },
+      tls: { browser: './empty-module.js' },
+    },
+  },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: 'raw.githubusercontent.com' },
