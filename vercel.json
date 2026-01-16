@@ -6,25 +6,91 @@
       "schedule": "* * * * *"
     }
   ],
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/swap",
+      "has": [
+        {
+          "type": "host",
+          "value": "swap.loofta.xyz"
+        }
+      ]
+    },
+    {
+      "source": "/:path*",
+      "destination": "/swap/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "swap.loofta.xyz"
+        }
+      ]
+    },
+    {
+      "source": "/",
+      "destination": "/checkout",
+      "has": [
+        {
+          "type": "host",
+          "value": "checkout.loofta.xyz"
+        }
+      ]
+    },
+    {
+      "source": "/:path*",
+      "destination": "/checkout/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "checkout.loofta.xyz"
+        }
+      ]
+    }
+  ],
   "redirects": [
     {
       "source": "/checkout",
       "destination": "https://checkout.loofta.xyz",
+      "has": [
+        {
+          "type": "host",
+          "value": "loofta.xyz"
+        }
+      ],
       "permanent": false
     },
     {
       "source": "/checkout/:path*",
       "destination": "https://checkout.loofta.xyz/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "loofta.xyz"
+        }
+      ],
       "permanent": false
     },
     {
       "source": "/swap",
       "destination": "https://swap.loofta.xyz",
+      "has": [
+        {
+          "type": "host",
+          "value": "loofta.xyz"
+        }
+      ],
       "permanent": false
     },
     {
       "source": "/swap/:path*",
       "destination": "https://swap.loofta.xyz/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "loofta.xyz"
+        }
+      ],
       "permanent": false
     }
   ]

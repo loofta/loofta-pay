@@ -55,7 +55,7 @@ export default function B2BCheckoutPage() {
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <a
-                href="t.me/looftaxyz"
+                href="https://t.me/looftaxyz"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center justify-center rounded-full px-8 py-2 text-base font-semibold text-white hover:opacity-90 transition-opacity"
