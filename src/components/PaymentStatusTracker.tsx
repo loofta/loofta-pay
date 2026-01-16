@@ -24,6 +24,8 @@ interface PaymentStep {
   estimatedTime?: number; // in seconds
 }
 
+export type PaymentType = 'direct' | 'companion-swap' | 'near-intent';
+
 interface PaymentStatusTrackerProps {
   status: PaymentStatus | null;
   statusData?: any;
@@ -34,6 +36,7 @@ interface PaymentStatusTrackerProps {
   depositAddress?: string | null; // For fetching transaction data from 1-click API
   timeEstimate?: number | null; // Time estimate from NEAR Intents quote (in seconds)
   paidAt?: string | null; // Timestamp when payment was completed
+  paymentType?: PaymentType; // Type of payment: 'direct' (same chain, same token), 'companion-swap' (same chain, different token), 'near-intent' (cross-chain)
 }
 
 const STEP_CONFIG: Record<string, Omit<PaymentStep, 'status'>> = {
@@ -77,7 +80,8 @@ function getStepsForStatus(
   status: PaymentStatus | null,
   averagePaymentTime?: number | null,
   fromChain?: string | null,
-  toChain?: string | null
+  toChain?: string | null,
+  paymentType?: PaymentType
 ): PaymentStep[] {
   const isSameChain = fromChain && toChain && String(fromChain).toLowerCase() === String(toChain).toLowerCase();
 
@@ -118,49 +122,49 @@ function getStepsForStatus(
   };
   const upperStatus = String(status || '').toUpperCase();
 
-  if (upperStatus === 'SUCCESS') {
-    return [
-      { ...configWithTimes.deposit, status: 'completed' as const },
-      { ...configWithTimes.routing, status: 'completed' as const },
-      { ...configWithTimes.processing, status: 'completed' as const },
-      { ...configWithTimes.sending, status: 'completed' as const },
-      { ...configWithTimes.success, status: 'completed' as const },
+  // For direct deposits, skip the routing step
+  const includeRouting = paymentType !== 'direct';
+
+  // Helper to build steps array conditionally including routing
+  const buildSteps = (depositStatus: 'pending' | 'active' | 'completed', routingStatus: 'pending' | 'active' | 'completed', processingStatus: 'pending' | 'active' | 'completed', sendingStatus: 'pending' | 'active' | 'completed', successStatus: 'pending' | 'active' | 'completed') => {
+    const steps: PaymentStep[] = [
+      {
+        ...configWithTimes.deposit,
+        status: depositStatus,
+        ...(depositStatus === 'active' && upperStatus === 'PENDING_DEPOSIT' ? {
+          label: 'Waiting for Deposit',
+          description: 'Send the exact amount to the deposit address shown above',
+        } : {}),
+      },
     ];
+
+    if (includeRouting) {
+      steps.push({ ...configWithTimes.routing, status: routingStatus });
+    }
+
+    steps.push(
+      { ...configWithTimes.processing, status: processingStatus },
+      { ...configWithTimes.sending, status: sendingStatus },
+      { ...configWithTimes.success, status: successStatus }
+    );
+
+    return steps;
+  };
+
+  if (upperStatus === 'SUCCESS') {
+    return buildSteps('completed', 'completed', 'completed', 'completed', 'completed');
   }
 
   if (upperStatus === 'PROCESSING' || upperStatus === 'KNOWN_DEPOSIT_TX') {
-    return [
-      { ...configWithTimes.deposit, status: 'completed' as const },
-      { ...configWithTimes.routing, status: 'active' as const },
-      { ...configWithTimes.processing, status: 'pending' as const },
-      { ...configWithTimes.sending, status: 'pending' as const },
-      { ...configWithTimes.success, status: 'pending' as const },
-    ];
+    return buildSteps('completed', includeRouting ? 'active' : 'completed', 'pending', 'pending', 'pending');
   }
 
   if (upperStatus === 'INCOMPLETE_DEPOSIT') {
-    return [
-      { ...configWithTimes.deposit, status: 'active' as const },
-      { ...configWithTimes.routing, status: 'pending' as const },
-      { ...configWithTimes.processing, status: 'pending' as const },
-      { ...configWithTimes.sending, status: 'pending' as const },
-      { ...configWithTimes.success, status: 'pending' as const },
-    ];
+    return buildSteps('active', 'pending', 'pending', 'pending', 'pending');
   }
 
-  // PENDING_DEPOSIT or default - show "Waiting for Deposit" not "Deposit Received"
-  return [
-    {
-      ...configWithTimes.deposit,
-      status: 'active' as const,
-      label: 'Waiting for Deposit', // Change label for pending status
-      description: 'Send the exact amount to the deposit address shown above',
-    },
-    { ...configWithTimes.routing, status: 'pending' as const },
-    { ...configWithTimes.processing, status: 'pending' as const },
-    { ...configWithTimes.sending, status: 'pending' as const },
-    { ...configWithTimes.success, status: 'pending' as const },
-  ];
+  // PENDING_DEPOSIT or default
+  return buildSteps('active', 'pending', 'pending', 'pending', 'pending');
 }
 
 function getStatusMessage(status: PaymentStatus | null): { title: string; subtitle: string } {
@@ -335,7 +339,7 @@ function TimeEstimate({
   const actualElapsedTime = useMemo(() => {
     if (upperStatus === 'SUCCESS' && paidAt) {
       let startTime: number | null = null;
-      
+
       // Prefer depositReceivedAt (time from when deposit was received to completion)
       if (depositReceivedAt) {
         startTime = new Date(depositReceivedAt).getTime();
@@ -343,7 +347,7 @@ function TimeEstimate({
         // Fallback to startedAt (time from claim creation to completion)
         startTime = new Date(startedAt).getTime();
       }
-      
+
       if (startTime) {
         const paidTime = new Date(paidAt).getTime();
         const elapsed = Math.floor((paidTime - startTime) / 1000);
@@ -403,12 +407,12 @@ function TimeEstimate({
     const totalSeconds = actualElapsedTime !== null ? actualElapsedTime : (elapsed > 0 ? elapsed : 0);
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
-    
+
     // Format: show "Xm Ys" or just "Ys" if less than a minute
-    const timeDisplay = minutes > 0 
+    const timeDisplay = minutes > 0
       ? `${minutes}m ${seconds}s`
       : `${seconds}s`;
-    
+
     return (
       <div className="text-center mt-4">
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-50 text-emerald-700 text-sm font-medium">
@@ -445,6 +449,7 @@ export function PaymentStatusTracker({
   depositAddress,
   timeEstimate,
   paidAt,
+  paymentType,
 }: PaymentStatusTrackerProps) {
   const [averagePaymentTime, setAveragePaymentTime] = useState<number | null>(null);
   const [loadingAverages, setLoadingAverages] = useState(false);
@@ -473,13 +478,15 @@ export function PaymentStatusTracker({
     setAveragePaymentTime(null);
   }, [timeEstimate, isSameChain, fromChain]);
 
-  const steps = useMemo(() => getStepsForStatus(status, averagePaymentTime, fromChain, toChain), [status, averagePaymentTime, fromChain, toChain]);
+  const steps = useMemo(() => getStepsForStatus(status, averagePaymentTime, fromChain, toChain, paymentType), [status, averagePaymentTime, fromChain, toChain, paymentType]);
   const statusMessage = useMemo(() => getStatusMessage(status), [status]);
   const upperStatus = String(status || '').toUpperCase();
 
   const activeStepIndex = steps.findIndex(s => s.status === 'active');
   const completedSteps = steps.filter(s => s.status === 'completed').length;
-  const progress = (completedSteps / (steps.length - 1)) * 100; // -1 because success step doesn't count
+  // Calculate progress excluding the success step
+  const nonSuccessSteps = steps.filter(s => s.id !== 'success');
+  const progress = nonSuccessSteps.length > 0 ? (completedSteps / nonSuccessSteps.length) * 100 : 0;
 
   return (
     <div className="w-full">
@@ -510,7 +517,7 @@ export function PaymentStatusTracker({
           />
         </div>
         <div className="mt-2 text-center text-sm text-gray-500">
-          Step {completedSteps} of {steps.length - 1}
+          Step {completedSteps} of {nonSuccessSteps.length}
         </div>
       </div>
 

@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
     lottery: null,
     claims: null,
     swaps: null,
+    orgSwaps: null,
   };
   
   const authBearer = `Bearer ${process.env.CRON_SECRET || ""}`;
@@ -56,7 +57,7 @@ export async function GET(request: NextRequest) {
     results.claims = { error: e?.message };
   }
   
-  // Process swaps
+  // Process swaps (claims)
   try {
     const swapsRes = await fetch(`${baseUrl}/api/cron/process-swaps`, {
       headers: { "Authorization": authBearer },
@@ -66,6 +67,18 @@ export async function GET(request: NextRequest) {
   } catch (e: any) {
     console.error("[process-all] Swaps error:", e);
     results.swaps = { error: e?.message };
+  }
+  
+  // Process organization swaps
+  try {
+    const orgSwapsRes = await fetch(`${baseUrl}/api/cron/process-org-swaps`, {
+      headers: { "Authorization": authBearer },
+    });
+    results.orgSwaps = await orgSwapsRes.json();
+    console.log("[process-all] Org Swaps:", results.orgSwaps);
+  } catch (e: any) {
+    console.error("[process-all] Org Swaps error:", e);
+    results.orgSwaps = { error: e?.message };
   }
   
   console.log("[process-all] Complete");

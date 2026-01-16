@@ -948,6 +948,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             toChain={destToken?.chain}
                             depositAddress={deposit?.depositAddress}
                             paidAt={claim.paid_at}
+                            paymentType={
+                              deposit?.isDirect ? 'direct' :
+                                deposit?.isCompanionSwap ? 'companion-swap' :
+                                  'near-intent'
+                            }
                           />
                         </div>
                         <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -1192,6 +1197,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     toChain={destToken?.chain}
                                     depositAddress={depositAddr}
                                     timeEstimate={timeEstimate}
+                                    paymentType={
+                                      deposit?.isDirect ? 'direct' :
+                                        deposit?.isCompanionSwap ? 'companion-swap' :
+                                          'near-intent'
+                                    }
                                   />
                                 </div>
                                 <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -1551,6 +1561,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                       toChain={destToken?.chain}
                                       depositAddress={depositAddr}
                                       timeEstimate={timeEstimate}
+                                      paymentType={
+                                        deposit?.isDirect ? 'direct' :
+                                          deposit?.isCompanionSwap ? 'companion-swap' :
+                                            'near-intent'
+                                      }
                                     />
                                   </div>
                                 </>
