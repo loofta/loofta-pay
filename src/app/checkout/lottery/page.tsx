@@ -792,9 +792,9 @@ export default function LotteryPage() {
                   </span>
                 </div>
                 {parseFloat(remainingDeposit || "0") <= 0 ? (
-                  <span className="text-xs font-medium text-green-600">✓ Ready to purchase</span>
+                  <span className="text-sm font-medium text-green-600">✓ Ready to purchase</span>
                 ) : parseFloat(companionBalance) > 0 ? (
-                  <span className="text-xs text-gray-500">Need ~{remainingDeposit} more ETH</span>
+                  <span className="text-sm text-gray-500">Need ~{remainingDeposit} more ETH</span>
                 ) : null}
               </div>
 
@@ -815,7 +815,7 @@ export default function LotteryPage() {
                   </div>
                   <button
                     type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-sm font-medium text-gray-600 hover:bg-gray-100"
                     onClick={async () => {
                       try {
                         await navigator.clipboard.writeText(depositAddress);
@@ -900,7 +900,7 @@ export default function LotteryPage() {
                   <Wallet className="w-4 h-4 text-blue-600" />
                   Your Base Wallet Address
                 </label>
-                <p className="text-xs text-gray-500 mb-3">
+                <p className="text-sm text-gray-500 mb-3">
                   Where you'll receive your lottery tickets (NFTs) and prizes if you win! 🎉
                 </p>
                 {!isNonEvmChain && userAddress ? (
@@ -909,7 +909,7 @@ export default function LotteryPage() {
                     <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
                       <div className="flex items-center gap-2 text-green-800 mb-1">
                         <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                        <span className="text-xs font-medium">Connected Wallet</span>
+                        <span className="text-sm font-medium">Connected Wallet</span>
                       </div>
                       <div className="font-mono text-sm text-gray-900 truncate">
                         {userAddress}
@@ -917,7 +917,7 @@ export default function LotteryPage() {
                     </div>
                     <button
                       onClick={() => setRecipientAddress("")}
-                      className="text-xs text-blue-600 hover:text-blue-700"
+                      className="text-sm text-blue-600 hover:text-blue-700"
                     >
                       Use different address
                     </button>
@@ -936,10 +936,10 @@ export default function LotteryPage() {
                       spellCheck={false}
                     />
                     {recipientAddress && !isValidEvmAddress(recipientAddress) && (
-                      <p className="text-xs text-red-600">Invalid address format</p>
+                      <p className="text-sm text-red-600">Invalid address format</p>
                     )}
                     {!isNonEvmChain && !userAddress && (
-                      <p className="text-xs text-gray-500">
+                      <p className="text-sm text-gray-500">
                         or <button onClick={handleConnectWallet} className="text-blue-600 hover:text-blue-700 font-medium">connect wallet</button>
                       </p>
                     )}
@@ -1009,7 +1009,7 @@ export default function LotteryPage() {
                       className="bg-white text-gray-900 border-2 border-gray-200 hover:border-blue-300 w-full h-11"
                     />
                   )}
-                  <p className="mt-1 text-xs text-gray-500">
+                  <p className="mt-1 text-sm text-gray-500">
                     We'll automatically convert to ETH on Base
                   </p>
                 </div>
@@ -1045,7 +1045,7 @@ export default function LotteryPage() {
                           ~{amountNeeded} {selectedFrom.symbol}
                         </span>
                       </div>
-                      <p className="text-xs text-gray-400">
+                      <p className="text-sm text-gray-400">
                         Final amount calculated when you proceed
                       </p>
                     </div>
@@ -1114,7 +1114,7 @@ export default function LotteryPage() {
                   Your {numTickets} IFT NFT ticket{parseFloat(numTickets) > 1 ? 's have' : ' has'} been minted to your wallet.
                 </p>
                 <div className="bg-white/60 rounded-lg p-3 mb-4">
-                  <div className="text-xs text-gray-600 mb-1">Recipient Address</div>
+                  <div className="text-sm text-gray-600 mb-1">Recipient Address</div>
                   <div className="font-mono text-sm text-gray-900 break-all">
                     {finalRecipientAddress}
                   </div>
@@ -1169,7 +1169,7 @@ export default function LotteryPage() {
                   The deposit was insufficient for the purchase. Your funds have been automatically refunded to your wallet.
                 </p>
                 <div className="bg-white/60 rounded-lg p-3 mb-4">
-                  <div className="text-xs text-gray-600 mb-1">Refund sent to</div>
+                  <div className="text-sm text-gray-600 mb-1">Refund sent to</div>
                   <div className="font-mono text-sm text-gray-900 break-all">
                     {finalRecipientAddress}
                   </div>
@@ -1285,7 +1285,7 @@ export default function LotteryPage() {
               }
               setShowRecovery(!showRecovery);
             }}
-            className="text-xs text-gray-400 hover:text-gray-600"
+            className="text-sm text-gray-400 hover:text-gray-600"
           >
             {showRecovery ? "Hide recovery options" : "Have funds stuck? Click here"}
           </button>
@@ -1294,22 +1294,22 @@ export default function LotteryPage() {
             <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200 text-left max-w-lg mx-auto">
               <h4 className="text-sm font-semibold text-gray-900 mb-3">Companion Wallets</h4>
               {recoveryWallets.length === 0 ? (
-                <p className="text-xs text-gray-500">No companion wallets found in cache.</p>
+                <p className="text-sm text-gray-500">No companion wallets found in cache.</p>
               ) : (
                 <div className="space-y-3">
                   {recoveryWallets.map((wallet) => (
                     <div key={wallet.companionAddress} className="p-3 bg-white rounded border border-gray-200">
                       <div className="flex justify-between items-start mb-2">
                         <div>
-                          <div className="text-xs text-gray-500">Companion</div>
-                          <div className="font-mono text-xs text-gray-900">{wallet.companionAddress.slice(0, 10)}...{wallet.companionAddress.slice(-8)}</div>
+                          <div className="text-sm text-gray-500">Companion</div>
+                          <div className="font-mono text-sm text-gray-900">{wallet.companionAddress.slice(0, 10)}...{wallet.companionAddress.slice(-8)}</div>
                         </div>
                         <div className="text-right">
-                          <div className="text-xs text-gray-500">Balance</div>
+                          <div className="text-sm text-gray-500">Balance</div>
                           <div className="font-bold text-sm">{parseFloat(wallet.balance).toFixed(6)} ETH</div>
                         </div>
                       </div>
-                      <div className="text-xs text-gray-500 mb-2">
+                      <div className="text-sm text-gray-500 mb-2">
                         Owner: {wallet.userAddress.slice(0, 8)}...{wallet.userAddress.slice(-6)}
                       </div>
                       {parseFloat(wallet.balance) > 0.00001 && (
@@ -1346,7 +1346,7 @@ export default function LotteryPage() {
                             }
                           }}
                           disabled={recovering}
-                          className="w-full mt-2 py-1.5 px-3 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                          className="w-full mt-2 py-1.5 px-3 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                         >
                           {recovering ? "Recovering..." : `Recover to ${userAddress ? userAddress.slice(0, 6) + '...' : 'wallet'}`}
                         </button>
@@ -1355,7 +1355,7 @@ export default function LotteryPage() {
                   ))}
                 </div>
               )}
-              <p className="mt-3 text-xs text-gray-400">
+              <p className="mt-3 text-sm text-gray-400">
                 Note: Recovery only works if the signer key is still in your browser's localStorage.
               </p>
             </div>
