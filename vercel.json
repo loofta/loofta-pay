@@ -5,51 +5,5 @@
       "path": "/api/cron/process-all",
       "schedule": "* * * * *"
     }
-  ],
-  "redirects": [
-    {
-      "source": "/checkout",
-      "destination": "https://checkout.loofta.xyz",
-      "has": [
-        {
-          "type": "host",
-          "value": "loofta.xyz"
-        }
-      ],
-      "permanent": false
-    },
-    {
-      "source": "/checkout/:path*",
-      "destination": "https://checkout.loofta.xyz/:path*",
-      "has": [
-        {
-          "type": "host",
-          "value": "loofta.xyz"
-        }
-      ],
-      "permanent": false
-    },
-    {
-      "source": "/swap",
-      "destination": "https://swap.loofta.xyz",
-      "has": [
-        {
-          "type": "host",
-          "value": "loofta.xyz"
-        }
-      ],
-      "permanent": false
-    },
-    {
-      "source": "/swap/:path*",
-      "destination": "https://swap.loofta.xyz/:path*",
-      "has": [
-        {
-          "type": "host",
-          "value": "loofta.xyz"
-        }
-      ],
-      "permanent": false
-    }
   ]
 }
