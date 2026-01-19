@@ -194,13 +194,13 @@ describe('ClaimsService', () => {
   describe('updateStatus', () => {
     it('should update claim status', async () => {
       mockSupabaseClaims.single.mockResolvedValueOnce({
-        data: { ...mockClaim, status: 'PROCESSING' },
+        data: { ...mockClaim, status: 'IN_FLIGHT' },
         error: null,
       });
 
-      const result = await service.updateStatus(mockClaim.id, 'PROCESSING');
+      const result = await service.updateStatus(mockClaim.id, 'IN_FLIGHT');
 
-      expect(result.status).toBe('PROCESSING');
+      expect(result.status).toBe('IN_FLIGHT');
     });
   });
 

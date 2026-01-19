@@ -118,7 +118,7 @@ export class ClaimProcessorService {
 
       // Update claim status based on normalized status
       if (statusResult.isComplete) {
-        await this.claimsService.updateStatus(claimId, 'COMPLETED');
+        await this.claimsService.updateStatus(claimId, 'SUCCESS');
         return {
           claimId,
           intentId,
@@ -128,7 +128,7 @@ export class ClaimProcessorService {
       }
 
       if (statusResult.isFailed) {
-        await this.claimsService.updateStatus(claimId, 'FAILED');
+        await this.claimsService.updateStatus(claimId, 'REFUNDED');
         return {
           claimId,
           intentId,

@@ -250,25 +250,36 @@ export function TokenCombobox({
 								) : (
 									<CommandGroup heading="Tokens">
 										{visibleGroups.map((g) => {
-											const tok = selectedChain ? g.chains[selectedChain] : undefined;
-											const id = `${g.symbol}-${selectedChain || "any"}`;
-											const isSelected = value?.symbol === g.symbol && value?.chain === selectedChain;
+											// Get available chains for this token
+											const availableChains = Object.keys(g.chains);
+											// Use selectedChain if set, otherwise use first available chain
+											const effectiveChain = selectedChain || availableChains[0];
+											const tok = effectiveChain ? g.chains[effectiveChain] : undefined;
+											const id = `${g.symbol}-${effectiveChain || "any"}`;
+											const isSelected = value?.symbol === g.symbol && value?.chain === effectiveChain;
+
+											// When "All networks" is selected, show available chains count
+											const showMultiChain = !selectedChain && availableChains.length > 1;
+
 											return (
 												<CommandItem
 													key={id}
-													value={`${g.symbol} ${g.name} ${selectedChain}`}
+													value={`${g.symbol} ${g.name} ${effectiveChain}`}
 													onSelect={() => {
-														if (!selectedChain || !tok) return;
-														onChange({ symbol: g.symbol, chain: selectedChain });
+														if (!effectiveChain || !tok) return;
+														onChange({ symbol: g.symbol, chain: effectiveChain });
 														setOpen(false);
 													}}
 												>
 													<div className="flex items-center gap-3 w-full">
-														<TokenIcon token={tok ?? g} chain={selectedChain} size={22} />
+														<TokenIcon token={tok ?? g} chain={effectiveChain} size={22} />
 														<div className="flex-1 overflow-hidden">
 															<div className="font-semibold truncate">{g.symbol}</div>
 															<div className="text-xs text-muted-foreground truncate">
-																{g.name} · {formatChainLabel(selectedChain)}
+																{g.name} · {formatChainLabel(effectiveChain)}
+																{showMultiChain && (
+																	<span className="ml-1 text-primary/70">+{availableChains.length - 1} more</span>
+																)}
 															</div>
 														</div>
 														<Check className={cn("h-4 w-4", isSelected ? "opacity-100" : "opacity-0")} />

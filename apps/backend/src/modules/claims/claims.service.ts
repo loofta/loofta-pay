@@ -219,7 +219,7 @@ export class ClaimsService {
   async getPendingIntents(): Promise<ClaimIntent[]> {
     const { data, error } = await this.supabaseService.claimIntents
       .select('*')
-      .in('status', ['PENDING_DEPOSIT', 'PROCESSING'])
+      .in('status', ['PENDING_DEPOSIT', 'IN_FLIGHT'])
       .order('created_at', { ascending: true });
 
     if (error) {

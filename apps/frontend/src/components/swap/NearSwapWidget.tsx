@@ -282,7 +282,20 @@ export function NearSwapWidget({
 			}
 		} catch (e: any) {
 			setDeposit(null);
-			setDepositError(e?.message || "Failed to get deposit address");
+			const rawMsg = (e?.message || "").toLowerCase();
+			// Simplify "amount too low" messages
+			let errorMsg: string;
+			if (rawMsg.includes("amount") && rawMsg.includes("too low")) {
+				errorMsg = "Amount is too low";
+			} else {
+				errorMsg = e?.message || "Failed to get deposit address";
+			}
+			setDepositError(errorMsg);
+			toast({
+				variant: "destructive",
+				title: "Transfer failed",
+				description: errorMsg,
+			});
 		} finally {
 			setDepositLoading(false);
 		}
@@ -343,7 +356,7 @@ export function NearSwapWidget({
 							<path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
 						</svg>
 						<span><strong>Cross-chain only:</strong> Sell and Buy tokens must be on different networks. Select a different chain for one of them.</span>
-							</div>
+					</div>
 				)}
 				{deposit ? (
 					<div className="rounded-2xl bg-gray-50 border border-gray-200 p-4">

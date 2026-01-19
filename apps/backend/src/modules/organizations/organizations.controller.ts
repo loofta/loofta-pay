@@ -89,6 +89,48 @@ export class OrganizationsController {
   }
 
   /**
+   * Get public organization info by organization_id
+   */
+  @Get('public/by-id')
+  @ApiOperation({ summary: 'Get public organization info by organization_id' })
+  @ApiQuery({ name: 'organizationId', description: 'Organization unique ID (e.g., acme-corp)' })
+  @ApiResponse({ status: 200, description: 'Public organization info' })
+  @ApiResponse({ status: 404, description: 'Organization not found' })
+  async getPublicByOrganizationId(@Query('organizationId') organizationId: string): Promise<{
+    organization: {
+      id: string;
+      organization_id: string;
+      name: string;
+      logo_url: string | null;
+      bg_color: string | null;
+      checkout_status: string;
+      org_referral: string;
+      recipient_wallet: string | null;
+      token_symbol: string | null;
+      token_chain: string | null;
+    };
+  }> {
+    const org = await this.organizationsService.findByOrganizationId(organizationId);
+    if (!org) {
+      throw new Error('Organization not found');
+    }
+    return {
+      organization: {
+        id: org.id,
+        organization_id: org.organization_id,
+        name: org.name,
+        logo_url: org.logo_url,
+        bg_color: org.bg_color,
+        checkout_status: org.checkout_status,
+        org_referral: org.org_referral,
+        recipient_wallet: org.recipient_wallet,
+        token_symbol: org.token_symbol,
+        token_chain: org.token_chain,
+      },
+    };
+  }
+
+  /**
    * Create new organization (Admin only)
    */
   @Post()

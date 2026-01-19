@@ -294,9 +294,36 @@ export async function getAccurateQuote(params: {
   } catch (_e: any) {
     // Build an error typology from SDK/axios error shapes
     const err = _e || {};
-    const status: number | undefined = err?.status ?? err?.response?.status;
-    const data = err?.body ?? err?.response?.data;
-    const message: string | undefined = data?.message || err?.message;
+    const status: number | undefined = err?.status ?? err?.response?.status ?? err?.statusCode;
+    
+    // Extract the actual API error message from various possible locations
+    // The SDK may wrap the error in different ways
+    const data = err?.body ?? err?.response?.data ?? err?.data;
+    
+    // Try multiple paths to get the actual error message from the API
+    let message: string | undefined;
+    if (typeof data === 'object' && data?.message) {
+      // API returned { message: "..." }
+      message = data.message;
+    } else if (typeof err?.body === 'string') {
+      // Body might be a JSON string
+      try {
+        const parsed = JSON.parse(err.body);
+        message = parsed?.message;
+      } catch {}
+    }
+    // Fallback to error message property
+    if (!message) {
+      message = err?.message;
+    }
+    // If message is generic like "Bad Request", try to get more detail
+    if (message && (message.includes('Bad Request') || message.includes('Invalid input'))) {
+      const detailedMessage = data?.message || data?.error || data?.detail;
+      if (detailedMessage && detailedMessage !== message) {
+        message = detailedMessage;
+      }
+    }
+    
     const correlationId: string | undefined = data?.correlationId;
     let type: "client" | "server" | "network" | "unknown" = "unknown";
     if (typeof status === "number") {
@@ -304,7 +331,7 @@ export async function getAccurateQuote(params: {
       else if (status >= 500) type = "server";
     } else if (err?.code === "ERR_NETWORK" || message?.toLowerCase().includes("network")) {
       type = "network";
-  }
+    }
     // Fallback: compute via prices if available, but attach error
   const pIn = typeof fromToken.price === "number" ? fromToken.price : undefined;
   const pOut = typeof toToken.price === "number" ? toToken.price : undefined;
@@ -389,29 +416,57 @@ export async function getDepositInfo(params: {
     } as QuoteRequest);
     if (REFERRAL_CODE) (req as any).referral = REFERRAL_CODE;
   }
-  const raw = await OneClickService.getQuote(req);
-  const q = (raw as any)?.quote || raw || {};
-  // Try to expose minimum deposit as human-readable
-  let minDepositFormatted: string | undefined = q?.minAmountInFormatted;
-  if (!minDepositFormatted && typeof q?.minAmountIn === "string" && fromToken.decimals != null) {
-    try {
-      const v = Number(q.minAmountIn) / Math.pow(10, fromToken.decimals);
-      if (Number.isFinite(v)) minDepositFormatted = String(v);
-    } catch {}
+  try {
+    const raw = await OneClickService.getQuote(req);
+    const q = (raw as any)?.quote || raw || {};
+    // Try to expose minimum deposit as human-readable
+    let minDepositFormatted: string | undefined = q?.minAmountInFormatted;
+    if (!minDepositFormatted && typeof q?.minAmountIn === "string" && fromToken.decimals != null) {
+      try {
+        const v = Number(q.minAmountIn) / Math.pow(10, fromToken.decimals);
+        if (Number.isFinite(v)) minDepositFormatted = String(v);
+      } catch {}
+    }
+    return {
+      raw,
+      depositAddress: q?.depositAddress || q?.address,
+      memo: q?.memo ?? null,
+      deadline: q?.deadline,
+      timeEstimate: q?.timeEstimate,
+      timeWhenInactive: q?.timeWhenInactive,
+      quoteId: q?.id || q?.quoteId,
+      originAsset,
+      destinationAsset,
+      amountAtomic: atomicIn,
+      minDepositFormatted,
+    };
+  } catch (_e: any) {
+    // Extract detailed error message from API response
+    const err = _e || {};
+    const data = err?.body ?? err?.response?.data ?? err?.data;
+    
+    let message: string | undefined;
+    if (typeof data === 'object' && data?.message) {
+      message = data.message;
+    } else if (typeof err?.body === 'string') {
+      try {
+        const parsed = JSON.parse(err.body);
+        message = parsed?.message;
+      } catch {}
+    }
+    if (!message) {
+      message = err?.message;
+    }
+    // If message is generic, try to get more detail
+    if (message && (message.includes('Bad Request') || message.includes('Invalid input'))) {
+      const detailedMessage = data?.message || data?.error || data?.detail;
+      if (detailedMessage && detailedMessage !== message) {
+        message = detailedMessage;
+      }
+    }
+    
+    throw new Error(message || 'Failed to get deposit address');
   }
-  return {
-    raw,
-    depositAddress: q?.depositAddress || q?.address,
-    memo: q?.memo ?? null,
-    deadline: q?.deadline,
-    timeEstimate: q?.timeEstimate,
-    timeWhenInactive: q?.timeWhenInactive,
-    quoteId: q?.id || q?.quoteId,
-    originAsset,
-    destinationAsset,
-    amountAtomic: atomicIn,
-    minDepositFormatted,
-  };
 }
 
 // SDK-style names to mirror 1click examples

@@ -92,12 +92,28 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
   const params = await props.params;
   try {
     const body = await request.json();
-    const { status, txHash, paidWith, depositReceivedAt, originAsset, destinationAsset } = body || {};
+    const { status: inputStatus, txHash, paidWith, depositReceivedAt, originAsset, destinationAsset } = body || {};
     
-    // Validate status
-    const allowedStatuses = ["PROCESSING", "SUCCESS", "FAILED", "PENDING_DEPOSIT"];
+    // Map legacy status names to database-valid values
+    // Database constraint: 'OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED'
+    const statusMap: Record<string, string> = {
+      "PROCESSING": "IN_FLIGHT",
+      "FAILED": "REFUNDED",
+      "SUCCESS": "SUCCESS",
+      "PENDING_DEPOSIT": "PENDING_DEPOSIT",
+      "IN_FLIGHT": "IN_FLIGHT",
+      "REFUNDED": "REFUNDED",
+      "EXPIRED": "EXPIRED",
+      "CANCELLED": "CANCELLED",
+      "OPEN": "OPEN",
+    };
+    
+    const status = statusMap[inputStatus?.toUpperCase()] || inputStatus;
+    
+    // Validate status against database constraint
+    const allowedStatuses = ["OPEN", "PENDING_DEPOSIT", "IN_FLIGHT", "SUCCESS", "REFUNDED", "EXPIRED", "CANCELLED"];
     if (!status || !allowedStatuses.includes(status)) {
-      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+      return NextResponse.json({ error: `Invalid status: ${inputStatus}. Allowed: ${allowedStatuses.join(", ")}` }, { status: 400 });
     }
 
     const supabase = getSupabaseAdmin();
@@ -149,9 +165,9 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     }
     
     // Update claim_intent status (only update status-related fields, preserve deposit_address etc.)
-    if (status === "PROCESSING" || status === "SUCCESS" || status === "FAILED") {
+    if (status === "IN_FLIGHT" || status === "SUCCESS" || status === "REFUNDED") {
       try {
-        // Check if deposit_received_at should be set (first time status becomes PROCESSING)
+        // Check if deposit_received_at should be set (first time status becomes IN_FLIGHT)
         let updateData: Record<string, any> = {
           status,
           tx_hash: txHash || null,
@@ -159,8 +175,8 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
           updated_at: new Date().toISOString(),
         };
         
-        // Set deposit_received_at when status first becomes PROCESSING
-        if (status === "PROCESSING") {
+        // Set deposit_received_at when status first becomes IN_FLIGHT
+        if (status === "IN_FLIGHT") {
           // Check if deposit_received_at is not already set
           const { data: existingIntent } = await supabase
             .from("claim_intents")

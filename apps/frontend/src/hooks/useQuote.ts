@@ -130,7 +130,7 @@ export function useQuote(tokens: NearToken[], fromSel: TokenSelection | null, to
 					sender,
 					recipient,
 					});
-				// Handle error typology (client/server/network) and fallback amountOut if present
+				// Handle errors from quote (usually doesn't happen for dry quotes)
 				if (q && q.error) {
 					setError(q.error.message || "Quote error");
 				} else {

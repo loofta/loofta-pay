@@ -7,15 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
-import { Loader2, AlertCircle, Lock, Shield, CheckCircle2, ArrowRight } from "lucide-react";
+import { Loader2, AlertCircle, ArrowRight } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import type { TokenSelection } from "@/app/utils/types";
 import { useQuery } from "@tanstack/react-query";
-import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
-import { QRCodeSVG } from "qrcode.react";
+import { PaymentDepositView } from "@/components/PaymentDepositView";
 import { findTokenBySelection } from "@/lib/tokens";
 import { roundUpDecimals } from "@/lib/format";
 import { TokenIcon } from "@/components/TokenIcon";
@@ -26,7 +25,7 @@ type Organization = {
   organization_id: string;
   name: string;
   logo_url: string | null;
-  checkout_status: "active" | "inactive";
+  checkout_status: "active" | "inactive" | "pending";
   org_referral: string;
   recipient_wallet: string | null;
   token_symbol: string | null;
@@ -297,13 +296,10 @@ export default function CheckoutPage() {
   const loadOrganization = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/organizations/public?organizationId=${organizationId}`);
 
-      if (!response.ok) {
-        throw new Error("Failed to load organization");
-      }
-
-      const data = await response.json();
+      // Use new backend API
+      const { organizationsApi } = await import("@/services/api/organizations");
+      const data = await organizationsApi.getByOrganizationId(organizationId!);
 
       if (!data.organization) {
         throw new Error("Organization not found");
@@ -349,26 +345,22 @@ export default function CheckoutPage() {
   const contentBgColor = organization.bg_color || "#FFFFFF";
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: contentBgColor }}>
-      {/* Organization Logo Header - Centered */}
-      {organization.logo_url && (
-        <header className="pt-8">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center justify-center">
-              <div className="relative w-32 h-32 sm:w-40 sm:h-40">
-                <Image
-                  src={organization.logo_url}
-                  alt={organization.name}
-                  fill
-                  className="object-contain drop-shadow-sm"
-                />
-              </div>
+    <div className="min-h-screen flex items-center justify-center py-8" style={{ backgroundColor: contentBgColor }}>
+      <div className="max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Organization Logo - Top Left */}
+        {organization.logo_url && (
+          <div className="mb-4">
+            <div className="relative w-16 h-16">
+              <Image
+                src={organization.logo_url}
+                alt={organization.name}
+                fill
+                className="object-contain"
+              />
             </div>
           </div>
-        </header>
-      )}
+        )}
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 w-full items-start">
           {/* Left Side - Amount Card */}
           <div className="flex flex-col">
@@ -539,247 +531,21 @@ export default function CheckoutPage() {
                     </Button>
                   </>
                 ) : (
-                  <>
-                    {(() => {
-                      const s = String(status || "").toUpperCase();
-                      const isTerminal = s === "FAILED" || s === "REFUNDED";
-                      const isExpired = (s === "PENDING_DEPOSIT" || s === "INCOMPLETE_DEPOSIT") && deposit?.deadline
-                        ? new Date(deposit.deadline).getTime() < Date.now()
-                        : false;
-
-                      if (isExpired) {
-                        return (
-                          <div className="text-center py-12">
-                            <div className="mb-4 text-6xl">🔗</div>
-                            <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                              Payment Link Expired
-                            </h3>
-                            <p className="text-gray-600 text-base mb-4">
-                              This payment link has expired. Please request a new one.
-                            </p>
-                            <Button onClick={() => setDeposit(null)} className="mt-4">
-                              Start New Payment
-                            </Button>
-                          </div>
-                        );
-                      }
-
-                      const depositAddr = deposit?.depositAddress
-                        || statusData?.quoteResponse?.quote?.depositAddress
-                        || statusData?.depositAddress;
-
-                      // Calculate amount to send - prioritize deposit response, then quote, then calculate
-                      let amountToSend: string | undefined = undefined;
-
-                      // First, try to get from deposit response (most accurate)
-                      if (deposit?.minAmountInFormatted) {
-                        amountToSend = deposit.minAmountInFormatted;
-                      } else if (statusData?.quoteResponse?.quote?.amountInFormatted) {
-                        amountToSend = statusData.quoteResponse.quote.amountInFormatted;
-                      } else if (quote?.amountInFormatted) {
-                        amountToSend = quote.amountInFormatted;
-                      }
-
-                      // If we still don't have an amount and have token price, calculate it
-                      if ((!amountToSend || amountToSend === '0') && selectedFrom?.price && amount) {
-                        const amountUsd = parseFloat(amount);
-                        const tokenPrice = selectedFrom.price;
-                        if (tokenPrice > 0 && amountUsd > 0) {
-                          if (deposit?.isCompanionSwap) {
-                            console.log('companion swap', amountUsd);
-                            // For companion swaps, add 3% buffer
-                            const baseAmount = amountUsd / tokenPrice;
-                            amountToSend = (baseAmount * 1.03).toFixed(6);
-                          } else {
-                            console.log('amountUsd', amountUsd);
-                            console.log('tokenPrice', tokenPrice);
-                            // For direct transfers, no buffer needed
-                            amountToSend = (amountUsd / tokenPrice).toFixed(6);
-                          }
-                        }
-                      }
-
-                      // Show status tracker for PROCESSING/KNOWN_DEPOSIT_TX
-                      if (s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX") {
-                        return (
-                          <>
-                            <PaymentStatusTracker
-                              status={status}
-                              statusData={statusData}
-                              depositReceivedAt={statusData?.updatedAt}
-                              startedAt={deposit?.deadline ? new Date(deposit.deadline).toISOString() : undefined}
-                              fromChain={selectedFrom?.chain}
-                              toChain={destToken?.chain}
-                              depositAddress={depositAddr}
-                              timeEstimate={statusData?.quoteResponse?.quote?.timeEstimate || deposit?.timeEstimate}
-                              paymentType={
-                                deposit?.isDirect ? 'direct' :
-                                  deposit?.isCompanionSwap ? 'companion-swap' :
-                                    'near-intent'
-                              }
-                            />
-                            <div className="mt-6 rounded-xl border border-gray-200 bg-white p-4">
-                              <div className="text-lg font-semibold text-gray-900 mb-2">Payment summary</div>
-                              <div className="text-base text-gray-700 space-y-1">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Amount requested</span>
-                                  <span className="text-lg font-semibold text-gray-900">
-                                    ${amount || "0.00"}
-                                  </span>
-                                </div>
-                                {selectedFrom && (
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-gray-600">Paid with</span>
-                                    <span className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
-                                      <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
-                                      <span>
-                                        {statusData?.swapDetails?.depositedAmountFormatted
-                                          ? `${roundUpDecimals(statusData.swapDetails.depositedAmountFormatted, 6)} ${selectedFrom.symbol}`
-                                          : `— ${selectedFrom.symbol}`}
-                                      </span>
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          </>
-                        );
-                      }
-
-                      if (s === "SUCCESS") {
-                        return (
-                          <div className="text-center py-12">
-                            <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
-                            <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                              Payment Complete! 🎉
-                            </h3>
-                            <p className="text-gray-600 text-base">
-                              Your payment has been successfully processed.
-                            </p>
-                          </div>
-                        );
-                      }
-
-                      if (isTerminal) {
-                        return (
-                          <div className="rounded-lg border border-red-200 bg-red-50 p-3">
-                            <div className="text-sm font-semibold text-red-700">
-                              {s === "FAILED" ? "Deposit failed." : "Deposit was refunded."}
-                            </div>
-                            <div className="text-sm text-red-700/80 mt-1">
-                              Please try again with a different token or network.
-                            </div>
-                            <Button onClick={() => setDeposit(null)} className="mt-4 w-full">
-                              Try Again
-                            </Button>
-                          </div>
-                        );
-                      }
-
-                      // PENDING_DEPOSIT or INCOMPLETE_DEPOSIT - show deposit info
-                      return (
-                        <div className="space-y-6">
-                          {/* Amount to Pay */}
-                          <div className="rounded-xl border border-gray-200 bg-white p-4">
-                            <div className="text-base text-gray-700 space-y-2">
-                              <div className="flex items-center justify-between">
-                                <span className="text-gray-600">Amount to pay</span>
-                                <span className="text-lg font-medium text-gray-900 inline-flex items-center gap-2">
-                                  {selectedFrom && (
-                                    <>
-                                      <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
-                                      <span>
-                                        {amountToSend && selectedFrom
-                                          ? `${roundUpDecimals(amountToSend, 6)} ${selectedFrom.symbol}`
-                                          : quote?.amountInFormatted && selectedFrom
-                                            ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                            : `$${amount || "0.00"}`}
-                                      </span>
-                                    </>
-                                  )}
-                                </span>
-                              </div>
-                              {depositAddr && (
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-gray-600">Deposit address</span>
-                                  <div className="flex items-center gap-2 flex-1 justify-end">
-                                    <span className="text-sm font-mono text-gray-900">
-                                      {depositAddr.length > 20
-                                        ? `${depositAddr.slice(0, 6)}...${depositAddr.slice(-4)}`
-                                        : depositAddr}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={async () => {
-                                        try {
-                                          await navigator.clipboard.writeText(depositAddr);
-                                          toast({ title: "Copied", description: "Deposit address copied to clipboard." });
-                                        } catch {
-                                          toast({ variant: "destructive", title: "Copy failed", description: "Could not copy address." });
-                                        }
-                                      }}
-                                      className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors flex-shrink-0"
-                                      title="Copy address"
-                                    >
-                                      <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-                                        <path d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
-                                      </svg>
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-                              {deposit?.memo && (
-                                <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Memo</span>
-                                  <span className="text-sm font-mono text-gray-900">
-                                    {deposit.memo}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* QR Code */}
-                          {depositAddr && (
-                            <div className="flex justify-center">
-                              <div className="bg-white p-4 rounded-lg border border-gray-200">
-                                <QRCodeSVG value={depositAddr} size={200} />
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Status Message */}
-                          {s === "INCOMPLETE_DEPOSIT" && (
-                            <div className="rounded-lg border border-orange-200 bg-orange-50 p-3">
-                              <div className="text-sm font-semibold text-orange-700">
-                                Incomplete Deposit
-                              </div>
-                              <div className="text-sm text-orange-700/80 mt-1">
-                                Please send the remaining amount to complete your payment.
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Payment Status Tracker */}
-                          <PaymentStatusTracker
-                            status={status}
-                            statusData={statusData}
-                            depositReceivedAt={statusData?.updatedAt}
-                            startedAt={deposit?.deadline ? new Date(deposit.deadline).toISOString() : undefined}
-                            fromChain={selectedFrom?.chain}
-                            toChain={destToken?.chain}
-                            depositAddress={depositAddr}
-                            timeEstimate={statusData?.quoteResponse?.quote?.timeEstimate || deposit?.timeEstimate}
-                            paymentType={
-                              deposit?.isDirect ? 'direct' :
-                                deposit?.isCompanionSwap ? 'companion-swap' :
-                                  'near-intent'
-                            }
-                          />
-                        </div>
-                      );
-                    })()}
-                  </>
+                  <PaymentDepositView
+                    deposit={deposit}
+                    status={status}
+                    statusData={statusData}
+                    selectedFrom={selectedFrom}
+                    destToken={destToken}
+                    amount={amount}
+                    quote={quote}
+                    onCancel={() => setDeposit(null)}
+                    paymentType={
+                      deposit?.isDirect ? 'direct' :
+                        deposit?.isCompanionSwap ? 'companion-swap' :
+                          'near-intent'
+                    }
+                  />
                 )}
 
                 {/* Security Notice */}
