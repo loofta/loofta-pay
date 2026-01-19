@@ -4,9 +4,12 @@ node_modules
 .env
 service-account.json
 scripts
-.DS_Store.DS_Store
-.DS_Store
 .DS_Store
 **/.DS_Store
-supabase/
 recover-funds.js
+
+# Backend build output
+apps/backend/dist
+
+# Supabase local files (but keep migrations)
+.supabase/

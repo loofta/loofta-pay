@@ -1,0 +1,232 @@
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { SupabaseService } from '@/database/supabase.service';
+import { CreateClaimDto } from './dto';
+import { Claim, ClaimIntent, ClaimStatus } from './entities/claim.entity';
+
+@Injectable()
+export class ClaimsService {
+  private readonly logger = new Logger(ClaimsService.name);
+  private readonly baseUrl: string;
+
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    private readonly configService: ConfigService,
+  ) {
+    this.baseUrl = this.configService.get<string>(
+      'NEXT_PUBLIC_BASE_URL',
+      'https://pay.loofta.xyz',
+    );
+  }
+
+  /**
+   * Create a new payment claim
+   */
+  async create(dto: CreateClaimDto): Promise<{ id: string; link: string }> {
+    const { amount, toSel, recipient, userId, userEmail } = dto;
+
+    if (!amount || !toSel?.symbol || !toSel?.chain || !recipient) {
+      throw new BadRequestException('Missing required fields');
+    }
+
+    const { data, error } = await this.supabaseService.claims
+      .insert({
+        amount: String(amount),
+        to_symbol: String(toSel.symbol),
+        to_chain: String(toSel.chain),
+        recipient_address: String(recipient),
+        created_by: userId ? String(userId) : null,
+        creator_email: userEmail ? String(userEmail) : null,
+        status: 'OPEN' as ClaimStatus,
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      this.logger.error('Failed to create claim:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    const id = data.id;
+    const link = `${this.baseUrl}/c/${id}`;
+
+    this.logger.log(`Created claim: ${id}`);
+    return { id, link };
+  }
+
+  /**
+   * Get claim by ID
+   */
+  async findOne(id: string): Promise<Claim> {
+    const { data, error } = await this.supabaseService.claims
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error || !data) {
+      throw new NotFoundException(`Claim with ID ${id} not found`);
+    }
+
+    return data;
+  }
+
+  /**
+   * Get claim with latest intent
+   */
+  async findWithLatestIntent(id: string): Promise<{
+    claim: Claim;
+    intent: ClaimIntent | null;
+  }> {
+    const claim = await this.findOne(id);
+
+    const { data: intent } = await this.supabaseService.claimIntents
+      .select('*')
+      .eq('claim_id', id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return { claim, intent };
+  }
+
+  /**
+   * Update claim status
+   */
+  async updateStatus(id: string, status: ClaimStatus): Promise<Claim> {
+    const { data, error } = await this.supabaseService.claims
+      .update({ status })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      this.logger.error('Failed to update claim status:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    this.logger.log(`Updated claim ${id} status to ${status}`);
+    return data;
+  }
+
+  /**
+   * Get all claims for a user
+   */
+  async findByUser(userId: string): Promise<Claim[]> {
+    const { data, error } = await this.supabaseService.claims
+      .select('*')
+      .eq('created_by', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      this.logger.error('Failed to fetch user claims:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    return data || [];
+  }
+
+  /**
+   * Get claims by status (for cron processing)
+   */
+  async findByStatus(status: ClaimStatus): Promise<Claim[]> {
+    const { data, error } = await this.supabaseService.claims
+      .select('*')
+      .eq('status', status)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      this.logger.error('Failed to fetch claims by status:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    return data || [];
+  }
+
+  /**
+   * Create claim intent record
+   */
+  async createIntent(params: {
+    claimId: string;
+    quoteId?: string;
+    depositAddress?: string;
+    memo?: string | null;
+    deadline?: string;
+    timeEstimate?: number;
+    fromChain?: string;
+    toChain?: string;
+    status?: string;
+  }): Promise<ClaimIntent> {
+    const { data, error } = await this.supabaseService.claimIntents
+      .insert({
+        claim_id: params.claimId,
+        quote_id: params.quoteId || null,
+        deposit_address: params.depositAddress || null,
+        memo: params.memo || null,
+        deadline: params.deadline ? new Date(params.deadline).toISOString() : null,
+        time_estimate: params.timeEstimate || null,
+        from_chain: params.fromChain || null,
+        to_chain: params.toChain || null,
+        status: params.status || 'PENDING_DEPOSIT',
+        last_status_payload: null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      this.logger.error('Failed to create claim intent:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    // Update claim status
+    await this.updateStatus(params.claimId, 'PENDING_DEPOSIT');
+
+    return data;
+  }
+
+  /**
+   * Update claim intent
+   */
+  async updateIntent(
+    intentId: string,
+    updates: Partial<{
+      status: string;
+      lastStatusPayload: any;
+      paidAmount: string;
+    }>,
+  ): Promise<ClaimIntent> {
+    const updateData: Record<string, unknown> = {};
+    if (updates.status !== undefined) updateData.status = updates.status;
+    if (updates.lastStatusPayload !== undefined) updateData.last_status_payload = updates.lastStatusPayload;
+    if (updates.paidAmount !== undefined) updateData.paid_amount = updates.paidAmount;
+
+    const { data, error } = await this.supabaseService.claimIntents
+      .update(updateData)
+      .eq('id', intentId)
+      .select()
+      .single();
+
+    if (error) {
+      this.logger.error('Failed to update claim intent:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  /**
+   * Get pending intents for processing
+   */
+  async getPendingIntents(): Promise<ClaimIntent[]> {
+    const { data, error } = await this.supabaseService.claimIntents
+      .select('*')
+      .in('status', ['PENDING_DEPOSIT', 'PROCESSING'])
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      this.logger.error('Failed to fetch pending intents:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    return data || [];
+  }
+}

@@ -1,0 +1,176 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { ConfigService } from '@nestjs/config';
+import { ClaimsService } from '../claims/claims.service';
+import { StatusService } from '../intents/status.service';
+import { RedisService } from '@/redis/redis.service';
+
+export interface ProcessingResult {
+  claimId: string;
+  intentId: string;
+  action: string;
+  success: boolean;
+  error?: string;
+}
+
+@Injectable()
+export class ClaimProcessorService {
+  private readonly logger = new Logger(ClaimProcessorService.name);
+  private isProcessing = false;
+
+  constructor(
+    private readonly claimsService: ClaimsService,
+    private readonly statusService: StatusService,
+    private readonly redisService: RedisService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  /**
+   * Process pending claims every minute
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleCron() {
+    // Check if auto-processing is enabled
+    const autoProcess = this.configService.get<string>('AUTO_PROCESS_CLAIMS', 'true');
+    if (autoProcess !== 'true') {
+      return;
+    }
+
+    await this.processPendingClaims();
+  }
+
+  /**
+   * Process all pending claims
+   */
+  async processPendingClaims(): Promise<ProcessingResult[]> {
+    // Prevent concurrent processing
+    if (this.isProcessing) {
+      this.logger.debug('Already processing claims, skipping');
+      return [];
+    }
+
+    this.isProcessing = true;
+    const results: ProcessingResult[] = [];
+
+    try {
+      this.logger.log('Starting claim processing...');
+
+      // Get pending intents
+      const pendingIntents = await this.claimsService.getPendingIntents();
+      this.logger.log(`Found ${pendingIntents.length} pending intents`);
+
+      for (const intent of pendingIntents) {
+        // Use distributed lock if Redis is available
+        const lockKey = `claim:${intent.claim_id}`;
+        
+        const processResult = await this.redisService.withLock(
+          lockKey,
+          async () => this.processIntent(intent),
+          60000, // 1 minute lock
+        );
+
+        if (processResult) {
+          results.push(processResult);
+        }
+      }
+
+      this.logger.log(`Processed ${results.length} intents`);
+    } catch (error: any) {
+      this.logger.error('Error processing claims:', error?.message);
+    } finally {
+      this.isProcessing = false;
+    }
+
+    return results;
+  }
+
+  /**
+   * Process a single intent
+   */
+  private async processIntent(intent: any): Promise<ProcessingResult | null> {
+    const { id: intentId, claim_id: claimId, deposit_address: depositAddress, status } = intent;
+
+    try {
+      this.logger.debug(`Processing intent ${intentId} for claim ${claimId}`);
+
+      // Skip if no deposit address
+      if (!depositAddress) {
+        return {
+          claimId,
+          intentId,
+          action: 'skipped',
+          success: true,
+          error: 'No deposit address',
+        };
+      }
+
+      // Check status from Near Intents
+      const statusResult = await this.statusService.getNearIntentsStatus(depositAddress);
+      this.logger.debug(`Intent ${intentId} status: ${statusResult.status}`);
+
+      // Update intent status if changed
+      if (statusResult.status !== status) {
+        await this.claimsService.updateIntent(intentId, {
+          status: statusResult.status,
+          lastStatusPayload: statusResult.raw,
+        });
+      }
+
+      // Update claim status based on normalized status
+      if (statusResult.isComplete) {
+        await this.claimsService.updateStatus(claimId, 'COMPLETED');
+        return {
+          claimId,
+          intentId,
+          action: 'completed',
+          success: true,
+        };
+      }
+
+      if (statusResult.isFailed) {
+        await this.claimsService.updateStatus(claimId, 'FAILED');
+        return {
+          claimId,
+          intentId,
+          action: 'failed',
+          success: true,
+        };
+      }
+
+      // Still pending/processing
+      return {
+        claimId,
+        intentId,
+        action: 'waiting',
+        success: true,
+      };
+    } catch (error: any) {
+      this.logger.error(`Error processing intent ${intentId}:`, error?.message);
+      return {
+        claimId,
+        intentId,
+        action: 'error',
+        success: false,
+        error: error?.message,
+      };
+    }
+  }
+
+  /**
+   * Manually trigger processing (for API endpoint)
+   */
+  async triggerProcessing(): Promise<{ processed: number; results: ProcessingResult[] }> {
+    const results = await this.processPendingClaims();
+    return {
+      processed: results.length,
+      results,
+    };
+  }
+
+  /**
+   * Get processing status
+   */
+  getProcessingStatus(): { isProcessing: boolean } {
+    return { isProcessing: this.isProcessing };
+  }
+}
