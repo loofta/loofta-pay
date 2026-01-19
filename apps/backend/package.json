@@ -17,10 +17,16 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:status": "supabase status",
+    "db:reset": "supabase db reset",
     "db:types": "supabase gen types typescript --project-id $SUPABASE_PROJECT_ID > src/types/database.types.ts",
     "db:types:local": "supabase gen types typescript --local > src/types/database.types.ts",
-    "db:migrate": "supabase db push",
-    "db:migrate:create": "supabase migration new"
+    "db:migrate:local": "supabase db reset",
+    "db:migrate:prod": "supabase db push",
+    "db:migrate:create": "supabase migration new",
+    "db:diff": "supabase db diff --use-migra"
   },
   "dependencies": {
     "@defuse-protocol/one-click-sdk-typescript": "0.1.1",

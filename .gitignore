@@ -27,6 +27,9 @@ apps/frontend/.next
 
 # Supabase local files (but keep migrations)
 .supabase/
+**/supabase/.temp/
+**/supabase/.branches/
+**/.supabase/
 
 # Vercel
 .vercel

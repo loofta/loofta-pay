@@ -15,6 +15,7 @@ import { TokensModule } from './modules/tokens/tokens.module';
 import { LotteryModule } from './modules/lottery/lottery.module';
 import { CronModule } from './modules/cron/cron.module';
 import { HealthModule } from './modules/health/health.module';
+import { PayrollModule } from './modules/payroll/payroll.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { HealthModule } from './modules/health/health.module';
     TokensModule,
     LotteryModule,
     CronModule,
+    PayrollModule,
   ],
 })
 export class AppModule {}
