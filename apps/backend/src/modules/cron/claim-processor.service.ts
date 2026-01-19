@@ -85,6 +85,34 @@ export class ClaimProcessorService {
   }
 
   /**
+   * Check if intent should be skipped (expired or too old)
+   */
+  private shouldSkipIntent(intent: any): { skip: boolean; reason?: string } {
+    const { deadline, created_at } = intent;
+
+    // Skip if deadline has passed
+    if (deadline) {
+      const deadlineDate = new Date(deadline);
+      if (deadlineDate < new Date()) {
+        return { skip: true, reason: 'Deadline expired' };
+      }
+    }
+
+    // Skip if older than 1 month
+    if (created_at) {
+      const createdDate = new Date(created_at);
+      const oneMonthAgo = new Date();
+      oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+      
+      if (createdDate < oneMonthAgo) {
+        return { skip: true, reason: 'Older than 1 month' };
+      }
+    }
+
+    return { skip: false };
+  }
+
+  /**
    * Process a single intent
    */
   private async processIntent(intent: any): Promise<ProcessingResult | null> {
@@ -92,6 +120,19 @@ export class ClaimProcessorService {
 
     try {
       this.logger.debug(`Processing intent ${intentId} for claim ${claimId}`);
+
+      // Skip expired or old intents
+      const skipCheck = this.shouldSkipIntent(intent);
+      if (skipCheck.skip) {
+        this.logger.debug(`Skipping intent ${intentId}: ${skipCheck.reason}`);
+        return {
+          claimId,
+          intentId,
+          action: 'skipped',
+          success: true,
+          error: skipCheck.reason,
+        };
+      }
 
       // Skip if no deposit address
       if (!depositAddress) {

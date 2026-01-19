@@ -215,11 +215,18 @@ export class ClaimsService {
 
   /**
    * Get pending intents for processing
+   * Excludes expired intents and intents older than 1 month
    */
   async getPendingIntents(): Promise<ClaimIntent[]> {
+    const now = new Date().toISOString();
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+
     const { data, error } = await this.supabaseService.claimIntents
       .select('*')
       .in('status', ['PENDING_DEPOSIT', 'IN_FLIGHT'])
+      .gt('deadline', now) // Only intents with future deadlines
+      .gt('created_at', oneMonthAgo.toISOString()) // Only intents from last month
       .order('created_at', { ascending: true });
 
     if (error) {
@@ -227,6 +234,107 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
+    this.logger.debug(`Found ${data?.length || 0} pending intents (excluding expired/old)`);
     return data || [];
+  }
+
+  /**
+   * Get all claims (admin)
+   */
+  async findAll(options?: {
+    status?: ClaimStatus;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ claims: Claim[]; total: number }> {
+    let query = this.supabaseService.claims.select('*', { count: 'exact' });
+
+    if (options?.status) {
+      query = query.eq('status', options.status);
+    }
+
+    query = query.order('created_at', { ascending: false });
+
+    if (options?.limit) {
+      query = query.limit(options.limit);
+    }
+    if (options?.offset) {
+      query = query.range(options.offset, options.offset + (options.limit || 50) - 1);
+    }
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      this.logger.error('Failed to fetch all claims:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    return { claims: data || [], total: count || 0 };
+  }
+
+  /**
+   * Delete a claim and its intents (admin)
+   */
+  async delete(id: string): Promise<void> {
+    // First delete all intents for this claim
+    const { error: intentError } = await this.supabaseService.claimIntents
+      .delete()
+      .eq('claim_id', id);
+
+    if (intentError) {
+      this.logger.error('Failed to delete claim intents:', intentError);
+      throw new Error(`Database error: ${intentError.message}`);
+    }
+
+    // Then delete the claim
+    const { error } = await this.supabaseService.claims
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      this.logger.error('Failed to delete claim:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    this.logger.log(`Deleted claim: ${id}`);
+  }
+
+  /**
+   * Delete multiple claims (admin)
+   */
+  async deleteMany(ids: string[]): Promise<{ deleted: number }> {
+    let deletedCount = 0;
+
+    for (const id of ids) {
+      try {
+        await this.delete(id);
+        deletedCount++;
+      } catch (e) {
+        this.logger.error(`Failed to delete claim ${id}:`, e);
+      }
+    }
+
+    return { deleted: deletedCount };
+  }
+
+  /**
+   * Get claim with all intents (admin)
+   */
+  async findWithAllIntents(id: string): Promise<{
+    claim: Claim;
+    intents: ClaimIntent[];
+  }> {
+    const claim = await this.findOne(id);
+
+    const { data: intents, error } = await this.supabaseService.claimIntents
+      .select('*')
+      .eq('claim_id', id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      this.logger.error('Failed to fetch claim intents:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    return { claim, intents: intents || [] };
   }
 }

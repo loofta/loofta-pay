@@ -9,8 +9,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import { getPaymentHistory } from "@/services/companionApi";
 import type { PaymentLog } from "@/services/companionApi";
-import { Loader2, Shield, Users, DollarSign, CheckCircle, XCircle, Clock, Building2 } from "lucide-react";
+import { Loader2, Shield, Users, DollarSign, CheckCircle, XCircle, Clock, Building2, Receipt } from "lucide-react";
 import { OrganizationsManager } from "./organizations";
+import { ClaimsManager } from "./claims";
 
 export default function AdminPage() {
   const { authenticated, userId, login, ready } = useAuth();
@@ -213,6 +214,10 @@ export default function AdminPage() {
               <Building2 className="w-4 h-4 mr-2" />
               Organizations
             </TabsTrigger>
+            <TabsTrigger value="claims">
+              <Receipt className="w-4 h-4 mr-2" />
+              Claims
+            </TabsTrigger>
             <TabsTrigger value="payments">
               <Users className="w-4 h-4 mr-2" />
               Payments
@@ -221,6 +226,10 @@ export default function AdminPage() {
 
           <TabsContent value="organizations">
             <OrganizationsManager />
+          </TabsContent>
+
+          <TabsContent value="claims">
+            <ClaimsManager />
           </TabsContent>
 
           <TabsContent value="payments">
