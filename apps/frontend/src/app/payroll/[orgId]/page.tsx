@@ -482,7 +482,7 @@ export default function PayrollOrgPage() {
             <div className="space-y-2">
               <Label>Payment Network & Token</Label>
               <TokenCombobox
-                value={formNetwork && formTokenSymbol ? { symbol: formTokenSymbol, chain: formNetwork } : null}
+                value={formNetwork && formTokenSymbol ? { symbol: formTokenSymbol, chain: formNetwork } : undefined}
                 onChange={(sel) => {
                   setFormNetwork(sel?.chain || null);
                   setFormTokenSymbol(sel?.symbol || null);
@@ -562,7 +562,7 @@ export default function PayrollOrgPage() {
             <div className="space-y-2">
               <Label>Payment Network & Token</Label>
               <TokenCombobox
-                value={formNetwork && formTokenSymbol ? { symbol: formTokenSymbol, chain: formNetwork } : null}
+                value={formNetwork && formTokenSymbol ? { symbol: formTokenSymbol, chain: formNetwork } : undefined}
                 onChange={(sel) => {
                   setFormNetwork(sel?.chain || null);
                   setFormTokenSymbol(sel?.symbol || null);
