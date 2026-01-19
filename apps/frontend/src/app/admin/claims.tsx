@@ -5,11 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import {
-  adminClaimsApi,
-  type Claim,
-  type ClaimIntent,
-} from "@/services/api/adminClaims";
+import { adminClaimsApi } from "@/services/api/adminClaims";
+import type { Claim, ClaimIntent } from "@/services/api/claims";
 import {
   Loader2,
   Trash2,

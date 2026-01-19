@@ -2,38 +2,8 @@
  * Admin Claims API Service
  */
 
-import { fetchApi, BACKEND_URL } from './client';
-
-export interface Claim {
-  id: string;
-  amount: string;
-  to_symbol: string;
-  to_chain: string;
-  recipient_address: string;
-  created_by: string | null;
-  creator_email: string | null;
-  status: 'OPEN' | 'PENDING_DEPOSIT' | 'IN_FLIGHT' | 'SUCCESS' | 'REFUNDED' | 'EXPIRED' | 'CANCELLED';
-  created_at: string;
-  updated_at: string | null;
-  paid_at: string | null;
-}
-
-export interface ClaimIntent {
-  id: string;
-  claim_id: string;
-  quote_id: string | null;
-  deposit_address: string | null;
-  memo: string | null;
-  deadline: string | null;
-  time_estimate: number | null;
-  status: string;
-  from_chain: string | null;
-  to_chain: string | null;
-  paid_amount: string | null;
-  last_status_payload: unknown;
-  created_at: string;
-  updated_at: string | null;
-}
+import { fetchApi } from './client';
+import type { Claim, ClaimIntent, ClaimStatus } from './claims';
 
 export interface ListClaimsResponse {
   claims: Claim[];

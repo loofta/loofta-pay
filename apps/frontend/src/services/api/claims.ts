@@ -49,6 +49,7 @@ export interface ClaimIntent {
   status: string | null;
   from_symbol: string | null;
   from_chain: string | null;
+  to_chain: string | null;
   paid_amount: string | null;
   companion_address: string | null;
   last_status_payload: unknown;
