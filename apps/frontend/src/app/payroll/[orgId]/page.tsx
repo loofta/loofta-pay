@@ -60,7 +60,7 @@ export default function PayrollOrgPage() {
   const router = useRouter();
   const { authenticated, userId, login, ready } = useAuth();
   const { toast } = useToast();
-  const { tokens } = useTokensQuery();
+  const { data: tokens = [] } = useTokensQuery();
 
   const [organization, setOrganization] = useState<PayrollOrganization | null>(null);
   const [contributors, setContributors] = useState<PayrollContributor[]>([]);
