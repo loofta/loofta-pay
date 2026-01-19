@@ -3,11 +3,11 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files first (for better caching)
-COPY package*.json ./
+# Copy package files
+COPY package.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies (use npm install since we're in a monorepo without local lock file)
+RUN npm install --legacy-peer-deps
 
 # Copy source code
 COPY . .
@@ -22,7 +22,7 @@ WORKDIR /app
 
 # Copy built files and dependencies
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 
 # Set environment

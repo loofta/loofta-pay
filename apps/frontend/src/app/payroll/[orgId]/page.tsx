@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
+import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -59,6 +60,7 @@ export default function PayrollOrgPage() {
   const router = useRouter();
   const { authenticated, userId, login, ready } = useAuth();
   const { toast } = useToast();
+  const { tokens } = useTokensQuery();
 
   const [organization, setOrganization] = useState<PayrollOrganization | null>(null);
   const [contributors, setContributors] = useState<PayrollContributor[]>([]);
@@ -482,6 +484,7 @@ export default function PayrollOrgPage() {
             <div className="space-y-2">
               <Label>Payment Network & Token</Label>
               <TokenCombobox
+                tokens={tokens}
                 value={formNetwork && formTokenSymbol ? { symbol: formTokenSymbol, chain: formNetwork } : undefined}
                 onChange={(sel) => {
                   setFormNetwork(sel?.chain || null);
@@ -562,6 +565,7 @@ export default function PayrollOrgPage() {
             <div className="space-y-2">
               <Label>Payment Network & Token</Label>
               <TokenCombobox
+                tokens={tokens}
                 value={formNetwork && formTokenSymbol ? { symbol: formTokenSymbol, chain: formNetwork } : undefined}
                 onChange={(sel) => {
                   setFormNetwork(sel?.chain || null);
