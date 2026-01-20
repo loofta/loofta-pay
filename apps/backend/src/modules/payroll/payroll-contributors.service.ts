@@ -64,6 +64,7 @@ export class PayrollContributorsService {
         wallet_address: dto.walletAddress || null,
         network: dto.network || null,
         token_symbol: dto.tokenSymbol || null,
+        department: dto.department || null,
         status: 'invited',
         invited_at: new Date().toISOString(),
       })
@@ -164,6 +165,7 @@ export class PayrollContributorsService {
     if (dto.walletAddress !== undefined) updateData.wallet_address = dto.walletAddress;
     if (dto.network !== undefined) updateData.network = dto.network;
     if (dto.tokenSymbol !== undefined) updateData.token_symbol = dto.tokenSymbol;
+    if (dto.department !== undefined) updateData.department = dto.department;
     if (dto.status !== undefined) {
       updateData.status = dto.status;
       if (dto.status === 'joined') {

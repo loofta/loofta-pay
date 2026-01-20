@@ -21,6 +21,12 @@ jobs:
         with:
           version: latest
 
+      - name: Login to Supabase
+        run: |
+          supabase login --token ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
       - name: Link Supabase project
         run: |
           cd apps/backend
@@ -34,7 +40,6 @@ jobs:
           supabase db push
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
 
       - name: Generate types (optional)
         run: |

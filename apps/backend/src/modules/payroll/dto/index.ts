@@ -55,6 +55,11 @@ export class CreateContributorDto {
   @IsOptional()
   @IsString()
   tokenSymbol?: string;
+
+  @ApiPropertyOptional({ description: 'Department (e.g., marketing, finance, engineering)' })
+  @IsOptional()
+  @IsString()
+  department?: string;
 }
 
 export class UpdateContributorDto {
@@ -82,6 +87,11 @@ export class UpdateContributorDto {
   @IsOptional()
   @IsString()
   tokenSymbol?: string;
+
+  @ApiPropertyOptional({ description: 'Department (e.g., marketing, finance, engineering)' })
+  @IsOptional()
+  @IsString()
+  department?: string;
 
   @ApiPropertyOptional({ description: 'Status', enum: ['invited', 'joined', 'removed'] })
   @IsOptional()
@@ -124,6 +134,7 @@ export interface PayrollContributor {
   wallet_address: string | null;
   network: string | null;
   token_symbol: string | null;
+  department: string | null;
   status: 'invited' | 'joined' | 'removed';
   invited_at: string | null;
   joined_at: string | null;

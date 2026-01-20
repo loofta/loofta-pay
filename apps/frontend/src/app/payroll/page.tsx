@@ -112,7 +112,7 @@ export default function PayrollPage() {
       setNewOrgName("");
       setNewOrgLogo(null);
       setLogoPreview(null);
-      
+
       // Navigate to the new org
       router.push(`/payroll/${org.id}`);
     } catch (error: any) {
@@ -176,7 +176,7 @@ export default function PayrollPage() {
                   />
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-2 ">
                   <Label>Logo (optional)</Label>
                   <div className="flex items-center gap-4">
                     {logoPreview ? (
@@ -258,7 +258,7 @@ export default function PayrollPage() {
             {organizations.map((org) => (
               <Card
                 key={org.id}
-                className="hover:shadow-md transition-shadow cursor-pointer"
+                className="hover:shadow-md transition-shadow cursor-pointer p-4"
                 onClick={() => router.push(`/payroll/${org.id}`)}
               >
                 <CardHeader className="flex flex-row items-center gap-4">

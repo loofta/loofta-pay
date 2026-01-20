@@ -43,6 +43,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import Image from "next/image";
 
 // Network to chain mapping
@@ -78,6 +85,10 @@ export default function PayrollOrgPage() {
   const [formWalletAddress, setFormWalletAddress] = useState("");
   const [formNetwork, setFormNetwork] = useState<string | null>(null);
   const [formTokenSymbol, setFormTokenSymbol] = useState<string | null>(null);
+  const [formDepartment, setFormDepartment] = useState<string | null>(null);
+
+  // Predefined departments
+  const DEPARTMENTS = ["Engineering", "Marketing", "Finance", "Operations", "Design", "Sales", "HR", "Legal", "Other"];
 
   const loadData = useCallback(async () => {
     if (!userId || !orgId) return;
@@ -120,6 +131,7 @@ export default function PayrollOrgPage() {
     setFormWalletAddress("");
     setFormNetwork(null);
     setFormTokenSymbol(null);
+    setFormDepartment(null);
   };
 
   const handleAddContributor = async () => {
@@ -156,6 +168,7 @@ export default function PayrollOrgPage() {
           walletAddress: formWalletAddress.trim() || undefined,
           network: formNetwork || undefined,
           tokenSymbol: formTokenSymbol || undefined,
+          department: formDepartment || undefined,
         },
         userId,
       );
@@ -193,6 +206,7 @@ export default function PayrollOrgPage() {
           walletAddress: formWalletAddress.trim() || undefined,
           network: formNetwork || undefined,
           tokenSymbol: formTokenSymbol || undefined,
+          department: formDepartment || undefined,
         },
         userId,
       );
@@ -243,6 +257,7 @@ export default function PayrollOrgPage() {
     setFormWalletAddress(contrib.wallet_address || "");
     setFormNetwork(contrib.network || null);
     setFormTokenSymbol(contrib.token_symbol || null);
+    setFormDepartment(contrib.department || null);
     setShowEditDialog(true);
   };
 
@@ -340,7 +355,7 @@ export default function PayrollOrgPage() {
         </div>
 
         {/* Contributors List */}
-        <Card>
+        <Card className="p-4">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Users className="w-5 h-5" />
@@ -367,6 +382,7 @@ export default function PayrollOrgPage() {
                     <tr className="border-b text-left">
                       <th className="p-4 font-medium text-gray-700">Name</th>
                       <th className="p-4 font-medium text-gray-700">Email</th>
+                      <th className="p-4 font-medium text-gray-700">Department</th>
                       <th className="p-4 font-medium text-gray-700">Wallet</th>
                       <th className="p-4 font-medium text-gray-700">Network / Token</th>
                       <th className="p-4 font-medium text-gray-700">Status</th>
@@ -386,6 +402,15 @@ export default function PayrollOrgPage() {
                             <Mail className="w-4 h-4 text-gray-400" />
                             {contrib.email}
                           </div>
+                        </td>
+                        <td className="p-4">
+                          {contrib.department ? (
+                            <Badge variant="outline" className="text-xs">
+                              {contrib.department}
+                            </Badge>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
                         </td>
                         <td className="p-4 font-mono text-sm">
                           {contrib.wallet_address ? (
@@ -511,6 +536,23 @@ export default function PayrollOrgPage() {
                 </p>
               )}
             </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="department">Department</Label>
+              <Select value={formDepartment || ""} onValueChange={(v) => setFormDepartment(v || null)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select department" />
+                </SelectTrigger>
+                <SelectContent>
+                  {DEPARTMENTS.map((dept) => (
+                    <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-500">
+                Used for grouping expenses by department
+              </p>
+            </div>
           </div>
 
           <DialogFooter>
@@ -583,6 +625,20 @@ export default function PayrollOrgPage() {
                 onChange={(e) => setFormWalletAddress(e.target.value)}
                 disabled={!formNetwork}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="editDepartment">Department</Label>
+              <Select value={formDepartment || ""} onValueChange={(v) => setFormDepartment(v || null)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select department" />
+                </SelectTrigger>
+                <SelectContent>
+                  {DEPARTMENTS.map((dept) => (
+                    <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

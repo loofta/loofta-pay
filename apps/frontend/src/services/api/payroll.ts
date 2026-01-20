@@ -22,6 +22,7 @@ export interface PayrollContributor {
   wallet_address: string | null;
   network: string | null;
   token_symbol: string | null;
+  department: string | null;
   status: 'invited' | 'joined' | 'removed';
   invited_at: string | null;
   joined_at: string | null;
@@ -41,6 +42,7 @@ export interface CreateContributorDto {
   walletAddress?: string;
   network?: string;
   tokenSymbol?: string;
+  department?: string;
 }
 
 export interface UpdateContributorDto {
@@ -49,6 +51,7 @@ export interface UpdateContributorDto {
   walletAddress?: string;
   network?: string;
   tokenSymbol?: string;
+  department?: string;
   status?: 'invited' | 'joined' | 'removed';
 }
 
