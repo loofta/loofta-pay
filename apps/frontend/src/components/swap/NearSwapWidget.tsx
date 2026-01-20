@@ -137,6 +137,9 @@ export function NearSwapWidget({
 	} | null>(null);
 	const [timeLeft, setTimeLeft] = useState<number | null>(null);
 	const [expired, setExpired] = useState<boolean>(false);
+	const [speedUpOpen, setSpeedUpOpen] = useState(false);
+	const [speedUpTx, setSpeedUpTx] = useState("");
+	const [speedUpLoading, setSpeedUpLoading] = useState(false);
 	const statusQuery = useIntentStatus(deposit?.depositAddress);
 	const currentStatus = statusQuery.data?.status;
 	const isSuccess = currentStatus === "SUCCESS";
@@ -210,6 +213,36 @@ export function NearSwapWidget({
 			// remote disabled
 		} catch { }
 	}, [statusQuery.data?.status, deposit, toast]);
+
+	async function handleSpeedUp() {
+		if (!speedUpTx.trim()) return;
+		setSpeedUpLoading(true);
+		try {
+			// Submit tx hash to Near Intents for faster processing
+			const resp = await fetch("https://1click.chaindefuser.com/v0/submit-deposit", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ txHash: speedUpTx.trim() }),
+			});
+			if (!resp.ok) {
+				throw new Error("Failed to submit transaction");
+			}
+			toast({
+				title: "Transaction submitted",
+				description: "Your deposit is being processed. Check the status in a few moments.",
+			});
+			setSpeedUpOpen(false);
+			setSpeedUpTx("");
+		} catch (e: any) {
+			toast({
+				variant: "destructive",
+				title: "Speed up failed",
+				description: e?.message || "Failed to submit transaction",
+			});
+		} finally {
+			setSpeedUpLoading(false);
+		}
+	}
 
 	async function handleStartTransfer() {
 		if (!selectedFrom || !selectedTo || !(amountNum > 0) || !recipient || recipientError) return;
@@ -512,9 +545,54 @@ export function NearSwapWidget({
 										) : null}
 									</div>
 								</div>
-								<div className="mt-4 flex justify-end">
+								<div className="mt-4 flex items-center justify-between">
+									<div>
+										{!speedUpOpen && (
+											<button
+												type="button"
+												onClick={() => setSpeedUpOpen(true)}
+												className="text-sm text-orange-600 hover:text-orange-700 underline"
+											>
+												Already deposited? Speed up processing
+											</button>
+										)}
+									</div>
 									<Button variant="outline" onClick={handleCancelDeposit}>Cancel</Button>
 								</div>
+
+								{/* Speed Up Form */}
+								{speedUpOpen && (
+									<div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
+										<div className="text-sm font-semibold text-gray-900 mb-1">Speed up processing</div>
+										<div className="text-xs text-gray-600 mb-3">
+											If you've already deposited, enter your transaction hash to speed up processing.
+										</div>
+										<Input
+											placeholder="Enter transaction hash"
+											value={speedUpTx}
+											onChange={(e) => setSpeedUpTx(e.target.value)}
+											className="text-sm mb-3"
+										/>
+										<div className="flex items-center gap-2">
+											<Button
+												size="sm"
+												onClick={handleSpeedUp}
+												disabled={!speedUpTx.trim() || speedUpLoading}
+												style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+												className="text-white"
+											>
+												{speedUpLoading ? "Submitting..." : "Submit"}
+											</Button>
+											<Button
+												size="sm"
+												variant="outline"
+												onClick={() => { setSpeedUpOpen(false); setSpeedUpTx(""); }}
+											>
+												Cancel
+											</Button>
+										</div>
+									</div>
+								)}
 							</div>
 						)}
 					</div>

@@ -45,7 +45,18 @@ USING (bucket_id = 'logos');
 -- Add any test data below for local development
 -- =============================================================================
 
--- Example test organization:
--- INSERT INTO public.organizations (organization_id, name, org_referral, checkout_status)
--- VALUES ('test-org', 'Test Organization', 'test-ref-123', 'active')
--- ON CONFLICT (organization_id) DO NOTHING;
+-- Production organization (exported from prod)
+INSERT INTO public.organizations (id, organization_id, name, logo_url, checkout_status, org_referral, recipient_wallet, token_symbol, token_chain, bg_color)
+VALUES (
+  '6be941fd-0d01-40c3-9b27-22067793e591',
+  'theinternettoken',
+  'Internet Token',
+  'https://rfxzswjefgxwgmjvcckf.supabase.co/storage/v1/object/public/logos/organizations/theinternettoken_1768386052213.png',
+  'active',
+  'org_bjgds0xyjt9n0ybo',
+  '0xEC523839fd5Aa275115d382A996Db616A3a7465F',
+  'USDC',
+  'base',
+  '#001C5C'
+)
+ON CONFLICT (organization_id) DO NOTHING;
