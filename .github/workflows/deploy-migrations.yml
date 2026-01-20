@@ -34,6 +34,24 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
+      - name: Mark old migrations as applied (one-time fix)
+        run: |
+          cd apps/backend
+          # Mark pre-existing migrations as applied (schema already exists in prod)
+          supabase migration repair 20240101000000 --status applied || true
+          supabase migration repair 20240101000001 --status applied || true
+          supabase migration repair 20240101000002 --status applied || true
+          supabase migration repair 20240101000003 --status applied || true
+          supabase migration repair 20240101000004 --status applied || true
+          supabase migration repair 20240101000005 --status applied || true
+          supabase migration repair 20240101000006 --status applied || true
+          supabase migration repair 20240101000007 --status applied || true
+          supabase migration repair 20240101000008 --status applied || true
+          supabase migration repair 20240101000009 --status applied || true
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        continue-on-error: true
+
       - name: Push migrations to production
         run: |
           cd apps/backend
