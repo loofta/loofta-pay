@@ -58,7 +58,18 @@ export default function CheckoutPage() {
 
   const organizationId = searchParams.get("organizationId");
   const amountParam = searchParams.get("amount");
+  const bgColorParam = searchParams.get("bgColor");
   const deserializedAmount = useMemo(() => deserializeAmount(amountParam), [amountParam]);
+
+  // Decode bgColor if URL encoded
+  const decodedBgColor = useMemo(() => {
+    if (!bgColorParam) return null;
+    try {
+      return decodeURIComponent(bgColorParam);
+    } catch {
+      return bgColorParam;
+    }
+  }, [bgColorParam]);
 
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,8 +123,21 @@ export default function CheckoutPage() {
   useEffect(() => {
     (async () => {
       setQuote(null);
-      if (!organization || !selectedFrom || !amount || parseFloat(amount) <= 0) {
+      if (!organization || !tokenSelection || !amount || parseFloat(amount) <= 0) {
         setQuoteLoading(false);
+        return;
+      }
+
+      // Wait for tokens to load and selectedFrom to be found
+      if (!selectedFrom) {
+        // Token might not be in the list yet, wait a bit
+        if (tokens.length > 0) {
+          // Tokens are loaded but token not found - don't show loading
+          setQuoteLoading(false);
+        } else {
+          // Still loading tokens
+          setQuoteLoading(true);
+        }
         return;
       }
 
@@ -153,54 +177,86 @@ export default function CheckoutPage() {
         });
         const data = await r.json();
         if (r.ok) {
-          if (data?.amountInFormatted) setQuote({ amountInFormatted: data.amountInFormatted });
-          else {
+          if (data?.amountInFormatted) {
+            setQuote({ amountInFormatted: data.amountInFormatted });
+          } else {
             const usd = typeof data?.amountInUSD === "number" ? data.amountInUSD : undefined;
             const est = typeof data?.amountInEst === "number" ? data.amountInEst : undefined;
             setQuote({ usd, est });
           }
+        } else {
+          // API returned error
+          console.warn("[Checkout] Quote API error:", data);
+          // Try fallback calculation
+          throw new Error(data?.error || `Quote API returned ${r.status}`);
         }
       } catch (e) {
-        console.error("Failed to fetch quote:", e);
+        console.error("[Checkout] Failed to fetch quote:", e);
         // Fallback: try simple calculation if we have token price
-        if (selectedFrom.price) {
+        if (selectedFrom.price && selectedFrom.price > 0) {
           const amountUsd = parseFloat(amount);
           const tokenPrice = selectedFrom.price;
-          if (tokenPrice > 0) {
-            const tokenAmount = amountUsd / tokenPrice;
-            setQuote({ amountInFormatted: tokenAmount.toFixed(6) });
-          }
+          const tokenAmount = amountUsd / tokenPrice;
+          console.log("[Checkout] Using fallback calculation:", { amountUsd, tokenPrice, tokenAmount });
+          setQuote({ amountInFormatted: tokenAmount.toFixed(6) });
+        } else {
+          // No price available, clear quote
+          setQuote(null);
         }
       } finally {
         setQuoteLoading(false);
       }
     })();
-  }, [organization, selectedFrom, destToken, amount, sameTokenAndChain]);
+  }, [organization, selectedFrom, destToken, amount, sameTokenAndChain, tokens, tokenSelection]);
 
   async function prepareDeposit() {
-    if (!organization || !selectedFrom || !amount) return;
+    if (!organization) {
+      toast({ variant: "destructive", title: "Error", description: "Organization not found. Please check the organization ID." });
+      return;
+    }
+    if (!selectedFrom) {
+      toast({ variant: "destructive", title: "Error", description: "Selected token not found. Please select a different token." });
+      return;
+    }
+    if (!amount) {
+      toast({ variant: "destructive", title: "Error", description: "Please enter an amount." });
+      return;
+    }
+
     setPreparing(true);
     setDeposit(null);
     try {
+      const payload = {
+        organizationId: organization.organization_id,
+        fromToken: {
+          tokenId: selectedFrom.tokenId || selectedFrom.address,
+          decimals: selectedFrom.decimals,
+          chain: selectedFrom.chain,
+          symbol: selectedFrom.symbol,
+        },
+        amount: amount,
+        orgReferral: organization.org_referral,
+      };
+
+      console.log("[Checkout] Preparing deposit with:", {
+        organizationId: payload.organizationId,
+        organizationFull: organization,
+        token: `${payload.fromToken.symbol} on ${payload.fromToken.chain}`,
+        amount: payload.amount,
+        payload: JSON.stringify(payload, null, 2),
+      });
+
       const res = await fetch("/api/organizations/deposit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          organizationId: organization.organization_id,
-          fromToken: {
-            tokenId: selectedFrom.tokenId || selectedFrom.address,
-            decimals: selectedFrom.decimals,
-            chain: selectedFrom.chain,
-            symbol: selectedFrom.symbol,
-          },
-          amount: amount,
-          orgReferral: organization.org_referral,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData?.error || "Failed to prepare deposit");
+        const errorMsg = errData?.error || `Failed to prepare deposit (${res.status})`;
+        console.error("[Checkout] Deposit error:", errorMsg, errData);
+        throw new Error(errorMsg);
       }
 
       const data = await res.json();
@@ -216,7 +272,12 @@ export default function CheckoutPage() {
         setDeposit(data);
       }
     } catch (e: any) {
-      toast({ variant: "destructive", title: "Failed to prepare", description: e?.message || "Could not obtain deposit info" });
+      console.error("[Checkout] Failed to prepare deposit:", e);
+      toast({
+        variant: "destructive",
+        title: "Failed to prepare",
+        description: e?.message || "Could not obtain deposit info. Please try again."
+      });
     } finally {
       setPreparing(false);
     }
@@ -290,16 +351,34 @@ export default function CheckoutPage() {
     if (s) {
       setStatus(s);
       setStatusData(statusQuery.data || null);
+
+      // When payment is successful, notify parent window (for popup mode)
+      if (String(s).toUpperCase() === 'SUCCESS' && typeof window !== 'undefined' && window.opener) {
+        window.opener.postMessage({
+          type: 'loofta-payment-success',
+          paymentId: depositAddress || statusQuery.data?.paymentId || 'unknown',
+          status: s,
+        }, '*');
+      }
     }
-  }, [statusQuery.data]);
+  }, [statusQuery.data, depositAddress]);
 
   const loadOrganization = async () => {
     try {
       setLoading(true);
 
+      console.log("[Checkout] Loading organization with ID:", organizationId);
+
       // Use new backend API
       const { organizationsApi } = await import("@/services/api/organizations");
       const data = await organizationsApi.getByOrganizationId(organizationId!);
+
+      console.log("[Checkout] Organization loaded:", {
+        found: !!data.organization,
+        organization_id: data.organization?.organization_id,
+        id: data.organization?.id,
+        name: data.organization?.name,
+      });
 
       if (!data.organization) {
         throw new Error("Organization not found");
@@ -312,8 +391,12 @@ export default function CheckoutPage() {
       }
 
       setOrganization(data.organization);
+      console.log("[Checkout] Organization set in state:", {
+        organization_id: data.organization.organization_id,
+        id: data.organization.id,
+      });
     } catch (error: any) {
-      console.error("Failed to load organization:", error);
+      console.error("[Checkout] Failed to load organization:", error);
       setError(error?.message || "Failed to load organization");
     } finally {
       setLoading(false);
@@ -341,8 +424,8 @@ export default function CheckoutPage() {
     );
   }
 
-  // Get background color from organization, default to white
-  const contentBgColor = organization.bg_color || "#FFFFFF";
+  // Get background color: URL param > organization setting > white
+  const contentBgColor = decodedBgColor || organization.bg_color || "#FFFFFF";
 
   return (
     <div className="min-h-screen flex items-center justify-center py-8" style={{ backgroundColor: contentBgColor }}>
@@ -365,7 +448,7 @@ export default function CheckoutPage() {
           {/* Left Side - Amount Card */}
           <div className="flex flex-col">
             {/* Amount Card */}
-            <div className="bg-white rounded-2xl p-8 shadow-sm w-full">
+            <div className="bg-white rounded-2xl p-8 shadow-lg w-full">
               <div className="space-y-6">
                 {/* Organization Name & Payment Request Label */}
                 <div>
@@ -430,7 +513,7 @@ export default function CheckoutPage() {
 
           {/* Right Side - Payment Options */}
           <div className="flex flex-col">
-            <div className="bg-gray-50 rounded-2xl p-8 space-y-6 w-full">
+            <div className="bg-gray-50 rounded-2xl shadow-lg p-8 space-y-6 w-full">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-6">Payment Details</h3>
 
@@ -461,7 +544,7 @@ export default function CheckoutPage() {
 
                     {/* Quote Display */}
                     <AnimatePresence mode="wait">
-                      {selectedFrom && amount && parseFloat(amount) > 0 && (
+                      {tokenSelection && amount && parseFloat(amount) > 0 && (
                         <motion.div
                           key={quote ? "quote" : quoteLoading ? "loading" : "empty"}
                           initial={{ opacity: 0, y: -10 }}
@@ -477,7 +560,7 @@ export default function CheckoutPage() {
                                 <p className="text-sm font-medium text-blue-900">Calculating conversion...</p>
                               </div>
                             </div>
-                          ) : quote ? (
+                          ) : quote && selectedFrom ? (
                             <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-3">
@@ -500,10 +583,16 @@ export default function CheckoutPage() {
                                 <ArrowRight className="w-5 h-5 text-emerald-600" />
                               </div>
                             </div>
+                          ) : !selectedFrom ? (
+                            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                              <p className="text-sm text-amber-700 text-center">
+                                Token not found. Please select a different token.
+                              </p>
+                            </div>
                           ) : (
                             <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
                               <p className="text-sm text-gray-600 text-center">
-                                Select a token to see conversion rate
+                                Calculating conversion rate...
                               </p>
                             </div>
                           )}
@@ -514,13 +603,21 @@ export default function CheckoutPage() {
                     {/* Proceed to Payment Button */}
                     <Button
                       onClick={prepareDeposit}
-                      disabled={!selectedFrom || preparing || !amount || parseFloat(amount) <= 0}
+                      disabled={!tokenSelection || !selectedFrom || preparing || !amount || parseFloat(amount) <= 0 || !organization}
                       className="w-full h-12 text-base font-semibold"
                     >
                       {preparing ? (
                         <>
                           <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                           Preparing…
+                        </>
+                      ) : !selectedFrom ? (
+                        <>
+                          Token not found
+                        </>
+                      ) : !organization ? (
+                        <>
+                          Organization not found
                         </>
                       ) : (
                         <>

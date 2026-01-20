@@ -54,22 +54,20 @@ export default function B2BCheckoutPage() {
               Integrate Loofta Pay into your platform and let your customers pay with any token from any blockchain.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <Link
+                href="/b2b/demo"
+                className="inline-flex items-center justify-center rounded-full px-8 py-2 text-base font-semibold text-white hover:opacity-90 transition-opacity"
+                style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+              >
+                Try Demo →
+              </Link>
               <a
                 href="https://t.me/looftaxyz"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center justify-center rounded-full px-8 py-2 text-base font-semibold text-white hover:opacity-90 transition-opacity"
-                style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
-              >
-                Request Integration
-              </a>
-              <a
-                href="https://loofta.gitbook.io/docs"
-                target="_blank"
-                rel="noopener noreferrer"
                 className="inline-flex items-center justify-center rounded-full px-8 py-2 text-base font-semibold border-2 border-slate-300 bg-white text-slate-900 hover:bg-slate-50 transition-colors"
               >
-                View Documentation
+                Request Integration
               </a>
             </div>
           </div>

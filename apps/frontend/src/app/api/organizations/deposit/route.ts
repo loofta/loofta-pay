@@ -36,12 +36,60 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
     const supabase = getSupabaseAdmin();
-    const { data: organization, error } = await supabase
+    const trimmedOrgId = String(organizationId || "").trim();
+    console.log("[organizations/deposit] Looking up organization with organizationId:", trimmedOrgId);
+    
+    // Try exact match first
+    let { data: organization, error } = await supabase
       .from("organizations")
       .select("id, organization_id, recipient_wallet, token_symbol, token_chain, org_referral")
-      .eq("organization_id", organizationId)
+      .eq("organization_id", trimmedOrgId)
       .single();
-    if (error || !organization) return NextResponse.json({ error: "Organization not found" }, { status: 404 });
+    
+    // If not found, try case-insensitive (for PostgreSQL)
+    if (error && error.code === 'PGRST116') {
+      console.log("[organizations/deposit] Trying case-insensitive lookup...");
+      const { data: orgCaseInsensitive, error: errorCaseInsensitive } = await supabase
+        .from("organizations")
+        .select("id, organization_id, recipient_wallet, token_symbol, token_chain, org_referral")
+        .ilike("organization_id", trimmedOrgId)
+        .single();
+      
+      if (orgCaseInsensitive && !errorCaseInsensitive) {
+        organization = orgCaseInsensitive;
+        error = null;
+        console.log("[organizations/deposit] Found organization with case-insensitive lookup");
+      }
+    }
+    
+    console.log("[organizations/deposit] Organization lookup result:", {
+      found: !!organization,
+      error: error?.message || null,
+      errorCode: error?.code || null,
+      organization_id: organization?.organization_id,
+      hasRecipientWallet: !!organization?.recipient_wallet,
+      token_symbol: organization?.token_symbol,
+      token_chain: organization?.token_chain,
+    });
+    
+    if (error) {
+      console.error("[organizations/deposit] Supabase error:", error);
+      // Check if it's a "not found" error or something else
+      if (error.code === 'PGRST116') {
+        return NextResponse.json({ 
+          error: "Organization not found",
+          details: `No organization found with organization_id: "${trimmedOrgId}"`
+        }, { status: 404 });
+      }
+      return NextResponse.json({ error: `Database error: ${error.message}` }, { status: 500 });
+    }
+    
+    if (!organization) {
+      return NextResponse.json({ 
+        error: "Organization not found",
+        details: `No organization found with organization_id: "${trimmedOrgId}"`
+      }, { status: 404 });
+    }
 
     if (!organization.recipient_wallet || !organization.token_symbol || !organization.token_chain) {
       return NextResponse.json({ error: "Organization payment configuration incomplete" }, { status: 400 });
