@@ -35,9 +35,6 @@ export async function POST(request: Request) {
     if (!organizationId || !fromToken?.tokenId || !fromToken?.decimals || !amount) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
-    if (!refundAddress) {
-      return NextResponse.json({ error: "Refund address is required" }, { status: 400 });
-    }
     const supabase = getSupabaseAdmin();
     const trimmedOrgId = String(organizationId || "").trim();
     console.log("[organizations/deposit] Looking up organization with organizationId:", trimmedOrgId);
@@ -381,7 +378,7 @@ export async function POST(request: Request) {
     })();
     const amountOutAtomic = toAtomic(String(destHumanOutRoundedUp || "0"), destDecimals);
     
-    // Use provided refund address (required, no fallback)
+    // Use provided refund address (required for swaps, optional for direct transfers)
     if (!refundAddress) {
       return NextResponse.json({ error: "Refund address is required" }, { status: 400 });
     }

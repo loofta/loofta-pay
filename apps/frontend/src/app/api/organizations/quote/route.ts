@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
-// Removed getRefundToForChain - now using user-provided refund addresses only
+import { getRefundToForChain } from "@/lib/refundAddresses";
 import { getDefuseAssetIdFor } from "@/lib/tokenlist";
 
 function getEnv(name: string, fallbacks: string[] = []) {
@@ -107,19 +107,18 @@ export async function POST(request: Request) {
     const amountOutAtomic = toAtomic(desiredOutHuman, destDecimals);
 
     try {
-      // Use user-provided refund address if available, otherwise throw error
-      // Quote endpoints should receive refund address from frontend
-      if (!refundAddress) {
+      // Use user-provided refund address if available, otherwise use default mocked address for quotes
+      // For quotes (dry runs), we can use a default address since it's just for estimation
+      const refundTo = refundAddress || getRefundToForChain(fromToken.chain || "");
+      
+      if (!refundTo) {
         return NextResponse.json({ 
-          error: "Refund address is required for quote",
+          error: "Could not determine refund address for quote",
           code: "REFUND_ADDRESS_REQUIRED"
         }, { status: 400 });
       }
-      
-      const refundTo = refundAddress;
-      // For recipient, use organization's recipient wallet (not refund address)
-      // This is a dry quote, so recipient doesn't matter much, but we need a valid address
-      const recipient = organization.token_chain ? refundAddress : refundAddress; // Use refund as placeholder for dry quote
+      // For recipient, use refundTo as placeholder (dry quote, recipient doesn't matter much)
+      const recipient = refundTo;
       
       const req: any = {
         dry: true,

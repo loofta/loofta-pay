@@ -14,8 +14,6 @@ export interface PayButtonProps {
   pageBgColor?: string;
   /** @deprecated Use buttonBgColor instead */
   bgColor?: string;
-  /** Logo URL (optional - falls back to org settings) */
-  logoUrl?: string;
   /** Callback URL after payment (optional - if not set, stays on current page) */
   callbackUrl?: string;
   /** Callback function after payment (optional) */
@@ -77,7 +75,6 @@ export function PayButton({
   buttonBgColor,
   pageBgColor,
   bgColor, // deprecated, use buttonBgColor
-  logoUrl,
   callbackUrl,
   onSuccess,
   buttonText = 'Pay with Loofta',
@@ -102,11 +99,10 @@ export function PayButton({
     params.set('organizationId', organizationId);
     if (amount) params.set('amount', String(amount));
     if (pageBgColor) params.set('bgColor', encodeURIComponent(pageBgColor));
-    if (logoUrl) params.set('logoUrl', encodeURIComponent(logoUrl));
     if (callbackUrl) params.set('callback', encodeURIComponent(callbackUrl));
     
     return `${baseUrl}?${params.toString()}`;
-  }, [organizationId, amount, pageBgColor, logoUrl, callbackUrl]);
+  }, [organizationId, amount, pageBgColor, callbackUrl]);
 
   const handleClick = useCallback(() => {
     if (disabled || loading || paid) return;
@@ -210,14 +206,13 @@ export function PayButton({
  * Generate embed code for PayButton
  */
 export function generateEmbedCode(props: Partial<PayButtonProps>): string {
-  const { organizationId, amount, buttonBgColor, pageBgColor, logoUrl, callbackUrl, buttonText } = props;
+  const { organizationId, amount, buttonBgColor, pageBgColor, callbackUrl, buttonText } = props;
   
   const propsStr = [
     `organizationId="${organizationId || 'your-org-id'}"`,
     amount ? `amount={${amount}}` : null,
     buttonBgColor ? `buttonBgColor="${buttonBgColor}"` : null,
     pageBgColor ? `pageBgColor="${pageBgColor}"` : null,
-    logoUrl ? `logoUrl="${logoUrl}"` : null,
     callbackUrl ? `callbackUrl="${callbackUrl}"` : null,
     buttonText ? `buttonText="${buttonText}"` : null,
   ].filter(Boolean).join('\n  ');

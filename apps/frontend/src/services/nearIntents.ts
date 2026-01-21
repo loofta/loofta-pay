@@ -5,6 +5,7 @@ import defaults from "@/config/defaultTokens.json";
 import { OneClickService, QuoteRequest, OpenAPI } from '@defuse-protocol/one-click-sdk-typescript';
 import { ONECLICK_API_BASE } from "@/config/oneClick";
 import { assertNotDemoMode } from "@/config/demoMode";
+import { getRefundToForChain } from "@/lib/refundAddresses";
 const REFERRAL_CODE = (process as any)?.env?.NEXT_PUBLIC_REFERRAL_CODE || (process as any)?.env?.NEXT_PUBLIC_ONECLICK_REFERRAL || undefined;
 const APP_FEE_BPS = Number((process as any)?.env?.NEXT_PUBLIC_APP_FEE_BPS || "");
 const APP_FEE_RECIPIENT = (process as any)?.env?.NEXT_PUBLIC_APP_FEE_RECIPIENT || undefined;
@@ -186,9 +187,11 @@ export async function getAccurateQuote(params: {
 }): Promise<QuoteResponse> {
   const { fromToken, toToken, amount, recipient, sender, refundAddress, slippageBps = 100, dryRun = true, userAddress, authMethod } = params;
   
-  // Refund address is required for non-custodial operations
-  if (!refundAddress) {
-    throw new Error("Refund address is required for quote");
+  // Use user-provided refund address or default placeholder for quotes (dry runs)
+  const refundTo = refundAddress || getRefundToForChain(fromToken.chain || "");
+  
+  if (!refundTo) {
+    throw new Error("Could not determine refund address for quote");
   }
   const toAtomic = (val: string, decimals: number): string => {
     const [i, f = ""] = String(val).split(".");
@@ -246,9 +249,10 @@ export async function getAccurateQuote(params: {
           // default to evm zero
           return ZERO;
         };
-        // For dry quotes, use refund address for both recipient and refund
-        const recipientDry = refundAddress;
-        const refundDry = refundAddress;
+        // For dry quotes, use refund address for refund (origin chain), but recipient needs to be for destination chain
+        const refundDry = refundTo;
+        // Get a valid placeholder address for the destination chain
+        const recipientDry = recipient || getRefundToForChain(toToken.chain || "");
         const sameChain = String(fromToken.chain || "").toLowerCase() === String(toToken.chain || "").toLowerCase();
         req = attachAppFees({
           dry: true,
@@ -280,7 +284,7 @@ export async function getAccurateQuote(params: {
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
       amount: atomicIn,
-      refundTo: refundAddress, // Use user-provided refund address
+      refundTo: refundTo, // Use user-provided refund address or default placeholder
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipient,
       recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,

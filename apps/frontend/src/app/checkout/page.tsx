@@ -86,7 +86,8 @@ export default function CheckoutPage() {
   const [statusData, setStatusData] = useState<any>(null);
   const [refundAddress, setRefundAddress] = useState<string>("");
   const [refundAddressError, setRefundAddressError] = useState<string | null>(null);
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1); // 1: Token selection, 2: Refund address, 3: Confirmation, 4: Deposit
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1); // 1: Token selection, 2: Refund address (skipped for direct), 3: Complete Payment (shows deposit when ready)
+  const [uploadedLogoUrl, setUploadedLogoUrl] = useState<string | null>(null);
 
   const selectedFrom = findTokenBySelection(tokens, tokenSelection || null);
   const destToken = useMemo(() => {
@@ -131,6 +132,16 @@ export default function CheckoutPage() {
     const sameToken = String(selectedFrom.symbol || "").toUpperCase() === String(destToken.symbol || "").toUpperCase();
     return sameChain && sameToken;
   }, [selectedFrom, destToken]);
+
+  // Get display step number (for direct payments, complete payment is step 2)
+  const getStepNumber = (step: number): number => {
+    if (sameTokenAndChain) {
+      // Direct payment: 1 -> Token, 2 -> Complete Payment
+      if (step === 3) return 2; // Complete Payment
+    }
+    // Swap: 1 -> Token, 2 -> Refund, 3 -> Complete Payment
+    return step;
+  };
 
   useEffect(() => {
     if (!organizationId) {
@@ -188,13 +199,7 @@ export default function CheckoutPage() {
 
       setQuoteLoading(true);
       try {
-        // Refund address is required for quotes - use it if available, otherwise skip quote
-        if (!refundAddress.trim()) {
-          // Don't call quote API without refund address
-          setQuoteLoading(false);
-          return;
-        }
-
+        // Call quote API - it will use default refund address if none provided
         const r = await fetch(`/api/organizations/quote`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -213,7 +218,8 @@ export default function CheckoutPage() {
               price: destToken.price,
             } : null,
             amount: amount,
-            refundAddress: refundAddress.trim(), // Pass refund address to quote API
+            // Pass refund address if available, otherwise API will use default
+            ...(refundAddress.trim() ? { refundAddress: refundAddress.trim() } : {}),
           }),
         });
         const data = await r.json();
@@ -250,7 +256,7 @@ export default function CheckoutPage() {
     })();
   }, [organization, selectedFrom, destToken, amount, sameTokenAndChain, tokens, tokenSelection]);
 
-  function handleProceedToPayment() {
+  async function handleProceedToPayment() {
     if (!organization) {
       toast({ variant: "destructive", title: "Error", description: "Organization not found. Please check the organization ID." });
       return;
@@ -263,11 +269,17 @@ export default function CheckoutPage() {
       toast({ variant: "destructive", title: "Error", description: "Please enter an amount." });
       return;
     }
-    // Move to refund address step
-    setCurrentStep(2);
+    // For direct payments (same token and chain), skip refund address step and prepare deposit
+    if (sameTokenAndChain) {
+      setCurrentStep(3);
+      await prepareDeposit();
+    } else {
+      // Move to refund address step for swaps
+      setCurrentStep(2);
+    }
   }
 
-  function handleContinueToConfirmation() {
+  async function handleContinueToConfirmation() {
     if (!refundAddress.trim()) {
       setRefundAddressError("Please enter a refund address");
       toast({ variant: "destructive", title: "Error", description: "Please enter a refund address." });
@@ -280,6 +292,8 @@ export default function CheckoutPage() {
     }
     setRefundAddressError(null);
     setCurrentStep(3);
+    // Automatically prepare deposit after moving to confirmation step
+    await prepareDeposit();
   }
 
   async function prepareDeposit() {
@@ -295,10 +309,22 @@ export default function CheckoutPage() {
       toast({ variant: "destructive", title: "Error", description: "Please enter an amount." });
       return;
     }
+    // For non-direct payments, require refund address
+    if (!sameTokenAndChain && !refundAddress.trim()) {
+      setRefundAddressError("Please enter a refund address");
+      toast({ variant: "destructive", title: "Error", description: "Please enter a refund address." });
+      return;
+    }
+    // Validate refund address for non-direct payments
+    if (!sameTokenAndChain && selectedFrom && !validateRefundAddress(refundAddress, selectedFrom.chain)) {
+      setRefundAddressError(`Invalid ${selectedFrom?.chain || ''} address format`);
+      toast({ variant: "destructive", title: "Error", description: `Invalid refund address format for ${selectedFrom?.chain.toUpperCase() || ''}.` });
+      return;
+    }
     setPreparing(true);
     setDeposit(null);
     setRefundAddressError(null);
-    setCurrentStep(4);
+    // Don't move to step 4 yet - wait for deposit data
     try {
       const payload = {
         organizationId: organization.organization_id,
@@ -310,7 +336,8 @@ export default function CheckoutPage() {
         },
         amount: amount,
         orgReferral: organization.org_referral,
-        refundAddress: refundAddress.trim(),
+        // Only include refundAddress for non-direct payments
+        ...(sameTokenAndChain ? {} : { refundAddress: refundAddress.trim() }),
       };
 
       console.log("[Checkout] Preparing deposit with:", {
@@ -346,7 +373,8 @@ export default function CheckoutPage() {
       } else {
         setDeposit(data);
       }
-      // Step 4 is already set in prepareDeposit
+      // Deposit data is ready, it will be shown in step 3
+      // Don't change step - stay on step 3 to show deposit view
     } catch (e: any) {
       console.error("[Checkout] Failed to prepare deposit:", e);
       toast({
@@ -474,11 +502,16 @@ export default function CheckoutPage() {
             const demoWallet = JSON.parse(stored);
             if (demoWallet.address && demoWallet.token && demoWallet.network) {
               console.log("[Checkout] Using localStorage demo wallet:", demoWallet);
+              // Load uploaded logo from localStorage if available
+              if (demoWallet.logoUrl) {
+                setUploadedLogoUrl(demoWallet.logoUrl);
+              }
               setOrganization({
                 ...data.organization,
                 recipient_wallet: demoWallet.address,
                 token_symbol: demoWallet.token,
                 token_chain: demoWallet.network,
+                logo_url: data.organization.logo_url,
               });
               return;
             }
@@ -529,14 +562,15 @@ export default function CheckoutPage() {
     <div className="min-h-screen flex items-center justify-center py-8" style={{ backgroundColor: contentBgColor }}>
       <div className="max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8">
         {/* Organization Logo - Top Left */}
-        {organization.logo_url && (
+        {(uploadedLogoUrl || organization.logo_url) && (
           <div className="mb-4">
             <div className="relative w-16 h-16">
               <Image
-                src={organization.logo_url}
+                src={uploadedLogoUrl || organization.logo_url || ""}
                 alt={organization.name}
                 fill
                 className="object-contain"
+                unoptimized={true}
               />
             </div>
           </div>
@@ -675,7 +709,7 @@ export default function CheckoutPage() {
                                 <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
                               </div>
                               <div>
-                                <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send</p>
+                                <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send approximately</p>
                                 <p className="text-lg font-bold text-emerald-900">
                                   {quote.amountInFormatted
                                     ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
@@ -791,7 +825,7 @@ export default function CheckoutPage() {
                 </motion.div>
               )}
 
-              {/* Step 3: Confirmation */}
+              {/* Step 3: Complete Payment (Step 2 for direct payments) */}
               {currentStep === 3 && selectedFrom && (
                 <motion.div
                   key="step3"
@@ -803,103 +837,154 @@ export default function CheckoutPage() {
                 >
                   <div className="flex items-center gap-2 mb-4">
                     <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-                      <span className="text-sm font-semibold text-blue-600">3</span>
+                      <span className="text-sm font-semibold text-blue-600">{getStepNumber(3)}</span>
                     </div>
-                    <h3 className="text-lg font-semibold text-gray-900">Confirm Payment</h3>
+                    <h3 className="text-lg font-semibold text-gray-900">Complete Payment</h3>
                   </div>
 
-                  <div className="space-y-4">
-                    <div className="p-4 bg-white rounded-lg border border-gray-200">
-                      <div className="space-y-3">
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm text-gray-600">Amount</span>
-                          <span className="text-base font-semibold text-gray-900">${amount || "0.00"}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm text-gray-600">Pay with</span>
-                          <div className="flex items-center gap-2">
-                            <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={20} />
-                            <span className="text-base font-semibold text-gray-900">
-                              {quote?.amountInFormatted
-                                ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                : selectedFrom.symbol}
-                            </span>
+                  {/* Show deposit view if deposit is ready, otherwise show payment summary */}
+                  {deposit ? (
+                    <PaymentDepositView
+                      deposit={deposit}
+                      status={status}
+                      statusData={statusData}
+                      selectedFrom={selectedFrom}
+                      destToken={destToken}
+                      amount={amount}
+                      quote={quote}
+                      onCancel={() => {
+                        setDeposit(null);
+                        setCurrentStep(sameTokenAndChain ? 1 : 2);
+                        setRefundAddress("");
+                        setRefundAddressError(null);
+                      }}
+                      paymentType={
+                        deposit?.isDirect ? 'direct' :
+                          deposit?.isCompanionSwap ? 'companion-swap' :
+                            'near-intent'
+                      }
+                    />
+                  ) : (
+                    <>
+                      <div className="space-y-4">
+                        <div className="p-4 bg-white rounded-lg border border-gray-200">
+                          <div className="space-y-3">
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm text-gray-600">Amount</span>
+                              <span className="text-base font-semibold text-gray-900">${amount || "0.00"}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm text-gray-600">Pay with</span>
+                              <div className="flex items-center gap-2">
+                                <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={20} />
+                                <span className="text-base font-semibold text-gray-900">
+                                  {quote?.amountInFormatted
+                                    ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                    : selectedFrom.symbol}
+                                </span>
+                              </div>
+                            </div>
+                            {sameTokenAndChain && organization?.recipient_wallet && (
+                              <>
+                                <div className="pt-2 border-t border-gray-200 space-y-2">
+                                  <div className="flex justify-between items-start gap-2">
+                                    <span className="text-sm text-gray-600">Send to</span>
+                                    <div className="flex items-center gap-2 max-w-[280px]">
+                                      <span className="text-xs font-mono text-gray-900 break-all text-right">
+                                        {organization.recipient_wallet}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          try {
+                                            await navigator.clipboard.writeText(organization.recipient_wallet || "");
+                                            toast({ title: "Copied", description: "Recipient address copied to clipboard." });
+                                          } catch {
+                                            toast({ variant: "destructive", title: "Copy failed", description: "Could not copy address." });
+                                          }
+                                        }}
+                                        className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors flex-shrink-0"
+                                        title="Copy address"
+                                      >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                          <path d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-sm text-gray-600">Network</span>
+                                    <span className="text-sm font-semibold text-gray-900 uppercase">
+                                      {selectedFrom.chain || organization.token_chain || ""}
+                                    </span>
+                                  </div>
+                                </div>
+                              </>
+                            )}
+                            {!sameTokenAndChain && (
+                              <div className="flex justify-between items-center pt-2 border-t border-gray-200">
+                                <span className="text-sm text-gray-600">Refund Address</span>
+                                <span className="text-xs font-mono text-gray-700 break-all text-right max-w-[200px]">
+                                  {refundAddress.slice(0, 6)}...{refundAddress.slice(-4)}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         </div>
-                        <div className="flex justify-between items-center pt-2 border-t border-gray-200">
-                          <span className="text-sm text-gray-600">Refund Address</span>
-                          <span className="text-xs font-mono text-gray-700 break-all text-right max-w-[200px]">
-                            {refundAddress.slice(0, 6)}...{refundAddress.slice(-4)}
-                          </span>
-                        </div>
+
+                        {/* Demo Message - Only show for direct payments (same token and chain) */}
+                        {organizationId === 'demo' && sameTokenAndChain && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200 shadow-sm"
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <span className="text-blue-600 text-lg">💡</span>
+                              </div>
+                              <div className="flex-1">
+                                <h4 className="text-sm font-semibold text-blue-900 mb-1">
+                                  Demo Mode
+                                </h4>
+                                <p className="text-sm text-blue-800 leading-relaxed">
+                                  For this demo, please confirm that you've completed the payment. Wallet connect integration for direct payments is coming soon!
+                                </p>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+
+                        {/* Loading state while preparing deposit */}
+                        {preparing && (
+                          <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                            <div className="flex items-center gap-3">
+                              <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                              <p className="text-sm font-medium text-blue-900">Preparing deposit address...</p>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  </div>
 
-                  <div className="flex gap-3 pt-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => setCurrentStep(2)}
-                      className="flex-1"
-                    >
-                      Back
-                    </Button>
-                    <Button
-                      onClick={prepareDeposit}
-                      disabled={preparing}
-                      className="flex-1 h-12 text-base font-semibold"
-                    >
-                      {preparing ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Preparing…
-                        </>
-                      ) : (
-                        <>
-                          Confirm & Continue
-                          <ArrowRight className="w-4 h-4 ml-2" />
-                        </>
-                      )}
-                    </Button>
-                  </div>
+                      <div className="flex gap-3 pt-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => setCurrentStep(sameTokenAndChain ? 1 : 2)}
+                          disabled={preparing}
+                          className="flex-1"
+                        >
+                          Back
+                        </Button>
+                      </div>
+                    </>
+                  )}
                 </motion.div>
               )}
 
-              {/* Step 4: Deposit */}
-              {currentStep === 4 && deposit && (
-                <motion.div
-                  key="step4"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="w-full"
-                >
-                  <PaymentDepositView
-                    deposit={deposit}
-                    status={status}
-                    statusData={statusData}
-                    selectedFrom={selectedFrom}
-                    destToken={destToken}
-                    amount={amount}
-                    quote={quote}
-                    onCancel={() => {
-                      setDeposit(null);
-                      setCurrentStep(1);
-                      setRefundAddress("");
-                      setRefundAddressError(null);
-                    }}
-                    paymentType={
-                      deposit?.isDirect ? 'direct' :
-                        deposit?.isCompanionSwap ? 'companion-swap' :
-                          'near-intent'
-                    }
-                  />
-                </motion.div>
-              )}
             </AnimatePresence>
 
-            {/* Security Notice - Show on all steps except deposit */}
-            {currentStep !== 4 && (
+            {/* Security Notice - Show when deposit is not ready */}
+            {!deposit && (
               <div className="pt-4 border-t border-gray-200 mt-6">
                 <p className="text-sm text-gray-500 text-center mb-3">
                   🔒 Secured by Loofta Pay • Multi-chain payments

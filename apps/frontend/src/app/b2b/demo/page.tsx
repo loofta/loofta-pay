@@ -51,7 +51,7 @@ export default function PayButtonDemoPage() {
   });
   const [savingWallet, setSavingWallet] = useState(false);
 
-  // Load demo wallet from localStorage on mount
+  // Load demo wallet and logo from localStorage on mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -63,6 +63,10 @@ export default function PayButtonDemoPage() {
             symbol: parsed.token || DEFAULT_DEMO_WALLET.token,
             chain: parsed.network || DEFAULT_DEMO_WALLET.network,
           });
+          // Load logo if available
+          if (parsed.logoUrl) {
+            setConfig(prev => ({ ...prev, logoUrl: parsed.logoUrl }));
+          }
         }
       } catch (error) {
         console.error('Failed to load demo wallet from localStorage:', error);
@@ -110,10 +114,12 @@ export default function PayButtonDemoPage() {
     setSavingWallet(true);
     try {
       // Save to localStorage (per-user, local storage)
+      // Include logoUrl if it exists in config
       const walletData = {
         address: demoWallet.address.trim(),
         token: demoTokenSelection.symbol,
         network: demoTokenSelection.chain,
+        ...(config.logoUrl ? { logoUrl: config.logoUrl } : {}),
       };
 
       if (typeof window !== 'undefined') {
@@ -172,7 +178,6 @@ export default function PayButtonDemoPage() {
     amount: config.amount ? Number(config.amount) : undefined,
     buttonBgColor: config.buttonBgColor || undefined,
     pageBgColor: config.pageBgColor || undefined,
-    logoUrl: config.logoUrl || undefined,
     callbackUrl: config.callbackUrl || undefined,
     buttonText: config.buttonText || undefined,
   });
@@ -276,16 +281,87 @@ export default function PayButtonDemoPage() {
                 />
               </div>
 
-              {/* Logo URL */}
+              {/* Logo Upload */}
               <div className="space-y-2">
-                <Label htmlFor="logoUrl" className="text-base font-semibold text-gray-900">Logo URL</Label>
-                <Input
-                  id="logoUrl"
-                  value={config.logoUrl}
-                  onChange={(e) => setConfig({ ...config, logoUrl: e.target.value })}
-                  placeholder="https://..."
-                  className="h-12 rounded-xl border-gray-300 focus:border-orange-400 focus:ring-orange-300 text-base"
-                />
+                <Label htmlFor="logoUpload" className="text-base font-semibold text-gray-900">Logo</Label>
+                <div className="space-y-3">
+                  {config.logoUrl && (
+                    <div className="relative w-24 h-24 border border-gray-300 rounded-lg overflow-hidden bg-white">
+                      <img
+                        src={config.logoUrl}
+                        alt="Logo preview"
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                  )}
+                  <label className="cursor-pointer">
+                    <div className="flex items-center gap-3 px-4 py-3 border-2 border-dashed border-gray-300 rounded-xl hover:border-orange-400 hover:bg-orange-50/50 transition-colors">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                      <span className="text-sm font-medium text-gray-700">
+                        {config.logoUrl ? 'Change logo' : 'Upload logo'}
+                      </span>
+                    </div>
+                    <input
+                      id="logoUpload"
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            const result = reader.result as string;
+                            setConfig({ ...config, logoUrl: result });
+                            // Store in localStorage for demo organization
+                            if (typeof window !== 'undefined') {
+                              try {
+                                const stored = localStorage.getItem(DEMO_WALLET_STORAGE_KEY);
+                                const demoWallet = stored ? JSON.parse(stored) : {};
+                                localStorage.setItem(DEMO_WALLET_STORAGE_KEY, JSON.stringify({
+                                  ...demoWallet,
+                                  logoUrl: result,
+                                }));
+                              } catch (error) {
+                                console.warn("Failed to save logo to localStorage:", error);
+                              }
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </label>
+                  {config.logoUrl && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setConfig({ ...config, logoUrl: '' });
+                        // Remove from localStorage
+                        if (typeof window !== 'undefined') {
+                          try {
+                            const stored = localStorage.getItem(DEMO_WALLET_STORAGE_KEY);
+                            const demoWallet = stored ? JSON.parse(stored) : {};
+                            delete demoWallet.logoUrl;
+                            localStorage.setItem(DEMO_WALLET_STORAGE_KEY, JSON.stringify(demoWallet));
+                          } catch (error) {
+                            console.warn("Failed to remove logo from localStorage:", error);
+                          }
+                        }
+                      }}
+                      className="text-sm"
+                    >
+                      Remove logo
+                    </Button>
+                  )}
+                </div>
+                <p className="text-sm text-gray-500">Upload an image file (PNG, JPG, etc.)</p>
               </div>
 
               {/* Callback URL */}
@@ -466,7 +542,6 @@ export default function PayButtonDemoPage() {
                     amount={config.amount ? Number(config.amount) : undefined}
                     buttonBgColor={config.buttonBgColor || undefined}
                     pageBgColor={config.pageBgColor || undefined}
-                    logoUrl={config.logoUrl || undefined}
                     callbackUrl={config.callbackUrl || undefined}
                     buttonText={config.buttonText}
                     onSuccess={handlePaymentSuccess}

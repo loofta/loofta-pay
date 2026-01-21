@@ -98,11 +98,12 @@ export function useQuote(tokens: NearToken[], fromSel: TokenSelection | null, to
 			setError(null);
 			try {
 				let q = null;
-				// ORIGIN_CHAIN quote using placeholders (zero addresses) to match widget behavior
+				// ORIGIN_CHAIN quote using known-good addresses that pass validation
 				const originAssetId = fromToken.tokenId || fromToken.address || "";
 				const destAssetId = toToken.tokenId || toToken.address || "";
-				const sender = ZERO;
-				// Infer destination chain family from destination asset id (e.g., nep141:sol.* => solana)
+				
+				// Infer origin and destination chain families
+				const originFamily = inferOriginFamily(originAssetId);
 				const destFamily = (() => {
 					const id = String(destAssetId);
 					if (id.startsWith("nep141:")) {
@@ -117,18 +118,30 @@ export function useQuote(tokens: NearToken[], fromSel: TokenSelection | null, to
 						if (code === "near" || (!rest.includes("-") && rest.includes(".near"))) return "near";
 						return "ethereum";
 					}
+					// Fallback to chain name if available
+					const chain = (toToken.chain || "").toLowerCase();
+					if (chain.includes("sol")) return "solana";
+					if (chain.includes("near")) return "near";
+					if (chain.includes("ton")) return "ton";
+					if (chain.includes("aptos")) return "aptos";
+					if (chain.includes("cardano") || chain.includes("ada")) return "cardano";
 					return "ethereum";
 				})();
-				// Use ORIGIN_CHAIN to match the 1-click example payload precisely
-				const recipient = ZERO;
+				
+				// For dry run quotes, use known-good addresses that pass validation
+				// Sender and refund address are on origin chain, recipient is on destination chain
+				const sender = getKnownGoodAddressForFamily(originFamily, "sender");
+				const refundAddress = getKnownGoodAddressForFamily(originFamily, "sender"); // Refund is also on origin chain
+				const recipient = getKnownGoodAddressForFamily(destFamily, "recipient");
 					q = await getAccurateQuote({
 						fromToken,
 						toToken,
 						amount,
 						dryRun: true,
 						slippageBps: 100,
-					sender,
-					recipient,
+						sender,
+						recipient,
+						refundAddress,
 					});
 				// Handle errors from quote (usually doesn't happen for dry quotes)
 				if (q && q.error) {
