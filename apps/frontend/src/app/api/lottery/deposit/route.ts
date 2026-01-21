@@ -3,7 +3,6 @@
 import { NextResponse } from "next/server";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
 // Removed getRefundToForChain - now using user-provided refund addresses only
-import { assertNotDemoMode } from "@/config/demoMode";
 
 function getEnv(name: string, fallbacks: string[] = []) {
   const all = [name, ...fallbacks];
@@ -22,8 +21,6 @@ if (ONECLICK_JWT) OpenAPI.TOKEN = ONECLICK_JWT;
 
 export async function POST(request: Request) {
   try {
-    assertNotDemoMode("Lottery deposit");
-    
     const body = await request.json();
     const { 
       fromToken, 

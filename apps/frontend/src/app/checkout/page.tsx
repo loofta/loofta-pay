@@ -296,6 +296,32 @@ export default function CheckoutPage() {
     await prepareDeposit();
   }
 
+  async function handleSpeedUp(txHash: string): Promise<void> {
+    try {
+      // Submit tx hash to Near Intents for faster processing
+      const resp = await fetch("https://1click.chaindefuser.com/v0/submit-deposit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ txHash: txHash.trim() }),
+      });
+      if (!resp.ok) {
+        const errorData = await resp.json().catch(() => ({}));
+        throw new Error(errorData?.error || "Failed to submit transaction");
+      }
+      toast({
+        title: "Transaction submitted",
+        description: "Your deposit is being processed. Check the status in a few moments.",
+      });
+    } catch (e: any) {
+      toast({
+        variant: "destructive",
+        title: "Speed up failed",
+        description: e?.message || "Failed to submit transaction",
+      });
+      throw e; // Re-throw so PaymentDepositView can handle it
+    }
+  }
+
   async function prepareDeposit() {
     if (!organization) {
       toast({ variant: "destructive", title: "Error", description: "Organization not found. Please check the organization ID." });
@@ -852,12 +878,14 @@ export default function CheckoutPage() {
                       destToken={destToken}
                       amount={amount}
                       quote={quote}
+                      depositAddress={depositAddress}
                       onCancel={() => {
                         setDeposit(null);
                         setCurrentStep(sameTokenAndChain ? 1 : 2);
                         setRefundAddress("");
                         setRefundAddressError(null);
                       }}
+                      onSpeedUp={handleSpeedUp}
                       paymentType={
                         deposit?.isDirect ? 'direct' :
                           deposit?.isCompanionSwap ? 'companion-swap' :

@@ -38,6 +38,9 @@ export function NearSwapWidget({
 	const { email } = useAuth();
 	const [recipient, setRecipient] = useState<string>("");
 	const [recipientError, setRecipientError] = useState<string | null>(null);
+	const [refundAddress, setRefundAddress] = useState<string>("");
+	const [refundAddressError, setRefundAddressError] = useState<string | null>(null);
+	const [currentStep, setCurrentStep] = useState<"recipient" | "refund">("recipient");
 	const [useShielded, setUseShielded] = useState<boolean>(false);
 	const selectedFrom = useMemo(() => findTokenBySelection(tokens, fromSel), [tokens, fromSel]);
 	const selectedTo = useMemo(() => findTokenBySelection(tokens, toSel), [tokens, toSel]);
@@ -64,7 +67,17 @@ export function NearSwapWidget({
 	}, [amount]);
 	// Check if same network (cross-chain only)
 	const isSameNetwork = fromSel?.chain && toSel?.chain && String(fromSel.chain).toLowerCase() === String(toSel.chain).toLowerCase();
-	const swapDisabled = !(amountNum > 0) || !selectedFrom || !selectedTo || !!quoteError || !recipient || !!recipientError || isSameNetwork;
+	// Filter out recipient/address-related errors from quoteError for button enablement
+	// (recipient validation errors should only block via recipientError, not quoteError)
+	const isQuoteError = quoteError && !quoteError.toLowerCase().includes("recipient") && !quoteError.toLowerCase().includes("address");
+	const swapDisabled = !(amountNum > 0) || !selectedFrom || !selectedTo || !!isQuoteError || !recipient || !!recipientError || isSameNetwork;
+	
+	// Reset step when tokens change
+	useEffect(() => {
+		setCurrentStep("recipient");
+		setRefundAddress("");
+		setRefundAddressError(null);
+	}, [fromSel, toSel]);
 	function flip() {
 		const prevFrom = fromSel;
 		setFromSel(toSel);
@@ -117,6 +130,10 @@ export function NearSwapWidget({
 		if (fam === "dogecoin") return /^D[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(v);
 		return false;
 	}
+	// Validate refund address based on origin chain family
+	function validateRefundAddress(addr: string, originFamily: string): boolean {
+		return isValidRecipientByFamily(addr, originFamily);
+	}
 	// Reset shielded toggle if destination stops being ZEC
 	useEffect(() => {
 		const isZec = (selectedTo?.symbol || "").toUpperCase() === "ZEC" || inferFamilyFromChain(selectedTo?.chain) === "zcash";
@@ -146,8 +163,8 @@ export function NearSwapWidget({
 
 	// Validate recipient and clear deposit on input changes; do NOT auto-create deposit
 	useEffect(() => {
-		const destFamily = inferFamilyFromChain(selectedTo?.chain);
-		if (!recipient) {
+		// Always clear error if no destination token is selected OR recipient is empty
+		if (!selectedTo || !recipient || recipient.trim() === "") {
 			setRecipientError(null);
 			setDeposit(null);
 			setExpired(false);
@@ -155,10 +172,14 @@ export function NearSwapWidget({
 			setDepositLoading(false);
 			return;
 		}
+		
+		const destFamily = inferFamilyFromChain(selectedTo?.chain);
+		const trimmedRecipient = recipient.trim();
+		
 		// Special case: ZEC shielded toggle requires shielded formats
 		const isZecDest = destFamily === "zcash" && ((selectedTo?.symbol || "").toUpperCase() === "ZEC");
 		if (isZecDest && useShielded) {
-			if (!isValidZcashShielded(recipient)) {
+			if (!isValidZcashShielded(trimmedRecipient)) {
 				setRecipientError("Invalid zcash shielded address format");
 				setDeposit(null);
 				setExpired(false);
@@ -167,7 +188,7 @@ export function NearSwapWidget({
 				return;
 			}
 		} else {
-			if (!isValidRecipientByFamily(recipient, destFamily)) {
+			if (!isValidRecipientByFamily(trimmedRecipient, destFamily)) {
 				setRecipientError(`Invalid ${destFamily} address format`);
 				setDeposit(null);
 				setExpired(false);
@@ -180,6 +201,21 @@ export function NearSwapWidget({
 		setExpired(false);
 		setTimeLeft(null);
 	}, [recipient, selectedTo, useShielded]);
+
+	// Validate refund address
+	useEffect(() => {
+		if (!selectedFrom || !refundAddress || refundAddress.trim() === "") {
+			setRefundAddressError(null);
+			return;
+		}
+		const originFamily = inferFamilyFromChain(selectedFrom?.chain);
+		const trimmedRefund = refundAddress.trim();
+		if (!validateRefundAddress(trimmedRefund, originFamily)) {
+			setRefundAddressError(`Invalid ${originFamily} address format`);
+		} else {
+			setRefundAddressError(null);
+		}
+	}, [refundAddress, selectedFrom]);
 
 	// Toast when expired
 	useEffect(() => {
@@ -246,6 +282,34 @@ export function NearSwapWidget({
 
 	async function handleStartTransfer() {
 		if (!selectedFrom || !selectedTo || !(amountNum > 0) || !recipient || recipientError) return;
+		
+		// If on recipient step and recipient is valid, move to refund step
+		if (currentStep === "recipient") {
+			setCurrentStep("refund");
+			return;
+		}
+		
+		// If on refund step, validate and create deposit
+		if (currentStep === "refund") {
+			if (!refundAddress || refundAddress.trim() === "") {
+				setRefundAddressError("Refund address is required");
+				toast({
+					variant: "destructive",
+					title: "Refund address required",
+					description: "Please enter a refund address where funds will be returned if the swap fails.",
+				});
+				return;
+			}
+			if (refundAddressError) {
+				toast({
+					variant: "destructive",
+					title: "Invalid refund address",
+					description: refundAddressError,
+				});
+				return;
+			}
+		}
+		
 		setDepositLoading(true);
 		setDepositError(null);
 		setExpired(false);
@@ -260,6 +324,7 @@ export function NearSwapWidget({
 				amount,
 				sender: fallbackSender,
 				recipient,
+				refundAddress: refundAddress.trim(),
 				slippageBps: 100,
 			});
 			if (!info?.depositAddress) {
@@ -684,7 +749,7 @@ export function NearSwapWidget({
 								</div>
 							</div>
 							<div className="mt-3 text-sm text-gray-500 min-h-4">
-								{quoteError ? (
+								{quoteError && !quoteError.toLowerCase().includes("recipient") && !quoteError.toLowerCase().includes("address") ? (
 									<span className="text-red-600">{quoteError}</span>
 								) : (loadingTokens || !selectedTo ? (
 									<Skeleton className="h-4 w-20" />
@@ -752,15 +817,52 @@ export function NearSwapWidget({
 											/>
 											{recipientError ? <div className="text-xs text-red-600 mt-1">{recipientError}</div> : null}
 										</div>
-										<div className="mt-4 flex justify-end">
+										{/* Refund Address Step */}
+										{currentStep === "refund" && (
+											<div className="mt-4">
+												<label className="text-sm font-medium text-gray-700">
+													Refund Address ({inferFamilyFromChain(selectedFrom?.chain).toUpperCase()}) *
+												</label>
+												<p className="text-xs text-gray-500 mt-1 mb-2">
+													Funds will be refunded to this address if the swap fails or expires
+												</p>
+												<input
+													type="text"
+													value={refundAddress}
+													onChange={(e) => {
+														setRefundAddress(e.target.value);
+														setRefundAddressError(null);
+													}}
+													placeholder={`Enter your ${inferFamilyFromChain(selectedFrom?.chain).toUpperCase()} refund address`}
+													className="mt-1 w-full rounded-xl border border-gray-200 bg-white text-gray-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400"
+													autoFocus
+												/>
+												{refundAddressError ? <div className="text-xs text-red-600 mt-1">{refundAddressError}</div> : null}
+											</div>
+										)}
+										<div className="mt-4 flex justify-end gap-2">
+											{currentStep === "refund" && (
+												<Button
+													type="button"
+													variant="outline"
+													onClick={() => setCurrentStep("recipient")}
+													className="flex-1 h-11 rounded-2xl border-gray-300"
+												>
+													Back
+												</Button>
+											)}
 											<Button
 												type="button"
 												onClick={handleStartTransfer}
-												disabled={swapDisabled || quoteLoading || depositLoading}
-												className="w-full h-11 rounded-2xl text-white font-semibold shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
+												disabled={
+													currentStep === "recipient" 
+														? (swapDisabled || quoteLoading || depositLoading)
+														: (!refundAddress || !!refundAddressError || depositLoading)
+												}
+												className={`${currentStep === "refund" ? "flex-1" : "w-full"} h-11 rounded-2xl text-white font-semibold shadow-md disabled:opacity-60 disabled:cursor-not-allowed`}
 												style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
 											>
-												{depositLoading ? "Preparing…" : "Start transfer"}
+												{depositLoading ? "Preparing…" : currentStep === "recipient" ? "Continue" : "Start transfer"}
 											</Button>
 										</div>
 									</motion.div>
