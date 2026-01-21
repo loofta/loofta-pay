@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
-import { getRefundToForChain } from "@/lib/refundAddresses";
+// Removed getRefundToForChain - now using user-provided refund addresses only
 import { getDefuseAssetIdFor } from "@/lib/tokenlist";
 import { 
   isRhinestoneChainSupported, 
@@ -31,9 +31,12 @@ const INTENTS_ONLY_CHAINS = new Set(['zec', 'zcash', 'btc', 'bitcoin', 'xrp', 'x
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { claimId, fromToken, amount, userAddress, orgReferral } = body || {};
+    const { claimId, fromToken, amount, userAddress, refundAddress, orgReferral } = body || {};
     if (!claimId || !fromToken?.tokenId || !fromToken?.decimals || !amount) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+    }
+    if (!refundAddress) {
+      return NextResponse.json({ error: "Refund address is required" }, { status: 400 });
     }
     const supabase = getSupabaseAdmin();
     const { data: claim, error } = await supabase
@@ -241,8 +244,11 @@ export async function POST(request: Request) {
     })();
     const amountOutAtomic = toAtomic(String(destHumanOutRoundedUp || "0"), destDecimals);
     
-    // Get appropriate refund address for the origin chain
-    const refundAddress = getRefundToForChain(originChain);
+    // Use provided refund address (required, no fallback)
+    if (!refundAddress) {
+      return NextResponse.json({ error: "Refund address is required" }, { status: 400 });
+    }
+    const finalRefundAddress = refundAddress;
     
     // For intents mode, calculate input amount in origin token atomic units
     // We need to estimate how much ZEC/BTC etc. to send to get the desired output
@@ -309,7 +315,7 @@ export async function POST(request: Request) {
       depositType: "INTENTS" as any,
       destinationAsset,
       amount: amountInAtomic,
-      refundTo: userAddress || refundAddress,
+      refundTo: userAddress || finalRefundAddress,
       refundType: "INTENTS" as any,
       // CRITICAL: recipient must be the claim's recipient_address, NOT userAddress
       // userAddress is only for refunds, not for where the payment should go
@@ -331,7 +337,7 @@ export async function POST(request: Request) {
       // Use input amount (with buffer) instead of output amount
       amount: amountInAtomic,
       // refundTo: treasury address on origin chain
-      refundTo: refundAddress,
+      refundTo: finalRefundAddress,
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       // recipient: the actual destination address
       recipient: claim.recipient_address,

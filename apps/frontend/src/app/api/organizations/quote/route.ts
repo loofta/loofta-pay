@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
-import { getRefundToForChain } from "@/lib/refundAddresses";
+// Removed getRefundToForChain - now using user-provided refund addresses only
 import { getDefuseAssetIdFor } from "@/lib/tokenlist";
 
 function getEnv(name: string, fallbacks: string[] = []) {
@@ -23,7 +23,7 @@ if (ONECLICK_JWT) OpenAPI.TOKEN = ONECLICK_JWT;
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { organizationId, fromToken, destToken, amount } = body || {};
+    const { organizationId, fromToken, destToken, amount, refundAddress } = body || {};
     if (!organizationId || !fromToken?.tokenId || typeof fromToken?.decimals !== "number" || !amount) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
@@ -107,8 +107,20 @@ export async function POST(request: Request) {
     const amountOutAtomic = toAtomic(desiredOutHuman, destDecimals);
 
     try {
-      const refundTo = getRefundToForChain(String(fromToken.chain || ""));
-      const recipient = getRefundToForChain(String(organization.token_chain || ""));
+      // Use user-provided refund address if available, otherwise throw error
+      // Quote endpoints should receive refund address from frontend
+      if (!refundAddress) {
+        return NextResponse.json({ 
+          error: "Refund address is required for quote",
+          code: "REFUND_ADDRESS_REQUIRED"
+        }, { status: 400 });
+      }
+      
+      const refundTo = refundAddress;
+      // For recipient, use organization's recipient wallet (not refund address)
+      // This is a dry quote, so recipient doesn't matter much, but we need a valid address
+      const recipient = organization.token_chain ? refundAddress : refundAddress; // Use refund as placeholder for dry quote
+      
       const req: any = {
         dry: true,
         swapType: (QuoteRequest.swapType as any).EXACT_OUTPUT ?? "EXACT_OUTPUT",

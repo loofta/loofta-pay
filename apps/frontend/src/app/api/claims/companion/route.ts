@@ -20,7 +20,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "redis";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
-import { getRefundToForChain } from "@/lib/refundAddresses";
+// Removed getRefundToForChain - now using user-provided refund addresses only
 
 // Initialize 1Click SDK
 const ONECLICK_BASE = process.env.ONECLICK_API_BASE || process.env.NEXT_PUBLIC_ONECLICK_API_BASE || "https://1click.chaindefuser.com";
@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
         depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
         destinationAsset,
         amount: destinationAmount, // EXACT_OUTPUT - recipient gets this exact amount
-        refundTo: getRefundToForChain("eth"),
+        refundTo: refundAddress, // Use user-provided refund address
         refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
         recipient: recipientAddress,
         recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
@@ -199,8 +199,11 @@ export async function POST(request: NextRequest) {
     // Step 3: Create first intent (User's token → ETH on Ethereum to companion)
     console.log("[claims/companion] Step 3: Creating first intent...");
     
-    const originChain = String(fromToken.chain || "").toLowerCase();
-    const refundAddress = getRefundToForChain(originChain);
+    // Refund address is required - get from request body
+    const { refundAddress } = body || {};
+    if (!refundAddress) {
+      return NextResponse.json({ error: "Refund address is required" }, { status: 400 });
+    }
     
     let firstIntentQuote: any;
     try {

@@ -36,7 +36,7 @@ export type NearToken = {
 
 import { resolveTokenLogo } from "@/lib/tokenImages";
 import { getDefuseAssetIdFor, getIconForAssetId } from "@/lib/tokenlist";
-import { getRefundToForChain } from "@/lib/refundAddresses";
+// Removed getRefundToForChain - now using user-provided refund addresses only
 
 // Configure SDK base/token once
 // Match 1-click examples: https://1click.chaindefuser.com
@@ -178,12 +178,18 @@ export async function getAccurateQuote(params: {
   amount: string; // human-readable input amount
   recipient?: string;
   sender?: string;
+  refundAddress?: string; // User-provided refund address (required for non-custodial)
   slippageBps?: number; // default 100 = 1%
   dryRun?: boolean; // default true for quick quote
   userAddress?: string; // optional; when provided with authMethod, uses INTENTS routing
   authMethod?: AuthMethod;
 }): Promise<QuoteResponse> {
-  const { fromToken, toToken, amount, recipient, sender, slippageBps = 100, dryRun = true, userAddress, authMethod } = params;
+  const { fromToken, toToken, amount, recipient, sender, refundAddress, slippageBps = 100, dryRun = true, userAddress, authMethod } = params;
+  
+  // Refund address is required for non-custodial operations
+  if (!refundAddress) {
+    throw new Error("Refund address is required for quote");
+  }
   const toAtomic = (val: string, decimals: number): string => {
     const [i, f = ""] = String(val).split(".");
     const cleanF = f.replace(/\D/g, "").slice(0, Math.max(0, decimals));
@@ -240,8 +246,9 @@ export async function getAccurateQuote(params: {
           // default to evm zero
           return ZERO;
         };
-        const recipientDry = getRefundToForChain(toToken.chain);
-        const refundDry = getRefundToForChain(fromToken.chain);
+        // For dry quotes, use refund address for both recipient and refund
+        const recipientDry = refundAddress;
+        const refundDry = refundAddress;
         const sameChain = String(fromToken.chain || "").toLowerCase() === String(toToken.chain || "").toLowerCase();
         req = attachAppFees({
           dry: true,
@@ -273,7 +280,7 @@ export async function getAccurateQuote(params: {
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
       amount: atomicIn,
-      refundTo: getRefundToForChain(fromToken.chain),
+      refundTo: refundAddress, // Use user-provided refund address
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipient,
       recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
@@ -356,6 +363,7 @@ export async function getDepositInfo(params: {
   amount: string; // human-readable input amount
   recipient?: string;
   sender?: string;
+  refundAddress?: string; // User-provided refund address (required for non-custodial)
   slippageBps?: number; // default 100 = 1%
   userAddress?: string;
   authMethod?: AuthMethod;
@@ -363,7 +371,12 @@ export async function getDepositInfo(params: {
   // Block deposit creation in demo mode
   assertNotDemoMode("Deposit address creation");
 
-  const { fromToken, toToken, amount, recipient, sender, slippageBps = 100, userAddress, authMethod } = params;
+  const { fromToken, toToken, amount, recipient, sender, refundAddress, slippageBps = 100, userAddress, authMethod } = params;
+  
+  // Refund address is required for non-custodial operations
+  if (!refundAddress) {
+    throw new Error("Refund address is required for deposit creation");
+  }
   const toAtomic = (val: string, decimals: number): string => {
     const [i, f = ""] = String(val).split(".");
     const cleanF = f.replace(/\D/g, "").slice(0, Math.max(0, decimals));
@@ -385,7 +398,7 @@ export async function getDepositInfo(params: {
       destinationAsset,
       // EXACT_OUTPUT expects desired out in atomic units for destination asset
       amount: toAtomic(amount || "0", toToken.decimals || 0),
-      refundTo: intentsUserId,
+      refundTo: refundAddress || intentsUserId, // Prefer user-provided refund address
       refundType: QuoteRequest.refundType.INTENTS,
       recipient: intentsUserId,
       recipientType: QuoteRequest.recipientType.INTENTS,
@@ -407,7 +420,7 @@ export async function getDepositInfo(params: {
       destinationAsset,
       // EXACT_OUTPUT expects desired out in atomic units for destination asset
       amount: toAtomic(amount || "0", toToken.decimals || 0),
-      refundTo: getRefundToForChain(fromToken.chain),
+      refundTo: refundAddress, // Use user-provided refund address
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipient,
       recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,

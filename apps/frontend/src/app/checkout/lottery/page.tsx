@@ -59,6 +59,8 @@ export default function LotteryPage() {
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
   const [userAddress, setUserAddress] = useState<string>("");
   const [recipientAddress, setRecipientAddress] = useState<string>(""); // EVM address where tickets will be minted
+  const [refundAddress, setRefundAddress] = useState<string>("");
+  const [refundAddressError, setRefundAddressError] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [status, setStatus] = useState<"IDLE" | "PROCESSING" | "SUCCESS" | "ERROR" | "REFUNDED">("IDLE");
   const [showInfo, setShowInfo] = useState(false);
@@ -456,6 +458,7 @@ export default function LotteryPage() {
           totalCostETH: totalCostETH,
           companionAddress: companionWallet.companionAddress,
           userAddress: finalRecipientAddress, // Use recipient as the key
+          refundAddress: refundAddress.trim(), // User-provided refund address
           orgReferral: orgReferral, // Pass organization referral code
         }),
       });
@@ -1013,6 +1016,34 @@ export default function LotteryPage() {
                     We'll automatically convert to ETH on Base
                   </p>
                 </div>
+
+                {/* Refund Address Input */}
+                {selectedFrom && (
+                  <div>
+                    <label className="text-sm font-semibold text-gray-900 mb-2 block">
+                      Refund Address ({selectedFrom.chain.toUpperCase()}) *
+                    </label>
+                    <Input
+                      type="text"
+                      value={refundAddress}
+                      onChange={(e) => {
+                        setRefundAddress(e.target.value);
+                        setRefundAddressError(null);
+                      }}
+                      placeholder={`Enter your ${selectedFrom.chain.toUpperCase()} address for refunds`}
+                      className={`h-11 font-mono text-sm border-2 ${refundAddressError ? 'border-red-300' : 'border-gray-200'} focus:border-blue-500`}
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                    />
+                    {refundAddressError && (
+                      <p className="mt-1 text-sm text-red-600">{refundAddressError}</p>
+                    )}
+                    <p className="mt-1 text-sm text-gray-500">
+                      Funds will be refunded to this address if payment fails or expires
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* RIGHT SIDE: Payment Summary */}
@@ -1076,7 +1107,7 @@ export default function LotteryPage() {
 
                     <Button
                       onClick={handlePurchase}
-                      disabled={preparing || !selectedFrom || !numTickets || parseFloat(numTickets) <= 0 || !finalRecipientAddress}
+                      disabled={preparing || !selectedFrom || !numTickets || parseFloat(numTickets) <= 0 || !finalRecipientAddress || !refundAddress.trim()}
                       className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50"
                     >
                       {preparing ? (

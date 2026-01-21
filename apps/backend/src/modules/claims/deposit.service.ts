@@ -49,7 +49,7 @@ export class DepositService {
    * Request deposit address for a claim payment
    */
   async requestDeposit(dto: RequestDepositDto): Promise<DepositResult> {
-    const { claimId, fromToken, amount, userAddress, orgReferral } = dto;
+    const { claimId, fromToken, amount, userAddress, refundAddress, orgReferral } = dto;
 
     // Validate input
     if (!claimId || !fromToken?.tokenId || fromToken.decimals === undefined || !amount) {
@@ -76,7 +76,7 @@ export class DepositService {
     }
 
     // Cross-chain: use Near Intents
-    return this.handleCrossChainDeposit(claim, fromToken, amount, userAddress, orgReferral);
+    return this.handleCrossChainDeposit(claim, fromToken, amount, userAddress, refundAddress, orgReferral);
   }
 
   /**
@@ -139,6 +139,7 @@ export class DepositService {
     fromToken: RequestDepositDto['fromToken'],
     amount: string,
     userAddress?: string,
+    refundAddress?: string,
     orgReferral?: string,
   ): Promise<DepositResult> {
     const originChain = String(fromToken.chain || '').toLowerCase();
@@ -190,7 +191,7 @@ export class DepositService {
         },
         amountIn: amountInHuman.toFixed(originDecimals > 8 ? 8 : originDecimals),
         recipient: claim.recipient_address,
-        refundAddress: userAddress,
+        refundAddress: refundAddress || userAddress,
         useIntentsMode,
         referral: orgReferral || 'loofta',
       });
@@ -203,6 +204,7 @@ export class DepositService {
       }
 
       // Create intent record
+      // Note: refundAddress is stored by Near Intents, not in our database
       await this.claimsService.createIntent({
         claimId: claim.id,
         quoteId: quoteResult.quoteId,

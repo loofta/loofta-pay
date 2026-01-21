@@ -42,6 +42,12 @@ export class RequestDepositDto {
   @MaxLength(100)
   userAddress?: string;
 
+  @ApiPropertyOptional({ description: 'Refund address (required for refunds)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  refundAddress?: string;
+
   @ApiPropertyOptional({ description: 'Organization referral code' })
   @IsOptional()
   @IsString()

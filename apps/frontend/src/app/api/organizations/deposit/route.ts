@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
-import { getRefundToForChain } from "@/lib/refundAddresses";
+// Removed getRefundToForChain - now using user-provided refund addresses only
 import { getDefuseAssetIdFor } from "@/lib/tokenlist";
 import { 
   isRhinestoneChainSupported, 
@@ -31,9 +31,12 @@ const INTENTS_ONLY_CHAINS = new Set(['zec', 'zcash', 'btc', 'bitcoin', 'xrp', 'x
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { organizationId, fromToken, amount, userAddress, orgReferral } = body || {};
+    const { organizationId, fromToken, amount, userAddress, orgReferral, refundAddress } = body || {};
     if (!organizationId || !fromToken?.tokenId || !fromToken?.decimals || !amount) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+    }
+    if (!refundAddress) {
+      return NextResponse.json({ error: "Refund address is required" }, { status: 400 });
     }
     const supabase = getSupabaseAdmin();
     const trimmedOrgId = String(organizationId || "").trim();
@@ -378,7 +381,11 @@ export async function POST(request: Request) {
     })();
     const amountOutAtomic = toAtomic(String(destHumanOutRoundedUp || "0"), destDecimals);
     
-    const refundAddress = getRefundToForChain(originChain);
+    // Use provided refund address (required, no fallback)
+    if (!refundAddress) {
+      return NextResponse.json({ error: "Refund address is required" }, { status: 400 });
+    }
+    const finalRefundAddress = refundAddress;
     
     let originDecimals = Number(fromToken.decimals) || 8;
     let originPrice: number | undefined = undefined;
@@ -414,7 +421,7 @@ export async function POST(request: Request) {
       depositType: "INTENTS" as any,
       destinationAsset,
       amount: amountInAtomic,
-      refundTo: userAddress || refundAddress,
+      refundTo: userAddress || finalRefundAddress,
       refundType: "INTENTS" as any,
       recipient: recipientAddress,
       recipientType: "INTENTS" as any,
@@ -429,7 +436,7 @@ export async function POST(request: Request) {
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
       amount: amountInAtomic,
-      refundTo: refundAddress,
+      refundTo: finalRefundAddress,
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipientAddress,
       recipientType: sameChain 

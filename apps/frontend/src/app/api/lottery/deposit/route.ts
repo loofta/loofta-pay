@@ -2,7 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
-import { getRefundToForChain } from "@/lib/refundAddresses";
+// Removed getRefundToForChain - now using user-provided refund addresses only
 import { assertNotDemoMode } from "@/config/demoMode";
 
 function getEnv(name: string, fallbacks: string[] = []) {
@@ -32,11 +32,16 @@ export async function POST(request: Request) {
       totalCostETH, // Total ETH needed on Base (human-readable)
       companionAddress, // Rhinestone companion wallet address
       userAddress,
+      refundAddress, // User-provided refund address (required)
       orgReferral // Organization referral code (optional)
     } = body || {};
     
     if (!fromToken?.tokenId || !toToken?.tokenId || !amountNeeded || !totalCostETH || !companionAddress) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    }
+    
+    if (!refundAddress) {
+      return NextResponse.json({ error: "Refund address is required" }, { status: 400 });
     }
 
     const toAtomic = (val: string, decimals: number): string => {
@@ -69,17 +74,13 @@ export async function POST(request: Request) {
     console.log("[lottery/deposit] Companion wallet address (Rhinestone):", companionAddress);
     console.log("[lottery/deposit] This address will receive ETH from NEAR Intents on Base");
     
-    // Use the same logic as claims/quote route
-    // Get refund address for origin chain
-    const refundTo = getRefundToForChain(String(fromToken.chain || ""));
-    // Get recipient address for destination chain (Base)
-    const recipient = getRefundToForChain(String(toToken.chain || "base"));
+    // Use user-provided refund address (required, no fallback)
+    const refundTo = refundAddress;
     
     console.log("[lottery/deposit] Chain info:", {
       originChain: fromToken.chain,
       destChain: toToken.chain,
-      refundTo,
-      recipient,
+      refundTo: refundAddress,
       companionAddress, // This is where ETH will actually arrive
     });
     
@@ -93,7 +94,7 @@ export async function POST(request: Request) {
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN, // Same as claims/quote
       destinationAsset,
       amount: amountInAtomic,
-      refundTo, // From getRefundToForChain (same as claims/quote)
+      refundTo: refundAddress, // User-provided refund address (required)
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN, // Same as claims/quote
       recipient: companionAddress, // Override with companion wallet address (where ETH arrives)
       recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN, // Specific address

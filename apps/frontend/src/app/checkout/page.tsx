@@ -84,12 +84,45 @@ export default function CheckoutPage() {
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [statusData, setStatusData] = useState<any>(null);
+  const [refundAddress, setRefundAddress] = useState<string>("");
+  const [refundAddressError, setRefundAddressError] = useState<string | null>(null);
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1); // 1: Token selection, 2: Refund address, 3: Confirmation, 4: Deposit
 
   const selectedFrom = findTokenBySelection(tokens, tokenSelection || null);
   const destToken = useMemo(() => {
     if (!organization?.token_symbol || !organization?.token_chain) return null;
     return tokens.find(t => t.symbol === organization.token_symbol && t.chain === organization.token_chain);
   }, [tokens, organization?.token_symbol, organization?.token_chain]);
+
+  // Validate refund address based on selected token's chain
+  const validateRefundAddress = (address: string, chain: string): boolean => {
+    if (!address.trim()) return false;
+    const chainLower = chain.toLowerCase();
+
+    // EVM chains
+    const evmChains = ['eth', 'ethereum', 'base', 'arb', 'arbitrum', 'op', 'optimism', 'polygon', 'pol', 'bsc', 'avax', 'avalanche'];
+    if (evmChains.includes(chainLower)) {
+      return /^0x[a-fA-F0-9]{40}$/.test(address);
+    }
+
+    // Solana
+    if (chainLower === 'sol' || chainLower === 'solana') {
+      return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+    }
+
+    // NEAR
+    if (chainLower === 'near') {
+      return /^[a-z0-9_-]+\.near$|^[a-f0-9]{64}$/i.test(address);
+    }
+
+    // Bitcoin
+    if (chainLower === 'btc' || chainLower === 'bitcoin') {
+      return /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/.test(address);
+    }
+
+    // Default to EVM pattern for unknown chains
+    return /^0x[a-fA-F0-9]{40}$/.test(address);
+  };
 
   // Check if same token and same chain (direct transfer, no swap needed)
   const sameTokenAndChain = useMemo(() => {
@@ -155,6 +188,13 @@ export default function CheckoutPage() {
 
       setQuoteLoading(true);
       try {
+        // Refund address is required for quotes - use it if available, otherwise skip quote
+        if (!refundAddress.trim()) {
+          // Don't call quote API without refund address
+          setQuoteLoading(false);
+          return;
+        }
+
         const r = await fetch(`/api/organizations/quote`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -173,6 +213,7 @@ export default function CheckoutPage() {
               price: destToken.price,
             } : null,
             amount: amount,
+            refundAddress: refundAddress.trim(), // Pass refund address to quote API
           }),
         });
         const data = await r.json();
@@ -209,6 +250,38 @@ export default function CheckoutPage() {
     })();
   }, [organization, selectedFrom, destToken, amount, sameTokenAndChain, tokens, tokenSelection]);
 
+  function handleProceedToPayment() {
+    if (!organization) {
+      toast({ variant: "destructive", title: "Error", description: "Organization not found. Please check the organization ID." });
+      return;
+    }
+    if (!selectedFrom) {
+      toast({ variant: "destructive", title: "Error", description: "Selected token not found. Please select a different token." });
+      return;
+    }
+    if (!amount) {
+      toast({ variant: "destructive", title: "Error", description: "Please enter an amount." });
+      return;
+    }
+    // Move to refund address step
+    setCurrentStep(2);
+  }
+
+  function handleContinueToConfirmation() {
+    if (!refundAddress.trim()) {
+      setRefundAddressError("Please enter a refund address");
+      toast({ variant: "destructive", title: "Error", description: "Please enter a refund address." });
+      return;
+    }
+    if (!selectedFrom || !validateRefundAddress(refundAddress, selectedFrom.chain)) {
+      setRefundAddressError(`Invalid ${selectedFrom?.chain || ''} address format`);
+      toast({ variant: "destructive", title: "Error", description: `Invalid refund address format for ${selectedFrom?.chain.toUpperCase() || ''}.` });
+      return;
+    }
+    setRefundAddressError(null);
+    setCurrentStep(3);
+  }
+
   async function prepareDeposit() {
     if (!organization) {
       toast({ variant: "destructive", title: "Error", description: "Organization not found. Please check the organization ID." });
@@ -222,9 +295,10 @@ export default function CheckoutPage() {
       toast({ variant: "destructive", title: "Error", description: "Please enter an amount." });
       return;
     }
-
     setPreparing(true);
     setDeposit(null);
+    setRefundAddressError(null);
+    setCurrentStep(4);
     try {
       const payload = {
         organizationId: organization.organization_id,
@@ -236,6 +310,7 @@ export default function CheckoutPage() {
         },
         amount: amount,
         orgReferral: organization.org_referral,
+        refundAddress: refundAddress.trim(),
       };
 
       console.log("[Checkout] Preparing deposit with:", {
@@ -271,6 +346,7 @@ export default function CheckoutPage() {
       } else {
         setDeposit(data);
       }
+      // Step 4 is already set in prepareDeposit
     } catch (e: any) {
       console.error("[Checkout] Failed to prepare deposit:", e);
       toast({
@@ -390,6 +466,28 @@ export default function CheckoutPage() {
         return;
       }
 
+      // For demo organization, override with localStorage wallet if available
+      if (organizationId === 'demo' && typeof window !== 'undefined') {
+        try {
+          const stored = localStorage.getItem('loofta_demo_wallet');
+          if (stored) {
+            const demoWallet = JSON.parse(stored);
+            if (demoWallet.address && demoWallet.token && demoWallet.network) {
+              console.log("[Checkout] Using localStorage demo wallet:", demoWallet);
+              setOrganization({
+                ...data.organization,
+                recipient_wallet: demoWallet.address,
+                token_symbol: demoWallet.token,
+                token_chain: demoWallet.network,
+              });
+              return;
+            }
+          }
+        } catch (error) {
+          console.warn("[Checkout] Failed to load demo wallet from localStorage:", error);
+        }
+      }
+
       setOrganization(data.organization);
       console.log("[Checkout] Organization set in state:", {
         organization_id: data.organization.organization_id,
@@ -424,8 +522,8 @@ export default function CheckoutPage() {
     );
   }
 
-  // Get background color: URL param > organization setting > white
-  const contentBgColor = decodedBgColor || organization.bg_color || "#FFFFFF";
+  // Get background color: URL param > white (default)
+  const contentBgColor = decodedBgColor || "#FFFFFF";
 
   return (
     <div className="min-h-screen flex items-center justify-center py-8" style={{ backgroundColor: contentBgColor }}>
@@ -511,123 +609,271 @@ export default function CheckoutPage() {
             </div>
           </div>
 
-          {/* Right Side - Payment Options */}
+          {/* Right Side - Payment Steps */}
           <div className="flex flex-col">
-            <div className="bg-gray-50 rounded-2xl shadow-lg p-8 space-y-6 w-full">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-6">Payment Details</h3>
+            <AnimatePresence mode="wait">
+              {/* Step 1: Token Selection */}
+              {currentStep === 1 && (
+                <motion.div
+                  key="step1"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.3 }}
+                  className="bg-gray-50 rounded-2xl shadow-lg p-8 space-y-6 w-full"
+                >
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                      <span className="text-sm font-semibold text-blue-600">1</span>
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900">Select Payment Method</h3>
+                  </div>
 
-                {!deposit ? (
-                  <>
-                    {/* Token Selection */}
-                    <div className="space-y-2 mb-6">
-                      <Label className="text-sm font-medium text-gray-700">
-                        Pay with
-                      </Label>
-                      {tokensLoading ? (
-                        <div className="flex items-center justify-center py-8">
-                          <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                  {/* Token Selection */}
+                  <div className="space-y-2 mb-6">
+                    <Label className="text-sm font-medium text-gray-700">
+                      Pay with
+                    </Label>
+                    {tokensLoading ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                      </div>
+                    ) : (
+                      <TokenCombobox
+                        tokens={tokens}
+                        value={tokenSelection || undefined}
+                        onChange={setTokenSelection}
+                        placeholder="Select token and network..."
+                        className="w-full"
+                      />
+                    )}
+                    <p className="text-sm text-gray-500 mt-1">
+                      Choose the token and network you want to pay with
+                    </p>
+                  </div>
+
+                  {/* Quote Display */}
+                  {tokenSelection && amount && parseFloat(amount) > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="mb-4"
+                    >
+                      {quoteLoading ? (
+                        <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200">
+                          <div className="flex items-center gap-3">
+                            <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                            <p className="text-sm font-medium text-blue-900">Calculating conversion...</p>
+                          </div>
+                        </div>
+                      ) : quote && selectedFrom ? (
+                        <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                                <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
+                              </div>
+                              <div>
+                                <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send</p>
+                                <p className="text-lg font-bold text-emerald-900">
+                                  {quote.amountInFormatted
+                                    ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                    : quote.est
+                                      ? `${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
+                                      : quote.usd
+                                        ? `≈ $${quote.usd.toFixed(2)}`
+                                        : ""}
+                                </p>
+                              </div>
+                            </div>
+                            <ArrowRight className="w-5 h-5 text-emerald-600" />
+                          </div>
+                        </div>
+                      ) : !selectedFrom ? (
+                        <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                          <p className="text-sm text-amber-700 text-center">
+                            Token not found. Please select a different token.
+                          </p>
                         </div>
                       ) : (
-                        <TokenCombobox
-                          tokens={tokens}
-                          value={tokenSelection || undefined}
-                          onChange={setTokenSelection}
-                          placeholder="Select token and network..."
-                          className="w-full"
-                        />
+                        <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                          <p className="text-sm text-gray-600 text-center">
+                            Calculating conversion rate...
+                          </p>
+                        </div>
                       )}
-                      <p className="text-sm text-gray-500 mt-1">
-                        Choose the token and network you want to pay with
-                      </p>
+                    </motion.div>
+                  )}
+
+                  {/* Proceed Button */}
+                  <Button
+                    onClick={handleProceedToPayment}
+                    disabled={!tokenSelection || !selectedFrom || preparing || !amount || parseFloat(amount) <= 0 || !organization}
+                    className="w-full h-12 text-base font-semibold"
+                  >
+                    {!selectedFrom ? (
+                      "Select a token"
+                    ) : !organization ? (
+                      "Organization not found"
+                    ) : (
+                      <>
+                        Proceed to payment
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </>
+                    )}
+                  </Button>
+                </motion.div>
+              )}
+
+              {/* Step 2: Refund Address */}
+              {currentStep === 2 && selectedFrom && (
+                <motion.div
+                  key="step2"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.3 }}
+                  className="bg-gray-50 rounded-2xl shadow-lg p-8 space-y-6 w-full"
+                >
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                      <span className="text-sm font-semibold text-blue-600">2</span>
                     </div>
+                    <h3 className="text-lg font-semibold text-gray-900">Enter Refund Address</h3>
+                  </div>
 
-                    {/* Quote Display */}
-                    <AnimatePresence mode="wait">
-                      {tokenSelection && amount && parseFloat(amount) > 0 && (
-                        <motion.div
-                          key={quote ? "quote" : quoteLoading ? "loading" : "empty"}
-                          initial={{ opacity: 0, y: -10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -10 }}
-                          transition={{ duration: 0.2 }}
-                          className="mb-4"
-                        >
-                          {quoteLoading ? (
-                            <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200">
-                              <div className="flex items-center gap-3">
-                                <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-                                <p className="text-sm font-medium text-blue-900">Calculating conversion...</p>
-                              </div>
-                            </div>
-                          ) : quote && selectedFrom ? (
-                            <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
-                                    <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
-                                  </div>
-                                  <div>
-                                    <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send</p>
-                                    <p className="text-lg font-bold text-emerald-900">
-                                      {quote.amountInFormatted
-                                        ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                        : quote.est
-                                          ? `${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
-                                          : quote.usd
-                                            ? `≈ $${quote.usd.toFixed(2)}`
-                                            : ""}
-                                    </p>
-                                  </div>
-                                </div>
-                                <ArrowRight className="w-5 h-5 text-emerald-600" />
-                              </div>
-                            </div>
-                          ) : !selectedFrom ? (
-                            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
-                              <p className="text-sm text-amber-700 text-center">
-                                Token not found. Please select a different token.
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                              <p className="text-sm text-gray-600 text-center">
-                                Calculating conversion rate...
-                              </p>
-                            </div>
-                          )}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                  <div className="space-y-2">
+                    <Label htmlFor="refundAddress" className="text-sm font-medium text-gray-700">
+                      Refund Address ({selectedFrom.chain.toUpperCase()})
+                    </Label>
+                    <Input
+                      id="refundAddress"
+                      type="text"
+                      value={refundAddress}
+                      onChange={(e) => {
+                        setRefundAddress(e.target.value);
+                        setRefundAddressError(null);
+                      }}
+                      placeholder={`Enter your ${selectedFrom.chain.toUpperCase()} address for refunds`}
+                      className={`w-full ${refundAddressError ? "border-red-500 focus:border-red-500" : ""}`}
+                      autoFocus
+                    />
+                    {refundAddressError && (
+                      <p className="text-sm text-red-600">{refundAddressError}</p>
+                    )}
+                    <p className="text-sm text-gray-500">
+                      Funds will be refunded to this address if the payment fails or expires
+                    </p>
+                  </div>
 
-                    {/* Proceed to Payment Button */}
+                  <div className="flex gap-3 pt-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setCurrentStep(1);
+                        setRefundAddress("");
+                        setRefundAddressError(null);
+                      }}
+                      className="flex-1"
+                    >
+                      Back
+                    </Button>
+                    <Button
+                      onClick={handleContinueToConfirmation}
+                      disabled={!refundAddress.trim()}
+                      className="flex-1 h-12 text-base font-semibold"
+                    >
+                      Continue
+                      <ArrowRight className="w-4 h-4 ml-2" />
+                    </Button>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Step 3: Confirmation */}
+              {currentStep === 3 && selectedFrom && (
+                <motion.div
+                  key="step3"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.3 }}
+                  className="bg-gray-50 rounded-2xl shadow-lg p-8 space-y-6 w-full"
+                >
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                      <span className="text-sm font-semibold text-blue-600">3</span>
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900">Confirm Payment</h3>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="p-4 bg-white rounded-lg border border-gray-200">
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-gray-600">Amount</span>
+                          <span className="text-base font-semibold text-gray-900">${amount || "0.00"}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-gray-600">Pay with</span>
+                          <div className="flex items-center gap-2">
+                            <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={20} />
+                            <span className="text-base font-semibold text-gray-900">
+                              {quote?.amountInFormatted
+                                ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                : selectedFrom.symbol}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex justify-between items-center pt-2 border-t border-gray-200">
+                          <span className="text-sm text-gray-600">Refund Address</span>
+                          <span className="text-xs font-mono text-gray-700 break-all text-right max-w-[200px]">
+                            {refundAddress.slice(0, 6)}...{refundAddress.slice(-4)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => setCurrentStep(2)}
+                      className="flex-1"
+                    >
+                      Back
+                    </Button>
                     <Button
                       onClick={prepareDeposit}
-                      disabled={!tokenSelection || !selectedFrom || preparing || !amount || parseFloat(amount) <= 0 || !organization}
-                      className="w-full h-12 text-base font-semibold"
+                      disabled={preparing}
+                      className="flex-1 h-12 text-base font-semibold"
                     >
                       {preparing ? (
                         <>
                           <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                           Preparing…
                         </>
-                      ) : !selectedFrom ? (
-                        <>
-                          Token not found
-                        </>
-                      ) : !organization ? (
-                        <>
-                          Organization not found
-                        </>
                       ) : (
                         <>
-                          Proceed to payment
+                          Confirm & Continue
                           <ArrowRight className="w-4 h-4 ml-2" />
                         </>
                       )}
                     </Button>
-                  </>
-                ) : (
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Step 4: Deposit */}
+              {currentStep === 4 && deposit && (
+                <motion.div
+                  key="step4"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className="w-full"
+                >
                   <PaymentDepositView
                     deposit={deposit}
                     status={status}
@@ -636,35 +882,41 @@ export default function CheckoutPage() {
                     destToken={destToken}
                     amount={amount}
                     quote={quote}
-                    onCancel={() => setDeposit(null)}
+                    onCancel={() => {
+                      setDeposit(null);
+                      setCurrentStep(1);
+                      setRefundAddress("");
+                      setRefundAddressError(null);
+                    }}
                     paymentType={
                       deposit?.isDirect ? 'direct' :
                         deposit?.isCompanionSwap ? 'companion-swap' :
                           'near-intent'
                     }
                   />
-                )}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-                {/* Security Notice */}
-                <div className="pt-4 border-t border-gray-200">
-                  <p className="text-sm text-gray-500 text-center mb-3">
-                    🔒 Secured by Loofta Pay • Multi-chain payments
-                  </p>
-                  {/* Small Loofta Logo */}
-                  <div className="flex justify-center">
-                    <Link href="/" className="flex items-center gap-1.5 opacity-60 hover:opacity-100 transition-opacity">
-                      <Image
-                        src="/loofta.svg"
-                        alt="Loofta Pay"
-                        width={60}
-                        height={22}
-                        className="h-4 w-auto"
-                      />
-                    </Link>
-                  </div>
+            {/* Security Notice - Show on all steps except deposit */}
+            {currentStep !== 4 && (
+              <div className="pt-4 border-t border-gray-200 mt-6">
+                <p className="text-sm text-gray-500 text-center mb-3">
+                  🔒 Secured by Loofta Pay • Multi-chain payments
+                </p>
+                <div className="flex justify-center">
+                  <Link href="/" className="flex items-center gap-1.5 opacity-60 hover:opacity-100 transition-opacity">
+                    <Image
+                      src="/loofta.svg"
+                      alt="Loofta Pay"
+                      width={60}
+                      height={22}
+                      className="h-4 w-auto"
+                    />
+                  </Link>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

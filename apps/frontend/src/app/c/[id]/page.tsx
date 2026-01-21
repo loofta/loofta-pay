@@ -6,6 +6,7 @@ import { TokenCombobox } from "@/components/TokenCombobox";
 import type { TokenSelection } from "@/app/utils/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
 import { trimDecimals, roundUpDecimals, formatUTCTimestamp } from "@/lib/format";
@@ -50,6 +51,7 @@ async function prepareDeposit(input: {
   fromToken: { tokenId: string; decimals: number; chain: string; symbol?: string };
   amount: string;
   userAddress?: string;
+  refundAddress?: string;
 }) {
   const r = await fetch(`/api/claims/deposit`, {
     method: "POST",
@@ -112,6 +114,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
   const [showPrivacyTutorial, setShowPrivacyTutorial] = useState<boolean>(false);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
+  const [refundAddress, setRefundAddress] = useState<string>("");
+  const [refundAddressError, setRefundAddressError] = useState<string | null>(null);
   const hasUpdatedClaimStatus = React.useRef<string | null>(null); // Track if we've already updated DB for this status
   const userCancelled = React.useRef<boolean>(false); // Track if user manually cancelled to prevent re-hydration
   const { logout, login, authenticated, user } = usePrivy();
@@ -119,6 +123,36 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
   const selectedFrom = findTokenBySelection(tokens, fromSel || null);
   const destToken = useMemo(() => tokens.find(t => t.symbol === claim?.to_symbol && t.chain === claim?.to_chain), [tokens, claim?.to_symbol, claim?.to_chain]);
+
+  // Validate refund address based on selected token's chain
+  const validateRefundAddress = (address: string, chain: string): boolean => {
+    if (!address.trim()) return false;
+    const chainLower = chain.toLowerCase();
+    
+    // EVM chains
+    const evmChains = ['eth', 'ethereum', 'base', 'arb', 'arbitrum', 'op', 'optimism', 'polygon', 'pol', 'bsc', 'avax', 'avalanche'];
+    if (evmChains.includes(chainLower)) {
+      return /^0x[a-fA-F0-9]{40}$/.test(address);
+    }
+    
+    // Solana
+    if (chainLower === 'sol' || chainLower === 'solana') {
+      return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+    }
+    
+    // NEAR
+    if (chainLower === 'near') {
+      return /^[a-z0-9_-]+\.near$|^[a-f0-9]{64}$/i.test(address);
+    }
+    
+    // Bitcoin
+    if (chainLower === 'btc' || chainLower === 'bitcoin') {
+      return /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/.test(address);
+    }
+    
+    // Default to EVM pattern for unknown chains
+    return /^0x[a-fA-F0-9]{40}$/.test(address);
+  };
   const destUSD = useMemo(() => {
     const amt = Number(claim?.amount || 0);
     return Number.isFinite(amt) ? amt : null;
@@ -297,10 +331,24 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
   async function onPrepare() {
     if (!claim || !selectedFrom) return;
+    
+    // Validate refund address
+    if (!refundAddress.trim()) {
+      setRefundAddressError("Please enter a refund address");
+      toast({ variant: "destructive", title: "Error", description: "Please enter a refund address." });
+      return;
+    }
+    if (!validateRefundAddress(refundAddress, selectedFrom.chain)) {
+      setRefundAddressError(`Invalid ${selectedFrom.chain} address format`);
+      toast({ variant: "destructive", title: "Error", description: `Invalid refund address format for ${selectedFrom.chain.toUpperCase()}.` });
+      return;
+    }
+    
     // Reset cancelled flag when starting new deposit
     userCancelled.current = false;
     setPreparing(true);
     setDeposit(null);
+    setRefundAddressError(null);
     try {
       useClaimPayStore.getState().setFromSel(id, { symbol: selectedFrom.symbol, chain: selectedFrom.chain } as any);
 
@@ -327,6 +375,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain, symbol: selectedFrom.symbol },
         amount: claim.amount,
         userAddress: userWalletAddress,
+        refundAddress: refundAddress.trim(),
       });
 
       // Handle different response types
@@ -1111,6 +1160,33 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     : ""}
                             </div>
                           ) : null}
+                          
+                          {/* Refund Address Input */}
+                          {selectedFrom && (
+                            <div className="mt-4 space-y-2">
+                              <Label htmlFor="refundAddress" className="text-sm font-medium text-gray-700">
+                                Refund Address ({selectedFrom.chain.toUpperCase()})
+                              </Label>
+                              <Input
+                                id="refundAddress"
+                                type="text"
+                                value={refundAddress}
+                                onChange={(e) => {
+                                  setRefundAddress(e.target.value);
+                                  setRefundAddressError(null);
+                                }}
+                                placeholder={`Enter your ${selectedFrom.chain.toUpperCase()} address for refunds`}
+                                className={refundAddressError ? "border-red-500 focus:border-red-500" : ""}
+                              />
+                              {refundAddressError && (
+                                <p className="text-sm text-red-600">{refundAddressError}</p>
+                              )}
+                              <p className="text-sm text-gray-500">
+                                Funds will be refunded to this address if the payment fails or expires
+                              </p>
+                            </div>
+                          )}
+                          
                           <div className="mt-4 flex gap-3">
                             {DEMO_MODE ? (
                               <Button
@@ -1123,7 +1199,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             ) : (
                               <GradientActionButton
                                 onClick={onPrepare}
-                                disabled={!selectedFrom || preparing}
+                                disabled={!selectedFrom || preparing || !refundAddress.trim()}
                                 loading={preparing}
                                 loadingText="Preparing…"
                               >

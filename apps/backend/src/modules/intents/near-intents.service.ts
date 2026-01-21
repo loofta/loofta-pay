@@ -96,7 +96,7 @@ export class NearIntentsService implements OnModuleInit {
   }
 
   /**
-   * Get refund address for a chain
+   * Get refund address for a chain (fallback only - prefer using provided refundAddress)
    */
   getRefundAddress(chain: string): string {
     const key = String(chain || '').toLowerCase();

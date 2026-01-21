@@ -62,6 +62,7 @@ VALUES (
 ON CONFLICT (organization_id) DO NOTHING;
 
 -- Demo organization for SDK testing
+-- Note: recipient_wallet should be empty by default - users configure it locally
 INSERT INTO public.organizations (organization_id, name, logo_url, checkout_status, org_referral, recipient_wallet, token_symbol, token_chain, bg_color)
 VALUES (
   'demo',
@@ -69,9 +70,9 @@ VALUES (
   NULL,
   'active',
   'org_demo123456789012',
-  '0xd28d8e18537a6De75900D2eafE8E718aA4A2Df11',
+  NULL,
   'USDC',
   'base',
-  '#FF0F00'
+  '#FFFFFF'
 )
 ON CONFLICT (organization_id) DO NOTHING;
