@@ -59,6 +59,7 @@ export default function LotteryPage() {
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
   const [userAddress, setUserAddress] = useState<string>("");
   const [recipientAddress, setRecipientAddress] = useState<string>(""); // EVM address where tickets will be minted
+  const [useManualAddress, setUseManualAddress] = useState<boolean>(false); // Track if user wants to override connected wallet
   const [refundAddress, setRefundAddress] = useState<string>("");
   const [refundAddressError, setRefundAddressError] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
@@ -249,8 +250,12 @@ export default function LotteryPage() {
 
   // Determine recipient address (where tickets will be minted)
   const finalRecipientAddress = useMemo(() => {
-    // For EVM chains, use connected wallet address
-    if (!isNonEvmChain && userAddress) {
+    // If user manually entered an address (override), use it
+    if (recipientAddress && isValidEvmAddress(recipientAddress)) {
+      return recipientAddress;
+    }
+    // For EVM chains, use connected wallet address if no manual override
+    if (!isNonEvmChain && userAddress && !useManualAddress) {
       return userAddress;
     }
     // For non-EVM chains, use manually entered recipient address
@@ -258,7 +263,7 @@ export default function LotteryPage() {
       return recipientAddress;
     }
     return null;
-  }, [isNonEvmChain, userAddress, recipientAddress]);
+  }, [isNonEvmChain, userAddress, recipientAddress, useManualAddress]);
 
   // Initialize default token selection - only if no cached token and no current selection
   useEffect(() => {
@@ -284,12 +289,15 @@ export default function LotteryPage() {
     if (user?.wallet?.address) {
       const addr = user.wallet.address;
       setUserAddress(addr);
-      // Auto-fill recipient address for EVM chains
-      if (!isNonEvmChain && isValidEvmAddress(addr)) {
+      // Auto-fill recipient address for EVM chains if not manually overridden
+      if (!isNonEvmChain && isValidEvmAddress(addr) && !useManualAddress) {
         setRecipientAddress(addr);
       }
+    } else {
+      // Wallet disconnected
+      setUserAddress("");
     }
-  }, [user, isNonEvmChain]);
+  }, [user, isNonEvmChain, useManualAddress]);
 
   // Poll companion wallet balance when waiting for deposit
   useEffect(() => {
@@ -906,7 +914,7 @@ export default function LotteryPage() {
                 <p className="text-sm text-gray-500 mb-3">
                   Where you'll receive your lottery tickets (NFTs) and prizes if you win! 🎉
                 </p>
-                {!isNonEvmChain && userAddress ? (
+                {!isNonEvmChain && userAddress && !useManualAddress ? (
                   // Connected wallet
                   <div className="space-y-2">
                     <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
@@ -919,8 +927,15 @@ export default function LotteryPage() {
                       </div>
                     </div>
                     <button
-                      onClick={() => setRecipientAddress("")}
-                      className="text-sm text-blue-600 hover:text-blue-700"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        console.log("[Lottery] Use different address clicked");
+                        setUseManualAddress(true);
+                        setRecipientAddress("");
+                      }}
+                      className="text-sm text-blue-600 hover:text-blue-700 hover:underline cursor-pointer font-medium transition-colors py-1 px-2 -ml-2 rounded hover:bg-blue-50 relative z-10"
+                      style={{ pointerEvents: 'auto' }}
                     >
                       Use different address
                     </button>
@@ -931,7 +946,12 @@ export default function LotteryPage() {
                     <Input
                       type="text"
                       value={recipientAddress}
-                      onChange={(e) => setRecipientAddress(e.target.value.trim())}
+                      onChange={(e) => {
+                        setRecipientAddress(e.target.value.trim());
+                        if (e.target.value.trim()) {
+                          setUseManualAddress(true);
+                        }
+                      }}
                       placeholder="0x..."
                       className="h-11 font-mono text-sm border-2 border-gray-200 focus:border-blue-500"
                       autoCapitalize="none"
@@ -940,6 +960,21 @@ export default function LotteryPage() {
                     />
                     {recipientAddress && !isValidEvmAddress(recipientAddress) && (
                       <p className="text-sm text-red-600">Invalid address format</p>
+                    )}
+                    {!isNonEvmChain && userAddress && useManualAddress && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          console.log("[Lottery] Use connected wallet clicked");
+                          setUseManualAddress(false);
+                          setRecipientAddress("");
+                        }}
+                        className="text-sm text-blue-600 hover:text-blue-700 hover:underline cursor-pointer font-medium transition-colors py-1 px-2 -ml-2 rounded hover:bg-blue-50 relative z-10"
+                        style={{ pointerEvents: 'auto' }}
+                      >
+                        ← Use connected wallet instead
+                      </button>
                     )}
                     {!isNonEvmChain && !userAddress && (
                       <p className="text-sm text-gray-500">
