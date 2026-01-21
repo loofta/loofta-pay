@@ -124,7 +124,7 @@ function toAtomic(val: string | number, decimals: number): string {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { claimId, fromToken, destinationAsset, destinationAmount, recipientAddress, amountUsd } = body;
+    const { claimId, fromToken, destinationAsset, destinationAmount, recipientAddress, amountUsd, refundAddress } = body;
     
     if (!claimId || !fromToken?.tokenId || !destinationAsset || !destinationAmount || !recipientAddress) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -199,8 +199,7 @@ export async function POST(request: NextRequest) {
     // Step 3: Create first intent (User's token → ETH on Ethereum to companion)
     console.log("[claims/companion] Step 3: Creating first intent...");
     
-    // Refund address is required - get from request body
-    const { refundAddress } = body || {};
+    // Refund address is required
     if (!refundAddress) {
       return NextResponse.json({ error: "Refund address is required" }, { status: 400 });
     }
