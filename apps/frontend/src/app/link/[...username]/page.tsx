@@ -197,7 +197,7 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
       }
       const claimDetailsData = await claimDetailsResponse.json();
       const fullClaim = claimDetailsData?.claim;
-      
+
       if (!fullClaim) {
         throw new Error("Claim details not found");
       }
@@ -241,7 +241,7 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
         isCompanionSwap: depositResult.sameChainSwap || false,
       };
       useClaimPayStore.getState().setDeposit(claimResult.id, depositToStore);
-      
+
       // Set status to PENDING_DEPOSIT
       useClaimPayStore.getState().setStatus(claimResult.id, "PENDING_DEPOSIT");
 

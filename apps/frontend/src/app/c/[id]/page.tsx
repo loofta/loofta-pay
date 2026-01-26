@@ -155,8 +155,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const destToken = useMemo(() => {
     if (!claim?.to_symbol || !claim?.to_chain) return null;
     // Try exact match first
-    let token = tokens.find(t => 
-      t.symbol?.toUpperCase() === claim.to_symbol.toUpperCase() && 
+    let token = tokens.find(t =>
+      t.symbol?.toUpperCase() === claim.to_symbol.toUpperCase() &&
       t.chain?.toLowerCase() === claim.to_chain.toLowerCase()
     );
     // If not found, try with chain aliases (sol/solana, eth/ethereum, etc.)
@@ -169,8 +169,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       };
       const chainLower = claim.to_chain.toLowerCase();
       const aliases = chainAliases[chainLower] || [chainLower];
-      token = tokens.find(t => 
-        t.symbol?.toUpperCase() === claim.to_symbol.toUpperCase() && 
+      token = tokens.find(t =>
+        t.symbol?.toUpperCase() === claim.to_symbol.toUpperCase() &&
         aliases.some(alias => t.chain?.toLowerCase() === alias.toLowerCase())
       );
     }
