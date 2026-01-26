@@ -46,6 +46,11 @@ const nextConfig = {
     ];
     return config;
   },
+  // Suppress React hydration warnings from Privy (third-party library issue)
+  onDemandEntries: {
+    maxInactiveAge: 25 * 1000,
+    pagesBufferLength: 2,
+  },
   // Content Security Policy for Privy authentication
   // https://docs.privy.io/guides/security/content-security-policy
   async headers() {

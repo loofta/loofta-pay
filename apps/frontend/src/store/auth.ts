@@ -5,7 +5,9 @@ type AuthState = {
 	authenticated: boolean;
 	userId?: string;
 	email?: string;
-	setAuth: (v: { authenticated: boolean; userId?: string; email?: string }) => void;
+	username?: string | null;
+	setAuth: (v: { authenticated: boolean; userId?: string; email?: string; username?: string | null }) => void;
+	setUsername: (username: string | null) => void;
 };
 
 export const useAuthStore = create<AuthState>()(
@@ -14,7 +16,14 @@ export const useAuthStore = create<AuthState>()(
 			authenticated: false,
 			userId: undefined,
 			email: undefined,
-			setAuth: (v) => set({ authenticated: !!v.authenticated, userId: v.userId, email: v.email }),
+			username: undefined,
+			setAuth: (v) => set({ 
+				authenticated: !!v.authenticated, 
+				userId: v.userId, 
+				email: v.email,
+				username: v.username,
+			}),
+			setUsername: (username) => set({ username }),
 		}),
 		{ name: "loofta.auth.v1" }
 	)

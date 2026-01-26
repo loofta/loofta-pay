@@ -7,12 +7,17 @@ create table if not exists public.app_users (
   created_at timestamptz not null default now(),
   privy_user_id text unique,
   email text,
-  notify_email boolean not null default false
+  username text unique,
+  notify_email boolean not null default false,
+  skip_onboarding boolean not null default false
   -- Keep wallet data out of core user record for minimal data retention
   -- If needed in future, consider a separate table with explicit consent.
   -- primary_wallet text,
   -- wallets jsonb
 );
+
+-- Index for username lookups
+create index if not exists idx_app_users_username on public.app_users(username);
 
 -- Claims: requested payouts
 create table if not exists public.claims (

@@ -1,8 +1,9 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
-import { CreateClaimDto } from './dto';
+import { CreateClaimDto, CreateClaimFromUsernameDto } from './dto';
 import { Claim, ClaimIntent, ClaimStatus } from './entities/claim.entity';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class ClaimsService {
@@ -12,6 +13,7 @@ export class ClaimsService {
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
+    private readonly usersService: UsersService,
   ) {
     this.baseUrl = this.configService.get<string>(
       'NEXT_PUBLIC_BASE_URL',
@@ -51,6 +53,53 @@ export class ClaimsService {
     const link = `${this.baseUrl}/c/${id}`;
 
     this.logger.log(`Created claim: ${id}`);
+    return { id, link };
+  }
+
+  /**
+   * Create a claim from username (wallet address fetched server-side only)
+   * Wallet address is never exposed to frontend
+   */
+  async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; link: string }> {
+    const { username, amount, userId, userEmail } = dto;
+
+    // Step 1: Get user by username
+    const user = await this.usersService.findByUsername(username);
+
+    // Step 2: Get wallet address from Privy (server-side only)
+    const walletAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
+
+    // Step 3: Create claim with wallet address (stays server-side)
+    const { data: claim, error: claimError } = await this.supabaseService.claims
+      .insert({
+        amount: String(amount),
+        to_symbol: 'USDC',
+        to_chain: 'solana',
+        recipient_address: walletAddress, // Stored in DB but never returned to frontend
+        created_by: userId ? String(userId) : null,
+        creator_email: userEmail ? String(userEmail) : null,
+        status: 'OPEN' as ClaimStatus,
+      })
+      .select('id')
+      .single();
+
+    if (claimError) {
+      this.logger.error('Error creating claim:', claimError);
+      throw new BadRequestException('Failed to create claim');
+    }
+
+    const id = claim.id;
+    const link = `${this.baseUrl}/c/${id}`;
+
+    console.log('claim', claim);
+    console.log('link', link);
+    console.log('userId', userId);
+    console.log('userEmail', userEmail);
+    console.log('username', username);
+    console.log('amount', amount);
+    console.log('walletAddress', walletAddress);
+
+    this.logger.log(`Created claim from username: ${id} for user ${username}`);
     return { id, link };
   }
 

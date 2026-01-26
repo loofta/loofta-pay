@@ -37,9 +37,38 @@ import {
 const DEMO_MODE = isDemoMode();
 
 async function fetchClaim(id: string) {
+  // Try backend API first (more reliable for newly created claims)
+  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  try {
+    const r = await fetch(`${backendUrl}/claims/${id}/latest-intent`);
+    if (r.ok) {
+      const data = await r.json();
+      return {
+        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string },
+        latestIntent: data.intent ? {
+          depositAddress: data.intent.deposit_address || null,
+          memo: data.intent.memo ?? null,
+          deadline: data.intent.deadline || null,
+          timeEstimate: typeof data.intent.time_estimate === "number" ? data.intent.time_estimate : null,
+          quoteId: data.intent.quote_id || null,
+          status: data.intent.status || null,
+          depositReceivedAt: data.intent.deposit_received_at || null,
+        } : null,
+      };
+    }
+  } catch (e) {
+    console.warn("[fetchClaim] Backend API failed, trying frontend API:", e);
+  }
+
+  // Fallback to frontend API route
   const r = await fetch(`/api/claims/${id}`);
-  if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || "Claim not found");
+  if (!r.ok) {
+    const errorData = await r.json().catch(() => ({}));
+    throw new Error(errorData?.error || errorData?.message || "Claim not found");
+  }
   const data = await r.json();
+  console.log('r lisa here data', data);
+
   return {
     claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string },
     latestIntent: data.latestIntent || null,
@@ -48,6 +77,7 @@ async function fetchClaim(id: string) {
 
 async function prepareDeposit(input: {
   claimId: string;
+  claim: { id: string; amount: string; to_symbol: string; to_chain: string; recipient_address?: string };
   fromToken: { tokenId: string; decimals: number; chain: string; symbol?: string };
   amount: string;
   userAddress?: string;
@@ -122,34 +152,57 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const { wallets } = useWallets();
 
   const selectedFrom = findTokenBySelection(tokens, fromSel || null);
-  const destToken = useMemo(() => tokens.find(t => t.symbol === claim?.to_symbol && t.chain === claim?.to_chain), [tokens, claim?.to_symbol, claim?.to_chain]);
+  const destToken = useMemo(() => {
+    if (!claim?.to_symbol || !claim?.to_chain) return null;
+    // Try exact match first
+    let token = tokens.find(t => 
+      t.symbol?.toUpperCase() === claim.to_symbol.toUpperCase() && 
+      t.chain?.toLowerCase() === claim.to_chain.toLowerCase()
+    );
+    // If not found, try with chain aliases (sol/solana, eth/ethereum, etc.)
+    if (!token) {
+      const chainAliases: Record<string, string[]> = {
+        'sol': ['solana', 'sol'],
+        'solana': ['sol', 'solana'],
+        'eth': ['ethereum', 'eth'],
+        'ethereum': ['eth', 'ethereum'],
+      };
+      const chainLower = claim.to_chain.toLowerCase();
+      const aliases = chainAliases[chainLower] || [chainLower];
+      token = tokens.find(t => 
+        t.symbol?.toUpperCase() === claim.to_symbol.toUpperCase() && 
+        aliases.some(alias => t.chain?.toLowerCase() === alias.toLowerCase())
+      );
+    }
+    return token || null;
+  }, [tokens, claim?.to_symbol, claim?.to_chain]);
 
   // Validate refund address based on selected token's chain
   const validateRefundAddress = (address: string, chain: string): boolean => {
     if (!address.trim()) return false;
     const chainLower = chain.toLowerCase();
-    
+
     // EVM chains
     const evmChains = ['eth', 'ethereum', 'base', 'arb', 'arbitrum', 'op', 'optimism', 'polygon', 'pol', 'bsc', 'avax', 'avalanche'];
     if (evmChains.includes(chainLower)) {
       return /^0x[a-fA-F0-9]{40}$/.test(address);
     }
-    
+
     // Solana
     if (chainLower === 'sol' || chainLower === 'solana') {
       return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
     }
-    
+
     // NEAR
     if (chainLower === 'near') {
       return /^[a-z0-9_-]+\.near$|^[a-f0-9]{64}$/i.test(address);
     }
-    
+
     // Bitcoin
     if (chainLower === 'btc' || chainLower === 'bitcoin') {
       return /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/.test(address);
     }
-    
+
     // Default to EVM pattern for unknown chains
     return /^0x[a-fA-F0-9]{40}$/.test(address);
   };
@@ -258,6 +311,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     if (entry?.fromSel) setFromSel(entry.fromSel as any);
     if (entry?.deposit) setDeposit(entry.deposit);
     if (entry?.status) setStatus(entry.status);
+    if (entry?.refundAddress) setRefundAddress(entry.refundAddress);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -331,7 +385,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
   async function onPrepare() {
     if (!claim || !selectedFrom) return;
-    
+
     // Validate refund address
     if (!refundAddress.trim()) {
       setRefundAddressError("Please enter a refund address");
@@ -343,7 +397,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       toast({ variant: "destructive", title: "Error", description: `Invalid refund address format for ${selectedFrom.chain.toUpperCase()}.` });
       return;
     }
-    
+
     // Reset cancelled flag when starting new deposit
     userCancelled.current = false;
     setPreparing(true);
@@ -372,6 +426,13 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
       const res = await prepareDeposit({
         claimId: id,
+        claim: {
+          id: claim.id,
+          amount: claim.amount,
+          to_symbol: claim.to_symbol,
+          to_chain: claim.to_chain,
+          recipient_address: claim.recipient_address,
+        },
         fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain, symbol: selectedFrom.symbol },
         amount: claim.amount,
         userAddress: userWalletAddress,
@@ -1071,7 +1132,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                           <div className="text-base text-gray-500">
                             <span className="inline-flex items-center gap-1">
                               <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
-                              {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol}
+                              {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol} {destToken?.chain ? `on ${destToken.chain.charAt(0).toUpperCase() + destToken.chain.slice(1)}` : ""}
                             </span>
                           </div>
                         </div>
@@ -1160,7 +1221,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     : ""}
                             </div>
                           ) : null}
-                          
+
                           {/* Refund Address Input */}
                           {selectedFrom && (
                             <div className="mt-4 space-y-2">
@@ -1186,7 +1247,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               </p>
                             </div>
                           )}
-                          
+
                           <div className="mt-4 flex gap-3">
                             {DEMO_MODE ? (
                               <Button
@@ -1643,6 +1704,26 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                             'near-intent'
                                       }
                                     />
+                                  </div>
+
+                                  {/* Cancel/Change Token Button - AT THE BOTTOM */}
+                                  <div className="mt-6 flex justify-center">
+                                    <Button
+                                      variant="outline"
+                                      onClick={() => {
+                                        setDeposit(null);
+                                        setStatus(null);
+                                        setFromSel(undefined);
+                                        setRefundAddress("");
+                                        setRefundAddressError(null);
+                                        userCancelled.current = true;
+                                        useClaimPayStore.getState().clear(id);
+                                        toast({ title: "Cancelled", description: "You can now choose a different token." });
+                                      }}
+                                      className="text-sm"
+                                    >
+                                      Cancel & Choose Different Token
+                                    </Button>
                                   </div>
                                 </>
                               ) : null}

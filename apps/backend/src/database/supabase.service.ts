@@ -55,6 +55,10 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('users');
   }
 
+  get appUsers() {
+    return this.client.from('app_users');
+  }
+
   get payrollBatches() {
     return this.client.from('payroll_batches');
   }

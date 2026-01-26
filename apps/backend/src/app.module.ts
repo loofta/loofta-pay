@@ -16,6 +16,7 @@ import { LotteryModule } from './modules/lottery/lottery.module';
 import { CronModule } from './modules/cron/cron.module';
 import { HealthModule } from './modules/health/health.module';
 import { PayrollModule } from './modules/payroll/payroll.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { PayrollModule } from './modules/payroll/payroll.module';
     LotteryModule,
     CronModule,
     PayrollModule,
+    UsersModule,
   ],
 })
 export class AppModule {}

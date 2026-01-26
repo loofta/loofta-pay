@@ -26,7 +26,8 @@
     "db:migrate:local": "supabase db reset",
     "db:migrate:prod": "supabase db push",
     "db:migrate:create": "supabase migration new",
-    "db:diff": "supabase db diff --use-migra"
+    "db:diff": "supabase db diff --use-migra",
+    "db:seed:users": "ts-node -r tsconfig-paths/register scripts/seed-local-users.ts"
   },
   "dependencies": {
     "@defuse-protocol/one-click-sdk-typescript": "0.1.1",

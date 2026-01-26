@@ -1,319 +1,672 @@
-/**
- * Supabase Database Types
- * 
- * To regenerate these types from your database, run:
- *   npm run db:types
- * 
- * Or for local Supabase:
- *   npm run db:types:local
- */
-
 export type Json =
   | string
   | number
   | boolean
   | null
   | { [key: string]: Json | undefined }
-  | Json[];
-
-// ===========================================
-// Enum Types - Matches database constraints
-// ===========================================
-
-export type ClaimStatus =
-  | 'OPEN'
-  | 'PENDING_DEPOSIT'
-  | 'IN_FLIGHT'
-  | 'SUCCESS'
-  | 'REFUNDED'
-  | 'EXPIRED'
-  | 'CANCELLED';
-
-export type CheckoutStatus = 'active' | 'inactive' | 'pending';
-
-export type UserRole = 'user' | 'admin' | 'super_admin';
-
-export type PayrollStatus = 'draft' | 'pending' | 'processing' | 'completed' | 'failed';
-
-// ===========================================
-// Table Types
-// ===========================================
-
-export interface AppUser {
-  id: string;
-  created_at: string;
-  privy_user_id: string | null;
-  email: string | null;
-  notify_email: boolean;
-}
-
-export interface Claim {
-  id: string;
-  created_at: string;
-  updated_at: string;
-  created_by: string | null;
-  creator_email: string | null;
-  amount: string;
-  to_symbol: string;
-  to_chain: string;
-  recipient_address: string;
-  notify_email_to: string | null;
-  status: ClaimStatus;
-  paid_at: string | null;
-  org_referral: string | null;
-}
-
-export interface ClaimInsert {
-  id?: string;
-  created_at?: string;
-  updated_at?: string;
-  created_by?: string | null;
-  creator_email?: string | null;
-  amount: string;
-  to_symbol: string;
-  to_chain: string;
-  recipient_address: string;
-  notify_email_to?: string | null;
-  status?: ClaimStatus;
-  paid_at?: string | null;
-  org_referral?: string | null;
-}
-
-export interface ClaimUpdate {
-  id?: string;
-  created_at?: string;
-  updated_at?: string;
-  created_by?: string | null;
-  creator_email?: string | null;
-  amount?: string;
-  to_symbol?: string;
-  to_chain?: string;
-  recipient_address?: string;
-  notify_email_to?: string | null;
-  status?: ClaimStatus;
-  paid_at?: string | null;
-  org_referral?: string | null;
-}
-
-export interface ClaimIntent {
-  id: string;
-  claim_id: string;
-  created_at: string;
-  updated_at: string;
-  quote_id: string | null;
-  deposit_address: string | null;
-  memo: string | null;
-  deadline: string | null;
-  time_estimate: number | null;
-  status: string | null;
-  last_status_payload: Json | null;
-  paid_amount: string | null;
-  from_symbol: string | null;
-  from_chain: string | null;
-  companion_address: string | null;
-}
-
-export interface ClaimIntentInsert {
-  id?: string;
-  claim_id: string;
-  created_at?: string;
-  updated_at?: string;
-  quote_id?: string | null;
-  deposit_address?: string | null;
-  memo?: string | null;
-  deadline?: string | null;
-  time_estimate?: number | null;
-  status?: string | null;
-  last_status_payload?: Json | null;
-  paid_amount?: string | null;
-  from_symbol?: string | null;
-  from_chain?: string | null;
-  companion_address?: string | null;
-}
-
-export interface ClaimIntentUpdate {
-  id?: string;
-  claim_id?: string;
-  created_at?: string;
-  updated_at?: string;
-  quote_id?: string | null;
-  deposit_address?: string | null;
-  memo?: string | null;
-  deadline?: string | null;
-  time_estimate?: number | null;
-  status?: string | null;
-  last_status_payload?: Json | null;
-  paid_amount?: string | null;
-  from_symbol?: string | null;
-  from_chain?: string | null;
-  companion_address?: string | null;
-}
-
-export interface ClaimEvent {
-  id: number;
-  claim_id: string;
-  created_at: string;
-  type: string;
-  payload: Json | null;
-}
-
-export interface Organization {
-  id: string;
-  organization_id: string;
-  name: string;
-  logo_url: string | null;
-  checkout_status: CheckoutStatus;
-  org_referral: string;
-  recipient_wallet: string | null;
-  token_symbol: string | null;
-  token_chain: string | null;
-  bg_color: string | null;
-  payment_config: Json | null;
-  created_at: string;
-  updated_at: string | null;
-}
-
-export interface OrganizationInsert {
-  id?: string;
-  organization_id: string;
-  name: string;
-  logo_url?: string | null;
-  checkout_status?: CheckoutStatus;
-  org_referral: string;
-  recipient_wallet?: string | null;
-  token_symbol?: string | null;
-  token_chain?: string | null;
-  bg_color?: string | null;
-  payment_config?: Json | null;
-  created_at?: string;
-  updated_at?: string | null;
-}
-
-export interface OrganizationUpdate {
-  id?: string;
-  organization_id?: string;
-  name?: string;
-  logo_url?: string | null;
-  checkout_status?: CheckoutStatus;
-  org_referral?: string;
-  recipient_wallet?: string | null;
-  token_symbol?: string | null;
-  token_chain?: string | null;
-  bg_color?: string | null;
-  payment_config?: Json | null;
-  created_at?: string;
-  updated_at?: string | null;
-}
-
-export interface User {
-  id: string;
-  privy_user_id: string;
-  email: string | null;
-  role: UserRole;
-  created_at: string;
-  updated_at: string | null;
-}
-
-export interface UserInsert {
-  id?: string;
-  privy_user_id: string;
-  email?: string | null;
-  role?: UserRole;
-  created_at?: string;
-  updated_at?: string | null;
-}
-
-export interface UserUpdate {
-  id?: string;
-  privy_user_id?: string;
-  email?: string | null;
-  role?: UserRole;
-  created_at?: string;
-  updated_at?: string | null;
-}
-
-export interface PayrollBatch {
-  id: string;
-  org_id: string;
-  name: string | null;
-  total_amount: string;
-  token_symbol: string;
-  token_chain: string;
-  status: PayrollStatus;
-  created_by: string;
-  created_at: string;
-  updated_at: string | null;
-}
-
-export interface PayrollRecipient {
-  id: string;
-  batch_id: string;
-  email: string | null;
-  wallet_address: string;
-  amount: string;
-  claim_id: string | null;
-  status: string;
-  created_at: string;
-}
-
-// ===========================================
-// Database Schema Type
-// ===========================================
+  | Json[]
 
 export type Database = {
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          operationName?: string
+          extensions?: Json
+          variables?: Json
+          query?: string
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       app_users: {
-        Row: AppUser;
-        Insert: Partial<AppUser> & Pick<AppUser, never>;
-        Update: Partial<AppUser>;
-      };
-      claims: {
-        Row: Claim;
-        Insert: ClaimInsert;
-        Update: ClaimUpdate;
-      };
-      claim_intents: {
-        Row: ClaimIntent;
-        Insert: ClaimIntentInsert;
-        Update: ClaimIntentUpdate;
-      };
+        Row: {
+          created_at: string
+          email: string | null
+          id: string
+          notify_email: boolean
+          privy_user_id: string | null
+          username: string | null
+        }
+        Insert: {
+          created_at?: string
+          email?: string | null
+          id?: string
+          notify_email?: boolean
+          privy_user_id?: string | null
+          username?: string | null
+        }
+        Update: {
+          created_at?: string
+          email?: string | null
+          id?: string
+          notify_email?: boolean
+          privy_user_id?: string | null
+          username?: string | null
+        }
+        Relationships: []
+      }
       claim_events: {
-        Row: ClaimEvent;
-        Insert: Omit<ClaimEvent, 'id'>;
-        Update: Partial<ClaimEvent>;
-      };
+        Row: {
+          claim_id: string
+          created_at: string
+          id: number
+          payload: Json | null
+          type: string
+        }
+        Insert: {
+          claim_id: string
+          created_at?: string
+          id?: number
+          payload?: Json | null
+          type: string
+        }
+        Update: {
+          claim_id?: string
+          created_at?: string
+          id?: number
+          payload?: Json | null
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_events_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_events_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "public_claims"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      claim_intents: {
+        Row: {
+          claim_id: string
+          created_at: string
+          deadline: string | null
+          deposit_address: string | null
+          id: string
+          last_status_payload: Json | null
+          memo: string | null
+          paid_amount: string | null
+          quote_id: string | null
+          status: string | null
+          time_estimate: number | null
+          updated_at: string
+        }
+        Insert: {
+          claim_id: string
+          created_at?: string
+          deadline?: string | null
+          deposit_address?: string | null
+          id?: string
+          last_status_payload?: Json | null
+          memo?: string | null
+          paid_amount?: string | null
+          quote_id?: string | null
+          status?: string | null
+          time_estimate?: number | null
+          updated_at?: string
+        }
+        Update: {
+          claim_id?: string
+          created_at?: string
+          deadline?: string | null
+          deposit_address?: string | null
+          id?: string
+          last_status_payload?: Json | null
+          memo?: string | null
+          paid_amount?: string | null
+          quote_id?: string | null
+          status?: string | null
+          time_estimate?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_intents_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_intents_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "public_claims"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      claims: {
+        Row: {
+          amount: string
+          created_at: string
+          created_by: string | null
+          creator_email: string | null
+          id: string
+          notify_email_to: string | null
+          paid_at: string | null
+          recipient_address: string
+          status: string
+          to_chain: string
+          to_symbol: string
+          updated_at: string
+        }
+        Insert: {
+          amount: string
+          created_at?: string
+          created_by?: string | null
+          creator_email?: string | null
+          id?: string
+          notify_email_to?: string | null
+          paid_at?: string | null
+          recipient_address: string
+          status?: string
+          to_chain: string
+          to_symbol: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: string
+          created_at?: string
+          created_by?: string | null
+          creator_email?: string | null
+          id?: string
+          notify_email_to?: string | null
+          paid_at?: string | null
+          recipient_address?: string
+          status?: string
+          to_chain?: string
+          to_symbol?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      confidential_payments: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          employee_address: string
+          encrypted_amount: string
+          id: string
+          payroll_batch_id: string | null
+          status: string
+          token_address: string
+          tx_signature: string | null
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          employee_address: string
+          encrypted_amount: string
+          id?: string
+          payroll_batch_id?: string | null
+          status?: string
+          token_address: string
+          tx_signature?: string | null
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          employee_address?: string
+          encrypted_amount?: string
+          id?: string
+          payroll_batch_id?: string | null
+          status?: string
+          token_address?: string
+          tx_signature?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "confidential_payments_payroll_batch_id_fkey"
+            columns: ["payroll_batch_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organizations: {
-        Row: Organization;
-        Insert: OrganizationInsert;
-        Update: OrganizationUpdate;
-      };
-      users: {
-        Row: User;
-        Insert: UserInsert;
-        Update: UserUpdate;
-      };
+        Row: {
+          bg_color: string | null
+          checkout_status: string
+          created_at: string
+          created_by: string | null
+          id: string
+          logo_url: string | null
+          name: string
+          org_referral: string
+          organization_id: string
+          recipient_wallet: string | null
+          token_chain: string | null
+          token_symbol: string | null
+          updated_at: string
+        }
+        Insert: {
+          bg_color?: string | null
+          checkout_status?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          logo_url?: string | null
+          name: string
+          org_referral: string
+          organization_id: string
+          recipient_wallet?: string | null
+          token_chain?: string | null
+          token_symbol?: string | null
+          updated_at?: string
+        }
+        Update: {
+          bg_color?: string | null
+          checkout_status?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          logo_url?: string | null
+          name?: string
+          org_referral?: string
+          organization_id?: string
+          recipient_wallet?: string | null
+          token_chain?: string | null
+          token_symbol?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       payroll_batches: {
-        Row: PayrollBatch;
-        Insert: Omit<PayrollBatch, 'id' | 'created_at' | 'updated_at'> & { id?: string };
-        Update: Partial<PayrollBatch>;
-      };
-      payroll_recipients: {
-        Row: PayrollRecipient;
-        Insert: Omit<PayrollRecipient, 'id' | 'created_at'> & { id?: string };
-        Update: Partial<PayrollRecipient>;
-      };
-    };
+        Row: {
+          batch_id: string
+          company_wallet: string
+          created_at: string | null
+          created_by: string | null
+          employee_count: number
+          encrypted_batch: string
+          executed_at: string | null
+          id: string
+          scheduled_date: string | null
+          status: string
+          tx_signatures: string[] | null
+          updated_at: string | null
+        }
+        Insert: {
+          batch_id: string
+          company_wallet: string
+          created_at?: string | null
+          created_by?: string | null
+          employee_count: number
+          encrypted_batch: string
+          executed_at?: string | null
+          id?: string
+          scheduled_date?: string | null
+          status?: string
+          tx_signatures?: string[] | null
+          updated_at?: string | null
+        }
+        Update: {
+          batch_id?: string
+          company_wallet?: string
+          created_at?: string | null
+          created_by?: string | null
+          employee_count?: number
+          encrypted_batch?: string
+          executed_at?: string | null
+          id?: string
+          scheduled_date?: string | null
+          status?: string
+          tx_signatures?: string[] | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      payroll_contributors: {
+        Row: {
+          created_at: string | null
+          department: string | null
+          email: string
+          first_name: string | null
+          id: string
+          invited_at: string | null
+          joined_at: string | null
+          last_name: string | null
+          network: string | null
+          organization_id: string
+          status: string
+          token_symbol: string | null
+          updated_at: string | null
+          wallet_address: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          department?: string | null
+          email: string
+          first_name?: string | null
+          id?: string
+          invited_at?: string | null
+          joined_at?: string | null
+          last_name?: string | null
+          network?: string | null
+          organization_id: string
+          status?: string
+          token_symbol?: string | null
+          updated_at?: string | null
+          wallet_address?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          department?: string | null
+          email?: string
+          first_name?: string | null
+          id?: string
+          invited_at?: string | null
+          joined_at?: string | null
+          last_name?: string | null
+          network?: string | null
+          organization_id?: string
+          status?: string
+          token_symbol?: string | null
+          updated_at?: string | null
+          wallet_address?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_contributors_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payroll_employees: {
+        Row: {
+          created_at: string | null
+          decrypted_amount: string | null
+          employee_address: string
+          encrypted_amount: string
+          id: string
+          payroll_batch_id: string
+          token_address: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          decrypted_amount?: string | null
+          employee_address: string
+          encrypted_amount: string
+          id?: string
+          payroll_batch_id: string
+          token_address: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          decrypted_amount?: string | null
+          employee_address?: string
+          encrypted_amount?: string
+          id?: string
+          payroll_batch_id?: string
+          token_address?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_employees_payroll_batch_id_fkey"
+            columns: ["payroll_batch_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payroll_org_members: {
+        Row: {
+          created_at: string | null
+          id: string
+          organization_id: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          organization_id: string
+          role?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          organization_id?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_org_members_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "payroll_organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payroll_organizations: {
+        Row: {
+          created_at: string | null
+          id: string
+          logo_url: string | null
+          name: string
+          owner_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          logo_url?: string | null
+          name: string
+          owner_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          logo_url?: string | null
+          name?: string
+          owner_id?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      users: {
+        Row: {
+          created_at: string | null
+          email: string | null
+          id: string
+          name: string | null
+          privy_user_id: string
+          role: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          email?: string | null
+          id?: string
+          name?: string | null
+          privy_user_id: string
+          role?: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          email?: string | null
+          id?: string
+          name?: string | null
+          privy_user_id?: string
+          role?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+    }
     Views: {
       public_claims: {
-        Row: Pick<Claim, 'id' | 'created_at' | 'amount' | 'to_symbol' | 'to_chain' | 'status'>;
-      };
-    };
+        Row: {
+          amount: string | null
+          created_at: string | null
+          id: string | null
+          status: string | null
+          to_chain: string | null
+          to_symbol: string | null
+        }
+        Insert: {
+          amount?: string | null
+          created_at?: string | null
+          id?: string | null
+          status?: string | null
+          to_chain?: string | null
+          to_symbol?: string | null
+        }
+        Update: {
+          amount?: string | null
+          created_at?: string | null
+          id?: string | null
+          status?: string | null
+          to_chain?: string | null
+          to_symbol?: string | null
+        }
+        Relationships: []
+      }
+    }
+    Functions: {
+      [_ in never]: never
+    }
     Enums: {
-      claim_status: ClaimStatus;
-      checkout_status: CheckoutStatus;
-      user_role: UserRole;
-      payroll_status: PayrollStatus;
-    };
-  };
-};
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
+}
+
+type PublicSchema = Database[Extract<keyof Database, "public">]
+
+export type Tables<
+  PublicTableNameOrOptions extends
+    | keyof (PublicSchema["Tables"] & PublicSchema["Views"])
+    | { schema: keyof Database },
+  TableName extends PublicTableNameOrOptions extends { schema: keyof Database }
+    ? keyof (Database[PublicTableNameOrOptions["schema"]]["Tables"] &
+        Database[PublicTableNameOrOptions["schema"]]["Views"])
+    : never = never,
+> = PublicTableNameOrOptions extends { schema: keyof Database }
+  ? (Database[PublicTableNameOrOptions["schema"]]["Tables"] &
+      Database[PublicTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+      Row: infer R
+    }
+    ? R
+    : never
+  : PublicTableNameOrOptions extends keyof (PublicSchema["Tables"] &
+        PublicSchema["Views"])
+    ? (PublicSchema["Tables"] &
+        PublicSchema["Views"])[PublicTableNameOrOptions] extends {
+        Row: infer R
+      }
+      ? R
+      : never
+    : never
+
+export type TablesInsert<
+  PublicTableNameOrOptions extends
+    | keyof PublicSchema["Tables"]
+    | { schema: keyof Database },
+  TableName extends PublicTableNameOrOptions extends { schema: keyof Database }
+    ? keyof Database[PublicTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = PublicTableNameOrOptions extends { schema: keyof Database }
+  ? Database[PublicTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Insert: infer I
+    }
+    ? I
+    : never
+  : PublicTableNameOrOptions extends keyof PublicSchema["Tables"]
+    ? PublicSchema["Tables"][PublicTableNameOrOptions] extends {
+        Insert: infer I
+      }
+      ? I
+      : never
+    : never
+
+export type TablesUpdate<
+  PublicTableNameOrOptions extends
+    | keyof PublicSchema["Tables"]
+    | { schema: keyof Database },
+  TableName extends PublicTableNameOrOptions extends { schema: keyof Database }
+    ? keyof Database[PublicTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = PublicTableNameOrOptions extends { schema: keyof Database }
+  ? Database[PublicTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Update: infer U
+    }
+    ? U
+    : never
+  : PublicTableNameOrOptions extends keyof PublicSchema["Tables"]
+    ? PublicSchema["Tables"][PublicTableNameOrOptions] extends {
+        Update: infer U
+      }
+      ? U
+      : never
+    : never
+
+export type Enums<
+  PublicEnumNameOrOptions extends
+    | keyof PublicSchema["Enums"]
+    | { schema: keyof Database },
+  EnumName extends PublicEnumNameOrOptions extends { schema: keyof Database }
+    ? keyof Database[PublicEnumNameOrOptions["schema"]]["Enums"]
+    : never = never,
+> = PublicEnumNameOrOptions extends { schema: keyof Database }
+  ? Database[PublicEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : PublicEnumNameOrOptions extends keyof PublicSchema["Enums"]
+    ? PublicSchema["Enums"][PublicEnumNameOrOptions]
+    : never
+
+export type CompositeTypes<
+  PublicCompositeTypeNameOrOptions extends
+    | keyof PublicSchema["CompositeTypes"]
+    | { schema: keyof Database },
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+    schema: keyof Database
+  }
+    ? keyof Database[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    : never = never,
+> = PublicCompositeTypeNameOrOptions extends { schema: keyof Database }
+  ? Database[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof PublicSchema["CompositeTypes"]
+    ? PublicSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+    : never
+

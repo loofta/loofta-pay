@@ -18,7 +18,7 @@ import {
 import { AuthGuard } from '@/common/guards';
 import { ClaimsService } from './claims.service';
 import { DepositService, DepositResult } from './deposit.service';
-import { CreateClaimDto, RequestDepositDto } from './dto';
+import { CreateClaimDto, CreateClaimFromUsernameDto, RequestDepositDto } from './dto';
 import { Claim, ClaimIntent } from './entities/claim.entity';
 
 @ApiTags('claims')
@@ -49,6 +49,29 @@ export class ClaimsController {
     @Body() createDto: CreateClaimDto,
   ): Promise<{ id: string; link: string }> {
     return this.claimsService.create(createDto);
+  }
+
+  /**
+   * Create a claim from username (wallet address fetched server-side, never exposed)
+   */
+  @Post('create-from-username')
+  @ApiOperation({ summary: 'Create claim from username (wallet address stays server-side)' })
+  @ApiResponse({
+    status: 201,
+    description: 'Claim created',
+    schema: {
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        link: { type: 'string', format: 'uri' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input' })
+  @ApiResponse({ status: 404, description: 'User not found or no wallet' })
+  async createFromUsername(
+    @Body() createDto: CreateClaimFromUsernameDto,
+  ): Promise<{ id: string; link: string }> {
+    return this.claimsService.createFromUsername(createDto);
   }
 
   /**

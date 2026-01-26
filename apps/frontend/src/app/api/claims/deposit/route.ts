@@ -31,20 +31,25 @@ const INTENTS_ONLY_CHAINS = new Set(['zec', 'zcash', 'btc', 'bitcoin', 'xrp', 'x
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { claimId, fromToken, amount, userAddress, refundAddress, orgReferral } = body || {};
+    const { claimId, claim: claimData, fromToken, amount, userAddress, refundAddress, orgReferral } = body || {};
     if (!claimId || !fromToken?.tokenId || !fromToken?.decimals || !amount) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
     if (!refundAddress) {
       return NextResponse.json({ error: "Refund address is required" }, { status: 400 });
     }
+    
+    // Use claim data passed from the page (already fetched from backend)
+    // No need to query Supabase again - we have the data!
+    if (!claimData) {
+      return NextResponse.json({ error: "Claim data is required" }, { status: 400 });
+    }
+    
+    const claim = claimData;
+    console.log('[claims/deposit] Using claim data from request:', claim.id);
+
+    // Still need Supabase for storing claim_intents (result of 1Click API call)
     const supabase = getSupabaseAdmin();
-    const { data: claim, error } = await supabase
-      .from("claims")
-      .select("id, amount, to_symbol, to_chain, recipient_address")
-      .eq("id", claimId)
-      .single();
-    if (error || !claim) return NextResponse.json({ error: "Claim not found" }, { status: 404 });
 
     const toAtomic = (val: string, decimals: number): string => {
       const [i, f = ""] = String(val).split(".");
@@ -317,8 +322,6 @@ export async function POST(request: Request) {
       amount: amountInAtomic,
       refundTo: userAddress || finalRefundAddress,
       refundType: "INTENTS" as any,
-      // CRITICAL: recipient must be the claim's recipient_address, NOT userAddress
-      // userAddress is only for refunds, not for where the payment should go
       recipient: claim.recipient_address,
       recipientType: "INTENTS" as any,
       deadline: new Date(Date.now() + 5 * 60 * 1000).toISOString(),

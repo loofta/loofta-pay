@@ -9,9 +9,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		<PrivyProvider
 			appId={appId}
 			config={{
-				// Email first for access requests, wallet for payments
-				loginMethods: ["email", "wallet"],
-				embeddedWallets: { createOnLogin: "users-without-wallets" },
+				// Email only for login/create account
+				loginMethods: ["email"],
+				embeddedWallets: { 
+					createOnLogin: "all-users", // Create wallet for all users on login
+					requireUserPasswordOnCreate: false,
+					// Don't create EVM wallets - only Solana
+					ethereum: {
+						createOnLogin: "off", // Explicitly disable EVM wallet creation
+					},
+					solana: {
+						enabled: true,
+						createOnLogin: "all-users", // Create Solana wallet for all users on login
+					},
+				},
 				appearance: {
 					theme: "light",
 					logo: "/loofta.svg",
