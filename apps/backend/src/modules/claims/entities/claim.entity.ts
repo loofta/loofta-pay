@@ -33,11 +33,20 @@ export class Claim {
   @ApiPropertyOptional({ description: 'Creator email' })
   creator_email: string | null;
 
+  @ApiPropertyOptional({ description: 'Payment description/message (supports emojis and GIFs)' })
+  description: string | null;
+
   @ApiProperty({ 
     description: 'Claim status', 
     enum: ['OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED'] 
   })
   status: ClaimStatus;
+
+  @ApiPropertyOptional({ description: 'Whether this is a private payment using Privacy Cash' })
+  is_private: boolean | null;
+
+  @ApiPropertyOptional({ description: 'Timestamp when payment was completed' })
+  paid_at: string | null;
 
   @ApiProperty({ description: 'Creation timestamp' })
   created_at: string;

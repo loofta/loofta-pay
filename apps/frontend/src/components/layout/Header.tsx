@@ -76,6 +76,16 @@ export function Header() {
           const usernameValue = userData.user.username || null;
           setUsername(usernameValue);
           
+          // Also update email in store if available
+          if (userData.user.email) {
+            useAuthStore.getState().setAuth({
+              authenticated: true,
+              userId: userId,
+              email: userData.user.email,
+              username: usernameValue,
+            });
+          }
+          
           // Log for debugging
           if (!usernameValue) {
             console.warn("[Header] User exists but username is null:", {

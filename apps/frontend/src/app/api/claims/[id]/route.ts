@@ -90,9 +90,13 @@ export async function GET(_: Request, props: { params: Promise<{ id: string }> }
 // Update claim status (for payment flow)
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
+  const claimId = params.id;
+  console.log("[claims/PATCH] Updating claim:", claimId);
+  
   try {
     const body = await request.json();
-    const { status: inputStatus, txHash, paidWith, depositReceivedAt, originAsset, destinationAsset } = body || {};
+    console.log("[claims/PATCH] Request body:", body);
+    const { status: inputStatus, txHash, paidWith, depositReceivedAt, originAsset, destinationAsset, isPrivate } = body || {};
     
     // Map legacy status names to database-valid values
     // Database constraint: 'OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED'
@@ -120,6 +124,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     
     // Update claim status
     const updateData: Record<string, any> = { status };
+    
+    // Set is_private flag if provided (for private payments)
+    if (isPrivate !== undefined) {
+      updateData.is_private = isPrivate;
+    }
     
     // Set paid_at timestamp when status becomes SUCCESS
     if (status === "SUCCESS") {
@@ -152,17 +161,54 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       }
     }
     
+    // First check if claim exists
+    console.log("[claims/PATCH] Checking if claim exists:", claimId);
+    const { data: existingClaim, error: checkError } = await supabase
+      .from("claims")
+      .select("id, status")
+      .eq("id", claimId)
+      .maybeSingle();
+    
+    console.log("[claims/PATCH] Existing claim check:", { existingClaim, checkError });
+    
+    if (checkError) {
+      console.error("[claims/PATCH] Error checking claim:", checkError);
+      return NextResponse.json({ error: checkError.message }, { status: 500 });
+    }
+    
+    if (!existingClaim) {
+      console.error("[claims/PATCH] Claim not found in database:", claimId);
+      // Try to list all claims to debug
+      const { data: allClaims } = await supabase
+        .from("claims")
+        .select("id")
+        .limit(5);
+      console.log("[claims/PATCH] Sample claim IDs:", allClaims);
+      return NextResponse.json({ error: "Claim not found" }, { status: 404 });
+    }
+    
+    console.log("[claims/PATCH] Claim exists, updating with:", updateData);
+    // Update claim status
     const { data, error } = await supabase
       .from("claims")
       .update(updateData)
-      .eq("id", params.id)
+      .eq("id", claimId)
       .select("id, status, created_at, paid_at")
       .single();
+    
+    console.log("[claims/PATCH] Update result:", { data, error });
       
     if (error) {
       console.error("[claims/PATCH] Error updating claim:", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    
+    if (!data) {
+      console.error("[claims/PATCH] No data returned after update:", params.id);
+      return NextResponse.json({ error: "Failed to update claim" }, { status: 500 });
+    }
+    
+    const updatedClaim = data;
     
     // Update claim_intent status (only update status-related fields, preserve deposit_address etc.)
     if (status === "IN_FLIGHT" || status === "SUCCESS" || status === "REFUNDED") {
@@ -218,7 +264,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       }
     }
     
-    return NextResponse.json({ ok: true, claim: data }, { status: 200 });
+    return NextResponse.json({ ok: true, claim: updatedClaim }, { status: 200 });
   } catch (e: any) {
     console.error("[claims/PATCH] Error:", e);
     return NextResponse.json({ error: e?.message || "Failed to update claim" }, { status: 500 });

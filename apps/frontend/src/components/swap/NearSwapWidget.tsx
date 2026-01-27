@@ -251,17 +251,22 @@ export function NearSwapWidget({
 	}, [statusQuery.data?.status, deposit, toast]);
 
 	async function handleSpeedUp() {
-		if (!speedUpTx.trim()) return;
+		if (!speedUpTx.trim() || !deposit?.depositAddress) return;
 		setSpeedUpLoading(true);
 		try {
 			// Submit tx hash to Near Intents for faster processing
 			const resp = await fetch("https://1click.chaindefuser.com/v0/submit-deposit", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ txHash: speedUpTx.trim() }),
+				body: JSON.stringify({ 
+					txHash: speedUpTx.trim(),
+					depositAddress: deposit.depositAddress,
+					...(deposit.quoteId ? { quoteId: deposit.quoteId } : {}),
+				}),
 			});
 			if (!resp.ok) {
-				throw new Error("Failed to submit transaction");
+				const errorData = await resp.json().catch(() => ({}));
+				throw new Error(errorData?.error || errorData?.message || "Failed to submit transaction");
 			}
 			toast({
 				title: "Transaction submitted",

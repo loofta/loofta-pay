@@ -2,9 +2,12 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { usePrivy } from "@privy-io/react-auth";
 import { motion, AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
+import { useAuthStore } from "@/store/auth";
+import { useToast } from "@/components/ui/use-toast";
 
 interface UserMenuProps {
   username: string | null;
@@ -13,15 +16,39 @@ interface UserMenuProps {
   onLogout: () => void;
 }
 
-export function UserMenu({ username, email, isDarkPage, onLogout }: UserMenuProps) {
+export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage, onLogout }: UserMenuProps) {
+  // Get email and username from store as fallback (always persistent)
+  const storeEmail = useAuthStore((s) => s.email);
+  const storeUsername = useAuthStore((s) => s.username ?? null);
+  const setAuth = useAuthStore((s) => s.setAuth);
+
+  // Use props if available, otherwise fallback to store
+  const username = usernameProp ?? storeUsername;
+  const email = emailProp ?? storeEmail;
+
+  // Sync props to store to ensure persistence
+  useEffect(() => {
+    if (emailProp || usernameProp !== undefined) {
+      setAuth({
+        authenticated: true,
+        email: emailProp ?? storeEmail,
+        username: usernameProp ?? storeUsername,
+      });
+    }
+  }, [emailProp, usernameProp, storeEmail, storeUsername, setAuth]);
+
   const [isOpen, setIsOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [showFullAddress, setShowFullAddress] = useState(false);
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [requirePrivatePayments, setRequirePrivatePayments] = useState(false);
+  const [loadingPreferences, setLoadingPreferences] = useState(false);
+  const [updatingPreferences, setUpdatingPreferences] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const { ready: privyReady, authenticated, user: privyUser } = usePrivy();
+  const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
+  const { toast } = useToast();
 
   // Get Solana wallet address from Privy
   // Use linkedAccounts - these are wallets tied to user (what shows in Privy dashboard)
@@ -35,35 +62,35 @@ export function UserMenu({ username, email, isDarkPage, onLogout }: UserMenuProp
     console.log("=== [UserMenu] PRIVY SOLANA WALLET DEBUG ===");
     console.log("[UserMenu] Privy ready:", privyReady);
     console.log("[UserMenu] Privy user:", privyUser);
-    
+
     // Check linked accounts (these are wallets tied to user, may not be connected)
     // According to Privy docs: "Linked wallets are embedded or external wallets tied to a user object"
     const linkedAccounts = privyUser?.linkedAccounts || [];
     console.log("[UserMenu] Linked accounts (all):", linkedAccounts);
-    
+
     // Filter for wallet accounts
     const linkedWallets = linkedAccounts.filter(
       (account: any) => account.type === 'wallet' || account.type === 'smart_wallet'
     );
     console.log("[UserMenu] Linked wallets (filtered):", linkedWallets);
-    
+
     // Find Solana wallet in linked accounts
     // Solana addresses are base58 encoded, typically 32-44 characters
     const solanaLinkedAccount = linkedWallets.find((account: any) => {
       // @ts-ignore - LinkedAccount types may vary
       const address = account.address;
       if (!address) return false;
-      
+
       // Check if it's a Solana wallet by address format (base58, 32-44 chars)
       const isSolanaAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
-      
+
       // Also check chainType/chainId if available
       // @ts-ignore
-      const isSolanaChain = account.chainType === "solana" || 
-                            account.chainId === "solana:mainnet" || 
-                            account.chainId === "solana:devnet" ||
-                            account.chainId?.includes("solana");
-      
+      const isSolanaChain = account.chainType === "solana" ||
+        account.chainId === "solana:mainnet" ||
+        account.chainId === "solana:devnet" ||
+        account.chainId?.includes("solana");
+
       console.log("[UserMenu] Linked wallet check:", {
         // @ts-ignore
         type: account.type,
@@ -76,7 +103,7 @@ export function UserMenu({ username, email, isDarkPage, onLogout }: UserMenuProp
         isSolanaChain,
         willMatch: isSolanaAddress || isSolanaChain,
       });
-      
+
       return isSolanaAddress || isSolanaChain;
     });
 
@@ -128,10 +155,83 @@ export function UserMenu({ username, email, isDarkPage, onLogout }: UserMenuProp
 
   const getPaymentLink = () => {
     if (!username) return null;
-    const baseUrl = typeof window !== "undefined" 
-      ? window.location.origin 
+    const baseUrl = typeof window !== "undefined"
+      ? window.location.origin
       : process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.xyz";
     return `${baseUrl}/link/@${username}`;
+  };
+
+  // Fetch user preferences when modal opens
+  useEffect(() => {
+    if (showShareModal && authenticated && getAccessToken && privyUser?.id) {
+      const fetchPreferences = async () => {
+        setLoadingPreferences(true);
+        try {
+          const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+          const token = await getAccessToken();
+          const response = await fetch(`${backendUrl}/users/me/preferences`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'x-privy-user-id': privyUser.id,
+            },
+          });
+          if (response.ok) {
+            const data = await response.json();
+            setRequirePrivatePayments(data.requirePrivatePayments || false);
+          } else {
+            const errorData = await response.json().catch(() => ({}));
+            console.error('Failed to fetch preferences:', errorData);
+          }
+        } catch (error) {
+          console.error('Failed to fetch preferences:', error);
+        } finally {
+          setLoadingPreferences(false);
+        }
+      };
+      fetchPreferences();
+    }
+  }, [showShareModal, authenticated, getAccessToken, privyUser?.id]);
+
+  // Update user preferences
+  const handleTogglePrivatePayments = async (checked: boolean) => {
+    if (!authenticated || !getAccessToken || !privyUser?.id) return;
+
+    setUpdatingPreferences(true);
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const token = await getAccessToken();
+      const response = await fetch(`${backendUrl}/users/me/preferences`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'x-privy-user-id': privyUser.id,
+        },
+        body: JSON.stringify({ requirePrivatePayments: checked }),
+      });
+
+      if (response.ok) {
+        setRequirePrivatePayments(checked);
+        toast({
+          title: "Settings updated",
+          description: checked
+            ? "Your payment link now requires private payments only."
+            : "Your payment link now accepts both standard and private payments.",
+        });
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Failed to update preferences:', errorData);
+        throw new Error(errorData.message || 'Failed to update preferences');
+      }
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: error.message || "Failed to update privacy preferences. Please try again.",
+      });
+    } finally {
+      setUpdatingPreferences(false);
+    }
   };
 
   const copyPaymentLink = () => {
@@ -375,6 +475,35 @@ export function UserMenu({ username, email, isDarkPage, onLogout }: UserMenuProp
               </div>
             )}
 
+            {/* Settings Link */}
+            <div className="mb-2">
+              <button
+                onClick={() => {
+                  setIsOpen(false);
+                  window.location.href = '/settings';
+                }}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${isDarkPage
+                  ? "text-gray-300 hover:bg-gray-800"
+                  : "text-gray-700 hover:bg-gray-100"
+                  }`}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3"></path>
+                </svg>
+                Settings
+              </button>
+            </div>
+
             {/* Divider */}
             {username && (
               <div className={`h-px my-2 ${isDarkPage ? "bg-gray-700" : "bg-gray-200"
@@ -456,6 +585,8 @@ export function UserMenu({ username, email, isDarkPage, onLogout }: UserMenuProp
                     </p>
                   </motion.div>
 
+
+
                   {/* Payment Link Display */}
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
@@ -463,7 +594,7 @@ export function UserMenu({ username, email, isDarkPage, onLogout }: UserMenuProp
                     transition={{ delay: 0.2 }}
                     className="mb-6 p-4 rounded-xl bg-gray-50 border border-gray-200"
                   >
-                    <p className="text-xs font-medium mb-2 text-gray-500">
+                    <p className="text-sm font-medium mb-2 text-gray-500">
                       Your payment link
                     </p>
                     <div className="flex items-center gap-2">
@@ -511,6 +642,41 @@ export function UserMenu({ username, email, isDarkPage, onLogout }: UserMenuProp
                           </svg>
                         )}
                       </button>
+                    </div>
+                  </motion.div>
+
+                  {/* Private Payment Option */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.15 }}
+                    className={`mb-6 p-4 rounded-xl border ${requirePrivatePayments
+                      ? 'bg-amber-50 border-amber-200'
+                      : 'bg-gray-50 border-gray-200'
+                      }`}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-base font-semibold text-gray-900">
+                            🔒 Require Private Payments Only
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600">
+                          When enabled, all payments to your link must use Privacy Cash for complete privacy.
+                          You will be charged additional fees: 0.35% + $0.74 per payment.
+                        </p>
+                      </div>
+                      {loadingPreferences ? (
+                        <div className="h-6 w-11 rounded-full bg-gray-200 animate-pulse" />
+                      ) : (
+                        <Switch
+                          checked={requirePrivatePayments}
+                          onCheckedChange={handleTogglePrivatePayments}
+                          disabled={updatingPreferences}
+                          className="data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
+                        />
+                      )}
                     </div>
                   </motion.div>
 

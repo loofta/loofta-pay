@@ -3,8 +3,13 @@
  * Client-side only - fetches directly from Solana RPC
  */
 
-const SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
-const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // USDC on Solana mainnet
+// Use Helius RPC if available, otherwise fallback to public RPC
+// Get free Helius API key at: https://www.helius.dev/
+const SOLANA_RPC_URL = process.env.NEXT_PUBLIC_SOLANA_RPC_URL 
+  || (process.env.NEXT_PUBLIC_HELIUS_API_KEY 
+    ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
+    : "https://api.mainnet-beta.solana.com");
+export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // USDC on Solana mainnet
 
 /**
  * Get USDC balance from Solana wallet address

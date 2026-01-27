@@ -141,6 +141,26 @@ export class ClaimsController {
   }
 
   /**
+   * Update claim status (public endpoint for payment flow)
+   */
+  @Post(':id/status')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update claim status' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Updated claim', type: Claim })
+  @ApiResponse({ status: 404, description: 'Claim not found' })
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() body: { status: string; txHash?: string; paidWith?: string; isPrivate?: boolean },
+  ): Promise<Claim> {
+    return this.claimsService.updateStatus(id, body.status as any, {
+      txHash: body.txHash,
+      paidWith: body.paidWith,
+      isPrivate: body.isPrivate,
+    });
+  }
+
+  /**
    * Get user's claims (authenticated)
    */
   @Get('user/my-claims')

@@ -48,6 +48,14 @@ export async function POST(request: Request) {
     const claim = claimData;
     console.log('[claims/deposit] Using claim data from request:', claim.id);
 
+    // Enforce private payment if claim requires it
+    if (claim.is_private === true) {
+      return NextResponse.json({ 
+        error: "This payment link requires private payments only. Please use the private payment option.",
+        code: "PRIVATE_PAYMENT_REQUIRED"
+      }, { status: 400 });
+    }
+
     // Still need Supabase for storing claim_intents (result of 1Click API call)
     const supabase = getSupabaseAdmin();
 

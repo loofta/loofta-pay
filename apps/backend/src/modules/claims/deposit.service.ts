@@ -59,6 +59,13 @@ export class DepositService {
     // Get claim details
     const claim = await this.claimsService.findOne(claimId);
 
+    // Enforce private payment if claim requires it
+    if (claim.is_private === true) {
+      throw new BadRequestException(
+        'This payment link requires private payments only. Please use the private payment option.'
+      );
+    }
+
     const originChain = String(fromToken.chain || '').toLowerCase();
     const destChain = String(claim.to_chain || '').toLowerCase();
     const fromSymbol = String(fromToken.symbol || '').toUpperCase();

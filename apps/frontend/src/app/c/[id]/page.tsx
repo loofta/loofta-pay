@@ -27,6 +27,8 @@ import { ACTIVE_SWAP_PROVIDER, getProviderDisplayName, type SwapProvider } from 
 import { ethers } from "ethers";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { isDemoMode } from "@/config/demoMode";
+import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES } from "@/services/privacyCash";
+import { VersionedTransaction } from "@solana/web3.js";
 import {
   isRhinestoneChainSupported,
   getSupportedTokensForChain,
@@ -44,7 +46,7 @@ async function fetchClaim(id: string) {
     if (r.ok) {
       const data = await r.json();
       return {
-        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string },
+        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; description?: string; is_private?: boolean },
         latestIntent: data.intent ? {
           depositAddress: data.intent.deposit_address || null,
           memo: data.intent.memo ?? null,
@@ -70,7 +72,7 @@ async function fetchClaim(id: string) {
   console.log('r lisa here data', data);
 
   return {
-    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string },
+    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; description?: string; is_private?: boolean },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -97,15 +99,32 @@ async function prepareDeposit(input: {
   return await r.json();
 }
 
-async function updateClaimStatus(claimId: string, status: string, extra?: { txHash?: string; paidWith?: string; depositReceivedAt?: string; originAsset?: string; destinationAsset?: string }) {
+async function updateClaimStatus(claimId: string, status: string, extra?: { txHash?: string; paidWith?: string; depositReceivedAt?: string; originAsset?: string; destinationAsset?: string; isPrivate?: boolean }) {
   try {
-    const r = await fetch(`/api/claims/${claimId}`, {
+    // Try backend API first (more reliable)
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+    const r = await fetch(`${backendUrl}/claims/${claimId}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, ...extra }),
+    });
+
+    if (r.ok) {
+      console.log("[updateClaimStatus] Successfully updated via backend");
+      return;
+    }
+
+    // Fallback to frontend API route
+    console.log("[updateClaimStatus] Backend failed, trying frontend API route");
+    const r2 = await fetch(`/api/claims/${claimId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status, ...extra }),
     });
-    if (!r.ok) {
-      console.error("[updateClaimStatus] Failed:", await r.text());
+
+    if (!r2.ok) {
+      const errorText = await r2.text();
+      console.error("[updateClaimStatus] Frontend API also failed:", errorText);
     }
   } catch (e) {
     console.error("[updateClaimStatus] Error:", e);
@@ -150,6 +169,30 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const userCancelled = React.useRef<boolean>(false); // Track if user manually cancelled to prevent re-hydration
   const { logout, login, authenticated, user } = usePrivy();
   const { wallets } = useWallets();
+
+  // Enforce private mode if claim requires it
+  const requiresPrivate = claim?.is_private === true;
+  
+  // Auto-set private mode when claim requires it
+  useEffect(() => {
+    if (requiresPrivate) {
+      setIsPrivateMode(true);
+    }
+  }, [requiresPrivate]);
+
+  // Prevent changing from private mode if claim requires it
+  const handleSetPrivateMode = (value: boolean) => {
+    if (requiresPrivate && !value) {
+      // Don't allow disabling private mode if claim requires it
+      toast({
+        variant: "destructive",
+        title: "Private payment required",
+        description: "This payment link requires private payments only. Standard payment is not available.",
+      });
+      return;
+    }
+    setIsPrivateMode(value);
+  };
 
   const selectedFrom = findTokenBySelection(tokens, fromSel || null);
   const destToken = useMemo(() => {
@@ -274,17 +317,17 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     });
   }, [tokens, destToken, destChainSupportsSwap, supportedSwapTokens]);
 
-  // Find ZEC token for private mode
-  const zecToken = useMemo(() => {
-    return tokens.find(t => t.symbol.toUpperCase() === 'ZEC');
+  // Find USDC token on Solana for private mode
+  const usdcSolanaToken = useMemo(() => {
+    return tokens.find(t => t.symbol.toUpperCase() === 'USDC' && (t.chain === 'solana' || t.chain === 'sol'));
   }, [tokens]);
 
-  // Auto-select ZEC when private mode is enabled
+  // Auto-select USDC on Solana when private mode is enabled
   useEffect(() => {
-    if (isPrivateMode && zecToken) {
-      setFromSel({ symbol: zecToken.symbol, chain: zecToken.chain });
+    if (isPrivateMode && usdcSolanaToken) {
+      setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
     }
-  }, [isPrivateMode, zecToken]);
+  }, [isPrivateMode, usdcSolanaToken]);
   // Check if direct pay via swap provider is available
   const swapEligibility = useMemo(() => {
     if (!selectedFrom || !destToken) return { eligible: false, provider: null as SwapProvider | null };
@@ -294,8 +337,14 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   }, [selectedFrom, destToken, sameChain]);
   const swapProviderEligible = swapEligibility.eligible;
   const activeProvider = swapEligibility.provider;
-  // Derive payer token from status originAsset if available
+  // Derive payer token from status originAsset if available, or from claim.is_private for private payments
   const paidToken = useMemo(() => {
+    // For private payments, return USDC on Solana
+    if (claim?.is_private) {
+      return usdcSolanaToken || null;
+    }
+
+    // Otherwise, derive from statusData
     const assetId = statusData?.originAsset as string | undefined;
     if (!assetId || !Array.isArray(tokens) || !tokens.length) return null;
     const t = tokens.find(tk => {
@@ -303,7 +352,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       return String(id || "").toLowerCase() === String(assetId || "").toLowerCase();
     });
     return t || null;
-  }, [statusData?.originAsset, tokens]);
+  }, [statusData?.originAsset, tokens, claim?.is_private, usdcSolanaToken]);
 
   // Hydrate UI state from persisted zustand on mount
   useEffect(() => {
@@ -343,14 +392,33 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     }
   }, [latestIntentData, deposit, status, id]);
 
-  // Hydrate status from claim data (for cross-device support)
+  // Hydrate status from claim data (for cross-device support and after refetch)
   useEffect(() => {
     if (!claim?.status) return;
     const claimStatus = String(claim.status).toUpperCase();
-    // Only hydrate if we don't have a status yet and claim has a meaningful status
-    if (!status && claimStatus && claimStatus !== "PENDING" && claimStatus !== "CREATED") {
-      setStatus(claimStatus);
-      useClaimPayStore.getState().setStatus(id, claimStatus);
+    // Map database status to UI status
+    const statusMap: Record<string, string> = {
+      "SUCCESS": "SUCCESS",
+      "IN_FLIGHT": "PROCESSING",
+      "PENDING_DEPOSIT": "PROCESSING",
+      "REFUNDED": "FAILED",
+      "FAILED": "FAILED",
+      "EXPIRED": "FAILED",
+      "CANCELLED": "FAILED",
+    };
+    const mappedStatus = statusMap[claimStatus] || claimStatus;
+
+    // Update status if:
+    // 1. We don't have a status yet, OR
+    // 2. The claim status is SUCCESS (always sync SUCCESS from DB)
+    // 3. The claim status changed to a terminal state
+    const isTerminalStatus = ["SUCCESS", "FAILED", "REFUNDED"].includes(mappedStatus);
+    if ((!status || mappedStatus === "SUCCESS" || isTerminalStatus) && mappedStatus !== "PENDING" && mappedStatus !== "CREATED") {
+      if (status !== mappedStatus) {
+        console.log(`[Claim Status] Syncing status from DB: ${status} -> ${mappedStatus}`);
+        setStatus(mappedStatus);
+        useClaimPayStore.getState().setStatus(id, mappedStatus);
+      }
     }
   }, [claim?.status, status, id]);
 
@@ -384,6 +452,28 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   }, [id, claim, selectedFrom, destToken?.tokenId, destToken?.price, destToken?.decimals]);
 
   async function onPrepare() {
+    // Prevent double payment - check if claim is already paid
+    const currentStatus = String(status || claim?.status || "").toUpperCase();
+    if (currentStatus === "SUCCESS") {
+      toast({
+        variant: "destructive",
+        title: "Already paid",
+        description: "This claim has already been paid.",
+      });
+      return;
+    }
+
+    // Enforce private mode if claim requires it
+    if (claim?.is_private && !isPrivateMode) {
+      toast({
+        variant: "destructive",
+        title: "Private payment required",
+        description: "This payment link requires private payments only. Please use the private payment option.",
+      });
+      setIsPrivateMode(true);
+      return;
+    }
+
     if (!claim || !selectedFrom) return;
 
     // Validate refund address
@@ -490,8 +580,145 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     }
   }
 
+  async function onPayPrivately() {
+    // Enforce private mode if claim requires it
+    if (claim?.is_private && !isPrivateMode) {
+      setIsPrivateMode(true);
+      toast({
+        variant: "destructive",
+        title: "Private payment required",
+        description: "This payment link requires private payments only.",
+      });
+      return;
+    }
+
+    if (!claim || !usdcSolanaToken) {
+      toast({ variant: "destructive", title: "Error", description: "Private payment requires USDC on Solana." });
+      return;
+    }
+
+    try {
+      // Get Phantom wallet from window
+      const phantomProvider = (window as any).phantom?.solana;
+      if (!phantomProvider) {
+        toast({
+          variant: "destructive",
+          title: "Phantom wallet required",
+          description: "Please install Phantom wallet to make private payments."
+        });
+        return;
+      }
+
+      // Connect to Phantom if not already connected
+      if (!phantomProvider.isConnected) {
+        await phantomProvider.connect();
+      }
+
+      const recipient = String(claim?.recipient_address || "").trim();
+      if (!recipient) {
+        toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
+        return;
+      }
+
+      const amountUSD = parseFloat(claim.amount);
+      if (!amountUSD || amountUSD <= 0) {
+        toast({ variant: "destructive", title: "Invalid amount", description: "Please enter a valid amount." });
+        return;
+      }
+
+      setPreparing(true);
+
+      // Get wallet address from Phantom
+      const walletAddress = phantomProvider.publicKey?.toString();
+      console.log('[Private Payment] Phantom wallet address:', walletAddress);
+      if (!walletAddress) {
+        throw new Error("Could not get wallet address from Phantom");
+      }
+
+      console.log('[Private Payment] Payment details:', {
+        walletAddress,
+        amountUSD,
+        recipientAddress: recipient,
+        claimId: claim.id,
+      });
+
+      // Sign message callback
+      const signMessage = async (msg: string): Promise<Uint8Array> => {
+        console.log('[Private Payment] Signing message:', msg);
+        try {
+          const encoded = new TextEncoder().encode(msg);
+          const signed = await phantomProvider.signMessage(encoded, 'utf8');
+          console.log('[Private Payment] Message signed, signature length:', signed.signature.length);
+          return Uint8Array.from(signed.signature);
+        } catch (error) {
+          console.error('[Private Payment] Error signing message:', error);
+          throw error;
+        }
+      };
+
+      // Sign transaction callback
+      const signTransaction = async (tx: VersionedTransaction): Promise<VersionedTransaction> => {
+        console.log('[Private Payment] Signing transaction:', {
+          numSignatures: tx.signatures.length,
+          message: tx.message ? 'present' : 'missing',
+        });
+        try {
+          const signed = await phantomProvider.signTransaction(tx);
+          console.log('[Private Payment] Transaction signed successfully');
+          return signed;
+        } catch (error) {
+          console.error('[Private Payment] Error signing transaction:', error);
+          throw error;
+        }
+      };
+
+      // Execute private payment
+      console.log('[Private Payment] Calling payPrivatelyWithPrivacyCash...');
+      const result = await payPrivatelyWithPrivacyCash({
+        walletAddress,
+        amountUSD,
+        recipientAddress: recipient,
+        signMessage,
+        signTransaction,
+        recipientPaysFees: requiresPrivate, // If claim requires private, recipient pays fees
+      });
+
+      console.log('[Private Payment] Result:', result);
+
+      if (result.success) {
+        toast({ title: "Payment successful!", description: "Your private payment has been completed." });
+        // Update claim status with transaction signature and is_private flag
+        if (result.signature) {
+          await updateClaimStatus(claim.id, 'SUCCESS', { txHash: result.signature, paidWith: 'USDC (Private)', isPrivate: true });
+        } else {
+          // If no signature, still update status (transaction might be pending)
+          await updateClaimStatus(claim.id, 'SUCCESS', { paidWith: 'USDC (Private)', isPrivate: true });
+        }
+        // Update local status immediately
+        setStatus("SUCCESS");
+        useClaimPayStore.getState().setStatus(id, "SUCCESS");
+        // Refresh claim data
+        await claimQuery.refetch();
+      } else {
+        throw new Error(result.error || 'Private payment failed');
+      }
+    } catch (error: any) {
+      console.error('[Private Payment] Error:', error);
+      toast({ variant: "destructive", title: "Payment failed", description: error?.message || "Could not complete private payment" });
+    } finally {
+      setPreparing(false);
+    }
+  }
+
   async function onPayNow() {
     if (!claim || !selectedFrom || !destToken) return;
+
+    // Handle private payments separately
+    if (isPrivateMode) {
+      await onPayPrivately();
+      return;
+    }
+
     if (!swapProviderEligible || !activeProvider) {
       toast({ variant: "destructive", title: "Not supported", description: "This network is not supported for direct pay." });
       return;
@@ -1042,39 +1269,83 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                           <p className="text-gray-600 text-base mb-4">
                             Your payment has been successfully processed and sent to the recipient.
                           </p>
-                          {claim.paid_at && (
-                            <p className="text-sm text-gray-500">
-                              Completed on {formatUTCTimestamp(claim.paid_at)}
-                            </p>
-                          )}
                         </div>
-                        <div className="mt-6">
-                          <PaymentStatusTracker
-                            status={status}
-                            statusData={statusData}
-                            depositReceivedAt={latestIntentData?.depositReceivedAt || statusData?.updatedAt}
-                            startedAt={claim.created_at}
-                            fromChain={selectedFrom?.chain}
-                            toChain={destToken?.chain}
-                            depositAddress={deposit?.depositAddress}
-                            paidAt={claim.paid_at}
-                            paymentType={
-                              deposit?.isDirect ? 'direct' :
-                                deposit?.isCompanionSwap ? 'companion-swap' :
-                                  'near-intent'
-                            }
-                          />
-                        </div>
+                        {/* Display description/message if available */}
+                        {claim?.description && (
+                          <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                            <div className="text-sm text-gray-600 mb-1">Message</div>
+                            <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
+                              {(() => {
+                                const desc = claim.description || '';
+                                // Check if description contains GIF URLs (common patterns including Giphy)
+                                const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
+                                const parts: string[] = [];
+                                let lastIndex = 0;
+                                let match;
+
+                                // Reset regex lastIndex
+                                gifUrlPattern.lastIndex = 0;
+
+                                while ((match = gifUrlPattern.exec(desc)) !== null) {
+                                  // Add text before match
+                                  if (match.index > lastIndex) {
+                                    parts.push(desc.slice(lastIndex, match.index));
+                                  }
+                                  // Add GIF URL
+                                  parts.push(match[0]);
+                                  lastIndex = match.index + match[0].length;
+                                }
+
+                                // Add remaining text
+                                if (lastIndex < desc.length) {
+                                  parts.push(desc.slice(lastIndex));
+                                }
+
+                                // If no matches, return original text
+                                if (parts.length === 0) {
+                                  return desc;
+                                }
+
+                                return parts.map((part, idx) => {
+                                  // Check if this part is a GIF URL
+                                  if (gifUrlPattern.test(part) || part.match(/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i)) {
+                                    // Convert Giphy URL to direct image URL if needed
+                                    let imageUrl = part;
+                                    if (part.includes('giphy.com') && !part.endsWith('.gif')) {
+                                      // Extract Giphy ID and use direct GIF URL
+                                      const giphyIdMatch = part.match(/giphy\.com\/media\/([^\/]+)/);
+                                      if (giphyIdMatch) {
+                                        imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
+                                      } else {
+                                        // Try to get the original URL
+                                        imageUrl = part.replace(/\/$/, '') + '.gif';
+                                      }
+                                    }
+                                    return (
+                                      <img
+                                        key={idx}
+                                        src={imageUrl}
+                                        alt="GIF"
+                                        className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
+                                        style={{ maxHeight: '200px', maxWidth: '100%' }}
+                                      />
+                                    );
+                                  }
+                                  return <span key={idx}>{part}</span>;
+                                });
+                              })()}
+                            </div>
+                          </div>
+                        )}
                         <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
                           <div className="text-base font-medium text-gray-800 mb-2">Payment summary</div>
                           <div className="text-base text-gray-700 space-y-1">
                             <div className="flex items-center justify-between">
                               <span className="text-gray-600">Amount requested</span>
                               <span className="text-lg font-semibold text-gray-900">
-
                                 <span className="inline-flex items-center gap-1">
                                   <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={18} />
-                                  {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol}
+                                  ${parseFloat(claim.amount || "0").toFixed(2)}
                                 </span>
                               </span>
                             </div>
@@ -1082,13 +1353,28 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               <span className="text-gray-600">Paid with</span>
                               <span className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
                                 {(() => {
+                                  // For private payments, calculate the total amount paid (requested + fees)
+                                  if (claim?.is_private) {
+                                    const requestedAmount = parseFloat(claim?.amount || "0");
+                                    const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
+                                    const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+                                    const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
+                                    return (
+                                      <>
+                                        <TokenIcon token={usdcSolanaToken} chain="solana" size={18} />
+                                        <span>${roundUpDecimals(String(withdrawalAmountNeeded), 2)}</span>
+                                      </>
+                                    );
+                                  }
+
+                                  // For standard payments, use statusData
                                   const paid = statusData?.swapDetails?.depositedAmountFormatted ?? statusData?.swapDetails?.amountInFormatted ?? null;
                                   const sym = paidToken?.symbol || selectedFrom?.symbol;
                                   const chain = paidToken?.chain || selectedFrom?.chain;
                                   return (
                                     <>
                                       <TokenIcon token={(paidToken as any) ?? (selectedFrom as any)} chain={(paidToken?.chain as any) ?? (selectedFrom?.chain as any)} size={18} />
-                                      <span>{paid != null ? roundUpDecimals(String(paid), 6) : "—"} {sym || ""}</span>
+                                      <span>{paid != null ? `$${roundUpDecimals(String(paid), 2)}` : "—"} {sym ? `(${sym})` : ""}</span>
                                     </>
                                   );
                                 })()}
@@ -1112,6 +1398,23 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             )}
                           </div>
                         </div>
+                        <div className="mt-6">
+                          <PaymentStatusTracker
+                            status={status}
+                            statusData={statusData}
+                            depositReceivedAt={latestIntentData?.depositReceivedAt || statusData?.updatedAt}
+                            startedAt={claim.created_at}
+                            fromChain={selectedFrom?.chain}
+                            toChain={destToken?.chain}
+                            depositAddress={deposit?.depositAddress}
+                            paidAt={claim.paid_at}
+                            paymentType={
+                              deposit?.isDirect ? 'direct' :
+                                deposit?.isCompanionSwap ? 'companion-swap' :
+                                  'near-intent'
+                            }
+                          />
+                        </div>
 
                       </>
                     ) : (
@@ -1124,6 +1427,72 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             </div>
                           ) : null}
                         </div>
+                        {claim?.description && (
+                          <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                            <div className="text-sm text-gray-600 mb-1">Message</div>
+                            <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
+                              {(() => {
+                                const desc = claim.description || '';
+                                // Check if description contains GIF URLs (common patterns including Giphy)
+                                const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
+                                const parts: string[] = [];
+                                let lastIndex = 0;
+                                let match;
+
+                                // Reset regex lastIndex
+                                gifUrlPattern.lastIndex = 0;
+
+                                while ((match = gifUrlPattern.exec(desc)) !== null) {
+                                  // Add text before match
+                                  if (match.index > lastIndex) {
+                                    parts.push(desc.slice(lastIndex, match.index));
+                                  }
+                                  // Add GIF URL
+                                  parts.push(match[0]);
+                                  lastIndex = match.index + match[0].length;
+                                }
+
+                                // Add remaining text
+                                if (lastIndex < desc.length) {
+                                  parts.push(desc.slice(lastIndex));
+                                }
+
+                                // If no matches, return original text
+                                if (parts.length === 0) {
+                                  return desc;
+                                }
+
+                                return parts.map((part, idx) => {
+                                  // Check if this part is a GIF URL
+                                  if (gifUrlPattern.test(part) || part.match(/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i)) {
+                                    // Convert Giphy URL to direct image URL if needed
+                                    let imageUrl = part;
+                                    if (part.includes('giphy.com') && !part.endsWith('.gif')) {
+                                      // Extract Giphy ID and use direct GIF URL
+                                      const giphyIdMatch = part.match(/giphy\.com\/media\/([^\/]+)/);
+                                      if (giphyIdMatch) {
+                                        imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
+                                      } else {
+                                        // Try to get the original URL
+                                        imageUrl = part.replace(/\/$/, '') + '.gif';
+                                      }
+                                    }
+                                    return (
+                                      <img
+                                        key={idx}
+                                        src={imageUrl}
+                                        alt="GIF"
+                                        className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
+                                        style={{ maxHeight: '200px', maxWidth: '100%' }}
+                                      />
+                                    );
+                                  }
+                                  return <span key={idx}>{part}</span>;
+                                });
+                              })()}
+                            </div>
+                          </div>
+                        )}
                         <div className="text-base text-gray-700">Amount requested</div>
                         <div className="mt-1 flex items-baseline justify-between">
                           <div className="text-3xl md:text-4xl font-semibold text-gray-900 leading-none">
@@ -1141,40 +1510,60 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
                     {String(status || "").toUpperCase() !== "SUCCESS" && (!deposit ? (
                       <>
-                        {/* Standard/Private Toggle */}
-                        <div className="mt-5">
-                          <div className="flex gap-2 rounded-xl bg-gray-100 p-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setIsPrivateMode(false)}
-                              className="flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all bg-orange-500 text-white"
-                            >
-                              Standard
-                            </button>
-                            <button
-                              type="button"
-                              disabled
-                              className="flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 bg-transparent text-gray-400 cursor-not-allowed opacity-60"
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="opacity-80">
-                                <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" fill="currentColor" />
-                              </svg>
-                              Private
-                              <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded ml-1">Soon</span>
-                            </button>
+                        {/* Standard/Private Toggle - Hide if claim requires private */}
+                        {!requiresPrivate && (
+                          <div className="mt-5">
+                            <div className="flex gap-2 rounded-xl bg-gray-100 p-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleSetPrivateMode(false)}
+                                className={`flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all ${!isPrivateMode
+                                  ? 'bg-orange-500 text-white'
+                                  : 'bg-transparent text-gray-600 hover:text-gray-900'
+                                  }`}
+                              >
+                                Standard
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleSetPrivateMode(true)}
+                                className={`flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 ${isPrivateMode
+                                  ? 'bg-orange-500 text-white'
+                                  : 'bg-transparent text-gray-600 hover:text-gray-900'
+                                  }`}
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="opacity-80">
+                                  <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" fill="currentColor" />
+                                </svg>
+                                Private
+                              </button>
+                            </div>
                           </div>
-                        </div>
+                        )}
+                        
+                        {/* Show private-only indicator if claim requires it */}
+                        {requiresPrivate && (
+                          <div className="mt-5 flex items-center gap-2 text-sm text-gray-600">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0">
+                              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                            </svg>
+                            <span className="font-medium">
+                              Private payment only - This link requires Privacy Cash for complete privacy
+                            </span>
+                          </div>
+                        )}
 
                         {/* Pay with section */}
                         <div className="mt-5">
                           <div className="text-base font-medium text-gray-700 mb-2">Pay with</div>
 
-                          {isPrivateMode ? (
-                            /* Private mode - fixed to ZEC */
+                          {isPrivateMode || requiresPrivate ? (
+                            /* Private mode - fixed to USDC on Solana */
                             <>
                               <div className="flex items-center gap-3 p-3 h-14 rounded-lg border border-amber-300 bg-amber-50">
-                                <Image src="/images/tokens/zec.png" alt="ZEC" width={28} height={28} className="rounded-full" />
-                                <span className="text-lg font-semibold text-gray-900">ZEC</span>
+                                <TokenIcon token={usdcSolanaToken} chain="solana" size={28} />
+                                <span className="text-lg font-semibold text-gray-900">USDC</span>
+                                <span className="text-sm text-gray-600">on Solana</span>
                                 <span className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-amber-200 text-amber-800 text-xs font-medium">
                                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
                                     <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" fill="currentColor" />
@@ -1183,47 +1572,107 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                 </span>
                               </div>
                               <div className="mt-2 text-sm text-amber-700">
-                                Your payment is shielded and untraceable
+                                Your payment is shielded and untraceable using Privacy Cash
                               </div>
+                              {(() => {
+                                const requestedAmount = parseFloat(claim?.amount || "0");
+                                
+                                // If requiresPrivate is true, recipient pays fees - payer only pays exact amount
+                                if (requiresPrivate) {
+                                  return (
+                                    <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                                      <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
+                                      <div className="space-y-1.5 text-sm">
+                                        <div className="flex items-center justify-between">
+                                          <span className="font-medium text-gray-900">Total to pay</span>
+                                          <span className="font-semibold text-lg text-gray-900">${requestedAmount.toFixed(2)}</span>
+                                        </div>
+                                        <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
+                                          Fees (0.35% + $0.74) will be deducted from the recipient when they withdraw
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+
+                                // Optional private payment - payer covers fees
+                                const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
+                                const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+
+                                // Calculate withdrawal amount needed so recipient receives exactly requestedAmount
+                                // withdrawalAmount = (requestedAmount + rentFee) / (1 - feeRate)
+                                const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
+                                const withdrawalFee = withdrawalAmountNeeded * feeRate;
+                                const totalFees = withdrawalFee + rentFee;
+                                const totalToPay = withdrawalAmountNeeded; // This is what we deposit and withdraw
+
+                                return (
+                                  <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                                    <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
+                                    <div className="space-y-1.5 text-sm">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-gray-600">Recipient receives</span>
+                                        <span className="font-semibold text-gray-900">${requestedAmount.toFixed(2)}</span>
+                                      </div>
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-gray-600">Withdrawal fee (0.35%)</span>
+                                        <span className="text-gray-700">${withdrawalFee.toFixed(6)}</span>
+                                      </div>
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-gray-600">Rent fee</span>
+                                        <span className="text-gray-700">${rentFee.toFixed(6)}</span>
+                                      </div>
+                                      <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
+                                        <span className="font-medium text-gray-900">Total to pay</span>
+                                        <span className="font-semibold text-lg text-gray-900">${totalToPay.toFixed(6)}</span>
+                                      </div>
+                                      <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
+                                        Fees are deducted automatically by Privacy Cash during withdrawal
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
                             </>
                           ) : (
-                            /* Standard mode - token selector */
-                            <TokenCombobox
-                              tokens={filteredTokens as any}
-                              value={fromSel}
-                              onChange={(sel) => {
-                                // Check if token is unsupported
-                                const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
-                                if (selected?._unsupported) {
-                                  toast({
-                                    variant: "destructive",
-                                    title: "Token not supported",
-                                    description: selected._reason || "This token cannot be used for this payment."
-                                  });
-                                  return;
-                                }
-                                setFromSel(sel);
-                              }}
-                              placeholder="Select token to pay with"
-                              onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                              className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none focus:border-orange-400 transition-colors"
-                            />
+                            /* Standard mode - token selector - Only show if not required private */
+                            <>
+                              <TokenCombobox
+                                tokens={filteredTokens as any}
+                                value={fromSel}
+                                onChange={(sel) => {
+                                  // Check if token is unsupported
+                                  const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
+                                  if (selected?._unsupported) {
+                                    toast({
+                                      variant: "destructive",
+                                      title: "Token not supported",
+                                      description: selected._reason || "This token cannot be used for this payment."
+                                    });
+                                    return;
+                                  }
+                                  setFromSel(sel);
+                                }}
+                                placeholder="Select token to pay with"
+                                onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                                className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none focus:border-orange-400 transition-colors"
+                              />
+                              {selectedFrom ? (
+                                <div className="mt-2 text-sm text-gray-700">
+                                  {quote?.amountInFormatted
+                                    ? `Estimated to send: ${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                    : quote?.est
+                                      ? `Estimated to send: ${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
+                                      : quote?.usd
+                                        ? `Estimated cost ≈ $${quote.usd.toFixed(2)}`
+                                        : ""}
+                                </div>
+                              ) : null}
+                            </>
                           )}
 
-                          {selectedFrom ? (
-                            <div className="mt-2 text-sm text-gray-700">
-                              {quote?.amountInFormatted
-                                ? `Estimated to send: ${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                : quote?.est
-                                  ? `Estimated to send: ${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
-                                  : quote?.usd
-                                    ? `Estimated cost ≈ $${quote.usd.toFixed(2)}`
-                                    : ""}
-                            </div>
-                          ) : null}
-
-                          {/* Refund Address Input */}
-                          {selectedFrom && (
+                          {/* Refund Address Input - Only show in standard mode and not required private */}
+                          {!isPrivateMode && !requiresPrivate && selectedFrom && (
                             <div className="mt-4 space-y-2">
                               <Label htmlFor="refundAddress" className="text-sm font-medium text-gray-700">
                                 Refund Address ({selectedFrom.chain.toUpperCase()})
@@ -1259,12 +1708,23 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               </Button>
                             ) : (
                               <GradientActionButton
-                                onClick={onPrepare}
-                                disabled={!selectedFrom || preparing || !refundAddress.trim()}
+                                onClick={isPrivateMode || requiresPrivate ? onPayPrivately : onPrepare}
+                                disabled={
+                                  requiresPrivate && !isPrivateMode
+                                    ? true // Disable if claim requires private but mode is not set
+                                    : isPrivateMode || requiresPrivate
+                                      ? (!usdcSolanaToken || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS")
+                                      : (!selectedFrom || preparing || !refundAddress.trim() || String(status || claim?.status || "").toUpperCase() === "SUCCESS")
+                                }
                                 loading={preparing}
-                                loadingText="Preparing…"
+                                loadingText={isPrivateMode || requiresPrivate ? "Processing private payment…" : "Preparing…"}
                               >
-                                {isPrivateMode ? "Get private deposit address" : "Get deposit address"}
+                                {requiresPrivate && !isPrivateMode 
+                                  ? "Private payment required"
+                                  : isPrivateMode || requiresPrivate
+                                    ? "Pay with Privacy Cash" 
+                                    : "Get deposit address"
+                                }
                               </GradientActionButton>
                             )}
                           </div>
@@ -1358,12 +1818,27 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                       <span className="text-gray-600">Paid with</span>
                                       <span className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
                                         {(() => {
+                                          // For private payments, calculate the total amount paid (requested + fees)
+                                          if (claim?.is_private) {
+                                            const requestedAmount = parseFloat(claim?.amount || "0");
+                                            const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
+                                            const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+                                            const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
+                                            return (
+                                              <>
+                                                <TokenIcon token={usdcSolanaToken} chain="solana" size={24} />
+                                                <span>${roundUpDecimals(String(withdrawalAmountNeeded), 2)}</span>
+                                              </>
+                                            );
+                                          }
+
+                                          // For standard payments, use statusData
                                           const paid = statusData?.swapDetails?.depositedAmountFormatted ?? null;
                                           const sym = paidToken?.symbol || selectedFrom?.symbol;
                                           return (
                                             <>
                                               <TokenIcon token={(paidToken as any) ?? (selectedFrom as any)} chain={(paidToken?.chain as any) ?? (selectedFrom?.chain as any)} size={24} />
-                                              <span>{paid != null ? roundUpDecimals(String(paid), 6) : "—"} {sym || ""}</span>
+                                              <span>{paid != null ? `$${roundUpDecimals(String(paid), 2)}` : "—"} {sym ? `(${sym})` : ""}</span>
                                             </>
                                           );
                                         })()}

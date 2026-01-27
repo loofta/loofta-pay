@@ -302,11 +302,16 @@ export default function CheckoutPage() {
       const resp = await fetch("https://1click.chaindefuser.com/v0/submit-deposit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ txHash: txHash.trim() }),
+        body: JSON.stringify({ 
+          txHash: txHash.trim(),
+          ...(deposit?.depositAddress ? { depositAddress: deposit.depositAddress } : {}),
+          ...(deposit?.quoteId ? { quoteId: deposit.quoteId } : {}),
+          ...(deposit?.memo ? { memo: deposit.memo } : {}),
+        }),
       });
       if (!resp.ok) {
         const errorData = await resp.json().catch(() => ({}));
-        throw new Error(errorData?.error || "Failed to submit transaction");
+        throw new Error(errorData?.error || errorData?.message || "Failed to submit transaction");
       }
       toast({
         title: "Transaction submitted",

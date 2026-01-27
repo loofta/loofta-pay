@@ -61,15 +61,27 @@ export class ClaimsService {
    * Wallet address is never exposed to frontend
    */
   async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; link: string }> {
-    const { username, amount, userId, userEmail } = dto;
+    const { username, amount, userId, userEmail, isPrivate = false, description } = dto;
 
     // Step 1: Get user by username
     const user = await this.usersService.findByUsername(username);
 
-    // Step 2: Get wallet address from Privy (server-side only)
+    // Step 2: Check if user requires private payments
+    const requiresPrivate = user.requirePrivatePayments || false;
+    
+    // Step 3: Enforce privacy if required
+    const finalIsPrivate = requiresPrivate ? true : isPrivate;
+    
+    if (requiresPrivate && !isPrivate) {
+      throw new BadRequestException(
+        'This user requires private payments only. Please enable privacy when creating the payment link.'
+      );
+    }
+
+    // Step 4: Get wallet address from Privy (server-side only)
     const walletAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
 
-    // Step 3: Create claim with wallet address (stays server-side)
+    // Step 5: Create claim with wallet address (stays server-side)
     const { data: claim, error: claimError } = await this.supabaseService.claims
       .insert({
         amount: String(amount),
@@ -79,6 +91,8 @@ export class ClaimsService {
         created_by: userId ? String(userId) : null,
         creator_email: userEmail ? String(userEmail) : null,
         status: 'OPEN' as ClaimStatus,
+        is_private: finalIsPrivate,
+        description: description || null,
       })
       .select('id')
       .single();
@@ -98,8 +112,10 @@ export class ClaimsService {
     console.log('username', username);
     console.log('amount', amount);
     console.log('walletAddress', walletAddress);
+    console.log('isPrivate', finalIsPrivate);
+    console.log('requiresPrivate', requiresPrivate);
 
-    this.logger.log(`Created claim from username: ${id} for user ${username}`);
+    this.logger.log(`Created claim from username: ${id} for user ${username} (private: ${finalIsPrivate}, required: ${requiresPrivate})`);
     return { id, link };
   }
 
@@ -141,9 +157,21 @@ export class ClaimsService {
   /**
    * Update claim status
    */
-  async updateStatus(id: string, status: ClaimStatus): Promise<Claim> {
+  async updateStatus(id: string, status: ClaimStatus, extra?: { txHash?: string; paidWith?: string; isPrivate?: boolean }): Promise<Claim> {
+    const updateData: Record<string, any> = { status };
+    
+    // Set paid_at timestamp when status becomes SUCCESS
+    if (status === 'SUCCESS') {
+      updateData.paid_at = new Date().toISOString();
+    }
+    
+    // Set is_private flag if provided (for private payments)
+    if (extra?.isPrivate !== undefined) {
+      updateData.is_private = extra.isPrivate;
+    }
+    
     const { data, error } = await this.supabaseService.claims
-      .update({ status })
+      .update(updateData)
       .eq('id', id)
       .select()
       .single();
@@ -153,7 +181,7 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
-    this.logger.log(`Updated claim ${id} status to ${status}`);
+    this.logger.log(`Updated claim ${id} status to ${status}${extra?.isPrivate ? ' (private)' : ''}`);
     return data;
   }
 

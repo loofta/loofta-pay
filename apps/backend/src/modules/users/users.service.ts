@@ -19,6 +19,7 @@ export class UsersService {
     privyUserId: string;
     email: string | null;
     username: string | null;
+    requirePrivatePayments: boolean;
   }> {
     // Remove @ prefix if present
     const cleanUsername = username.replace(/^@/, '').toLowerCase();
@@ -27,7 +28,7 @@ export class UsersService {
 
     // Use maybeSingle() instead of single() to handle 0 rows gracefully
     const { data: user, error } = await this.supabaseService.appUsers
-      .select('id, privy_user_id, email, username')
+      .select('id, privy_user_id, email, username, require_private_payments')
       .eq('username', cleanUsername)
       .maybeSingle();
 
@@ -54,6 +55,7 @@ export class UsersService {
       privyUserId: user.privy_user_id,
       email: user.email,
       username: user.username,
+      requirePrivatePayments: user.require_private_payments || false,
     };
   }
 
@@ -157,5 +159,91 @@ export class UsersService {
     const usernames = (users || []).map((u: any) => u.username).filter(Boolean);
     this.logger.debug(`Found ${usernames.length} usernames`);
     return { usernames };
+  }
+
+  /**
+   * Get user preferences by Privy user ID
+   */
+  async getUserPreferences(privyUserId: string): Promise<{
+    requirePrivatePayments: boolean;
+  } | null> {
+    const { data: user, error } = await this.supabaseService.appUsers
+      .select('require_private_payments')
+      .eq('privy_user_id', privyUserId)
+      .maybeSingle();
+
+    if (error || !user) {
+      this.logger.error('Error fetching user preferences:', error);
+      return null;
+    }
+
+    return {
+      requirePrivatePayments: user.require_private_payments || false,
+    };
+  }
+
+  /**
+   * Update user privacy preferences
+   */
+  async updatePrivacyPreferences(
+    privyUserId: string,
+    requirePrivatePayments: boolean,
+  ): Promise<void> {
+    const { error } = await this.supabaseService.appUsers
+      .update({ require_private_payments: requirePrivatePayments })
+      .eq('privy_user_id', privyUserId);
+
+    if (error) {
+      this.logger.error('Error updating privacy preferences:', error);
+      throw new Error('Failed to update privacy preferences');
+    }
+
+    this.logger.log(`Updated privacy preferences for user ${privyUserId}: requirePrivatePayments=${requirePrivatePayments}`);
+  }
+
+  /**
+   * Get Solana wallet balance in USD (for checking if wallet can be regenerated)
+   */
+  async getSolanaWalletBalanceUSD(privyUserId: string): Promise<number> {
+    const walletAddress = await this.getSolanaWalletAddress(privyUserId);
+    
+    // Use Solana RPC to get USDC balance
+    const solanaRpcUrl = process.env.SOLANA_RPC_URL || 
+      (process.env.HELIUS_API_KEY 
+        ? `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`
+        : 'https://api.mainnet-beta.solana.com');
+    
+    const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    
+    try {
+      const response = await fetch(solanaRpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getTokenAccountsByOwner',
+          params: [
+            walletAddress,
+            { mint: USDC_MINT },
+            { encoding: 'jsonParsed' },
+          ],
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (data.error || !data.result?.value || data.result.value.length === 0) {
+        return 0;
+      }
+
+      const account = data.result.value[0];
+      const balance = account.account.data.parsed.info.tokenAmount.uiAmount;
+      
+      return balance || 0;
+    } catch (error) {
+      this.logger.error('Error fetching Solana balance:', error);
+      return 0;
+    }
   }
 }
