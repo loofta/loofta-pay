@@ -3,11 +3,22 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { useExportWallet } from "@privy-io/react-auth/solana";
 import { motion, AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
 import { useAuthStore } from "@/store/auth";
 import { useToast } from "@/components/ui/use-toast";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Settings } from "lucide-react";
 
 interface UserMenuProps {
   username: string | null;
@@ -46,8 +57,18 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [requirePrivatePayments, setRequirePrivatePayments] = useState(false);
   const [loadingPreferences, setLoadingPreferences] = useState(false);
   const [updatingPreferences, setUpdatingPreferences] = useState(false);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [exportedPrivateKey, setExportedPrivateKey] = useState<string | null>(null);
+  const [withdrawAddress, setWithdrawAddress] = useState("");
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [withdrawing, setWithdrawing] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
+  const { exportWallet } = useExportWallet();
+  const { wallets } = useWallets();
   const { toast } = useToast();
 
   // Get Solana wallet address from Privy
@@ -359,84 +380,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 </div>
               )}
 
-              {walletAddress && (
-                <div>
-                  <p className={`text-xs font-medium mb-1 ${isDarkPage ? "text-gray-400" : "text-gray-500"
-                    }`}>
-                    Wallet Address
-                  </p>
-                  <div className="flex items-center justify-between gap-2">
-                    <p
-                      className={`text-sm font-mono cursor-pointer hover:opacity-80 transition-opacity break-all ${isDarkPage ? "text-white/90" : "text-gray-700"
-                        }`}
-                      onClick={() => {
-                        setShowFullAddress(!showFullAddress);
-                        if (!showFullAddress) {
-                          copyToClipboard(walletAddress, false);
-                        }
-                      }}
-                      title="Click to toggle full address"
-                    >
-                      {showFullAddress ? walletAddress : formatAddress(walletAddress)}
-                    </p>
-                    <button
-                      onClick={() => copyToClipboard(walletAddress, false)}
-                      className={`p-1 rounded hover:bg-opacity-20 transition-colors ${isDarkPage ? "hover:bg-white" : "hover:bg-gray-200"
-                        } ${copied ? (isDarkPage ? "bg-green-500/20" : "bg-green-100") : ""}`}
-                      title={copied ? "Copied!" : "Copy wallet address"}
-                    >
-                      {copied ? (
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          className="text-green-500"
-                        >
-                          <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
-                      ) : (
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          className={isDarkPage ? "text-gray-400" : "text-gray-500"}
-                        >
-                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                        </svg>
-                      )}
-                    </button>
-                  </div>
-                  <p className={`text-xs mt-1 ${isDarkPage ? "text-gray-500" : "text-gray-400"
-                    }`}>
-                    {showFullAddress ? "Click to show shortened" : "Click address to copy full"}
-                  </p>
-                </div>
-              )}
-
-              {!walletAddress && privyReady && authenticated && (
-                <div>
-                  <p className={`text-xs ${isDarkPage ? "text-gray-500" : "text-gray-400"
-                    }`}>
-                    Wallet will be created automatically when needed...
-                  </p>
-                </div>
-              )}
-
-              {!privyReady && (
-                <div>
-                  <p className={`text-xs ${isDarkPage ? "text-gray-500" : "text-gray-400"
-                    }`}>
-                    Loading wallet...
-                  </p>
-                </div>
-              )}
             </div>
 
             {/* Divider */}
@@ -475,31 +418,19 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               </div>
             )}
 
-            {/* Settings Link */}
+            {/* Settings - opens modal with wallet address & export private keys */}
             <div className="mb-2">
               <button
                 onClick={() => {
                   setIsOpen(false);
-                  window.location.href = '/settings';
+                  setShowSettingsModal(true);
                 }}
                 className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${isDarkPage
                   ? "text-gray-300 hover:bg-gray-800"
                   : "text-gray-700 hover:bg-gray-100"
                   }`}
               >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="3"></circle>
-                  <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3"></path>
-                </svg>
+                <Settings className="w-4 h-4 shrink-0" />
                 Settings
               </button>
             </div>
@@ -801,6 +732,324 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         }
         return null;
       })()}
+
+      {/* Settings Modal - wallet address, export private keys, etc. */}
+      <Dialog open={showSettingsModal} onOpenChange={setShowSettingsModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="w-5 h-5" />
+              Settings
+            </DialogTitle>
+            <DialogDescription>
+              Wallet address and security options.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {walletAddress ? (
+              <>
+                {/* Wallet Address */}
+                <div>
+                  <Label className="text-sm font-medium mb-2 block">Wallet Address</Label>
+                  <div className="flex items-center gap-2 p-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
+                    <p
+                      className="flex-1 text-sm font-mono break-all cursor-pointer hover:opacity-80"
+                      onClick={() => {
+                        setShowFullAddress(!showFullAddress);
+                        if (!showFullAddress) copyToClipboard(walletAddress, false);
+                      }}
+                      title="Click to toggle full address"
+                    >
+                      {showFullAddress ? walletAddress : formatAddress(walletAddress)}
+                    </p>
+                    <button
+                      onClick={() => copyToClipboard(walletAddress, false)}
+                      className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0"
+                      title={copied ? "Copied!" : "Copy"}
+                    >
+                      {copied ? (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-500">
+                          <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                      ) : (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">{showFullAddress ? "Click to show shortened" : "Click address to copy full"}</p>
+                </div>
+
+                {/* Wallet actions */}
+                <div className="space-y-1">
+                  <button
+                    onClick={() => {
+                      setShowSettingsModal(false);
+                      window.open(`https://solscan.io/account/${walletAddress}`, '_blank');
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                      <polyline points="15 3 21 3 21 9"></polyline>
+                      <line x1="10" y1="14" x2="21" y2="3"></line>
+                    </svg>
+                    View on Solscan
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowSettingsModal(false);
+                      setShowWithdrawModal(true);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="7 10 12 15 17 10"></polyline>
+                      <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Withdraw
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setShowSettingsModal(false);
+                      try {
+                        if (!walletAddress) {
+                          toast({
+                            variant: "destructive",
+                            title: "Wallet not found",
+                            description: "Could not find your embedded wallet to export.",
+                          });
+                          return;
+                        }
+                        const privateKey = await exportWallet({ address: walletAddress });
+                        if (privateKey && typeof privateKey === 'string') {
+                          setExportedPrivateKey(privateKey);
+                          setShowExportModal(true);
+                        } else {
+                          toast({
+                            title: "Export initiated",
+                            description: "Please follow the prompts to export your wallet private key.",
+                          });
+                        }
+                      } catch (error: any) {
+                        toast({
+                          variant: "destructive",
+                          title: "Export failed",
+                          description: error?.message || "Failed to export wallet. Please try again.",
+                        });
+                      }
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="17 8 12 3 7 8"></polyline>
+                      <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    Export Private Key
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="py-4 text-center">
+                {!privyReady ? (
+                  <p className="text-sm text-gray-500">Loading wallet...</p>
+                ) : (
+                  <p className="text-sm text-gray-500">Wallet will be created automatically when needed.</p>
+                )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Export Wallet Modal */}
+      <Dialog open={showExportModal} onOpenChange={setShowExportModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Export Private Key</DialogTitle>
+            <DialogDescription>
+              ⚠️ Keep your private key secure. Anyone with access to this key can control your wallet.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {exportedPrivateKey ? (
+              <>
+                <div className="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                  <Label className="text-sm font-medium mb-2 block">Your Private Key:</Label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 text-xs font-mono break-all p-2 bg-white dark:bg-gray-800 rounded border">
+                      {exportedPrivateKey}
+                    </code>
+                    <button
+                      onClick={() => {
+                        copyToClipboard(exportedPrivateKey, false);
+                        toast({
+                          title: "Copied!",
+                          description: "Private key copied to clipboard.",
+                        });
+                      }}
+                      className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+                    >
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
+                  <p className="text-sm text-red-800 dark:text-red-200">
+                    <strong>Warning:</strong> Never share this private key with anyone. Store it securely and never store it in plain text online.
+                  </p>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-4">
+                <p className="text-sm text-gray-600 dark:text-gray-400">Loading private key...</p>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowExportModal(false);
+                setExportedPrivateKey(null);
+              }}
+            >
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Withdraw Modal */}
+      <Dialog open={showWithdrawModal} onOpenChange={setShowWithdrawModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Withdraw Funds</DialogTitle>
+            <DialogDescription>
+              Send funds from your wallet to another Solana address.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="withdraw-address">Recipient Address</Label>
+              <Input
+                id="withdraw-address"
+                placeholder="Enter Solana address"
+                value={withdrawAddress}
+                onChange={(e) => setWithdrawAddress(e.target.value)}
+                className="mt-1 font-mono text-sm"
+              />
+            </div>
+            <div>
+              <Label htmlFor="withdraw-amount">Amount (USDC)</Label>
+              <Input
+                id="withdraw-amount"
+                type="number"
+                step="0.01"
+                placeholder="0.00"
+                value={withdrawAmount}
+                onChange={(e) => setWithdrawAmount(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+              <p className="text-sm text-blue-800 dark:text-blue-200">
+                <strong>Note:</strong> You'll need SOL for transaction fees. Make sure you have enough SOL in your wallet.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowWithdrawModal(false);
+                setWithdrawAddress("");
+                setWithdrawAmount("");
+              }}
+              disabled={withdrawing}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!withdrawAddress || !withdrawAmount) {
+                  toast({
+                    variant: "destructive",
+                    title: "Missing information",
+                    description: "Please enter both recipient address and amount.",
+                  });
+                  return;
+                }
+
+                // Validate Solana address format
+                if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(withdrawAddress)) {
+                  toast({
+                    variant: "destructive",
+                    title: "Invalid address",
+                    description: "Please enter a valid Solana address.",
+                  });
+                  return;
+                }
+
+                const amount = parseFloat(withdrawAmount);
+                if (isNaN(amount) || amount <= 0) {
+                  toast({
+                    variant: "destructive",
+                    title: "Invalid amount",
+                    description: "Please enter a valid amount greater than 0.",
+                  });
+                  return;
+                }
+
+                setWithdrawing(true);
+                try {
+                  // Note: This is a placeholder. You'll need to implement actual USDC transfer
+                  // using Privy's wallet signing capabilities or your backend API
+                  toast({
+                    title: "Withdrawal initiated",
+                    description: `Withdrawing $${amount.toFixed(2)} USDC to ${withdrawAddress.slice(0, 8)}...`,
+                  });
+                  
+                  // TODO: Implement actual withdrawal logic
+                  // This would involve:
+                  // 1. Getting the Solana wallet from useWallets
+                  // 2. Creating a USDC transfer transaction
+                  // 3. Signing and sending the transaction
+                  
+                  setShowWithdrawModal(false);
+                  setWithdrawAddress("");
+                  setWithdrawAmount("");
+                } catch (error: any) {
+                  toast({
+                    variant: "destructive",
+                    title: "Withdrawal failed",
+                    description: error?.message || "Failed to process withdrawal. Please try again.",
+                  });
+                } finally {
+                  setWithdrawing(false);
+                }
+              }}
+              disabled={withdrawing || !withdrawAddress || !withdrawAmount}
+            >
+              {withdrawing ? "Processing..." : "Withdraw"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

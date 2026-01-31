@@ -25,7 +25,7 @@ export class ClaimsService {
    * Create a new payment claim
    */
   async create(dto: CreateClaimDto): Promise<{ id: string; link: string }> {
-    const { amount, toSel, recipient, userId, userEmail } = dto;
+    const { amount, toSel, recipient, userId } = dto;
 
     if (!amount || !toSel?.symbol || !toSel?.chain || !recipient) {
       throw new BadRequestException('Missing required fields');
@@ -38,7 +38,7 @@ export class ClaimsService {
         to_chain: String(toSel.chain),
         recipient_address: String(recipient),
         created_by: userId ? String(userId) : null,
-        creator_email: userEmail ? String(userEmail) : null,
+        creator_email: null,
         status: 'OPEN' as ClaimStatus,
       })
       .select('id')
@@ -61,7 +61,7 @@ export class ClaimsService {
    * Wallet address is never exposed to frontend
    */
   async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; link: string }> {
-    const { username, amount, userId, userEmail, isPrivate = false, description } = dto;
+    const { username, amount, userId, isPrivate = false, description } = dto;
 
     // Step 1: Get user by username
     const user = await this.usersService.findByUsername(username);
@@ -89,7 +89,7 @@ export class ClaimsService {
         to_chain: 'solana',
         recipient_address: walletAddress, // Stored in DB but never returned to frontend
         created_by: userId ? String(userId) : null,
-        creator_email: userEmail ? String(userEmail) : null,
+        creator_email: null,
         status: 'OPEN' as ClaimStatus,
         is_private: finalIsPrivate,
         description: description || null,
@@ -108,7 +108,6 @@ export class ClaimsService {
     console.log('claim', claim);
     console.log('link', link);
     console.log('userId', userId);
-    console.log('userEmail', userEmail);
     console.log('username', username);
     console.log('amount', amount);
     console.log('walletAddress', walletAddress);
@@ -132,7 +131,12 @@ export class ClaimsService {
       throw new NotFoundException(`Claim with ID ${id} not found`);
     }
 
-    return data;
+    const claim = data as Claim;
+    if (claim.created_by) {
+      const creator = await this.usersService.findByPrivyId(claim.created_by);
+      (claim as Claim & { creator_username?: string | null }).creator_username = creator?.username ?? null;
+    }
+    return claim;
   }
 
   /**
@@ -157,7 +161,13 @@ export class ClaimsService {
   /**
    * Update claim status
    */
-  async updateStatus(id: string, status: ClaimStatus, extra?: { txHash?: string; paidWith?: string; isPrivate?: boolean }): Promise<Claim> {
+  async updateStatus(id: string, status: ClaimStatus, extra?: { 
+    txHash?: string; 
+    paidWith?: string; 
+    isPrivate?: boolean;
+    paidWithToken?: string;
+    paidWithChain?: string;
+  }): Promise<Claim> {
     const updateData: Record<string, any> = { status };
     
     // Set paid_at timestamp when status becomes SUCCESS
@@ -168,6 +178,14 @@ export class ClaimsService {
     // Set is_private flag if provided (for private payments)
     if (extra?.isPrivate !== undefined) {
       updateData.is_private = extra.isPrivate;
+    }
+    
+    // Save payment information (what token/chain was used to pay)
+    if (extra?.paidWithToken) {
+      updateData.paid_with_token = extra.paidWithToken;
+    }
+    if (extra?.paidWithChain) {
+      updateData.paid_with_chain = extra.paidWithChain;
     }
     
     const { data, error } = await this.supabaseService.claims
@@ -241,8 +259,6 @@ export class ClaimsService {
         memo: params.memo || null,
         deadline: params.deadline ? new Date(params.deadline).toISOString() : null,
         time_estimate: params.timeEstimate || null,
-        from_chain: params.fromChain || null,
-        to_chain: params.toChain || null,
         status: params.status || 'PENDING_DEPOSIT',
         last_status_payload: null,
       })

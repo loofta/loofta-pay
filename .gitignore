@@ -18,6 +18,10 @@ dist
 service-account.json
 scripts
 recover-funds.js
+# Privy / auth keys (do not commit)
+*.pem
+private.pem
+public.pem
 
 # Backend build output
 apps/backend/dist

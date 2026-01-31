@@ -17,7 +17,7 @@ import { TokenIcon } from "@/components/TokenIcon";
 import Image from "next/image";
 import { getChainIcon } from "@/lib/chains";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Loader2, ArrowRight } from "lucide-react";
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { QRCodeSVG } from "qrcode.react";
 import { motion } from "framer-motion";
@@ -26,9 +26,11 @@ import { createSwapTransaction, getSwapStatus, checkSwapEligibility } from "@/se
 import { ACTIVE_SWAP_PROVIDER, getProviderDisplayName, type SwapProvider } from "@/config/swapProvider";
 import { ethers } from "ethers";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
 import { isDemoMode } from "@/config/demoMode";
 import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES } from "@/services/privacyCash";
-import { VersionedTransaction } from "@solana/web3.js";
+import { Connection, VersionedTransaction } from "@solana/web3.js";
+import { getRefundToForChain } from "@/lib/refundAddresses";
 import {
   isRhinestoneChainSupported,
   getSupportedTokensForChain,
@@ -46,7 +48,7 @@ async function fetchClaim(id: string) {
     if (r.ok) {
       const data = await r.json();
       return {
-        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; description?: string; is_private?: boolean },
+        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean; paid_with_token?: string; paid_with_chain?: string },
         latestIntent: data.intent ? {
           depositAddress: data.intent.deposit_address || null,
           memo: data.intent.memo ?? null,
@@ -72,7 +74,7 @@ async function fetchClaim(id: string) {
   console.log('r lisa here data', data);
 
   return {
-    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; description?: string; is_private?: boolean },
+    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean; paid_with_token?: string; paid_with_chain?: string },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -84,7 +86,69 @@ async function prepareDeposit(input: {
   amount: string;
   userAddress?: string;
   refundAddress?: string;
+  isPrivate?: boolean;
+  /** For private cross-chain to Solana: logged-in user's embedded Solana wallet (required) */
+  recipientSolanaAddress?: string;
 }) {
+  // For private cross-chain payments (to Solana USDC), user must be logged in; Near-Intents sends to their embedded Solana wallet
+  const originChain = String(input.fromToken?.chain || '').toLowerCase();
+  const destChain = String(input.claim?.to_chain || '').toLowerCase();
+  const isCrossChain = originChain !== destChain;
+  const isPrivateCrossChain = input.isPrivate && isCrossChain && (destChain === 'solana' || destChain === 'sol') && input.claim.to_symbol === 'USDC';
+
+  if (isPrivateCrossChain) {
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+
+    if (!input.fromToken.symbol) {
+      throw new Error('Token symbol is required for private cross-chain payments');
+    }
+    if (!input.recipientSolanaAddress) {
+      throw new Error('Private cross-chain to Solana requires login. Please connect your Loofta account — your embedded Solana wallet will receive the funds, then you complete the private transfer.');
+    }
+
+    const backendPayload = {
+      claimId: input.claimId,
+      fromToken: {
+        tokenId: input.fromToken.tokenId,
+        symbol: input.fromToken.symbol,
+        chain: input.fromToken.chain,
+        decimals: input.fromToken.decimals,
+      },
+      amount: input.amount,
+      ...(input.userAddress && { userAddress: input.userAddress }),
+      ...(input.refundAddress && { refundAddress: input.refundAddress }),
+      recipientSolanaAddress: input.recipientSolanaAddress,
+      isPrivate: true,
+    };
+
+    console.log('[prepareDeposit] Calling backend for private cross-chain payment:', {
+      backendUrl: `${backendUrl}/claims/deposit`,
+      payload: backendPayload,
+    });
+
+    const r = await fetch(`${backendUrl}/claims/deposit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(backendPayload),
+    });
+
+    if (!r.ok) {
+      const errData = await r.json().catch(() => ({}));
+      console.error('[prepareDeposit] Backend error:', {
+        status: r.status,
+        error: errData,
+      });
+      const err = new Error(errData?.error || errData?.message || "Failed to prepare deposit") as any;
+      err.code = errData?.code;
+      throw err;
+    }
+
+    const result = await r.json();
+    console.log('[prepareDeposit] Backend response:', result);
+    return result;
+  }
+
+  // For standard payments, use frontend API route
   const r = await fetch(`/api/claims/deposit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -151,10 +215,26 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const latestIntentData = useMemo(() => {
     return claimData?.latestIntent || null;
   }, [claimData]);
+
+  // Log claim + intent when data loads or updates
+  useEffect(() => {
+    if (!claimData) return;
+    console.log("[Claim] Data loaded/updated", {
+      claimId: claim?.id,
+      claimStatus: claim?.status,
+      isPrivate: claim?.is_private,
+      amount: claim?.amount,
+      toSymbol: claim?.to_symbol,
+      toChain: claim?.to_chain,
+      intentStatus: latestIntentData?.status,
+      intentDepositAddress: latestIntentData?.depositAddress ? latestIntentData.depositAddress.slice(0, 12) + "…" : null,
+    });
+  }, [claimData, claim?.id, claim?.status, claim?.is_private, claim?.amount, claim?.to_symbol, claim?.to_chain, latestIntentData?.status, latestIntentData?.depositAddress]);
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
   const [deposit, setDeposit] = useState<any>(null);
   const [preparing, setPreparing] = useState(false);
   const [quote, setQuote] = useState<{ amountInFormatted?: string; usd?: number; est?: number } | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [statusData, setStatusData] = useState<any>(null);
   const [speedUpOpen, setSpeedUpOpen] = useState<boolean>(false);
@@ -167,12 +247,16 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const [refundAddressError, setRefundAddressError] = useState<string | null>(null);
   const hasUpdatedClaimStatus = React.useRef<string | null>(null); // Track if we've already updated DB for this status
   const userCancelled = React.useRef<boolean>(false); // Track if user manually cancelled to prevent re-hydration
+  const privateTransferTriggeredRef = React.useRef<Set<string>>(new Set()); // Auto-run Privacy Cash once per claim when PRIVATE_TRANSFER_PENDING
+  const onPayPrivatelyRef = React.useRef<(() => Promise<void>) | null>(null);
   const { logout, login, authenticated, user } = usePrivy();
   const { wallets } = useWallets();
+  const { signMessage: privySignMessage } = usePrivySignMessage();
+  const { signTransaction: privySignTransaction } = usePrivySignTransaction();
 
   // Enforce private mode if claim requires it
   const requiresPrivate = claim?.is_private === true;
-  
+
   // Auto-set private mode when claim requires it
   useEffect(() => {
     if (requiresPrivate) {
@@ -359,7 +443,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     const entry = useClaimPayStore.getState().byId[id];
     if (entry?.fromSel) setFromSel(entry.fromSel as any);
     if (entry?.deposit) setDeposit(entry.deposit);
-    if (entry?.status) setStatus(entry.status);
+    if (entry?.status) {
+      console.log("[Claim] Hydrating status from store:", { claimId: id, status: entry.status });
+      setStatus(entry.status);
+    }
     if (entry?.refundAddress) setRefundAddress(entry.refundAddress);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -387,6 +474,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     // Set status if we have one and haven't set it yet
     if (d?.status && !status) {
       const s = String(d.status);
+      console.log("[Claim] Setting status from intent/deposit:", { claimId: id, status: s, from: "latestIntentData/deposit" });
       setStatus(s);
       useClaimPayStore.getState().setStatus(id, s);
     }
@@ -399,8 +487,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     // Map database status to UI status
     const statusMap: Record<string, string> = {
       "SUCCESS": "SUCCESS",
-      "IN_FLIGHT": "PROCESSING",
-      "PENDING_DEPOSIT": "PROCESSING",
+      "IN_FLIGHT": "IN_FLIGHT",
+      "PENDING_DEPOSIT": "PENDING_DEPOSIT",
+      "PRIVATE_TRANSFER_PENDING": "PRIVATE_TRANSFER_PENDING",
       "REFUNDED": "FAILED",
       "FAILED": "FAILED",
       "EXPIRED": "FAILED",
@@ -411,9 +500,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     // Update status if:
     // 1. We don't have a status yet, OR
     // 2. The claim status is SUCCESS (always sync SUCCESS from DB)
-    // 3. The claim status changed to a terminal state
+    // 3. The claim status changed to a terminal state or PRIVATE_TRANSFER_PENDING
     const isTerminalStatus = ["SUCCESS", "FAILED", "REFUNDED"].includes(mappedStatus);
-    if ((!status || mappedStatus === "SUCCESS" || isTerminalStatus) && mappedStatus !== "PENDING" && mappedStatus !== "CREATED") {
+    if ((!status || mappedStatus === "SUCCESS" || mappedStatus === "PRIVATE_TRANSFER_PENDING" || isTerminalStatus) && mappedStatus !== "PENDING" && mappedStatus !== "CREATED") {
       if (status !== mappedStatus) {
         console.log(`[Claim Status] Syncing status from DB: ${status} -> ${mappedStatus}`);
         setStatus(mappedStatus);
@@ -425,7 +514,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   useEffect(() => {
     (async () => {
       setQuote(null);
-      if (!claim || !selectedFrom) return;
+      if (!claim || !selectedFrom) {
+        setQuoteLoading(false);
+        return;
+      }
+      setQuoteLoading(true);
       try {
         const r = await fetch(`/api/claims/quote`, {
           method: "POST",
@@ -436,6 +529,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
             destToken: { tokenId: destToken?.tokenId || destToken?.address, decimals: destToken?.decimals, chain: destToken?.chain, price: destToken?.price },
             fromTokenPriceUSD: selectedFrom?.price,
             destTokenPriceUSD: destToken?.price,
+            // For quotes, always use a generated mock refund address (user field is only used for real deposit)
+            refundAddress: getRefundToForChain(selectedFrom.chain),
           }),
         });
         const data = await r.json();
@@ -446,8 +541,27 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
             const est = typeof data?.amountInEst === "number" ? data.amountInEst : undefined;
             setQuote({ usd, est });
           }
+        } else {
+          // Fallback: try simple calculation if we have token price
+          if (selectedFrom.price && selectedFrom.price > 0 && claim?.amount) {
+            const amountUsd = parseFloat(claim.amount);
+            const tokenPrice = selectedFrom.price;
+            const tokenAmount = amountUsd / tokenPrice;
+            setQuote({ amountInFormatted: tokenAmount.toFixed(6) });
+          }
         }
-      } catch { }
+      } catch (e) {
+        console.error("[Claim] Failed to fetch quote:", e);
+        // Fallback: try simple calculation if we have token price
+        if (selectedFrom.price && selectedFrom.price > 0 && claim?.amount) {
+          const amountUsd = parseFloat(claim.amount);
+          const tokenPrice = selectedFrom.price;
+          const tokenAmount = amountUsd / tokenPrice;
+          setQuote({ amountInFormatted: tokenAmount.toFixed(6) });
+        }
+      } finally {
+        setQuoteLoading(false);
+      }
     })();
   }, [id, claim, selectedFrom, destToken?.tokenId, destToken?.price, destToken?.decimals]);
 
@@ -476,13 +590,17 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
     if (!claim || !selectedFrom) return;
 
-    // Validate refund address
+    // User MUST provide a real refund address for the actual deposit
     if (!refundAddress.trim()) {
       setRefundAddressError("Please enter a refund address");
-      toast({ variant: "destructive", title: "Error", description: "Please enter a refund address." });
+      toast({ variant: "destructive", title: "Error", description: "Please enter a refund address for refunds." });
       return;
     }
-    if (!validateRefundAddress(refundAddress, selectedFrom.chain)) {
+
+    const finalRefundAddress = refundAddress.trim();
+
+    // Validate refund address format
+    if (!validateRefundAddress(finalRefundAddress, selectedFrom.chain)) {
       setRefundAddressError(`Invalid ${selectedFrom.chain} address format`);
       toast({ variant: "destructive", title: "Error", description: `Invalid refund address format for ${selectedFrom.chain.toUpperCase()}.` });
       return;
@@ -514,6 +632,48 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       // Get user's wallet address for intents mode
       const userWalletAddress = wallets[0]?.address;
 
+      // Determine if this is a private payment
+      const isUSDCOnSolana = selectedFrom.symbol === 'USDC' && selectedFrom.chain?.toLowerCase() === 'solana';
+      const isPrivatePayment = requiresPrivate || (isPrivateMode && !isUSDCOnSolana);
+
+      // For private cross-chain to Solana: require user's embedded Solana wallet (they must be logged in)
+      const destChainLower = (claim.to_chain || '').toLowerCase();
+      const isPrivateCrossChainToSolana = isPrivatePayment && (destChainLower === 'solana' || destChainLower === 'sol') && claim.to_symbol === 'USDC';
+      // Privy: get embedded Solana wallet from useWallets() first, then fallback to user.linkedAccounts (embedded wallet may only appear there)
+      let solanaAddress: string | undefined;
+      if (isPrivateCrossChainToSolana) {
+        const fromWallets = wallets?.find((w) => {
+          const wa = w as { walletClientType?: string; chainType?: string; address?: string };
+          const isSolana = wa.chainType === 'solana' || wa.chainType === 'sol';
+          const looksLikeSolana = wa.address && wa.address.length >= 32 && wa.address.length <= 44 && !wa.address.startsWith('0x');
+          return isSolana || looksLikeSolana;
+        });
+        solanaAddress = fromWallets?.address;
+        if (!solanaAddress && authenticated && user?.linkedAccounts?.length) {
+          const linkedWallets = (user.linkedAccounts as any[]).filter(
+            (a: any) => a.type === 'wallet' || a.type === 'smart_wallet'
+          );
+          const solanaLinked = linkedWallets.find((a: any) => {
+            const addr = a.address;
+            return addr && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr);
+          });
+          solanaAddress = solanaLinked?.address;
+        }
+      }
+      if (isPrivateCrossChainToSolana && !solanaAddress) {
+        console.log("[Claim] Prepare: private cross-chain to Solana but no embedded wallet");
+        toast({
+          variant: "destructive",
+          title: "Login required for private payment",
+          description: "Please log in with Loofta. Your embedded Solana wallet will receive the funds; then you complete the private transfer in the app.",
+        });
+        setPreparing(false);
+        return;
+      }
+      if (isPrivateCrossChainToSolana && solanaAddress) {
+        console.log("[Claim] Prepare: private cross-chain to Solana, recipientSolanaAddress (embedded wallet):", solanaAddress.slice(0, 8) + "…");
+      }
+
       const res = await prepareDeposit({
         claimId: id,
         claim: {
@@ -526,7 +686,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain, symbol: selectedFrom.symbol },
         amount: claim.amount,
         userAddress: userWalletAddress,
-        refundAddress: refundAddress.trim(),
+        refundAddress: finalRefundAddress,
+        isPrivate: isPrivatePayment,
+        ...(isPrivateCrossChainToSolana && solanaAddress && { recipientSolanaAddress: solanaAddress }),
       });
 
       // Handle different response types
@@ -581,8 +743,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   }
 
   async function onPayPrivately() {
+    console.log("[PrivateTransfer] onPayPrivately called", { claimId: claim?.id, isPrivate: claim?.is_private, isPrivateMode, authenticated });
     // Enforce private mode if claim requires it
     if (claim?.is_private && !isPrivateMode) {
+      console.log("[PrivateTransfer] Enforcing private mode");
       setIsPrivateMode(true);
       toast({
         variant: "destructive",
@@ -593,87 +757,91 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     }
 
     if (!claim || !usdcSolanaToken) {
+      console.log("[PrivateTransfer] Early exit: no claim or usdcSolanaToken");
       toast({ variant: "destructive", title: "Error", description: "Private payment requires USDC on Solana." });
       return;
     }
 
+    const recipient = String(claim?.recipient_address || "").trim();
+    if (!recipient) {
+      console.log("[PrivateTransfer] Early exit: no recipient");
+      toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
+      return;
+    }
+
+    const amountUSD = parseFloat(claim.amount);
+    if (!amountUSD || amountUSD <= 0) {
+      console.log("[PrivateTransfer] Early exit: invalid amount", { amount: claim.amount });
+      toast({ variant: "destructive", title: "Invalid amount", description: "Please enter a valid amount." });
+      return;
+    }
+
+    console.log("[PrivateTransfer] Starting", { claimId: claim.id, amountUSD, recipient: recipient.slice(0, 8) + "…", walletsCount: wallets?.length ?? 0 });
+    setPreparing(true);
+
     try {
-      // Get Phantom wallet from window
-      const phantomProvider = (window as any).phantom?.solana;
-      if (!phantomProvider) {
+      // Prefer embedded Solana wallet (Privy) – same wallet that received the funds
+      let walletAddress: string | undefined;
+      const fromWallets = wallets?.find((w) => {
+        const wa = w as { walletClientType?: string; chainType?: string; address?: string };
+        const isSolana = wa.chainType === 'solana' || wa.chainType === 'sol';
+        const looksLikeSolana = wa.address && wa.address.length >= 32 && wa.address.length <= 44 && !wa.address.startsWith('0x');
+        return isSolana || looksLikeSolana;
+      });
+      walletAddress = fromWallets?.address;
+      if (!walletAddress && authenticated && user?.linkedAccounts?.length) {
+        const linkedWallets = (user.linkedAccounts as any[]).filter(
+          (a: any) => a.type === 'wallet' || a.type === 'smart_wallet'
+        );
+        const solanaLinked = linkedWallets.find((a: any) => {
+          const addr = a.address;
+          return addr && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr);
+        });
+        walletAddress = solanaLinked?.address;
+      }
+      console.log("[PrivateTransfer] Wallet resolution", { walletAddress: walletAddress ? walletAddress.slice(0, 8) + "…" : undefined, authenticated, fromWallets: !!fromWallets });
+
+      let signMessage: (msg: string) => Promise<Uint8Array>;
+      let signTransaction: (tx: VersionedTransaction) => Promise<VersionedTransaction>;
+
+      // Private payments always use the same embedded Solana wallet that received the Near-Intents swap
+      if (!walletAddress || !authenticated) {
+        console.log("[PrivateTransfer] Early exit: no wallet or not authenticated");
         toast({
           variant: "destructive",
-          title: "Phantom wallet required",
-          description: "Please install Phantom wallet to make private payments."
+          title: "Log in required",
+          description: "Please log in with Loofta. Your embedded Solana wallet is used for this private payment."
         });
+        setPreparing(false);
         return;
       }
 
-      // Connect to Phantom if not already connected
-      if (!phantomProvider.isConnected) {
-        await phantomProvider.connect();
-      }
+      const solanaRpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL
+        || (process.env.NEXT_PUBLIC_HELIUS_API_KEY
+          ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
+          : "https://api.mainnet-beta.solana.com");
+      const connection = new Connection(solanaRpcUrl);
 
-      const recipient = String(claim?.recipient_address || "").trim();
-      if (!recipient) {
-        toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
-        return;
-      }
-
-      const amountUSD = parseFloat(claim.amount);
-      if (!amountUSD || amountUSD <= 0) {
-        toast({ variant: "destructive", title: "Invalid amount", description: "Please enter a valid amount." });
-        return;
-      }
-
-      setPreparing(true);
-
-      // Get wallet address from Phantom
-      const walletAddress = phantomProvider.publicKey?.toString();
-      console.log('[Private Payment] Phantom wallet address:', walletAddress);
-      if (!walletAddress) {
-        throw new Error("Could not get wallet address from Phantom");
-      }
-
-      console.log('[Private Payment] Payment details:', {
-        walletAddress,
-        amountUSD,
-        recipientAddress: recipient,
-        claimId: claim.id,
-      });
-
-      // Sign message callback
-      const signMessage = async (msg: string): Promise<Uint8Array> => {
-        console.log('[Private Payment] Signing message:', msg);
-        try {
-          const encoded = new TextEncoder().encode(msg);
-          const signed = await phantomProvider.signMessage(encoded, 'utf8');
-          console.log('[Private Payment] Message signed, signature length:', signed.signature.length);
-          return Uint8Array.from(signed.signature);
-        } catch (error) {
-          console.error('[Private Payment] Error signing message:', error);
-          throw error;
-        }
-      };
-
-      // Sign transaction callback
-      const signTransaction = async (tx: VersionedTransaction): Promise<VersionedTransaction> => {
-        console.log('[Private Payment] Signing transaction:', {
-          numSignatures: tx.signatures.length,
-          message: tx.message ? 'present' : 'missing',
+      signMessage = async (msg: string): Promise<Uint8Array> => {
+        const sig = await privySignMessage({
+          message: new TextEncoder().encode(msg),
+          options: { address: walletAddress },
         });
-        try {
-          const signed = await phantomProvider.signTransaction(tx);
-          console.log('[Private Payment] Transaction signed successfully');
-          return signed;
-        } catch (error) {
-          console.error('[Private Payment] Error signing transaction:', error);
-          throw error;
-        }
+        return sig;
       };
+      signTransaction = async (tx: VersionedTransaction): Promise<VersionedTransaction> => {
+        const signed = await privySignTransaction({
+          transaction: tx,
+          connection,
+          address: walletAddress,
+        });
+        return signed as VersionedTransaction;
+      };
+      console.log("[PrivateTransfer] Using embedded Solana wallet:", walletAddress);
+      console.log("[PrivateTransfer] Payment details:", { walletAddress, amountUSD, recipientAddress: recipient, claimId: claim.id, recipientPaysFees: requiresPrivate });
 
       // Execute private payment
-      console.log('[Private Payment] Calling payPrivatelyWithPrivacyCash...');
+      console.log("[PrivateTransfer] Calling payPrivatelyWithPrivacyCash…");
       const result = await payPrivatelyWithPrivacyCash({
         walletAddress,
         amountUSD,
@@ -683,9 +851,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         recipientPaysFees: requiresPrivate, // If claim requires private, recipient pays fees
       });
 
-      console.log('[Private Payment] Result:', result);
+      console.log("[PrivateTransfer] payPrivatelyWithPrivacyCash result:", result);
 
       if (result.success) {
+        console.log("[PrivateTransfer] Success, updating claim status to SUCCESS", { signature: result.signature });
         toast({ title: "Payment successful!", description: "Your private payment has been completed." });
         // Update claim status with transaction signature and is_private flag
         if (result.signature) {
@@ -699,16 +868,37 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         useClaimPayStore.getState().setStatus(id, "SUCCESS");
         // Refresh claim data
         await claimQuery.refetch();
+        console.log("[PrivateTransfer] Claim refetched, flow complete");
       } else {
+        console.log("[PrivateTransfer] SDK returned success: false", result.error);
         throw new Error(result.error || 'Private payment failed');
       }
     } catch (error: any) {
-      console.error('[Private Payment] Error:', error);
+      console.error("[PrivateTransfer] Error:", error);
       toast({ variant: "destructive", title: "Payment failed", description: error?.message || "Could not complete private payment" });
     } finally {
       setPreparing(false);
     }
   }
+
+  // Keep ref updated so auto-trigger effect can call latest onPayPrivately
+  useEffect(() => {
+    onPayPrivatelyRef.current = onPayPrivately;
+  });
+
+  // When funds arrive in embedded wallet (PRIVATE_TRANSFER_PENDING), run Privacy Cash automatically
+  useEffect(() => {
+    const s = String(status || "").toUpperCase();
+    console.log("[Claim] Auto-trigger effect:", { status: s, claimId: claim?.id, isPrivate: claim?.is_private, alreadyTriggered: claim?.id ? privateTransferTriggeredRef.current.has(claim.id) : false });
+    if (s !== "PRIVATE_TRANSFER_PENDING" || !claim?.is_private || !claim?.id) return;
+    if (privateTransferTriggeredRef.current.has(claim.id)) {
+      console.log("[Claim] Skipping auto-trigger (already ran for this claim):", claim.id);
+      return;
+    }
+    privateTransferTriggeredRef.current.add(claim.id);
+    console.log("[Claim] Auto-running Privacy Cash for claim:", claim.id);
+    onPayPrivatelyRef.current?.();
+  }, [status, claim?.id, claim?.is_private]);
 
   async function onPayNow() {
     if (!claim || !selectedFrom || !destToken) return;
@@ -840,9 +1030,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
           // Skip-funding: companion already funded, deposit happened earlier
           // Use current time as deposit received (or we could track when companion was funded)
           const depositReceivedAt = new Date().toISOString();
-          setStatus("PROCESSING");
+          setStatus("PROCESSING"); // UI status (display only)
           useClaimPayStore.getState().setStatus(id, "PROCESSING");
-          updateClaimStatus(id, "PROCESSING", {
+          updateClaimStatus(id, "IN_FLIGHT", { // DB status (valid constraint)
             paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}`,
             depositReceivedAt
           });
@@ -862,9 +1052,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
           // Deposit is received when funding transaction confirms
           const depositReceivedAt = new Date().toISOString();
-          setStatus("PROCESSING");
+          setStatus("PROCESSING"); // UI status (display only)
           useClaimPayStore.getState().setStatus(id, "PROCESSING");
-          updateClaimStatus(id, "PROCESSING", {
+          updateClaimStatus(id, "IN_FLIGHT", { // DB status (valid constraint)
             paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}`,
             depositReceivedAt // Pass deposit time to API
           });
@@ -912,9 +1102,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         // Non-Rhinestone flow (Biconomy or others)
         // Deposit happens when transaction is sent (before confirmation)
         const depositReceivedAt = new Date().toISOString();
-        setStatus("PROCESSING");
+        setStatus("PROCESSING"); // UI status (display only)
         useClaimPayStore.getState().setStatus(id, "PROCESSING");
-        updateClaimStatus(id, "PROCESSING", {
+        updateClaimStatus(id, "IN_FLIGHT", { // DB status (valid constraint)
           paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}`,
           depositReceivedAt
         });
@@ -1005,7 +1195,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         const destinationAsset = statusQuery.data?.destinationAsset;
 
         // Deposit was just detected - record the time
-        updateClaimStatus(id, "PROCESSING", {
+        updateClaimStatus(id, "IN_FLIGHT", { // DB status (valid constraint)
           paidWith: paidToken?.symbol
             ? `${paidToken.symbol} on ${paidToken.chain || selectedFrom?.chain}`
             : selectedFrom?.symbol
@@ -1080,12 +1270,12 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       return;
     }
 
-    // Optimistic UI: immediately set status to PROCESSING
-    setStatus("PROCESSING");
-    useClaimPayStore.getState().setStatus(id, "PROCESSING");
+    // Optimistic UI: immediately set status to IN_FLIGHT (PROCESSING is not a valid DB status)
+    setStatus("IN_FLIGHT");
+    useClaimPayStore.getState().setStatus(id, "IN_FLIGHT");
 
     // Update claim status in database
-    updateClaimStatus(id, "PROCESSING", { txHash: hash }).catch((e) => {
+    updateClaimStatus(id, "IN_FLIGHT", { txHash: hash }).catch((e) => {
       console.error("[onSubmitTxHash] Failed to update claim status:", e);
     });
 
@@ -1353,7 +1543,24 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               <span className="text-gray-600">Paid with</span>
                               <span className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
                                 {(() => {
-                                  // For private payments, calculate the total amount paid (requested + fees)
+                                  // Use actual payment info from database if available
+                                  if (claim?.paid_with_token && claim?.paid_with_chain) {
+                                    // Find the token that was actually used to pay
+                                    const paidTokenObj = tokens.find(t =>
+                                      t.symbol?.toUpperCase() === claim.paid_with_token.toUpperCase() &&
+                                      t.chain?.toLowerCase() === claim.paid_with_chain.toLowerCase()
+                                    );
+                                    // Show the actual amount requested (not fees - fees are deducted from recipient for private)
+                                    const amountPaid = parseFloat(claim?.amount || "0");
+                                    return (
+                                      <>
+                                        <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={18} />
+                                        <span>${amountPaid.toFixed(2)} {claim.paid_with_token} ({claim.paid_with_chain})</span>
+                                      </>
+                                    );
+                                  }
+
+                                  // Fallback: For private payments, calculate the total amount paid (requested + fees)
                                   if (claim?.is_private) {
                                     const requestedAmount = parseFloat(claim?.amount || "0");
                                     const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
@@ -1407,6 +1614,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             fromChain={selectedFrom?.chain}
                             toChain={destToken?.chain}
                             depositAddress={deposit?.depositAddress}
+                            isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
                             paidAt={claim.paid_at}
                             paymentType={
                               deposit?.isDirect ? 'direct' :
@@ -1421,11 +1629,13 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                       <>
                         <div className="mb-3 flex items-start justify-between">
                           <div className="text-base font-medium text-gray-700">Payment request</div>
-                          {claim?.creator_email ? (
+                          {claim?.created_by ? (
                             <div className="text-sm text-gray-600">
-                              {claim.creator_email}
+                              {claim.creator_username ? `@${claim.creator_username}` : 'User'}
                             </div>
-                          ) : null}
+                          ) : (
+                            <div className="text-sm text-gray-500">Anonymous</div>
+                          )}
                         </div>
                         {claim?.description && (
                           <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
@@ -1540,7 +1750,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             </div>
                           </div>
                         )}
-                        
+
                         {/* Show private-only indicator if claim requires it */}
                         {requiresPrivate && (
                           <div className="mt-5 flex items-center gap-2 text-sm text-gray-600">
@@ -1557,28 +1767,142 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                         <div className="mt-5">
                           <div className="text-base font-medium text-gray-700 mb-2">Pay with</div>
 
-                          {isPrivateMode || requiresPrivate ? (
-                            /* Private mode - fixed to USDC on Solana */
+                          {requiresPrivate || isPrivateMode ? (
+                            /* Private mode (required or optional) - Show USDC on SOL as best option, but allow other tokens */
                             <>
-                              <div className="flex items-center gap-3 p-3 h-14 rounded-lg border border-amber-300 bg-amber-50">
-                                <TokenIcon token={usdcSolanaToken} chain="solana" size={28} />
-                                <span className="text-lg font-semibold text-gray-900">USDC</span>
-                                <span className="text-sm text-gray-600">on Solana</span>
-                                <span className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-amber-200 text-amber-800 text-xs font-medium">
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                                    <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" fill="currentColor" />
-                                  </svg>
-                                  Private
-                                </span>
+                              {/* Best option: Pay USDC on SOL (FREE) - uses Privacy Cash directly */}
+                              {usdcSolanaToken && (
+                                <div className="mb-4">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
+                                    }}
+                                    className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
+                                      ? 'border-green-400 bg-green-100'
+                                      : 'border-gray-300 bg-white hover:bg-gray-50'
+                                      }`}
+                                  >
+                                    <TokenIcon token={usdcSolanaToken} chain="solana" size={32} />
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-lg font-semibold text-gray-900">Pay USDC on Solana</span>
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
+                                          FREE
+                                        </span>
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-200 text-amber-800 text-xs font-medium">
+                                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+                                            <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" fill="currentColor" />
+                                          </svg>
+                                          Private
+                                        </span>
+                                      </div>
+                                      <div className="text-sm text-gray-600 mt-0.5">
+                                        Fastest option • Uses Privacy Cash for privacy
+                                      </div>
+                                    </div>
+                                    {selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain && (
+                                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-600">
+                                        <path d="M20 6L9 17l-5-5" />
+                                      </svg>
+                                    )}
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* Divider */}
+                              <div className="relative mb-4">
+                                <div className="absolute inset-0 flex items-center">
+                                  <div className="w-full border-t border-gray-300"></div>
+                                </div>
+                                <div className="relative flex justify-center text-sm">
+                                  <span className="px-2 bg-white text-gray-500">or choose another token</span>
+                                </div>
                               </div>
-                              <div className="mt-2 text-sm text-amber-700">
-                                Your payment is shielded and untraceable using Privacy Cash
+
+                              {/* Token selector - hide Solana to avoid swapping to USDC before Privacy Cash */}
+                              <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
+                                <TokenCombobox
+                                  tokens={filteredTokens as any}
+                                  value={fromSel}
+                                  onChange={(sel) => {
+                                    // Check if token is unsupported
+                                    const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
+                                    if (selected?._unsupported) {
+                                      toast({
+                                        variant: "destructive",
+                                        title: "Token not supported",
+                                        description: selected._reason || "This token cannot be used for this payment."
+                                      });
+                                      return;
+                                    }
+                                    setFromSel(sel);
+                                  }}
+                                  placeholder="Select token to pay with"
+                                  onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                                  hideChains={['solana', 'sol']} // Hide Solana to avoid swapping to USDC before Privacy Cash
+                                  className={`bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain)
+                                    ? 'border-emerald-400 hover:bg-emerald-50'
+                                    : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'
+                                    }`}
+                                />
                               </div>
+                              {/* Selected Token Display - Show when a token is selected */}
+                              {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? (
+                                <motion.div
+                                  initial={{ opacity: 0, y: -10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ duration: 0.2 }}
+                                  className="mt-4"
+                                >
+                                  <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                                          <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
+                                        </div>
+                                        <div>
+                                          <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send approximately</p>
+                                          {quoteLoading ? (
+                                            <div className="flex items-center gap-2">
+                                              <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                                              <p className="text-lg font-bold text-emerald-900">Calculating...</p>
+                                            </div>
+                                          ) : (
+                                            <p className="text-lg font-bold text-emerald-900">
+                                              {quote?.amountInFormatted
+                                                ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                                : quote?.est
+                                                  ? `${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
+                                                  : quote?.usd
+                                                    ? `≈ $${quote.usd.toFixed(2)}`
+                                                    : selectedFrom.price && claim?.amount
+                                                      ? `${roundUpDecimals((parseFloat(claim.amount) / selectedFrom.price).toFixed(6), 6)} ${selectedFrom.symbol}`
+                                                      : "Unable to calculate"}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <ArrowRight className="w-5 h-5 text-emerald-600" />
+                                    </div>
+                                  </div>
+                                </motion.div>
+                              ) : selectedFrom && selectedFrom.symbol === usdcSolanaToken?.symbol && selectedFrom.chain === usdcSolanaToken?.chain ? (
+                                <div className="mt-2 text-sm text-amber-700">
+                                  Payment will use Privacy Cash for complete privacy
+                                </div>
+                              ) : null}
+                              {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) && (
+                                <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                                  <span className="font-medium">Private payment:</span> Your token will be swapped to USDC on Solana via Near-Intents, then processed through Privacy Cash for privacy.
+                                </div>
+                              )}
                               {(() => {
                                 const requestedAmount = parseFloat(claim?.amount || "0");
-                                
-                                // If requiresPrivate is true, recipient pays fees - payer only pays exact amount
-                                if (requiresPrivate) {
+                                const isUSDCSelected = selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain;
+
+                                // If requiresPrivate is true, recipient pays fees - payer only pays exact amount (only for USDC)
+                                if (requiresPrivate && isUSDCSelected) {
                                   return (
                                     <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                                       <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
@@ -1595,84 +1919,168 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   );
                                 }
 
-                                // Optional private payment - payer covers fees
-                                const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-                                const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+                                // Optional private payment - payer covers fees (only for USDC)
+                                if (isUSDCSelected && !requiresPrivate) {
+                                  const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
+                                  const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+                                  const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
+                                  const withdrawalFee = withdrawalAmountNeeded * feeRate;
+                                  const rentFeeAmount = rentFee;
+                                  const totalToPay = withdrawalAmountNeeded;
 
-                                // Calculate withdrawal amount needed so recipient receives exactly requestedAmount
-                                // withdrawalAmount = (requestedAmount + rentFee) / (1 - feeRate)
-                                const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
-                                const withdrawalFee = withdrawalAmountNeeded * feeRate;
-                                const totalFees = withdrawalFee + rentFee;
-                                const totalToPay = withdrawalAmountNeeded; // This is what we deposit and withdraw
-
-                                return (
-                                  <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                                    <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
-                                    <div className="space-y-1.5 text-sm">
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-gray-600">Recipient receives</span>
-                                        <span className="font-semibold text-gray-900">${requestedAmount.toFixed(2)}</span>
-                                      </div>
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-gray-600">Withdrawal fee (0.35%)</span>
-                                        <span className="text-gray-700">${withdrawalFee.toFixed(6)}</span>
-                                      </div>
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-gray-600">Rent fee</span>
-                                        <span className="text-gray-700">${rentFee.toFixed(6)}</span>
-                                      </div>
-                                      <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
-                                        <span className="font-medium text-gray-900">Total to pay</span>
-                                        <span className="font-semibold text-lg text-gray-900">${totalToPay.toFixed(6)}</span>
-                                      </div>
-                                      <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
-                                        Fees are deducted automatically by Privacy Cash during withdrawal
+                                  return (
+                                    <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                                      <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
+                                      <div className="space-y-1.5 text-sm">
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-gray-600">Recipient receives</span>
+                                          <span className="font-semibold text-gray-900">${requestedAmount.toFixed(2)}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-gray-600">Withdrawal fee (0.35%)</span>
+                                          <span className="text-gray-700">${withdrawalFee.toFixed(6)}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-gray-600">Rent fee</span>
+                                          <span className="text-gray-700">${rentFeeAmount.toFixed(6)}</span>
+                                        </div>
+                                        <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
+                                          <span className="font-medium text-gray-900">Total to pay</span>
+                                          <span className="font-semibold text-lg text-gray-900">${totalToPay.toFixed(6)}</span>
+                                        </div>
+                                        <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
+                                          Fees are deducted automatically by Privacy Cash during withdrawal
+                                        </div>
                                       </div>
                                     </div>
-                                  </div>
-                                );
+                                  );
+                                }
+
+                                // For other tokens in private mode, show estimated amount only
+                                return null;
                               })()}
                             </>
                           ) : (
-                            /* Standard mode - token selector - Only show if not required private */
+                            /* Standard mode - Show USDC on SOL (FREE) option first, then token selector */
                             <>
-                              <TokenCombobox
-                                tokens={filteredTokens as any}
-                                value={fromSel}
-                                onChange={(sel) => {
-                                  // Check if token is unsupported
-                                  const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
-                                  if (selected?._unsupported) {
-                                    toast({
-                                      variant: "destructive",
-                                      title: "Token not supported",
-                                      description: selected._reason || "This token cannot be used for this payment."
-                                    });
-                                    return;
-                                  }
-                                  setFromSel(sel);
-                                }}
-                                placeholder="Select token to pay with"
-                                onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                                className="bg-white text-gray-900 border border-orange-200 hover:bg-orange-50 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none focus:border-orange-400 transition-colors"
-                              />
-                              {selectedFrom ? (
-                                <div className="mt-2 text-sm text-gray-700">
-                                  {quote?.amountInFormatted
-                                    ? `Estimated to send: ${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                    : quote?.est
-                                      ? `Estimated to send: ${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
-                                      : quote?.usd
-                                        ? `Estimated cost ≈ $${quote.usd.toFixed(2)}`
-                                        : ""}
+                              {/* Best option: Pay USDC on SOL (FREE) - uses Privacy Cash */}
+                              {usdcSolanaToken && (
+                                <div className="mb-4">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
+                                      setIsPrivateMode(true); // Switch to private mode for USDC on SOL
+                                    }}
+                                    className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
+                                      ? 'border-green-400 bg-green-100'
+                                      : 'border-gray-300 bg-white hover:bg-gray-50'
+                                      }`}
+                                  >
+                                    <TokenIcon token={usdcSolanaToken} chain="solana" size={32} />
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-lg font-semibold text-gray-900">Pay USDC on Solana</span>
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
+                                          FREE
+                                        </span>
+                                      </div>
+                                      <div className="text-sm text-gray-600 mt-0.5">
+                                        Fastest option • Uses Privacy Cash for privacy
+                                      </div>
+                                    </div>
+                                    {selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain && (
+                                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-600">
+                                        <path d="M20 6L9 17l-5-5" />
+                                      </svg>
+                                    )}
+                                  </button>
                                 </div>
+                              )}
+
+                              {/* Divider */}
+                              <div className="relative mb-4">
+                                <div className="absolute inset-0 flex items-center">
+                                  <div className="w-full border-t border-gray-300"></div>
+                                </div>
+                                <div className="relative flex justify-center text-sm">
+                                  <span className="px-2 bg-white text-gray-500">or choose token</span>
+                                </div>
+                              </div>
+
+                              {/* Token selector - hide Solana to avoid swapping to USDC before Privacy Cash */}
+                              <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
+                                <TokenCombobox
+                                  tokens={filteredTokens as any}
+                                  value={fromSel}
+                                  onChange={(sel) => {
+                                    // Check if token is unsupported
+                                    const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
+                                    if (selected?._unsupported) {
+                                      toast({
+                                        variant: "destructive",
+                                        title: "Token not supported",
+                                        description: selected._reason || "This token cannot be used for this payment."
+                                      });
+                                      return;
+                                    }
+                                    setFromSel(sel);
+                                  }}
+                                  placeholder="Select token to pay with"
+                                  onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                                  hideChains={['solana', 'sol']} // Hide Solana to avoid swapping to USDC before Privacy Cash
+                                  className={`bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain)
+                                    ? 'border-emerald-400 hover:bg-emerald-50'
+                                    : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'
+                                    }`}
+                                />
+                              </div>
+                              {/* Selected Token Display - Show when a token is selected */}
+                              {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? (
+                                <motion.div
+                                  initial={{ opacity: 0, y: -10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ duration: 0.2 }}
+                                  className="mt-4"
+                                >
+                                  <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                                          <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
+                                        </div>
+                                        <div>
+                                          <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send approximately</p>
+                                          {quoteLoading ? (
+                                            <div className="flex items-center gap-2">
+                                              <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                                              <p className="text-lg font-bold text-emerald-900">Calculating...</p>
+                                            </div>
+                                          ) : (
+                                            <p className="text-lg font-bold text-emerald-900">
+                                              {quote?.amountInFormatted
+                                                ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                                : quote?.est
+                                                  ? `${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
+                                                  : quote?.usd
+                                                    ? `≈ $${quote.usd.toFixed(2)}`
+                                                    : selectedFrom.price && claim?.amount
+                                                      ? `${roundUpDecimals((parseFloat(claim.amount) / selectedFrom.price).toFixed(6), 6)} ${selectedFrom.symbol}`
+                                                      : "Unable to calculate"}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <ArrowRight className="w-5 h-5 text-emerald-600" />
+                                    </div>
+                                  </div>
+                                </motion.div>
                               ) : null}
                             </>
                           )}
 
-                          {/* Refund Address Input - Only show in standard mode and not required private */}
-                          {!isPrivateMode && !requiresPrivate && selectedFrom && (
+                          {/* Refund Address Input - Show when a token is selected (not USDC on Solana) */}
+                          {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) && (
                             <div className="mt-4 space-y-2">
                               <Label htmlFor="refundAddress" className="text-sm font-medium text-gray-700">
                                 Refund Address ({selectedFrom.chain.toUpperCase()})
@@ -1685,14 +2093,14 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   setRefundAddress(e.target.value);
                                   setRefundAddressError(null);
                                 }}
-                                placeholder={`Enter your ${selectedFrom.chain.toUpperCase()} address for refunds`}
+                                placeholder={`Enter ${selectedFrom.chain.toUpperCase()} address for refunds (pre-filled with a safe placeholder)`}
                                 className={refundAddressError ? "border-red-500 focus:border-red-500" : ""}
                               />
                               {refundAddressError && (
                                 <p className="text-sm text-red-600">{refundAddressError}</p>
                               )}
-                              <p className="text-sm text-gray-500">
-                                Funds will be refunded to this address if the payment fails or expires
+                              <p className="text-xs text-gray-500">
+                                Funds will be refunded to this address if the payment fails or expires. For quotes, a safe placeholder may be used.
                               </p>
                             </div>
                           )}
@@ -1708,23 +2116,48 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               </Button>
                             ) : (
                               <GradientActionButton
-                                onClick={isPrivateMode || requiresPrivate ? onPayPrivately : onPrepare}
+                                onClick={() => {
+                                  const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                                    selectedFrom?.chain === usdcSolanaToken?.chain;
+                                  if (!authenticated && !isUSDCOnSolana) {
+                                    login();
+                                    return;
+                                  }
+                                  if ((isPrivateMode || requiresPrivate) && isUSDCOnSolana) {
+                                    onPayPrivately();
+                                  } else {
+                                    onPrepare();
+                                  }
+                                }}
                                 disabled={
                                   requiresPrivate && !isPrivateMode
-                                    ? true // Disable if claim requires private but mode is not set
-                                    : isPrivateMode || requiresPrivate
-                                      ? (!usdcSolanaToken || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS")
-                                      : (!selectedFrom || preparing || !refundAddress.trim() || String(status || claim?.status || "").toUpperCase() === "SUCCESS")
+                                    ? true
+                                    : (() => {
+                                      const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                                        selectedFrom?.chain === usdcSolanaToken?.chain;
+                                      if (!authenticated && !isUSDCOnSolana) return false;
+                                      if (isPrivateMode || requiresPrivate) {
+                                        if (isUSDCOnSolana) {
+                                          return (!usdcSolanaToken || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
+                                        }
+                                        return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
+                                      }
+                                      return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
+                                    })()
                                 }
                                 loading={preparing}
                                 loadingText={isPrivateMode || requiresPrivate ? "Processing private payment…" : "Preparing…"}
                               >
-                                {requiresPrivate && !isPrivateMode 
-                                  ? "Private payment required"
-                                  : isPrivateMode || requiresPrivate
-                                    ? "Pay with Privacy Cash" 
-                                    : "Get deposit address"
-                                }
+                                {(() => {
+                                  const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                                    selectedFrom?.chain === usdcSolanaToken?.chain;
+                                  if (!authenticated && !isUSDCOnSolana) return "Login to pay";
+                                  if (requiresPrivate && !isPrivateMode) return "Private payment required";
+                                  if (isPrivateMode || requiresPrivate) {
+                                    return isUSDCOnSolana ? "Pay with Privacy Cash" : "Get deposit address";
+                                  }
+                                  return "Get deposit address";
+                                })()}
                               </GradientActionButton>
                             )}
                           </div>
@@ -1799,6 +2232,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                         deposit?.isCompanionSwap ? 'companion-swap' :
                                           'near-intent'
                                     }
+                                    isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
                                   />
                                 </div>
                                 <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -1818,7 +2252,24 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                       <span className="text-gray-600">Paid with</span>
                                       <span className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
                                         {(() => {
-                                          // For private payments, calculate the total amount paid (requested + fees)
+                                          // Use actual payment info from database if available
+                                          if (claim?.paid_with_token && claim?.paid_with_chain) {
+                                            // Find the token that was actually used to pay
+                                            const paidTokenObj = tokens.find(t =>
+                                              t.symbol?.toUpperCase() === claim.paid_with_token.toUpperCase() &&
+                                              t.chain?.toLowerCase() === claim.paid_with_chain.toLowerCase()
+                                            );
+                                            // Show the actual amount requested (not fees - fees are deducted from recipient for private)
+                                            const amountPaid = parseFloat(claim?.amount || "0");
+                                            return (
+                                              <>
+                                                <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={24} />
+                                                <span>${amountPaid.toFixed(2)} {claim.paid_with_token} ({claim.paid_with_chain})</span>
+                                              </>
+                                            );
+                                          }
+
+                                          // Fallback: For private payments, calculate the total amount paid (requested + fees)
                                           if (claim?.is_private) {
                                             const requestedAmount = parseFloat(claim?.amount || "0");
                                             const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
@@ -2011,13 +2462,16 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     const s = String(status || "PENDING_DEPOSIT").toUpperCase();
                                     let statusTitle = "Waiting for Deposit";
                                     let statusSubtitle: string | React.ReactNode = "Send the exact amount to the deposit address shown above.";
-                                    const isProcessing = s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX";
+                                    const isProcessing = s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX" || s === "PRIVATE_TRANSFER_PENDING";
                                     const isSuccess = s === "SUCCESS";
                                     const isWaiting = s === "PENDING_DEPOSIT" || !status;
 
                                     if (s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX") {
-                                      statusTitle = "Processing Your Payment";
+                                      statusTitle = "Route & swapping";
                                       statusSubtitle = "We're routing your funds and executing the swap. This usually takes 1-2 minutes.";
+                                    } else if (s === "PRIVATE_TRANSFER_PENDING") {
+                                      statusTitle = "Performing private deposit";
+                                      statusSubtitle = "Funds are in your wallet. Complete the private transfer to the recipient using the button below.";
                                     } else if (s === "INCOMPLETE_DEPOSIT") {
                                       statusTitle = "Incomplete Deposit";
                                       statusSubtitle = "Please send the remaining amount to complete your payment.";
@@ -2105,10 +2559,12 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     // Calculate steps and progress based on status
                                     const s = String(status || "PENDING_DEPOSIT").toUpperCase();
                                     let completedSteps = 0;
-                                    const totalSteps = 5; // deposit, routing, processing, sending, success
+                                    const totalSteps = 5; // deposit, routing, processing, private deposit, success
 
                                     if (s === 'SUCCESS') {
                                       completedSteps = 5;
+                                    } else if (s === 'PRIVATE_TRANSFER_PENDING') {
+                                      completedSteps = 3; // Route done, performing private deposit step
                                     } else if (s === 'PROCESSING' || s === 'KNOWN_DEPOSIT_TX') {
                                       completedSteps = 1; // Deposit completed, routing active
                                     } else if (s === 'INCOMPLETE_DEPOSIT') {
@@ -2140,6 +2596,34 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                       </div>
                                     );
                                   })()}
+
+                                  {/* PRIVATE_TRANSFER_PENDING: auto-runs Privacy Cash from embedded wallet; show progress or retry */}
+                                  {String(status || "").toUpperCase() === "PRIVATE_TRANSFER_PENDING" && claim?.is_private && (
+                                    <div className="mb-6 p-4 rounded-xl border-2 border-amber-200 bg-amber-50">
+                                      {preparing ? (
+                                        <p className="text-sm text-amber-900 flex items-center gap-2">
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                          Completing private transfer…
+                                        </p>
+                                      ) : (
+                                        <>
+                                          <p className="text-sm text-amber-900 mb-3">
+                                            Private transfer did not complete. You can retry below.
+                                          </p>
+                                          <GradientActionButton
+                                            onClick={async () => {
+                                              await onPayPrivately();
+                                            }}
+                                            disabled={preparing}
+                                            loading={preparing}
+                                            loadingText="Completing…"
+                                          >
+                                            Retry private transfer
+                                          </GradientActionButton>
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
 
                                   {/* QR Code and Deposit Address - BELOW STATUS MESSAGE */}
                                   <div className="mb-6 hidden">
@@ -2178,6 +2662,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                           deposit?.isCompanionSwap ? 'companion-swap' :
                                             'near-intent'
                                       }
+                                      isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
                                     />
                                   </div>
 
@@ -2189,6 +2674,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                         setDeposit(null);
                                         setStatus(null);
                                         setFromSel(undefined);
+                                        // Reset refund address - will be auto-populated by useEffect
                                         setRefundAddress("");
                                         setRefundAddressError(null);
                                         userCancelled.current = true;

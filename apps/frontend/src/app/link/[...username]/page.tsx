@@ -135,10 +135,10 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
 
     // Validate minimum amount for private payments (Privacy Cash requires $2 minimum)
     if (isPrivate && Number(amountUSD) < 2) {
-      toast({ 
-        variant: "destructive", 
-        title: "Minimum amount required", 
-        description: "Private payments require a minimum of $2.00 due to Privacy Cash fees." 
+      toast({
+        variant: "destructive",
+        title: "Minimum amount required",
+        description: "Private payments require a minimum of $3.00."
       });
       return;
     }
@@ -154,7 +154,6 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
         username: cleanUsername,
         amount: amountUSD,
         userId: user?.id,
-        userEmail: user?.email?.address,
         isPrivate: isPrivate,
         description: fullDescription || undefined,
       });
@@ -237,7 +236,7 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
                     />
                     {isPrivate && (
                       <div className="mt-2 text-sm text-gray-500">
-                        Minimum amount: $2.00 (Privacy Cash requirement)
+                        Minimum amount: $3.00
                       </div>
                     )}
 
@@ -310,10 +309,9 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
                         <GradientActionButton
                           onClick={handleCreatePaymentLink}
                           disabled={
-                            preparing || 
-                            !amountUSD || 
-                            Number(amountUSD) <= 0 || 
-                            (isPrivate && Number(amountUSD) < 2)
+                            preparing ||
+                            !amountUSD ||
+                            Number(amountUSD) < 3
                           }
                           loading={preparing}
                           loadingText="Creating payment link…"

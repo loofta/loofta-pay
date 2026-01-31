@@ -12,8 +12,10 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { UsernameSetupModal } from "@/components/UsernameSetupModal";
 import { UserMenu } from "@/components/UserMenu";
 import { WelcomeOnboarding } from "@/components/WelcomeOnboarding";
+import { BalanceModal } from "@/components/BalanceModal";
 import { getSolanaBalanceUSD } from "@/services/solanaBalance";
 import { useAuthStore } from "@/store/auth";
+import { useCallback } from "react";
 
 export function Header() {
   const { authenticated, email, userId, logout } = useAuth();
@@ -38,8 +40,10 @@ export function Header() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showUsernameModal, setShowUsernameModal] = useState(false);
   const [showWelcomeOnboarding, setShowWelcomeOnboarding] = useState(false);
+  const [showBalanceModal, setShowBalanceModal] = useState(false);
   const [balanceUSD, setBalanceUSD] = useState<string>("0.00");
   const [loadingBalance, setLoadingBalance] = useState(false);
+  const [solanaAddress, setSolanaAddress] = useState<string | null>(null);
 
   // Handle email-only login
   const handleRequestAccess = () => {
@@ -176,6 +180,7 @@ export function Header() {
   useEffect(() => {
     if (!authenticated || !privyUser) {
       setBalanceUSD("0.00");
+      setSolanaAddress(null);
       return;
     }
 
@@ -198,17 +203,19 @@ export function Header() {
         console.log("[Header] ❌ Solana wallet not found in linked accounts");
         console.log("[Header] Linked accounts:", linkedAccounts.length);
         setBalanceUSD("0.00");
+        setSolanaAddress(null);
         return;
       }
 
       // @ts-ignore
-      const solanaAddress = solanaLinkedWallet.address;
-      console.log("[Header] ✅ Found Solana wallet for balance:", solanaAddress);
-      
+      const addr = solanaLinkedWallet.address;
+      setSolanaAddress(addr);
+      console.log("[Header] ✅ Found Solana wallet for balance:", addr);
+
       setLoadingBalance(true);
       try {
         // Fetch balance directly from Solana RPC (client-side)
-        const balance = await getSolanaBalanceUSD(solanaAddress);
+        const balance = await getSolanaBalanceUSD(addr);
         setBalanceUSD(balance.toFixed(2));
       } catch (error) {
         console.error("[Header] Error fetching Solana balance:", error);
@@ -228,6 +235,20 @@ export function Header() {
       clearInterval(interval);
     };
   }, [authenticated, privyUser]);
+
+  const refreshBalance = useCallback(async () => {
+    if (solanaAddress) {
+      setLoadingBalance(true);
+      try {
+        const balance = await getSolanaBalanceUSD(solanaAddress);
+        setBalanceUSD(balance.toFixed(2));
+      } catch (error) {
+        console.error("[Header] Error refreshing balance:", error);
+      } finally {
+        setLoadingBalance(false);
+      }
+    }
+  }, [solanaAddress]);
 
   // Show success message when user authenticates after requesting access
   useEffect(() => {
@@ -397,13 +418,17 @@ export function Header() {
               </>
             ) : (
               <>
-                {/* Balance Display */}
-                <div className={`hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg ${isDarkPage ? 'bg-white/10 text-white' : 'bg-gray-100 text-gray-700'}`}>
+                {/* Balance Display – click to open Balance & Withdraw modal */}
+                <button
+                  type="button"
+                  onClick={() => setShowBalanceModal(true)}
+                  className={`hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${isDarkPage ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                >
                   <span className="text-sm font-medium">Balance:</span>
                   <span className="text-sm font-semibold">
                     {loadingBalance ? "..." : `$${balanceUSD}`}
                   </span>
-                </div>
+                </button>
                 <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
                 {/* User Menu with Dropdown */}
                 <UserMenu
@@ -538,15 +563,22 @@ export function Header() {
                 {authenticated && (
                   <>
                     <div className="h-px bg-gray-200 my-2"></div>
-                    {/* Balance in mobile menu */}
-                    <div className="px-4 py-2 bg-gray-50 rounded-lg mb-2">
+                    {/* Balance in mobile menu – click to open Balance & Withdraw modal */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        setShowBalanceModal(true);
+                      }}
+                      className="w-full text-left px-4 py-2 bg-gray-50 rounded-lg mb-2 hover:bg-gray-100 transition-colors"
+                    >
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-gray-600">Balance:</span>
                         <span className="text-sm font-semibold text-gray-900">
                           {loadingBalance ? "..." : `$${balanceUSD}`}
                         </span>
                       </div>
-                    </div>
+                    </button>
                     <div className="px-4 py-2 text-sm text-gray-600 mb-2">
                       {username ? `@${username}` : email}
                     </div>
@@ -652,6 +684,18 @@ export function Header() {
               }
             }
           }}
+        />
+      )}
+
+      {/* Balance & Withdraw Modal – opened when clicking balance */}
+      {authenticated && (
+        <BalanceModal
+          open={showBalanceModal}
+          onClose={() => setShowBalanceModal(false)}
+          balanceUSD={balanceUSD}
+          loadingBalance={loadingBalance}
+          solanaAddress={solanaAddress}
+          onRefresh={refreshBalance}
         />
       )}
 

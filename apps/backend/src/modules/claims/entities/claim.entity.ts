@@ -1,11 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 // Re-export ClaimStatus from the constraint check in database
-// Matches: check (status in ('OPEN','PENDING_DEPOSIT','IN_FLIGHT','SUCCESS','REFUNDED','EXPIRED','CANCELLED'))
+// Matches: check (status in ('OPEN','PENDING_DEPOSIT','IN_FLIGHT','PRIVATE_TRANSFER_PENDING','SUCCESS','REFUNDED','EXPIRED','CANCELLED'))
 export type ClaimStatus = 
   | 'OPEN'
   | 'PENDING_DEPOSIT'
   | 'IN_FLIGHT'
+  | 'PRIVATE_TRANSFER_PENDING'
   | 'SUCCESS'
   | 'REFUNDED'
   | 'EXPIRED'
@@ -30,15 +31,18 @@ export class Claim {
   @ApiPropertyOptional({ description: 'Privy user ID who created the claim' })
   created_by: string | null;
 
-  @ApiPropertyOptional({ description: 'Creator email' })
+  @ApiPropertyOptional({ description: 'Creator email (legacy)' })
   creator_email: string | null;
+
+  @ApiPropertyOptional({ description: 'Creator username resolved from created_by (privy ID); for display use @username or Anonymous' })
+  creator_username?: string | null;
 
   @ApiPropertyOptional({ description: 'Payment description/message (supports emojis and GIFs)' })
   description: string | null;
 
   @ApiProperty({ 
     description: 'Claim status', 
-    enum: ['OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED'] 
+    enum: ['OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'PRIVATE_TRANSFER_PENDING', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED'] 
   })
   status: ClaimStatus;
 

@@ -39,6 +39,7 @@
     "@nestjs/swagger": "^7.4.0",
     "@nestjs/throttler": "^6.2.0",
     "@rhinestone/sdk": "^1.0.34",
+    "@solana/web3.js": "^1.95.8",
     "@supabase/supabase-js": "^2.87.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",

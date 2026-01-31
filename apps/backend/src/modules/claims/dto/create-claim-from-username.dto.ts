@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, IsEmail, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, IsBoolean } from 'class-validator';
 
 export class CreateClaimFromUsernameDto {
   @ApiProperty({ description: 'Username (with or without @ prefix)', example: 'looftaxyz' })
@@ -12,15 +12,10 @@ export class CreateClaimFromUsernameDto {
   @Min(0.01)
   amount: number;
 
-  @ApiPropertyOptional({ description: 'Privy user ID who created the claim' })
+  @ApiPropertyOptional({ description: 'Privy user ID who created the claim (used to resolve username for display)' })
   @IsOptional()
   @IsString()
   userId?: string;
-
-  @ApiPropertyOptional({ description: 'Creator email address' })
-  @IsOptional()
-  @IsEmail()
-  userEmail?: string;
 
   @ApiPropertyOptional({ description: 'Whether this is a private payment', default: false })
   @IsOptional()

@@ -12,6 +12,24 @@ export class UsersService {
   ) {}
 
   /**
+   * Get creator display info by Privy user ID (for claim display: username only, no email)
+   */
+  async findByPrivyId(privyUserId: string): Promise<{ username: string | null } | null> {
+    if (!privyUserId || !privyUserId.includes('did:privy:')) {
+      return null;
+    }
+    const { data: user, error } = await this.supabaseService.appUsers
+      .select('username')
+      .eq('privy_user_id', privyUserId)
+      .maybeSingle();
+
+    if (error || !user) {
+      return null;
+    }
+    return { username: user.username ?? null };
+  }
+
+  /**
    * Get user by username (NO wallet address returned - privacy)
    */
   async findByUsername(username: string): Promise<{

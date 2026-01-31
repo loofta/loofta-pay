@@ -9,53 +9,22 @@ export async function GET(_: Request, props: { params: Promise<{ id: string }> }
   try {
     const supabase = getSupabaseAdmin();
     
-    // Get claim data with creator email
     const { data: claim, error: claimError } = await supabase
       .from("claims")
-      .select("id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, creator_email, created_by")
+      .select("id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description")
       .eq("id", params.id)
       .single();
     
     if (claimError) return NextResponse.json({ error: claimError.message }, { status: 404 });
     
-    // If creator_email is not set, try to fetch it from app_users table
-    let creatorEmail = claim?.creator_email;
-    if (!creatorEmail && claim?.created_by) {
-      // created_by might be a Privy user ID string or a UUID reference to app_users
-      // First, try to get email from app_users by privy_user_id (if created_by is a Privy ID string)
-      if (typeof claim.created_by === 'string' && claim.created_by.includes('did:privy:')) {
-        const { data: appUser } = await supabase
-          .from("app_users")
-          .select("email")
-          .eq("privy_user_id", claim.created_by)
-          .maybeSingle();
-        
-        if (appUser?.email) {
-          creatorEmail = appUser.email;
-          // Update the claim with the email for future queries
-          await supabase
-            .from("claims")
-            .update({ creator_email: creatorEmail })
-            .eq("id", params.id);
-        }
-      } else {
-        // If created_by is a UUID, it should reference app_users(id)
-        // Join with app_users to get the email
-        const { data: appUser } = await supabase
-          .from("app_users")
-          .select("email")
-          .eq("id", claim.created_by)
-          .maybeSingle();
-        
-        if (appUser?.email) {
-          creatorEmail = appUser.email;
-          // Update the claim with the email for future queries
-          await supabase
-            .from("claims")
-            .update({ creator_email: creatorEmail })
-            .eq("id", params.id);
-        }
-      }
+    let creator_username: string | null = null;
+    if (claim?.created_by && typeof claim.created_by === 'string' && claim.created_by.includes('did:privy:')) {
+      const { data: appUser } = await supabase
+        .from("app_users")
+        .select("username")
+        .eq("privy_user_id", claim.created_by)
+        .maybeSingle();
+      creator_username = appUser?.username ?? null;
     }
     
     // Also get latest intent data (for hydration)
@@ -70,7 +39,7 @@ export async function GET(_: Request, props: { params: Promise<{ id: string }> }
     return NextResponse.json({ 
       claim: {
         ...claim,
-        creator_email: creatorEmail || null,
+        creator_username: creator_username ?? null,
       },
       latestIntent: intent ? {
         depositAddress: intent.deposit_address || null,

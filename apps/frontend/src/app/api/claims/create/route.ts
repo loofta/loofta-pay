@@ -5,7 +5,7 @@ import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
 export async function POST(request: Request) {
   try {
-    const { amount, toSel, recipient, userId, userEmail } = await request.json();
+    const { amount, toSel, recipient, userId } = await request.json();
     if (!amount || !toSel?.symbol || !toSel?.chain || !recipient) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
@@ -13,13 +13,12 @@ export async function POST(request: Request) {
     const { data, error } = await supabase
       .from("claims")
       .insert({
-        // Store USD amount as string
         amount: String(amount),
         to_symbol: String(toSel.symbol),
         to_chain: String(toSel.chain),
         recipient_address: String(recipient),
-        created_by: userId ? String(userId) : null, // Store Privy user ID who created the claim
-        creator_email: userEmail ? String(userEmail) : null, // Store creator's email
+        created_by: userId ? String(userId) : null,
+        creator_email: null,
         status: "OPEN",
       })
       .select("id")

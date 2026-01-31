@@ -69,6 +69,12 @@ export async function payPrivatelyWithPrivacyCash(options: {
   signTransaction: (tx: VersionedTransaction) => Promise<VersionedTransaction>;
   recipientPaysFees?: boolean; // If true, recipient pays fees - payer deposits exact amount
 }): Promise<{ success: boolean; signature?: string; error?: string }> {
+  console.log('[PrivacyCash] payPrivatelyWithPrivacyCash called', {
+    walletAddress: options.walletAddress?.slice(0, 8) + '…',
+    amountUSD: options.amountUSD,
+    recipientAddress: options.recipientAddress?.slice(0, 8) + '…',
+    recipientPaysFees: options.recipientPaysFees,
+  });
   try {
     // Check if we're in a Turbopack environment (which doesn't support WASM)
     if (typeof window !== 'undefined' && (window as any).__NEXT_DATA__?.buildId) {
@@ -77,10 +83,13 @@ export async function payPrivatelyWithPrivacyCash(options: {
     }
 
     // Step 1: Sign the constant message to derive encryption key
+    console.log('[PrivacyCash] Step 1: signing message for encryption key…');
     const messageSignature = await options.signMessage(PRIVACY_CASH_MESSAGE);
-    
+    console.log('[PrivacyCash] Step 1: message signed');
+
     // Step 2: Create EncryptionService from signature
     const encryptionService = await createEncryptionServiceFromSignature(messageSignature);
+    console.log('[PrivacyCash] Step 2: EncryptionService created');
     
     // Step 3: Import Privacy Cash SDK functions with dynamic import
     // CRITICAL: These imports will fail at build time if WASM files are missing
@@ -117,7 +126,8 @@ export async function payPrivatelyWithPrivacyCash(options: {
     const { depositSPL, withdrawSPL } = sdkModule;
     const { WasmFactory } = hasherModule;
     const lightWasm = await WasmFactory.getInstance();
-    
+    console.log('[PrivacyCash] Step 3: SDK and WASM loaded');
+
     const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
     const publicKey = new PublicKey(options.walletAddress);
     const recipient = new PublicKey(options.recipientAddress);

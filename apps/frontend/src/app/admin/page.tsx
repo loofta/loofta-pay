@@ -208,15 +208,15 @@ export default function AdminPage() {
         </div>
 
         {/* Tabs */}
-        <Tabs defaultValue="organizations" className="space-y-6">
+        <Tabs defaultValue="claims" className="space-y-6">
           <TabsList>
-            <TabsTrigger value="organizations">
-              <Building2 className="w-4 h-4 mr-2" />
-              Organizations
-            </TabsTrigger>
             <TabsTrigger value="claims">
               <Receipt className="w-4 h-4 mr-2" />
               Claims
+            </TabsTrigger>
+            <TabsTrigger value="organizations">
+              <Building2 className="w-4 h-4 mr-2" />
+              Organizations
             </TabsTrigger>
             <TabsTrigger value="payments">
               <Users className="w-4 h-4 mr-2" />
@@ -229,6 +229,29 @@ export default function AdminPage() {
           </TabsContent>
 
           <TabsContent value="claims">
+            {/* Wallet Info Card */}
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="w-5 h-5" />
+                  Privy Backend Wallet
+                </CardTitle>
+                <CardDescription>
+                  Wallet address where private cross-chain payments arrive before Privacy Cash execution
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  <div>
+                    <span className="text-sm text-gray-500">Address:</span>
+                    <span className="ml-2 font-mono text-sm">C5H7TyU6fBdvrzYnwME1RUD9tZACuGPw83Kh1TwDWMWb</span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-2">
+                    💡 When claims show "PRIVATE_TRANSFER_PENDING", check this wallet for USDC. Execute Privacy Cash manually, then update claim status to SUCCESS.
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
             <ClaimsManager />
           </TabsContent>
 

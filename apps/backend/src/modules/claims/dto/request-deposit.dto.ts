@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, IsOptional, MaxLength, IsUUID } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, MaxLength, IsUUID, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class FromTokenDto {
   @ApiProperty({ description: 'Token ID (asset ID)' })
@@ -29,6 +30,8 @@ export class RequestDepositDto {
   claimId: string;
 
   @ApiProperty({ description: 'Source token details', type: FromTokenDto })
+  @ValidateNested()
+  @Type(() => FromTokenDto)
   fromToken: FromTokenDto;
 
   @ApiProperty({ description: 'Amount to deposit', example: '0.05' })
@@ -53,4 +56,14 @@ export class RequestDepositDto {
   @IsString()
   @MaxLength(50)
   orgReferral?: string;
+
+  @ApiPropertyOptional({ description: 'Whether this is a private payment (cross-chain to Solana requires login)' })
+  @IsOptional()
+  isPrivate?: boolean;
+
+  @ApiPropertyOptional({ description: 'Recipient Solana address (required for private cross-chain to Solana - use your embedded Loofta wallet)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  recipientSolanaAddress?: string;
 }

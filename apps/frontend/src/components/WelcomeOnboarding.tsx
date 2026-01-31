@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import { Switch } from "@/components/ui/switch";
+import { usePrivy } from "@privy-io/react-auth";
 
 interface WelcomeOnboardingProps {
   open: boolean;
@@ -13,6 +15,7 @@ interface WelcomeOnboardingProps {
 }
 
 export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEditUsername }: WelcomeOnboardingProps) {
+  const { getAccessToken, user: privyUser } = usePrivy();
   const [step, setStep] = useState(0);
   const [displayText, setDisplayText] = useState("");
   const [dontShowAgain, setDontShowAgain] = useState(false);
@@ -20,6 +23,55 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
   const [usernameError, setUsernameError] = useState<string | null>(null);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [requirePrivatePayments, setRequirePrivatePayments] = useState(false);
+  const [loadingPreferences, setLoadingPreferences] = useState(false);
+  const [updatingPreferences, setUpdatingPreferences] = useState(false);
+
+  const getPaymentLink = () => {
+    const u = username || newUsername.trim() || "username";
+    const baseUrl = typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.xyz";
+    return `${baseUrl}/link/@${u}`;
+  };
+
+  const copyToClipboard = (text: string, isLink: boolean) => {
+    navigator.clipboard.writeText(text);
+    if (isLink) {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    }
+  };
+
+  const copyPaymentLink = () => {
+    const link = getPaymentLink();
+    if (link) copyToClipboard(link, true);
+  };
+
+  const shareToTelegram = () => {
+    const link = getPaymentLink();
+    if (link) {
+      const text = encodeURIComponent(`Pay me on Loofta Pay: ${link}`);
+      window.open(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`, '_blank');
+    }
+  };
+
+  const shareToWhatsApp = () => {
+    const link = getPaymentLink();
+    if (link) {
+      const text = encodeURIComponent(`Pay me on Loofta Pay: ${link}`);
+      window.open(`https://wa.me/?text=${text}`, '_blank');
+    }
+  };
+
+  const shareToEmail = () => {
+    const link = getPaymentLink();
+    if (link) {
+      const subject = encodeURIComponent('Pay me on Loofta Pay');
+      const body = encodeURIComponent(`Hi,\n\nYou can pay me using this link: ${link}\n\nThanks!`);
+      window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    }
+  };
+
   const fullTexts = [
     `Pay your friend\nsend money to @${username || "username"}`,
     "Pay from merchant,\nwithout worrying about network/token",
@@ -37,8 +89,62 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
       setUsernameError(null);
       setUsernameAvailable(null);
       setCheckingAvailability(false);
+      setLinkCopied(false);
     }
   }, [open, username]);
+
+  // Fetch user preferences when on step 5 (share step)
+  useEffect(() => {
+    if (step === 5 && open && getAccessToken && privyUser?.id) {
+      const fetchPreferences = async () => {
+        setLoadingPreferences(true);
+        try {
+          const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+          const token = await getAccessToken();
+          const response = await fetch(`${backendUrl}/users/me/preferences`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'x-privy-user-id': privyUser.id,
+            },
+          });
+          if (response.ok) {
+            const data = await response.json();
+            setRequirePrivatePayments(data.requirePrivatePayments || false);
+          }
+        } catch (error) {
+          console.error('[WelcomeOnboarding] Failed to fetch preferences:', error);
+        } finally {
+          setLoadingPreferences(false);
+        }
+      };
+      fetchPreferences();
+    }
+  }, [step, open, getAccessToken, privyUser?.id]);
+
+  const handleTogglePrivatePayments = async (checked: boolean) => {
+    if (!getAccessToken || !privyUser?.id) return;
+    setUpdatingPreferences(true);
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const token = await getAccessToken();
+      const response = await fetch(`${backendUrl}/users/me/preferences`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'x-privy-user-id': privyUser.id,
+        },
+        body: JSON.stringify({ requirePrivatePayments: checked }),
+      });
+      if (response.ok) {
+        setRequirePrivatePayments(checked);
+      }
+    } catch (error) {
+      console.error('[WelcomeOnboarding] Failed to update preferences:', error);
+    } finally {
+      setUpdatingPreferences(false);
+    }
+  };
 
   // Check username availability with debounce
   useEffect(() => {
@@ -187,13 +293,13 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
       return;
     }
 
-    // Only show typing animation for steps 2, 3, 4, 5 (not 0, 1)
-    if (step < 2) {
+    // Only show typing animation for steps 2, 3, 4 (not 0, 1, 5 – step 5 is share content)
+    if (step < 2 || step > 4) {
       setDisplayText("");
       return;
     }
 
-    const textIndex = step - 2; // Map step 2->0, 3->1, 4->2, 5->3
+    const textIndex = step - 2; // Map step 2->0, 3->1, 4->2
     const currentText = fullTexts[textIndex];
     if (!currentText) return;
 
@@ -576,52 +682,110 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                 </motion.div>
               )}
 
-              {/* Step 5: Final welcome */}
+              {/* Step 5: Share link – same content as Share modal */}
               {step === 5 && (
                 <motion.div
                   key="step5"
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -20 }}
-                  className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center"
+                  className="absolute inset-0 overflow-y-auto p-6"
                 >
                   <motion.div
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
                     transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                    className="mb-6"
+                    className="mb-4 flex justify-center"
                   >
                     <div
-                      className="w-24 h-24 rounded-full flex items-center justify-center mx-auto"
+                      className="w-16 h-16 rounded-full flex items-center justify-center"
                       style={{
                         background: "linear-gradient(135deg, rgba(255,15,0,0.15) 0%, rgba(234,179,8,0.15) 100%)",
                       }}
                     >
-                      <motion.div
-                        animate={{ rotate: [0, 10, -10, 0] }}
-                        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                        className="text-6xl"
-                      >
-                        🎉
-                      </motion.div>
+                      <span className="text-3xl">💰</span>
                     </div>
                   </motion.div>
                   <motion.h2
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="text-2xl font-bold text-gray-900 mb-6 min-h-[80px] whitespace-pre-line"
+                    className="text-2xl font-bold text-gray-900 mb-2 text-center"
                   >
-                    {displayText.split("\n").map((line, i) => (
-                      <span key={i}>
-                        {line}
-                        {i < displayText.split("\n").length - 1 && <br />}
-                      </span>
-                    ))}
-                    {displayText.length < fullTexts[3].length && (
-                      <span className="animate-pulse">|</span>
-                    )}
+                    Start receiving money now
                   </motion.h2>
+                  <motion.p
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.15 }}
+                    className="text-sm text-gray-600 mb-4 text-center"
+                  >
+                    Share your payment link to receive payments
+                  </motion.p>
+
+                  {/* Payment Link Display */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
+                    className="mb-4 p-3 rounded-xl bg-gray-50 border border-gray-200"
+                  >
+                    <p className="text-xs font-medium mb-2 text-gray-500">Your payment link</p>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={getPaymentLink()}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 text-sm font-mono truncate hover:underline text-orange-600"
+                      >
+                        {getPaymentLink().replace(/^https?:\/\//, "")}
+                      </a>
+                      <button
+                        onClick={copyPaymentLink}
+                        className={`p-2 rounded hover:bg-gray-200 transition-colors flex-shrink-0 ${linkCopied ? "bg-green-100" : ""}`}
+                        title={linkCopied ? "Copied!" : "Copy link"}
+                      >
+                        {linkCopied ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-500">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  </motion.div>
+
+                  {/* Require Private Payments Only */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.25 }}
+                    className={`mb-4 p-3 rounded-xl border ${requirePrivatePayments ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-semibold text-gray-900">🔒 Require Private Payments Only</span>
+                        <p className="text-xs text-gray-600 mt-1">
+                          When enabled, all payments to your link must use Privacy Cash. Fees: 0.35% + $0.74 per payment.
+                        </p>
+                      </div>
+                      {loadingPreferences ? (
+                        <div className="h-6 w-9 rounded-full bg-gray-200 animate-pulse shrink-0" />
+                      ) : (
+                        <Switch
+                          checked={requirePrivatePayments}
+                          onCheckedChange={handleTogglePrivatePayments}
+                          disabled={updatingPreferences}
+                          className="shrink-0 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
+                        />
+                      )}
+                    </div>
+                  </motion.div>
+
                 </motion.div>
               )}
             </AnimatePresence>

@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
-// Removed getRefundToForChain - now using user-provided refund addresses only
+import { getRefundToForChain } from "@/lib/refundAddresses";
 
 function getEnv(name: string, fallbacks: string[] = []) {
   const all = [name, ...fallbacks];
@@ -26,14 +26,7 @@ export async function POST(request: Request) {
     if (!claimId || !fromToken?.tokenId || typeof fromToken?.decimals !== "number" || !destToken?.tokenId || typeof destToken?.decimals !== "number") {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
-    
-    // Refund address is required for quotes
-    if (!refundAddress) {
-      return NextResponse.json({ 
-        error: "Refund address is required for quote",
-        code: "REFUND_ADDRESS_REQUIRED"
-      }, { status: 400 });
-    }
+
     const supabase = getSupabaseAdmin();
     const { data: claim, error } = await supabase
       .from("claims")
@@ -46,7 +39,9 @@ export async function POST(request: Request) {
     const toAsset = destToken.tokenId;
 
     // amount is stored in USD; convert USD -> destination token using provided price
-    const amountUsd = Number(claim.amount || 0);
+    // Enforce a minimum effective payout of $3 to avoid very small swaps failing
+    const rawAmountUsd = Number(claim.amount || 0);
+    const amountUsd = Number.isFinite(rawAmountUsd) ? Math.max(rawAmountUsd, 3) : 3;
     const desiredOutHuman = (Number.isFinite(amountUsd) && Number(destTokenPriceUSD) > 0)
       ? String(amountUsd / Number(destTokenPriceUSD))
       : "0";
@@ -59,14 +54,22 @@ export async function POST(request: Request) {
     const amountOutAtomic = toAtomic(desiredOutHuman, Number(destToken.decimals));
 
     try {
-      // Use user-provided refund address (required)
-      const refundTo = refundAddress;
+      // Use user-provided refund address if present, otherwise fallback to mocked refund address
+      const refundTo = refundAddress || getRefundToForChain(fromToken.chain || "");
+      if (!refundTo) {
+        return NextResponse.json({
+          error: "Could not determine refund address for quote",
+          code: "REFUND_ADDRESS_REQUIRED",
+        }, { status: 400 });
+      }
       // For recipient in dry quote, use refund address as placeholder (doesn't matter for dry quote)
-      const recipient = refundAddress;
+      const recipient = refundTo;
       
       const req: any = {
         dry: true,
         swapType: (QuoteRequest.swapType as any).EXACT_OUTPUT ?? "EXACT_OUTPUT",
+        // Match working example: use SIMPLE deposit mode
+        depositMode: 'SIMPLE',
         slippageTolerance: 100,
         originAsset: fromToken.tokenId,
         depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
@@ -79,6 +82,16 @@ export async function POST(request: Request) {
         recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
         deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
         quoteWaitingTimeMs: 0,
+        // Include app fees so quote matches real execution path
+        appFees: [
+          {
+            recipient: 'lisabey.near',
+            fee: 30,
+          },
+        ],
+        virtualChainRecipient: null,
+        virtualChainRefundRecipient: null,
+        referral: null,
       };
       const raw = await OneClickService.getQuote(req as QuoteRequest);
       const q = (raw as any)?.quote || raw || {};
