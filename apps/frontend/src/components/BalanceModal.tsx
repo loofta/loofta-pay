@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +20,7 @@ import { TokenCombobox } from "@/components/TokenCombobox";
 import { useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
 import { Connection, VersionedTransaction } from "@solana/web3.js";
 import { payPrivatelyWithPrivacyCash } from "@/services/privacyCash";
+import { CheckCircle2, AlertTriangle, Loader2, ShieldCheck } from "lucide-react";
 
 const SOLANA_RPC_URL =
   process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
@@ -53,6 +54,7 @@ export function BalanceModal({
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
+  const [addressRiskStatus, setAddressRiskStatus] = useState<"idle" | "checking" | "safe" | "unsafe">("idle");
 
   // USDC on Solana - primary balance we have in embedded wallet
   const usdcSolanaToken = useMemo(
@@ -78,13 +80,29 @@ export function BalanceModal({
     (effectiveToken?.chain === "solana" || effectiveToken?.chain === "sol");
 
   /** Check destination address with Range risk API (server-side). */
-  const checkAddressRisk = async (address: string): Promise<{ safe: boolean }> => {
+  const checkAddressRisk = useCallback(async (address: string): Promise<{ safe: boolean }> => {
     const res = await fetch(
       `/api/risk/address?address=${encodeURIComponent(address)}&network=solana`
     );
     const data = await res.json().catch(() => ({}));
     return { safe: data.safe !== false };
-  };
+  }, []);
+
+  /** Debounced Range check when user enters a valid Solana address. */
+  useEffect(() => {
+    const raw = withdrawAddress.trim();
+    const isValidFormat = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw);
+    if (!raw || !isValidFormat) {
+      setAddressRiskStatus("idle");
+      return;
+    }
+    setAddressRiskStatus("checking");
+    const t = setTimeout(async () => {
+      const { safe } = await checkAddressRisk(raw);
+      setAddressRiskStatus(safe ? "safe" : "unsafe");
+    }, 500);
+    return () => clearTimeout(t);
+  }, [withdrawAddress, checkAddressRisk]);
 
   const handleWithdraw = async () => {
     if (!solanaAddress || !withdrawAddress.trim() || !withdrawAmount.trim()) {
@@ -274,6 +292,8 @@ export function BalanceModal({
             )}
           </div>
 
+
+
           {/* Destination wallet address */}
           <div>
             <Label htmlFor="withdraw-address">Destination Solana wallet</Label>
@@ -284,11 +304,26 @@ export function BalanceModal({
               onChange={(e) => setWithdrawAddress(e.target.value)}
               className="mt-1 font-mono text-sm"
             />
+            {addressRiskStatus === "checking" && (
+              <p className="text-xs text-gray-600 mt-1.5 flex items-center gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                Checking address with Range…
+              </p>
+            )}
+            {addressRiskStatus === "safe" && (
+              <p className="text-xs text-emerald-600 mt-1.5 flex items-center gap-1.5 font-medium">
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                Address compliant — safe to withdraw
+              </p>
+            )}
+            {addressRiskStatus === "unsafe" && (
+              <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1.5 font-medium">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                Address flagged — withdrawal blocked for your protection
+              </p>
+            )}
             <p className="text-xs text-gray-500 mt-1.5">
               Withdrawals use Privacy Cash (private). Fees are deducted on the recipient side, not added on top.
-            </p>
-            <p className="text-xs text-amber-600 mt-1">
-              You need a small amount of SOL in your wallet to pay for transaction fees.
             </p>
           </div>
 
@@ -304,10 +339,19 @@ export function BalanceModal({
                 !withdrawAddress.trim() ||
                 loadingBalance ||
                 balanceNum <= 0 ||
-                !solanaAddress
+                !solanaAddress ||
+                addressRiskStatus !== "safe"
               }
               className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-              title={balanceNum <= 0 ? "No balance to withdraw" : undefined}
+              title={
+                addressRiskStatus === "unsafe"
+                  ? "Address flagged — withdrawal blocked"
+                  : addressRiskStatus !== "safe"
+                    ? "Enter a valid Solana address and wait for AML compliance check"
+                    : balanceNum <= 0
+                      ? "No balance to withdraw"
+                      : undefined
+              }
             >
               {withdrawing ? "Sending…" : "Withdraw"}
             </Button>

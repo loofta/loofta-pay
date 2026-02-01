@@ -29,8 +29,17 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
 import { isDemoMode } from "@/config/demoMode";
 import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES } from "@/services/privacyCash";
-import { Connection, VersionedTransaction } from "@solana/web3.js";
+import { Connection, VersionedTransaction, PublicKey } from "@solana/web3.js";
 import { getRefundToForChain } from "@/lib/refundAddresses";
+
+/** Phantom wallet provider (injected by Phantom extension). Use for USDC-on-Solana payments. */
+function getPhantomProvider(): { connect: () => Promise<{ publicKey: PublicKey }>; publicKey: PublicKey | null; signMessage: (msg: Uint8Array, display?: string) => Promise<{ signature: Uint8Array }>; signTransaction: (tx: VersionedTransaction) => Promise<VersionedTransaction> } | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as { solana?: { connect?: () => Promise<{ publicKey: PublicKey }>; publicKey: PublicKey | null; signMessage?: (msg: Uint8Array, display?: string) => Promise<{ signature: Uint8Array }>; signTransaction?: (tx: VersionedTransaction) => Promise<VersionedTransaction> } };
+  const solana = w?.solana;
+  if (!solana?.signTransaction || !solana?.signMessage) return null;
+  return solana as { connect: () => Promise<{ publicKey: PublicKey }>; publicKey: PublicKey | null; signMessage: (msg: Uint8Array, display?: string) => Promise<{ signature: Uint8Array }>; signTransaction: (tx: VersionedTransaction) => Promise<VersionedTransaction> };
+}
 import {
   isRhinestoneChainSupported,
   getSupportedTokensForChain,
@@ -636,42 +645,37 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       const isUSDCOnSolana = selectedFrom.symbol === 'USDC' && selectedFrom.chain?.toLowerCase() === 'solana';
       const isPrivatePayment = requiresPrivate || (isPrivateMode && !isUSDCOnSolana);
 
-      // For private cross-chain to Solana: require user's embedded Solana wallet (they must be logged in)
+      // For private cross-chain to Solana: use Phantom wallet (USDC-on-Solana payments use Phantom, not Privy)
       const destChainLower = (claim.to_chain || '').toLowerCase();
       const isPrivateCrossChainToSolana = isPrivatePayment && (destChainLower === 'solana' || destChainLower === 'sol') && claim.to_symbol === 'USDC';
-      // Privy: get embedded Solana wallet from useWallets() first, then fallback to user.linkedAccounts (embedded wallet may only appear there)
       let solanaAddress: string | undefined;
       if (isPrivateCrossChainToSolana) {
-        const fromWallets = wallets?.find((w) => {
-          const wa = w as { walletClientType?: string; chainType?: string; address?: string };
-          const isSolana = wa.chainType === 'solana' || wa.chainType === 'sol';
-          const looksLikeSolana = wa.address && wa.address.length >= 32 && wa.address.length <= 44 && !wa.address.startsWith('0x');
-          return isSolana || looksLikeSolana;
-        });
-        solanaAddress = fromWallets?.address;
-        if (!solanaAddress && authenticated && user?.linkedAccounts?.length) {
-          const linkedWallets = (user.linkedAccounts as any[]).filter(
-            (a: any) => a.type === 'wallet' || a.type === 'smart_wallet'
-          );
-          const solanaLinked = linkedWallets.find((a: any) => {
-            const addr = a.address;
-            return addr && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr);
-          });
-          solanaAddress = solanaLinked?.address;
+        const phantom = getPhantomProvider();
+        if (phantom) {
+          if (phantom.publicKey) {
+            solanaAddress = phantom.publicKey.toBase58();
+          } else if (phantom.connect) {
+            try {
+              const { publicKey } = await phantom.connect();
+              solanaAddress = publicKey.toBase58();
+            } catch (_e) {
+              // User cancelled or connect failed
+            }
+          }
+          if (solanaAddress) {
+            console.log("[Claim] Prepare: private cross-chain to Solana, recipientSolanaAddress (Phantom):", solanaAddress.slice(0, 8) + "…");
+          }
         }
-      }
-      if (isPrivateCrossChainToSolana && !solanaAddress) {
-        console.log("[Claim] Prepare: private cross-chain to Solana but no embedded wallet");
-        toast({
-          variant: "destructive",
-          title: "Login required for private payment",
-          description: "Please log in with Loofta. Your embedded Solana wallet will receive the funds; then you complete the private transfer in the app.",
-        });
-        setPreparing(false);
-        return;
-      }
-      if (isPrivateCrossChainToSolana && solanaAddress) {
-        console.log("[Claim] Prepare: private cross-chain to Solana, recipientSolanaAddress (embedded wallet):", solanaAddress.slice(0, 8) + "…");
+        if (!solanaAddress) {
+          console.log("[Claim] Prepare: private cross-chain to Solana but Phantom not available or not connected");
+          toast({
+            variant: "destructive",
+            title: "Phantom wallet required",
+            description: "Install and connect Phantom to pay with USDC on Solana. Funds will be sent to your Phantom address.",
+          });
+          setPreparing(false);
+          return;
+        }
       }
 
       const res = await prepareDeposit({
@@ -776,44 +780,39 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       return;
     }
 
-    console.log("[PrivateTransfer] Starting", { claimId: claim.id, amountUSD, recipient: recipient.slice(0, 8) + "…", walletsCount: wallets?.length ?? 0 });
+    console.log("[PrivateTransfer] Starting", { claimId: claim.id, amountUSD, recipient: recipient.slice(0, 8) + "…" });
     setPreparing(true);
 
     try {
-      // Prefer embedded Solana wallet (Privy) – same wallet that received the funds
-      let walletAddress: string | undefined;
-      const fromWallets = wallets?.find((w) => {
-        const wa = w as { walletClientType?: string; chainType?: string; address?: string };
-        const isSolana = wa.chainType === 'solana' || wa.chainType === 'sol';
-        const looksLikeSolana = wa.address && wa.address.length >= 32 && wa.address.length <= 44 && !wa.address.startsWith('0x');
-        return isSolana || looksLikeSolana;
-      });
-      walletAddress = fromWallets?.address;
-      if (!walletAddress && authenticated && user?.linkedAccounts?.length) {
-        const linkedWallets = (user.linkedAccounts as any[]).filter(
-          (a: any) => a.type === 'wallet' || a.type === 'smart_wallet'
-        );
-        const solanaLinked = linkedWallets.find((a: any) => {
-          const addr = a.address;
-          return addr && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr);
-        });
-        walletAddress = solanaLinked?.address;
-      }
-      console.log("[PrivateTransfer] Wallet resolution", { walletAddress: walletAddress ? walletAddress.slice(0, 8) + "…" : undefined, authenticated, fromWallets: !!fromWallets });
-
-      let signMessage: (msg: string) => Promise<Uint8Array>;
-      let signTransaction: (tx: VersionedTransaction) => Promise<VersionedTransaction>;
-
-      // Private payments always use the same embedded Solana wallet that received the Near-Intents swap
-      if (!walletAddress || !authenticated) {
-        console.log("[PrivateTransfer] Early exit: no wallet or not authenticated");
+      // USDC on Solana payments use Phantom wallet (not Privy embedded wallet)
+      const phantom = getPhantomProvider();
+      if (!phantom) {
         toast({
           variant: "destructive",
-          title: "Log in required",
-          description: "Please log in with Loofta. Your embedded Solana wallet is used for this private payment."
+          title: "Phantom wallet required",
+          description: "Install the Phantom browser extension to pay with USDC on Solana.",
         });
         setPreparing(false);
         return;
+      }
+
+      let walletAddress: string | undefined;
+      if (phantom.publicKey) {
+        walletAddress = phantom.publicKey.toBase58();
+      } else {
+        try {
+          const { publicKey } = await phantom.connect();
+          walletAddress = publicKey.toBase58();
+        } catch (e) {
+          console.warn("[PrivateTransfer] Phantom connect failed:", e);
+          toast({
+            variant: "destructive",
+            title: "Phantom connection failed",
+            description: "Please connect your Phantom wallet and try again.",
+          });
+          setPreparing(false);
+          return;
+        }
       }
 
       const solanaRpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL
@@ -822,22 +821,16 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
           : "https://api.mainnet-beta.solana.com");
       const connection = new Connection(solanaRpcUrl);
 
-      signMessage = async (msg: string): Promise<Uint8Array> => {
-        const sig = await privySignMessage({
-          message: new TextEncoder().encode(msg),
-          options: { address: walletAddress },
-        });
-        return sig;
+      const signMessage = async (msg: string): Promise<Uint8Array> => {
+        const encoded = new TextEncoder().encode(msg);
+        const { signature } = await phantom.signMessage(encoded, "utf8");
+        return signature;
       };
-      signTransaction = async (tx: VersionedTransaction): Promise<VersionedTransaction> => {
-        const signed = await privySignTransaction({
-          transaction: tx,
-          connection,
-          address: walletAddress,
-        });
-        return signed as VersionedTransaction;
+      const signTransaction = async (tx: VersionedTransaction): Promise<VersionedTransaction> => {
+        return phantom.signTransaction(tx);
       };
-      console.log("[PrivateTransfer] Using embedded Solana wallet:", walletAddress);
+
+      console.log("[PrivateTransfer] Using Phantom wallet:", walletAddress?.slice(0, 8) + "…");
       console.log("[PrivateTransfer] Payment details:", { walletAddress, amountUSD, recipientAddress: recipient, claimId: claim.id, recipientPaysFees: requiresPrivate });
 
       // Execute private payment
@@ -1790,12 +1783,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
                                           FREE
                                         </span>
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-200 text-amber-800 text-xs font-medium">
-                                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
-                                            <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" fill="currentColor" />
-                                          </svg>
-                                          Private
-                                        </span>
+
                                       </div>
                                       <div className="text-sm text-gray-600 mt-0.5">
                                         Fastest option • Uses Privacy Cash for privacy

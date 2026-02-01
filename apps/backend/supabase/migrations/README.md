@@ -2,6 +2,8 @@
 
 This directory contains SQL migration files for the Supabase database.
 
+**Using a remote dev DB (no Docker)?** See [REMOTE_DEV.md](../REMOTE_DEV.md) for setup and how to revert to local.
+
 ## Migration File Naming
 
 Migrations should be named with the format: `YYYYMMDDHHMMSS_description.sql`

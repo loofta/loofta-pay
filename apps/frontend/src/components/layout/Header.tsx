@@ -79,7 +79,7 @@ export function Header() {
           // Store username in session/store (ensure it's set even if null initially)
           const usernameValue = userData.user.username || null;
           setUsername(usernameValue);
-          
+
           // Also update email in store if available
           if (userData.user.email) {
             useAuthStore.getState().setAuth({
@@ -89,7 +89,7 @@ export function Header() {
               username: usernameValue,
             });
           }
-          
+
           // Log for debugging
           if (!usernameValue) {
             console.warn("[Header] User exists but username is null:", {
@@ -97,7 +97,7 @@ export function Header() {
               email: userData.user.email,
             });
           }
-          
+
           // Show username modal if user needs to set username
           if (userData.needsUsername) {
             setShowUsernameModal(true);
@@ -150,7 +150,7 @@ export function Header() {
         const linkedWallets = linkedAccounts.filter(
           (account: any) => account.type === 'wallet' || account.type === 'smart_wallet'
         );
-        
+
         // Find Solana wallet by address format (base58, 32-44 chars)
         const solanaLinkedWallet = linkedWallets.find((account: any) => {
           // @ts-ignore
@@ -190,7 +190,7 @@ export function Header() {
       const linkedWallets = linkedAccounts.filter(
         (account: any) => account.type === 'wallet' || account.type === 'smart_wallet'
       );
-      
+
       // Find Solana wallet by address format (base58, 32-44 chars)
       const solanaLinkedWallet = linkedWallets.find((account: any) => {
         // @ts-ignore
@@ -227,7 +227,7 @@ export function Header() {
 
     // Wait a bit for Privy to initialize
     const timeout = setTimeout(fetchBalance, 1000);
-    
+
     // Refresh balance every 30 seconds
     const interval = setInterval(fetchBalance, 30000);
     return () => {
