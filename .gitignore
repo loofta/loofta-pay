@@ -23,6 +23,9 @@ recover-funds.js
 private.pem
 public.pem
 
+# Frontend public files
+apps/frontend/public/loofta-swapxprivacycaash.code-workspace
+
 # Backend build output
 apps/backend/dist
 
