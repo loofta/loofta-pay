@@ -50,6 +50,7 @@ const CLAIM_STATUSES = [
   'OPEN',
   'PENDING_DEPOSIT',
   'IN_FLIGHT',
+  'PRIVATE_TRANSFER_PENDING',
   'SUCCESS',
   'REFUNDED',
   'EXPIRED',
@@ -204,7 +205,7 @@ export function ClaimsManager() {
     }
   };
 
-  const getStatusIcon = (status: Claim['status']) => {
+  const getStatusIcon = (status: Claim['status'] | string) => {
     switch (status) {
       case 'SUCCESS':
         return <CheckCircle className="w-4 h-4 text-green-500" />;
@@ -213,6 +214,8 @@ export function ClaimsManager() {
       case 'EXPIRED':
       case 'CANCELLED':
         return <XCircle className="w-4 h-4 text-red-500" />;
+      case 'PRIVATE_TRANSFER_PENDING':
+        return <AlertCircle className="w-4 h-4 text-purple-500" />;
       case 'IN_FLIGHT':
       case 'PENDING_DEPOSIT':
         return <Clock className="w-4 h-4 text-yellow-500" />;
@@ -221,7 +224,7 @@ export function ClaimsManager() {
     }
   };
 
-  const getStatusColor = (status: Claim['status']) => {
+  const getStatusColor = (status: Claim['status'] | string) => {
     switch (status) {
       case 'SUCCESS':
         return 'bg-green-100 text-green-800';
@@ -230,6 +233,8 @@ export function ClaimsManager() {
       case 'EXPIRED':
       case 'CANCELLED':
         return 'bg-red-100 text-red-800';
+      case 'PRIVATE_TRANSFER_PENDING':
+        return 'bg-purple-100 text-purple-800';
       case 'IN_FLIGHT':
       case 'PENDING_DEPOSIT':
         return 'bg-yellow-100 text-yellow-800';
@@ -245,6 +250,7 @@ export function ClaimsManager() {
     total,
     success: claims.filter(c => c.status === 'SUCCESS').length,
     pending: claims.filter(c => ['OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT'].includes(c.status)).length,
+    privateTransferPending: claims.filter(c => (c.status as string) === 'PRIVATE_TRANSFER_PENDING').length,
     failed: claims.filter(c => ['REFUNDED', 'EXPIRED', 'CANCELLED'].includes(c.status)).length,
   };
 
@@ -255,7 +261,7 @@ export function ClaimsManager() {
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Claims Management</h2>
           <p className="mt-1 text-sm text-gray-600">
-            View, manage, and delete payment claims
+            View, manage, and delete payment claims. Private payments — coming soon. Private cross-chain claims may show PRIVATE_TRANSFER_PENDING until the feature is available.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -285,7 +291,7 @@ export function ClaimsManager() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
         <Card className="p-4">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-0">
             <CardTitle className="text-sm font-medium">Total Claims</CardTitle>
@@ -310,6 +316,16 @@ export function ClaimsManager() {
           </CardHeader>
           <CardContent className="p-0 pt-2">
             <div className="text-2xl font-bold text-yellow-600">{stats.pending}</div>
+          </CardContent>
+        </Card>
+        <Card className="p-4">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-0">
+            <CardTitle className="text-sm font-medium">Private Transfer</CardTitle>
+            <AlertCircle className="h-4 w-4 text-purple-500" />
+          </CardHeader>
+          <CardContent className="p-0 pt-2">
+            <div className="text-2xl font-bold text-purple-600">{stats.privateTransferPending}</div>
+            <p className="text-xs text-gray-500 mt-1">Private transfer — coming soon</p>
           </CardContent>
         </Card>
         <Card className="p-4">
@@ -523,10 +539,32 @@ export function ClaimsManager() {
                   <span className="text-gray-500">Recipient:</span>
                   <span className="ml-2 font-mono text-xs">{detailClaim.recipient_address}</span>
                 </div>
-                {detailClaim.creator_email && (
+                {(detailClaim.creator_username ?? detailClaim.creator_email) ? (
                   <div className="col-span-2">
-                    <span className="text-gray-500">Creator Email:</span>
-                    <span className="ml-2">{detailClaim.creator_email}</span>
+                    <span className="text-gray-500">Creator:</span>
+                    <span className="ml-2">{detailClaim.creator_username ? `@${detailClaim.creator_username}` : detailClaim.creator_email}</span>
+                  </div>
+                ) : detailClaim.created_by ? (
+                  <div className="col-span-2">
+                    <span className="text-gray-500">Creator:</span>
+                    <span className="ml-2 text-gray-500">User (privy)</span>
+                  </div>
+                ) : (
+                  <div className="col-span-2">
+                    <span className="text-gray-500">Creator:</span>
+                    <span className="ml-2 text-gray-500">Anonymous</span>
+                  </div>
+                )}
+                {(detailClaim as any).is_private && (
+                  <div className="col-span-2">
+                    <span className="text-gray-500">Private Payment:</span>
+                    <span className="ml-2 text-purple-600 font-semibold">Yes</span>
+                  </div>
+                )}
+                {(detailClaim as any).paid_with_token && (detailClaim as any).paid_with_chain && (
+                  <div className="col-span-2">
+                    <span className="text-gray-500">Paid With:</span>
+                    <span className="ml-2">{(detailClaim as any).paid_with_token} ({(detailClaim as any).paid_with_chain})</span>
                   </div>
                 )}
               </div>
@@ -549,11 +587,10 @@ export function ClaimsManager() {
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-mono text-xs">{intent.id.slice(0, 12)}...</span>
-                          <span className={`px-2 py-0.5 rounded text-xs ${
-                            intent.status === 'SUCCESS' ? 'bg-green-100 text-green-800' :
-                            intent.status === 'REFUNDED' ? 'bg-orange-100 text-orange-800' :
-                            'bg-gray-100 text-gray-800'
-                          }`}>
+                          <span className={`px-2 py-0.5 rounded text-xs ${intent.status === 'SUCCESS' ? 'bg-green-100 text-green-800' :
+                              intent.status === 'REFUNDED' ? 'bg-orange-100 text-orange-800' :
+                                'bg-gray-100 text-gray-800'
+                            }`}>
                             {intent.status}
                           </span>
                         </div>

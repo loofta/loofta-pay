@@ -6,6 +6,8 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { QueryProvider } from "@/providers/QueryProvider";
 import { AuthProvider } from "@/providers/AuthProvider";
+// Suppress Privy hydration warnings (third-party library issue)
+import "@/lib/suppressPrivyWarnings";
 import { AppShell } from "@/components/layout/AppShell";
 import { Analytics } from "@vercel/analytics/next"
 

@@ -395,13 +395,13 @@ export async function getDepositInfo(params: {
     const intentsUserId = `${authMethod.toLowerCase()}:${userAddress}`;
     req = attachAppFees({
       dry: false,
-      swapType: QuoteRequest.swapType.EXACT_OUTPUT,
+      swapType: QuoteRequest.swapType.EXACT_INPUT,
       slippageTolerance: slippageBps,
       originAsset,
       depositType: QuoteRequest.depositType.INTENTS,
       destinationAsset,
-      // EXACT_OUTPUT expects desired out in atomic units for destination asset
-      amount: toAtomic(amount || "0", toToken.decimals || 0),
+      // EXACT_INPUT expects input amount in atomic units for origin asset
+      amount: atomicIn,
       refundTo: refundAddress || intentsUserId, // Prefer user-provided refund address
       refundType: QuoteRequest.refundType.INTENTS,
       recipient: intentsUserId,
@@ -417,13 +417,13 @@ export async function getDepositInfo(params: {
     const sameChain = String(fromToken.chain || "").toLowerCase() === String(toToken.chain || "").toLowerCase();
     req = attachAppFees({
       dry: false,
-      swapType: QuoteRequest.swapType.EXACT_OUTPUT,
+      swapType: QuoteRequest.swapType.EXACT_INPUT,
       slippageTolerance: slippageBps,
       originAsset,
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
-      // EXACT_OUTPUT expects desired out in atomic units for destination asset
-      amount: toAtomic(amount || "0", toToken.decimals || 0),
+      // EXACT_INPUT expects input amount in atomic units for origin asset
+      amount: atomicIn,
       refundTo: refundAddress, // Use user-provided refund address
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipient,

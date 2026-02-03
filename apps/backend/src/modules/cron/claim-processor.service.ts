@@ -159,6 +159,20 @@ export class ClaimProcessorService {
 
       // Update claim status based on normalized status
       if (statusResult.isComplete) {
+        // Near Intents completed - funds arrived. For any private claim, funds are in user's
+        // embedded wallet; do NOT set SUCCESS until user completes Privacy Cash in the UI.
+        const claim = await this.claimsService.findOne(claimId);
+        if (claim.is_private === true) {
+          this.logger.log(`[ClaimProcessor] Claim ${claimId} is private – set PRIVATE_TRANSFER_PENDING (wait for Privacy Cash)`);
+          await this.claimsService.updateStatus(claimId, 'PRIVATE_TRANSFER_PENDING');
+          return {
+            claimId,
+            intentId,
+            action: 'private_transfer_pending',
+            success: true,
+          };
+        }
+        this.logger.log(`[ClaimProcessor] Claim ${claimId} completed`);
         await this.claimsService.updateStatus(claimId, 'SUCCESS');
         return {
           claimId,

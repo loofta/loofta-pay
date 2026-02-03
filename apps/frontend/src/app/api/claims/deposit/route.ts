@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
-// Removed getRefundToForChain - now using user-provided refund addresses only
+import { getRefundToForChain } from "@/lib/refundAddresses";
 import { getDefuseAssetIdFor } from "@/lib/tokenlist";
 import { 
   isRhinestoneChainSupported, 
@@ -31,20 +31,80 @@ const INTENTS_ONLY_CHAINS = new Set(['zec', 'zcash', 'btc', 'bitcoin', 'xrp', 'x
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { claimId, fromToken, amount, userAddress, refundAddress, orgReferral } = body || {};
+    const { claimId, claim: claimData, fromToken, amount, userAddress, refundAddress, orgReferral, isPrivate } = body || {};
     if (!claimId || !fromToken?.tokenId || !fromToken?.decimals || !amount) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
-    if (!refundAddress) {
-      return NextResponse.json({ error: "Refund address is required" }, { status: 400 });
+    
+    // Use claim data passed from the page (already fetched from backend)
+    // No need to query Supabase again - we have the data!
+    if (!claimData) {
+      return NextResponse.json({ error: "Claim data is required" }, { status: 400 });
     }
+    
+    const claim = claimData;
+    console.log('[claims/deposit] Using claim data from request:', claim.id);
+
+    // Enforce private payment if claim requires it
+    if (claim.is_private === true) {
+      return NextResponse.json({ 
+        error: "This payment link requires private payments only. Please use the private payment option.",
+        code: "PRIVATE_PAYMENT_REQUIRED"
+      }, { status: 400 });
+    }
+
+    // For private cross-chain payments, forward to backend to create Privy wallet
+    const originChain = String(fromToken.chain || '').toLowerCase();
+    const destChain = String(claim.to_chain || '').toLowerCase();
+    const isCrossChain = originChain !== destChain;
+    const isPrivateCrossChain = isPrivate && isCrossChain && destChain === 'solana' && claim.to_symbol === 'USDC';
+    
+    if (isPrivateCrossChain) {
+      // Forward to backend API to create Privy wallet
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      try {
+        const backendResponse = await fetch(`${backendUrl}/claims/deposit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            claimId,
+            fromToken,
+            amount,
+            userAddress,
+            refundAddress,
+            orgReferral,
+            isPrivate: true,
+          }),
+        });
+        
+        if (backendResponse.ok) {
+          const backendData = await backendResponse.json();
+          return NextResponse.json(backendData);
+        } else {
+          const errorData = await backendResponse.json().catch(() => ({}));
+          return NextResponse.json({ 
+            error: errorData.error || "Failed to create deposit address",
+            code: errorData.code 
+          }, { status: backendResponse.status });
+        }
+      } catch (error: any) {
+        console.error("[claims/deposit] Backend API error:", error);
+        return NextResponse.json({ 
+          error: "Failed to connect to backend",
+          code: "BACKEND_ERROR"
+        }, { status: 500 });
+      }
+    }
+
+    // Standard payment flow - continue with existing logic
+    // For real deposits, a user-provided refund address is required
+    if (!refundAddress) {
+      return NextResponse.json({ error: "Refund address is required", code: "REFUND_ADDRESS_REQUIRED" }, { status: 400 });
+    }
+    const finalRefundAddress = refundAddress;
+
+    // Still need Supabase for storing claim_intents (result of 1Click API call)
     const supabase = getSupabaseAdmin();
-    const { data: claim, error } = await supabase
-      .from("claims")
-      .select("id, amount, to_symbol, to_chain, recipient_address")
-      .eq("id", claimId)
-      .single();
-    if (error || !claim) return NextResponse.json({ error: "Claim not found" }, { status: 404 });
 
     const toAtomic = (val: string, decimals: number): string => {
       const [i, f = ""] = String(val).split(".");
@@ -86,11 +146,11 @@ export async function POST(request: Request) {
       : "";
     
     // Check if origin chain requires INTENTS mode
-    const originChain = String(fromToken?.chain || "").toLowerCase();
+    // Note: originChain and destChain are already declared above (lines 57-58)
     const useIntentsMode = INTENTS_ONLY_CHAINS.has(originChain);
     
     // Determine same-chain and choose recipient type accordingly
-    const destChain = String(claim.to_chain || "").toLowerCase();
+    // Note: destChain is already declared above (line 58)
     const sameChain = originChain === destChain;
     const sameToken = String(fromToken?.symbol || "").toUpperCase() === String(claim.to_symbol || "").toUpperCase();
     
@@ -244,11 +304,7 @@ export async function POST(request: Request) {
     })();
     const amountOutAtomic = toAtomic(String(destHumanOutRoundedUp || "0"), destDecimals);
     
-    // Use provided refund address (required, no fallback)
-    if (!refundAddress) {
-      return NextResponse.json({ error: "Refund address is required" }, { status: 400 });
-    }
-    const finalRefundAddress = refundAddress;
+    // Use the same finalRefundAddress defined above (required from user)
     
     // For intents mode, calculate input amount in origin token atomic units
     // We need to estimate how much ZEC/BTC etc. to send to get the desired output
@@ -317,8 +373,6 @@ export async function POST(request: Request) {
       amount: amountInAtomic,
       refundTo: userAddress || finalRefundAddress,
       refundType: "INTENTS" as any,
-      // CRITICAL: recipient must be the claim's recipient_address, NOT userAddress
-      // userAddress is only for refunds, not for where the payment should go
       recipient: claim.recipient_address,
       recipientType: "INTENTS" as any,
       deadline: new Date(Date.now() + 5 * 60 * 1000).toISOString(),

@@ -324,10 +324,15 @@ export class SwapProcessorService {
         await this.redisService.set(redisKey, JSON.stringify(data));
         await this.redisService.sRem(pendingKey, redisKey);
 
-        // Update claim status
+        // Update claim status – private claims stay PRIVATE_TRANSFER_PENDING until user completes Privacy Cash
         if (type === 'claim' && data.claimId) {
+          const { data: claim } = await this.supabaseService.claims
+            .select('is_private')
+            .eq('id', data.claimId)
+            .single();
+          const newStatus = claim?.is_private === true ? 'PRIVATE_TRANSFER_PENDING' : 'SUCCESS';
           await this.supabaseService.claims
-            .update({ status: 'SUCCESS' })
+            .update({ status: newStatus })
             .eq('id', data.claimId);
         }
 

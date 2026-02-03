@@ -26,7 +26,8 @@
     "db:migrate:local": "supabase db reset",
     "db:migrate:prod": "supabase db push",
     "db:migrate:create": "supabase migration new",
-    "db:diff": "supabase db diff --use-migra"
+    "db:diff": "supabase db diff --use-migra",
+    "db:seed:users": "ts-node -r tsconfig-paths/register scripts/seed-local-users.ts"
   },
   "dependencies": {
     "@defuse-protocol/one-click-sdk-typescript": "0.1.1",
@@ -38,7 +39,9 @@
     "@nestjs/swagger": "^7.4.0",
     "@nestjs/throttler": "^6.2.0",
     "@rhinestone/sdk": "^1.0.34",
+    "@solana/web3.js": "^1.95.8",
     "@supabase/supabase-js": "^2.87.3",
+    "bs58": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "ioredis": "^5.4.1",

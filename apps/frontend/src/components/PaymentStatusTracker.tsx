@@ -37,6 +37,7 @@ interface PaymentStatusTrackerProps {
   timeEstimate?: number | null; // Time estimate from NEAR Intents quote (in seconds)
   paidAt?: string | null; // Timestamp when payment was completed
   paymentType?: PaymentType; // Type of payment: 'direct' (same chain, same token), 'companion-swap' (same chain, different token), 'near-intent' (cross-chain)
+  isPrivate?: boolean; // Whether this is a private payment (requires Privacy Cash execution step)
 }
 
 const STEP_CONFIG: Record<string, Omit<PaymentStep, 'status'>> = {
@@ -68,6 +69,13 @@ const STEP_CONFIG: Record<string, Omit<PaymentStep, 'status'>> = {
     icon: <Send className="w-5 h-5" />,
     estimatedTime: 30, // 30 seconds for cross-chain transfer
   },
+  privacyCash: {
+    id: 'privacy-cash',
+    label: 'Private Transfer',
+    description: 'Private payments coming soon',
+    icon: <Loader2 className="w-5 h-5" />,
+    estimatedTime: 45,
+  },
   success: {
     id: 'success',
     label: 'Payment Complete',
@@ -81,7 +89,8 @@ function getStepsForStatus(
   averagePaymentTime?: number | null,
   fromChain?: string | null,
   toChain?: string | null,
-  paymentType?: PaymentType
+  paymentType?: PaymentType,
+  isPrivate?: boolean
 ): PaymentStep[] {
   const isSameChain = fromChain && toChain && String(fromChain).toLowerCase() === String(toChain).toLowerCase();
 
@@ -118,15 +127,28 @@ function getStepsForStatus(
     routing: { ...STEP_CONFIG.routing, estimatedTime: routingTime },
     processing: { ...STEP_CONFIG.processing, estimatedTime: processingTime },
     sending: { ...STEP_CONFIG.sending, estimatedTime: sendingTime },
+    privacyCash: { ...STEP_CONFIG.privacyCash, estimatedTime: 45 },
     success: { ...STEP_CONFIG.success }, // Success step doesn't need estimatedTime
   };
   const upperStatus = String(status || '').toUpperCase();
 
   // For direct deposits, skip the routing step
   const includeRouting = paymentType !== 'direct';
+  
+  // For private cross-chain payments, include Privacy Cash step
+  const isPrivateCrossChain = isPrivate && fromChain && toChain && 
+                               fromChain.toLowerCase() !== toChain.toLowerCase() &&
+                               toChain.toLowerCase() === 'solana';
 
-  // Helper to build steps array conditionally including routing
-  const buildSteps = (depositStatus: 'pending' | 'active' | 'completed', routingStatus: 'pending' | 'active' | 'completed', processingStatus: 'pending' | 'active' | 'completed', sendingStatus: 'pending' | 'active' | 'completed', successStatus: 'pending' | 'active' | 'completed') => {
+  // Helper to build steps array conditionally including routing and Privacy Cash
+  const buildSteps = (
+    depositStatus: 'pending' | 'active' | 'completed',
+    routingStatus: 'pending' | 'active' | 'completed',
+    processingStatus: 'pending' | 'active' | 'completed',
+    sendingStatus: 'pending' | 'active' | 'completed',
+    privacyCashStatus: 'pending' | 'active' | 'completed',
+    successStatus: 'pending' | 'active' | 'completed'
+  ) => {
     const steps: PaymentStep[] = [
       {
         ...configWithTimes.deposit,
@@ -142,8 +164,14 @@ function getStepsForStatus(
       steps.push({ ...configWithTimes.routing, status: routingStatus });
     }
 
+    steps.push({ ...configWithTimes.processing, status: processingStatus });
+
+    // For private cross-chain, add Privacy Cash step before sending
+    if (isPrivateCrossChain) {
+      steps.push({ ...configWithTimes.privacyCash, status: privacyCashStatus });
+    }
+
     steps.push(
-      { ...configWithTimes.processing, status: processingStatus },
       { ...configWithTimes.sending, status: sendingStatus },
       { ...configWithTimes.success, status: successStatus }
     );
@@ -152,19 +180,29 @@ function getStepsForStatus(
   };
 
   if (upperStatus === 'SUCCESS') {
-    return buildSteps('completed', 'completed', 'completed', 'completed', 'completed');
+    return buildSteps('completed', 'completed', 'completed', 'completed', 'completed', 'completed');
+  }
+
+  // For private cross-chain: PRIVATE_TRANSFER_PENDING means Near Intents completed, Privacy Cash is executing
+  if (isPrivateCrossChain && upperStatus === 'PRIVATE_TRANSFER_PENDING') {
+    return buildSteps('completed', includeRouting ? 'completed' : 'completed', 'completed', 'pending', 'active', 'pending');
+  }
+
+  // For private cross-chain: IN_FLIGHT means Near Intents completed, Privacy Cash is executing
+  if (isPrivateCrossChain && upperStatus === 'IN_FLIGHT') {
+    return buildSteps('completed', includeRouting ? 'completed' : 'completed', 'completed', 'pending', 'active', 'pending');
   }
 
   if (upperStatus === 'PROCESSING' || upperStatus === 'KNOWN_DEPOSIT_TX') {
-    return buildSteps('completed', includeRouting ? 'active' : 'completed', 'pending', 'pending', 'pending');
+    return buildSteps('completed', includeRouting ? 'active' : 'completed', 'pending', 'pending', 'pending', 'pending');
   }
 
   if (upperStatus === 'INCOMPLETE_DEPOSIT') {
-    return buildSteps('active', 'pending', 'pending', 'pending', 'pending');
+    return buildSteps('active', 'pending', 'pending', 'pending', 'pending', 'pending');
   }
 
   // PENDING_DEPOSIT or default
-  return buildSteps('active', 'pending', 'pending', 'pending', 'pending');
+  return buildSteps('active', 'pending', 'pending', 'pending', 'pending', 'pending');
 }
 
 function getStatusMessage(status: PaymentStatus | null): { title: string; subtitle: string } {
@@ -182,6 +220,11 @@ function getStatusMessage(status: PaymentStatus | null): { title: string; subtit
       return {
         title: 'Processing Your Payment',
         subtitle: 'We\'re routing your funds and executing the swap. This usually takes 1-2 minutes.',
+      };
+    case 'PRIVATE_TRANSFER_PENDING':
+      return {
+        title: 'Private Transfer',
+        subtitle: 'Private payments coming soon.',
       };
     case 'INCOMPLETE_DEPOSIT':
       return {
@@ -213,7 +256,7 @@ function getStatusMessage(status: PaymentStatus | null): { title: string; subtit
 
 function AnimatedCharacter({ status }: { status: PaymentStatus | null }) {
   const upperStatus = String(status || '').toUpperCase();
-  const isProcessing = upperStatus === 'PROCESSING' || upperStatus === 'KNOWN_DEPOSIT_TX';
+  const isProcessing = upperStatus === 'PROCESSING' || upperStatus === 'KNOWN_DEPOSIT_TX' || upperStatus === 'PRIVATE_TRANSFER_PENDING';
   const isSuccess = upperStatus === 'SUCCESS';
   const isWaiting = upperStatus === 'PENDING_DEPOSIT' || !status;
 
@@ -305,7 +348,9 @@ function TimeEstimate({
   averagePaymentTime,
   fromChain,
   toChain,
-  paidAt
+  paidAt,
+  paymentType,
+  isPrivate
 }: {
   status: PaymentStatus | null;
   startedAt?: string | null;
@@ -314,13 +359,15 @@ function TimeEstimate({
   fromChain?: string | null;
   toChain?: string | null;
   paidAt?: string | null;
+  paymentType?: PaymentType;
+  isPrivate?: boolean;
 }) {
   const [elapsed, setElapsed] = useState(0);
   const upperStatus = String(status || '').toUpperCase();
 
-  // Only start timer when deposit is actually received (PROCESSING, KNOWN_DEPOSIT_TX, or later)
+  // Only start timer when deposit is actually received (PROCESSING, KNOWN_DEPOSIT_TX, PRIVATE_TRANSFER_PENDING, or later)
   // Don't start timer for: PENDING_DEPOSIT, INCOMPLETE_DEPOSIT, FAILED, REFUNDED
-  const shouldStartTimer = (upperStatus === 'PROCESSING' || upperStatus === 'KNOWN_DEPOSIT_TX');
+  const shouldStartTimer = (upperStatus === 'PROCESSING' || upperStatus === 'KNOWN_DEPOSIT_TX' || upperStatus === 'PRIVATE_TRANSFER_PENDING');
 
   const startTime = useMemo(() => {
     // Only use depositReceivedAt if status is PROCESSING or later
@@ -378,14 +425,17 @@ function TimeEstimate({
     return () => clearInterval(interval);
   }, [startTime, upperStatus, shouldStartTimer, actualElapsedTime]);
 
-  const getEstimatedTimeRemaining = () => {
+  // Calculate estimated time remaining
+  const estimatedRemaining = useMemo(() => {
+    const upperStatus = String(status || '').toUpperCase();
     if (upperStatus === 'SUCCESS') return null;
     // Don't show time estimate for PENDING_DEPOSIT or INCOMPLETE_DEPOSIT - deposit hasn't been fully received yet
     if (upperStatus === 'PENDING_DEPOSIT' || upperStatus === 'INCOMPLETE_DEPOSIT') return null;
     // Don't show for terminal states
     if (upperStatus === 'FAILED' || upperStatus === 'REFUNDED') return null;
+    // Show time estimate for PRIVATE_TRANSFER_PENDING (Privacy Cash execution)
 
-    const steps = getStepsForStatus(status, averagePaymentTime, fromChain, toChain);
+    const steps = getStepsForStatus(status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate);
     const activeStepIndex = steps.findIndex(s => s.status === 'active');
     if (activeStepIndex === -1) return null;
 
@@ -397,9 +447,7 @@ function TimeEstimate({
 
     const remaining = Math.max(0, totalEstimate - elapsed);
     return remaining;
-  };
-
-  const estimatedRemaining = getEstimatedTimeRemaining();
+  }, [status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate, elapsed]);
 
   if (upperStatus === 'SUCCESS') {
     // Calculate elapsed time: from deposit received to payment completed
@@ -450,6 +498,7 @@ export function PaymentStatusTracker({
   timeEstimate,
   paidAt,
   paymentType,
+  isPrivate,
 }: PaymentStatusTrackerProps) {
   const [averagePaymentTime, setAveragePaymentTime] = useState<number | null>(null);
   const [loadingAverages, setLoadingAverages] = useState(false);
@@ -478,7 +527,7 @@ export function PaymentStatusTracker({
     setAveragePaymentTime(null);
   }, [timeEstimate, isSameChain, fromChain]);
 
-  const steps = useMemo(() => getStepsForStatus(status, averagePaymentTime, fromChain, toChain, paymentType), [status, averagePaymentTime, fromChain, toChain, paymentType]);
+  const steps = useMemo(() => getStepsForStatus(status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate), [status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate]);
   const statusMessage = useMemo(() => getStatusMessage(status), [status]);
   const upperStatus = String(status || '').toUpperCase();
 
@@ -613,6 +662,8 @@ export function PaymentStatusTracker({
         fromChain={fromChain}
         toChain={toChain}
         paidAt={paidAt}
+        paymentType={paymentType}
+        isPrivate={isPrivate}
       />
 
       {/* Additional Info for Processing */}

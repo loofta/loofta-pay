@@ -5,7 +5,6 @@ import { ClaimProcessorService, ProcessingResult } from './claim-processor.servi
 import { LotteryProcessorService, LotteryProcessingResult } from './lottery-processor.service';
 import { ClaimCompanionProcessorService, ClaimCompanionResult } from './claim-companion-processor.service';
 import { SwapProcessorService, SwapProcessingResult } from './swap-processor.service';
-
 @ApiTags('cron')
 @Controller('cron')
 export class CronController {

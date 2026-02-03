@@ -18,6 +18,13 @@ dist
 service-account.json
 scripts
 recover-funds.js
+# Privy / auth keys (do not commit)
+*.pem
+private.pem
+public.pem
+
+# Frontend public files
+apps/frontend/public/loofta-swapxprivacycaash.code-workspace
 
 # Backend build output
 apps/backend/dist

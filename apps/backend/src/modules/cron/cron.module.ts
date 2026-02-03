@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { CronController } from './cron.controller';
 import { ClaimProcessorService } from './claim-processor.service';
@@ -7,12 +7,14 @@ import { ClaimCompanionProcessorService } from './claim-companion-processor.serv
 import { SwapProcessorService } from './swap-processor.service';
 import { ClaimsModule } from '../claims/claims.module';
 import { IntentsModule } from '../intents/intents.module';
+import { DatabaseModule } from '@/database/database.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
-    ClaimsModule,
+    forwardRef(() => ClaimsModule),
     IntentsModule,
+    DatabaseModule,
   ],
   controllers: [CronController],
   providers: [

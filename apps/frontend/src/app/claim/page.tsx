@@ -14,14 +14,13 @@ import { findTokenBySelection } from "@/lib/tokens";
 import { maskLink } from "@/lib/format";
 import { isValidZcashShielded } from "@/lib/zcash";
 import { useClaimStore } from "@/store/claim";
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
 
 async function createClaim(formData: {
   amount: string;
   toSel: TokenSelection;
   recipient: string;
   userId?: string;
-  userEmail?: string;
 }): Promise<{ id: string; link: string }> {
   const r = await fetch("/api/claims/create", {
     method: "POST",
@@ -49,11 +48,13 @@ function CheckIcon(props: SVGProps<SVGSVGElement>) {
 export default function ClaimPage() {
   const { authenticated, email: userEmail, userId, login, ready } = useAuth();
   const { login: privyLogin } = usePrivy();
+  const { wallets } = useWallets();
   const { toast } = useToast();
   const { data: tokens = [] } = useTokensQuery();
   const [toSel, setToSel] = useState<TokenSelection | undefined>(undefined);
   const [amount, setAmount] = useState<string>("");
   const [recipient, setRecipient] = useState<string>("");
+  const [recipientPrefilled, setRecipientPrefilled] = useState(false);
   const [creating, setCreating] = useState(false);
   const [notifyChecked, setNotifyChecked] = useState<boolean>(Boolean(userEmail));
   const [notifyEmail, setNotifyEmail] = useState<string>(userEmail || "");
@@ -84,6 +85,20 @@ export default function ClaimPage() {
       setPendingAccessRequest(false);
     }
   }, [authenticated, pendingAccessRequest]);
+
+  // Prefill recipient with logged-in user's Solana wallet when they have one
+  useEffect(() => {
+    if (authenticated && wallets?.length && !recipientPrefilled) {
+      const solanaWallet = wallets.find((w: { walletClientType?: string; chainType?: string; address?: string }) =>
+        (w.walletClientType === 'privy' && (w.chainType === 'solana' || w.chainType === 'sol')) ||
+        (w.chainType === 'solana' || w.chainType === 'sol')
+      );
+      if (solanaWallet?.address) {
+        setRecipient((prev) => (prev ? prev : solanaWallet.address));
+        setRecipientPrefilled(true);
+      }
+    }
+  }, [authenticated, wallets, recipientPrefilled]);
 
   const selectedTo = findTokenBySelection(tokens, toSel || null);
 
@@ -215,14 +230,13 @@ export default function ClaimPage() {
         toSel: { symbol: finalToSel.symbol, chain: finalToSel.chain },
         recipient: finalRecipient,
         userId: authenticated ? userId : undefined,
-        userEmail: authenticated && userEmail ? userEmail : undefined,
       });
       setCreatedLink(res.link);
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 2500);
       toast({ title: "Payment link created", description: "Share the link with your recipient." });
     } catch (e: any) {
-      toast({ variant: "destructive", title: "Failed to create payment link", description: e?.message || "Unknown error" });
+      toast({ variant: "destructive", title: "Failed to create payment link ", description: e?.message || "Unknown error" });
     } finally {
       setCreating(false);
     }
@@ -811,7 +825,7 @@ export default function ClaimPage() {
                           loading={creating}
                           loadingText="Creating…"
                         >
-                          Create payment link
+                          Create Payment
                         </GradientActionButton>
                       ) : (
                         <button
@@ -821,7 +835,7 @@ export default function ClaimPage() {
                         >
                           <span className="flex items-center justify-center gap-2">
 
-                            Login to create your  link
+                            Login to create new payment
                           </span>
                         </button>
                       )
