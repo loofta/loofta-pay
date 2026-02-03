@@ -128,6 +128,7 @@ export interface RhinestoneChain {
  * This initiates the payment flow
  */
 export async function requestDeposit(data: DepositRequest): Promise<DepositResult> {
+  console.log('data here??', data);
   return fetchApi<DepositResult>('/claims/deposit', {
     method: 'POST',
     body: JSON.stringify(data),

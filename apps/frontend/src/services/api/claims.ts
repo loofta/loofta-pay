@@ -17,6 +17,7 @@ export type ClaimStatus =
   | 'OPEN'
   | 'PENDING_DEPOSIT'
   | 'IN_FLIGHT'
+  | 'PRIVATE_TRANSFER_PENDING'
   | 'SUCCESS'
   | 'REFUNDED'
   | 'EXPIRED'
@@ -30,10 +31,14 @@ export interface Claim {
   recipient_address: string;
   created_by: string | null;
   creator_email: string | null;
+  creator_username?: string | null;
   notify_email_to: string | null;
   status: ClaimStatus;
   paid_at: string | null;
   org_referral: string | null;
+  is_private: boolean | null;
+  paid_with_token: string | null;
+  paid_with_chain: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -65,7 +70,6 @@ export interface CreateClaimInput {
   };
   recipient: string;
   userId?: string;
-  userEmail?: string;
   orgReferral?: string;
 }
 

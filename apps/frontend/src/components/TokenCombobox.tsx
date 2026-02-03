@@ -27,6 +27,7 @@ type Props = {
 	placeholder?: string;
 	className?: string;
 	onQuery?: (q: string) => Promise<NearToken[]>;
+	hideChains?: string[]; // Chains to hide from selection (e.g., ['solana'])
 };
 
 export function TokenCombobox({
@@ -35,11 +36,17 @@ export function TokenCombobox({
 	onChange,
 	placeholder = "Select token...",
 	className,
-	onQuery
+	onQuery,
+	hideChains = []
 }: Props) {
 	const [open, setOpen] = React.useState(false);
 	const [query, setQuery] = React.useState("");
-	const [options, setOptions] = React.useState<NearToken[]>(tokens);
+	// Filter out tokens from hidden chains
+	const filteredTokens = React.useMemo(() => {
+		if (hideChains.length === 0) return tokens;
+		return tokens.filter(t => !hideChains.includes(t.chain?.toLowerCase() || ''));
+	}, [tokens, hideChains]);
+	const [options, setOptions] = React.useState<NearToken[]>(filteredTokens);
 	const [loading, setLoading] = React.useState(false);
 	const selectedToken = React.useMemo(() => {
 		return findTokenBySelection(tokens, value);
@@ -49,9 +56,9 @@ export function TokenCombobox({
 	// keep options in sync if tokens prop changes and no query
 	React.useEffect(() => {
 		if (!query) {
-			setOptions(tokens);
+			setOptions(filteredTokens);
 		}
-	}, [tokens, query]);
+	}, [filteredTokens, query]);
 
 	React.useEffect(() => {
 		// Ensure selectedChain is a valid option only when it's set.

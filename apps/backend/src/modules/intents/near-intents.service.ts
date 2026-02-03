@@ -155,16 +155,36 @@ export class NearIntentsService implements OnModuleInit {
     const tokens = await this.getTokens();
     const sym = symbol.toUpperCase();
     const ch = chain.toLowerCase();
+    
+    // Normalize chain names for matching (solana -> sol, ethereum -> eth, etc.)
+    const normalizeChain = (chainName: string): string[] => {
+      const normalized = chainName.toLowerCase();
+      const variants: string[] = [normalized];
+      if (normalized === 'solana' || normalized === 'sol') {
+        variants.push('sol', 'solana');
+      } else if (normalized === 'ethereum' || normalized === 'eth') {
+        variants.push('eth', 'ethereum');
+      } else if (normalized === 'arbitrum' || normalized === 'arb') {
+        variants.push('arb', 'arbitrum');
+      } else if (normalized === 'optimism' || normalized === 'op') {
+        variants.push('op', 'optimism');
+      }
+      return [...new Set(variants)]; // Remove duplicates
+    };
 
+    const chainVariants = normalizeChain(ch);
     const token = tokens.find(
       (t) =>
         t.symbol.toUpperCase() === sym &&
-        t.chain.toLowerCase() === ch,
+        chainVariants.includes(t.chain.toLowerCase()),
     );
 
     if (token?.tokenId) {
+      this.logger.log(`[getDefuseAssetId] Found token in list: ${token.tokenId} for ${symbol} on ${chain}`);
       return token.tokenId;
     }
+    
+    this.logger.warn(`[getDefuseAssetId] Token not found in list for ${symbol} on ${chain}, using fallback`);
 
     // Fallback: construct common patterns
     if (sym === 'ETH') {
@@ -173,6 +193,23 @@ export class NearIntentsService implements OnModuleInit {
       if (ch === 'base') return 'nep141:base.omft.near';
       if (ch === 'op' || ch === 'optimism') return 'nep141:op.omft.near';
       return `nep141:${ch}.omft.near`;
+    }
+
+    // Fallback for USDC on various chains
+    if (sym === 'USDC') {
+      if (ch === 'sol' || ch === 'solana') {
+        // Actual format from 1Click API: nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near
+        // But we can't construct this without the hash, so we should have found it in the token list
+        // If we're here, the token list lookup failed - log a warning
+        this.logger.error(`[getDefuseAssetId] USDC on Solana not found in token list! This should not happen.`);
+        // Return a placeholder - this will likely fail, but at least we tried
+        return 'nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near';
+      }
+      if (ch === 'base') return 'nep141:usdc.base.omft.near';
+      if (ch === 'arb' || ch === 'arbitrum') return 'nep141:usdc.arbitrum.omft.near';
+      if (ch === 'op' || ch === 'optimism') return 'nep141:usdc.optimism.omft.near';
+      if (ch === 'eth' || ch === 'ethereum') return 'nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near';
+      return `nep141:usdc.${ch}.omft.near`;
     }
 
     this.logger.warn(`Could not find asset ID for ${symbol} on ${chain}`);
@@ -275,20 +312,24 @@ export class NearIntentsService implements OnModuleInit {
   async getDepositQuote(params: {
     fromToken: { tokenId: string; chain: string; symbol: string; decimals: number };
     toToken: { tokenId: string; chain: string; symbol: string; decimals: number };
-    amountIn: string;
+    amountIn?: string;
+    amountOut?: string;
     recipient: string;
     refundAddress?: string;
     useIntentsMode?: boolean;
     referral?: string;
+    useExactOutput?: boolean;
   }): Promise<QuoteResult> {
     const {
       fromToken,
       toToken,
       amountIn,
+      amountOut,
       recipient,
       refundAddress,
       useIntentsMode = false,
       referral,
+      useExactOutput = false,
     } = params;
 
     const toAtomic = (val: string, decimals: number): string => {
@@ -298,47 +339,43 @@ export class NearIntentsService implements OnModuleInit {
       return BigInt(padded).toString();
     };
 
-    const atomicIn = toAtomic(amountIn, fromToken.decimals);
+    const atomicIn = amountIn ? toAtomic(amountIn, fromToken.decimals) : '0';
+    const atomicOut = amountOut ? toAtomic(amountOut, toToken.decimals) : '0';
+    
+    // Determine swap type and amount
+    const swapType = useExactOutput ? 'EXACT_OUTPUT' : 'EXACT_INPUT';
+    const amount = useExactOutput ? atomicOut : atomicIn;
     const refundTo = refundAddress || this.getRefundAddress(fromToken.chain);
 
+    // Use SIMPLE deposit mode with ORIGIN_CHAIN deposit type (matches working example)
+    const sameChain = fromToken.chain.toLowerCase() === toToken.chain.toLowerCase();
+    let req: any;
+    
     try {
-      let req: any;
+      req = this.attachAppFees({
+        dry: false,
+        swapType: swapType === 'EXACT_OUTPUT' ? QuoteRequest.swapType.EXACT_OUTPUT : QuoteRequest.swapType.EXACT_INPUT,
+        depositMode: 'SIMPLE',
+        slippageTolerance: 100,
+        originAsset: fromToken.tokenId,
+        depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
+        destinationAsset: toToken.tokenId,
+        amount: amount,
+        refundTo,
+        refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
+        recipient,
+        recipientType: sameChain 
+          ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN 
+          : QuoteRequest.recipientType.DESTINATION_CHAIN,
+        deadline: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        quoteWaitingTimeMs: 3000,
+        referral: referral || this.referralCode,
+        virtualChainRecipient: null,
+        virtualChainRefundRecipient: null,
+      });
 
-      if (useIntentsMode) {
-        req = this.attachAppFees({
-          dry: false,
-          swapType: 'EXACT_INPUT',
-          slippageTolerance: 100,
-          originAsset: fromToken.tokenId,
-          depositType: 'INTENTS',
-          destinationAsset: toToken.tokenId,
-          amount: atomicIn,
-          refundTo,
-          refundType: 'INTENTS',
-          recipient,
-          recipientType: 'INTENTS',
-          deadline: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-          quoteWaitingTimeMs: 3000,
-        });
-      } else {
-        req = this.attachAppFees({
-          dry: false,
-          swapType: QuoteRequest.swapType.EXACT_INPUT,
-          slippageTolerance: 100,
-          originAsset: fromToken.tokenId,
-          depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
-          destinationAsset: toToken.tokenId,
-          amount: atomicIn,
-          refundTo,
-          refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
-          recipient,
-          recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
-          deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
-          quoteWaitingTimeMs: 5000,
-          referral: referral || this.referralCode,
-        });
-      }
-
+      this.logger.log(`[getDepositQuote] Request:`, JSON.stringify(req, null, 2));
+      
       const raw = await OneClickService.getQuote(req);
       const q = (raw as any)?.quote || raw || {};
 
@@ -354,6 +391,13 @@ export class NearIntentsService implements OnModuleInit {
       };
     } catch (error: any) {
       this.logger.error('Deposit quote error:', error?.message);
+      this.logger.error('Error details:', {
+        message: error?.message,
+        body: error?.body,
+        response: error?.response,
+        status: error?.status,
+      });
+      this.logger.error('Request that failed:', JSON.stringify(req, null, 2));
       throw error;
     }
   }
@@ -375,9 +419,15 @@ export class NearIntentsService implements OnModuleInit {
   private mapSdkToken(t: any): NearToken {
     const symbol = t?.symbol || '';
     const assetId = t?.assetId || t?.tokenId || t?.address;
-    const blockchain = typeof t?.blockchain === 'string'
+    let blockchain = typeof t?.blockchain === 'string'
       ? t.blockchain.toLowerCase()
       : (t?.chain || '');
+    
+    // Normalize chain names for consistency (sol -> solana, etc.)
+    if (blockchain === 'sol') blockchain = 'solana';
+    if (blockchain === 'eth') blockchain = 'ethereum';
+    if (blockchain === 'arb') blockchain = 'arbitrum';
+    if (blockchain === 'op') blockchain = 'optimism';
 
     return {
       symbol,

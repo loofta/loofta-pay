@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, MaxLength, IsEmail } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, MaxLength } from 'class-validator';
 
 export class TokenSelectionDto {
   @ApiProperty({ description: 'Token symbol', example: 'USDC' })
@@ -28,13 +28,8 @@ export class CreateClaimDto {
   @MaxLength(100)
   recipient: string;
 
-  @ApiPropertyOptional({ description: 'Privy user ID who created the claim' })
+  @ApiPropertyOptional({ description: 'Privy user ID who created the claim (used to resolve username for display)' })
   @IsOptional()
   @IsString()
   userId?: string;
-
-  @ApiPropertyOptional({ description: 'Creator email address' })
-  @IsOptional()
-  @IsEmail()
-  userEmail?: string;
 }

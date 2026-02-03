@@ -8,16 +8,29 @@ import { useHistoryModal } from "@/contexts/HistoryModalContext";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { UsernameSetupModal } from "@/components/UsernameSetupModal";
+import { UserMenu } from "@/components/UserMenu";
+import { WelcomeOnboarding } from "@/components/WelcomeOnboarding";
+import { BalanceModal } from "@/components/BalanceModal";
+import { getSolanaBalanceUSD } from "@/services/solanaBalance";
+import { useAuthStore } from "@/store/auth";
+import { useCallback } from "react";
 
 export function Header() {
-  const { authenticated, email, logout } = useAuth();
-  const { login: privyLogin } = usePrivy();
+  const { authenticated, email, userId, logout } = useAuth();
+  const { login: privyLogin, user: privyUser, ready: privyReady } = usePrivy();
+  // Note: For Solana, we should use useWallets from @privy-io/react-auth/solana
+  // But for Header balance fetching, we'll check linkedAccounts instead
   const { openHistory } = useHistoryModal();
   const pathname = usePathname();
   const showHistory = pathname?.startsWith('/swap') === true;
   // Check if we're on a dark background page
   const isDarkPage = pathname?.startsWith('/claim') === true || pathname?.startsWith('/c/') === true;
+
+  // Get username from store (ensure it's string | null, not undefined)
+  const username = useAuthStore((s) => s.username ?? null);
+  const setUsername = useAuthStore((s) => s.setUsername);
 
   // Helper to check if a link is active
   const isActive = (href: string) => pathname?.startsWith(href) === true;
@@ -25,15 +38,217 @@ export function Header() {
   const [showAccessRequested, setShowAccessRequested] = useState(false);
   const [pendingAccessRequest, setPendingAccessRequest] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showUsernameModal, setShowUsernameModal] = useState(false);
+  const [showWelcomeOnboarding, setShowWelcomeOnboarding] = useState(false);
+  const [showBalanceModal, setShowBalanceModal] = useState(false);
+  const [balanceUSD, setBalanceUSD] = useState<string>("0.00");
+  const [loadingBalance, setLoadingBalance] = useState(false);
+  const [solanaAddress, setSolanaAddress] = useState<string | null>(null);
 
-  // Handle email-only login for request access
+  // Handle email-only login
   const handleRequestAccess = () => {
-    //setPendingAccessRequest(true);
     privyLogin({
       loginMethods: ['email'],
       disableSignup: false,
     });
   };
+
+  // Check user and get username from backend (only for username, not wallet/balance)
+  useEffect(() => {
+    if (!authenticated || !userId) {
+      setUsername(null);
+      setBalanceUSD("0.00");
+      return;
+    }
+
+    const checkUser = async () => {
+      try {
+        // Only check/create user and get username from backend
+        const userResponse = await fetch("/api/users/check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            privyUserId: userId,
+            email: email,
+          }),
+        });
+
+        const userData = await userResponse.json();
+
+        if (userData.user) {
+          // Store username in session/store (ensure it's set even if null initially)
+          const usernameValue = userData.user.username || null;
+          setUsername(usernameValue);
+
+          // Also update email in store if available
+          if (userData.user.email) {
+            useAuthStore.getState().setAuth({
+              authenticated: true,
+              userId: userId,
+              email: userData.user.email,
+              username: usernameValue,
+            });
+          }
+
+          // Log for debugging
+          if (!usernameValue) {
+            console.warn("[Header] User exists but username is null:", {
+              userId: userData.user.privyUserId,
+              email: userData.user.email,
+            });
+          }
+
+          // Show username modal if user needs to set username
+          if (userData.needsUsername) {
+            setShowUsernameModal(true);
+          } else if (userData.user.username) {
+            // User has username - check if we should show welcome onboarding
+            // Show onboarding if user just completed setup (check localStorage)
+            const hasSeenOnboarding = localStorage.getItem("loofta.hasSeenWelcomeOnboarding");
+            if (!hasSeenOnboarding) {
+              // Check if wallet exists - if yes, show onboarding
+              // We'll check this in a separate effect
+            }
+          }
+        }
+      } catch (error) {
+        console.error("[Header] Error checking user:", error);
+      }
+    };
+
+    checkUser();
+  }, [authenticated, userId, email]);
+
+  // Check if we should show welcome onboarding (user + wallet ready)
+  // Always show until user opts out via "don't show again" checkbox
+  useEffect(() => {
+    if (!authenticated || !username || !privyReady || !privyUser || !userId) {
+      return;
+    }
+
+    // Check user's onboarding preference from database
+    const checkOnboardingPreference = async () => {
+      try {
+        const userResponse = await fetch("/api/users/check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            privyUserId: userId,
+            email: email,
+          }),
+        });
+
+        const userData = await userResponse.json();
+
+        // If user has opted out, don't show onboarding
+        if (userData.user?.skipOnboarding) {
+          return;
+        }
+
+        // Check if Solana wallet exists in linked accounts (even if not connected)
+        const linkedAccounts = privyUser?.linkedAccounts || [];
+        const linkedWallets = linkedAccounts.filter(
+          (account: any) => account.type === 'wallet' || account.type === 'smart_wallet'
+        );
+
+        // Find Solana wallet by address format (base58, 32-44 chars)
+        const solanaLinkedWallet = linkedWallets.find((account: any) => {
+          // @ts-ignore
+          const address = account.address;
+          return address && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+        });
+
+        // Show onboarding when both username and wallet are ready
+        // Wait a bit after username modal closes (if it was shown)
+        // @ts-ignore
+        if (username && solanaLinkedWallet?.address && !showUsernameModal) {
+          // Small delay to ensure everything is rendered
+          const timer = setTimeout(() => {
+            setShowWelcomeOnboarding(true);
+          }, 1500);
+          return () => clearTimeout(timer);
+        }
+      } catch (error) {
+        console.error("[Header] Error checking onboarding preference:", error);
+      }
+    };
+
+    checkOnboardingPreference();
+  }, [authenticated, username, privyUser, privyReady, showUsernameModal, userId, email]);
+
+  // Fetch balance from Solana wallet (client-side, from Privy session)
+  useEffect(() => {
+    if (!authenticated || !privyUser) {
+      setBalanceUSD("0.00");
+      setSolanaAddress(null);
+      return;
+    }
+
+    const fetchBalance = async () => {
+      // Get Solana wallet from linked accounts (these are wallets tied to user)
+      const linkedAccounts = privyUser?.linkedAccounts || [];
+      const linkedWallets = linkedAccounts.filter(
+        (account: any) => account.type === 'wallet' || account.type === 'smart_wallet'
+      );
+
+      // Find Solana wallet by address format (base58, 32-44 chars)
+      const solanaLinkedWallet = linkedWallets.find((account: any) => {
+        // @ts-ignore
+        const address = account.address;
+        return address && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+      });
+
+      if (!solanaLinkedWallet) {
+        // Wallet not found in linked accounts
+        console.log("[Header] ❌ Solana wallet not found in linked accounts");
+        console.log("[Header] Linked accounts:", linkedAccounts.length);
+        setBalanceUSD("0.00");
+        setSolanaAddress(null);
+        return;
+      }
+
+      // @ts-ignore
+      const addr = solanaLinkedWallet.address;
+      setSolanaAddress(addr);
+      console.log("[Header] ✅ Found Solana wallet for balance:", addr);
+
+      setLoadingBalance(true);
+      try {
+        // Fetch balance directly from Solana RPC (client-side)
+        const balance = await getSolanaBalanceUSD(addr);
+        setBalanceUSD(balance.toFixed(2));
+      } catch (error) {
+        console.error("[Header] Error fetching Solana balance:", error);
+        setBalanceUSD("0.00");
+      } finally {
+        setLoadingBalance(false);
+      }
+    };
+
+    // Wait a bit for Privy to initialize
+    const timeout = setTimeout(fetchBalance, 1000);
+
+    // Refresh balance every 30 seconds
+    const interval = setInterval(fetchBalance, 30000);
+    return () => {
+      clearTimeout(timeout);
+      clearInterval(interval);
+    };
+  }, [authenticated, privyUser]);
+
+  const refreshBalance = useCallback(async () => {
+    if (solanaAddress) {
+      setLoadingBalance(true);
+      try {
+        const balance = await getSolanaBalanceUSD(solanaAddress);
+        setBalanceUSD(balance.toFixed(2));
+      } catch (error) {
+        console.error("[Header] Error refreshing balance:", error);
+      } finally {
+        setLoadingBalance(false);
+      }
+    }
+  }, [solanaAddress]);
 
   // Show success message when user authenticates after requesting access
   useEffect(() => {
@@ -183,7 +398,7 @@ export function Header() {
                   style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
                   onClick={handleRequestAccess}
                 >
-                  Log In
+                  Login / Create Account
                 </Button>
                 {/* Mobile burger menu button */}
                 <button
@@ -203,15 +418,28 @@ export function Header() {
               </>
             ) : (
               <>
-                <span className={`hidden sm:block text-sm px-4 py-2 ${isDarkPage ? 'text-white/90' : 'text-gray-700'}`}>{email}</span>
-                <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
-                <Button
-                  variant="outline"
-                  className="hidden sm:flex font-semibold px-4 py-2 rounded-xl border-gray-300 text-gray-800 hover:bg-gray-100"
-                  onClick={() => logout()}
+                {/* Balance Display – click to open Balance & Withdraw modal */}
+                <button
+                  type="button"
+                  onClick={() => setShowBalanceModal(true)}
+                  className={`hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${isDarkPage ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
                 >
-                  Log out
-                </Button>
+                  <span className="text-sm font-medium">Balance:</span>
+                  <span className="text-sm font-semibold">
+                    {loadingBalance ? "..." : `$${balanceUSD}`}
+                  </span>
+                </button>
+                <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
+                {/* User Menu with Dropdown */}
+                <UserMenu
+                  username={username || null}
+                  email={email}
+                  isDarkPage={isDarkPage}
+                  onLogout={() => {
+                    setUsername(null); // Clear username from store
+                    logout();
+                  }}
+                />
                 {/* Mobile burger menu button */}
                 <button
                   onClick={() => setIsMobileMenuOpen(true)}
@@ -335,15 +563,32 @@ export function Header() {
                 {authenticated && (
                   <>
                     <div className="h-px bg-gray-200 my-2"></div>
-                    <div className="px-4 py-2 text-sm text-gray-600">
-                      {email}
+                    {/* Balance in mobile menu – click to open Balance & Withdraw modal */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        setShowBalanceModal(true);
+                      }}
+                      className="w-full text-left px-4 py-2 bg-gray-50 rounded-lg mb-2 hover:bg-gray-100 transition-colors"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-gray-600">Balance:</span>
+                        <span className="text-sm font-semibold text-gray-900">
+                          {loadingBalance ? "..." : `$${balanceUSD}`}
+                        </span>
+                      </div>
+                    </button>
+                    <div className="px-4 py-2 text-sm text-gray-600 mb-2">
+                      {username ? `@${username}` : email}
                     </div>
                     <button
                       onClick={() => {
                         setIsMobileMenuOpen(false);
+                        setUsername(null); // Clear username from store
                         logout();
                       }}
-                      className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-900 font-medium hover:bg-gray-100 transition-colors text-left"
+                      className="flex items-center gap-3 px-4 py-3 rounded-lg text-red-600 font-medium hover:bg-red-50 transition-colors text-left"
                     >
                       Log out
                     </button>
@@ -361,7 +606,7 @@ export function Header() {
                       className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90"
                       style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
                     >
-                      Log In
+                      Login / Create Account
                     </button>
                   </>
                 )}
@@ -370,6 +615,88 @@ export function Header() {
           </div>
         </div>,
         document.body
+      )}
+
+      {/* Username Setup Modal */}
+      {userId && (
+        <UsernameSetupModal
+          open={showUsernameModal}
+          onClose={() => setShowUsernameModal(false)}
+          onSuccess={(newUsername) => {
+            setUsername(newUsername); // This is from store
+            setShowUsernameModal(false);
+          }}
+          privyUserId={userId}
+        />
+      )}
+
+      {/* Welcome Onboarding Modal - rendered in portal to center on screen */}
+      {username && userId && (
+        <WelcomeOnboarding
+          open={showWelcomeOnboarding}
+          onClose={(dontShowAgain) => {
+            setShowWelcomeOnboarding(false);
+            // Preference is saved to database in the component itself
+            // Refresh user data to get updated username
+            if (authenticated && userId) {
+              // Trigger a refresh of user data
+              const refreshUser = async () => {
+                try {
+                  const userResponse = await fetch("/api/users/check", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      privyUserId: userId,
+                      email: email,
+                    }),
+                  });
+                  const userData = await userResponse.json();
+                  if (userData.user?.username) {
+                    setUsername(userData.user.username);
+                  }
+                } catch (error) {
+                  console.error("[Header] Error refreshing user:", error);
+                }
+              };
+              refreshUser();
+            }
+          }}
+          username={username}
+          privyUserId={userId}
+          onEditUsername={async () => {
+            // Refresh user data after username is saved
+            if (authenticated && userId) {
+              try {
+                const userResponse = await fetch("/api/users/check", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    privyUserId: userId,
+                    email: email,
+                  }),
+                });
+                const userData = await userResponse.json();
+                if (userData.user?.username) {
+                  setUsername(userData.user.username);
+                }
+              } catch (error) {
+                console.error("[Header] Error refreshing user:", error);
+              }
+            }
+          }}
+        />
+      )}
+
+      {/* Balance & Withdraw Modal – opened when clicking balance */}
+      {authenticated && (
+        <BalanceModal
+          open={showBalanceModal}
+          onClose={() => setShowBalanceModal(false)}
+          balanceUSD={balanceUSD}
+          loadingBalance={loadingBalance}
+          solanaAddress={solanaAddress}
+          onRefresh={refreshBalance}
+        />
       )}
 
       {/* Access Requested Success Modal */}

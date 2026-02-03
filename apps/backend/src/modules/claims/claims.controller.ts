@@ -7,6 +7,8 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  BadRequestException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -18,7 +20,8 @@ import {
 import { AuthGuard } from '@/common/guards';
 import { ClaimsService } from './claims.service';
 import { DepositService, DepositResult } from './deposit.service';
-import { CreateClaimDto, RequestDepositDto } from './dto';
+import { SolanaSponsorService } from './solana-sponsor.service';
+import { CreateClaimDto, CreateClaimFromUsernameDto, RequestDepositDto } from './dto';
 import { Claim, ClaimIntent } from './entities/claim.entity';
 
 @ApiTags('claims')
@@ -27,6 +30,7 @@ export class ClaimsController {
   constructor(
     private readonly claimsService: ClaimsService,
     private readonly depositService: DepositService,
+    private readonly solanaSponsor: SolanaSponsorService,
   ) {}
 
   /**
@@ -49,6 +53,44 @@ export class ClaimsController {
     @Body() createDto: CreateClaimDto,
   ): Promise<{ id: string; link: string }> {
     return this.claimsService.create(createDto);
+  }
+
+  /**
+   * Create a claim from username (wallet address fetched server-side, never exposed)
+   */
+  @Post('create-from-username')
+  @ApiOperation({ summary: 'Create claim from username (wallet address stays server-side)' })
+  @ApiResponse({
+    status: 201,
+    description: 'Claim created',
+    schema: {
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        link: { type: 'string', format: 'uri' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input' })
+  @ApiResponse({ status: 404, description: 'User not found or no wallet' })
+  async createFromUsername(
+    @Body() createDto: CreateClaimFromUsernameDto,
+  ): Promise<{ id: string; link: string }> {
+    return this.claimsService.createFromUsername(createDto);
+  }
+
+  /**
+   * Get fee payer address for Solana sponsored transactions (Pay with Loofta).
+   * Declared before :id so "solana-sponsor/fee-payer" is not captured as claim id.
+   */
+  @Get('solana-sponsor/fee-payer')
+  @ApiOperation({ summary: 'Get Solana fee payer address for sponsorship' })
+  @ApiResponse({
+    status: 200,
+    description: 'Fee payer address if sponsorship is enabled',
+    schema: { properties: { feePayerAddress: { type: 'string', nullable: true } } },
+  })
+  getSolanaFeePayer(): { feePayerAddress: string | null } {
+    return { feePayerAddress: this.solanaSponsor.getFeePayerAddress() };
   }
 
   /**
@@ -115,6 +157,61 @@ export class ClaimsController {
     @Body() depositDto: RequestDepositDto,
   ): Promise<DepositResult> {
     return this.depositService.requestDeposit(depositDto);
+  }
+
+  /**
+   * Update claim status (public endpoint for payment flow)
+   */
+  @Post(':id/status')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update claim status' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Updated claim', type: Claim })
+  @ApiResponse({ status: 404, description: 'Claim not found' })
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() body: { status: string; txHash?: string; paidWith?: string; isPrivate?: boolean },
+  ): Promise<Claim> {
+    return this.claimsService.updateStatus(id, body.status as any, {
+      txHash: body.txHash,
+      paidWith: body.paidWith,
+      isPrivate: body.isPrivate,
+    });
+  }
+
+  /**
+   * Sign a user-signed sponsored transaction with the fee payer and broadcast.
+   * Body: { transaction: base64 serialized VersionedTransaction (user already signed) }.
+   */
+  @Post('solana-sponsor/sign-and-broadcast')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Sign and broadcast sponsored Solana transaction' })
+  @ApiResponse({
+    status: 200,
+    description: 'Transaction signature',
+    schema: { properties: { signature: { type: 'string' } } },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid transaction' })
+  @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
+  async signAndBroadcastSponsored(
+    @Body() body: { transaction: string },
+  ): Promise<{ signature: string }> {
+    if (!body?.transaction || typeof body.transaction !== 'string') {
+      throw new BadRequestException('Missing or invalid transaction');
+    }
+    if (!this.solanaSponsor.isAvailable()) {
+      throw new ServiceUnavailableException('Solana fee sponsorship is not configured');
+    }
+    try {
+      return await this.solanaSponsor.signAndBroadcast(body.transaction);
+    } catch (e: any) {
+      if (e?.message?.includes('not configured')) {
+        throw new ServiceUnavailableException('Solana sponsorship is not configured');
+      }
+      throw new BadRequestException(e?.message || 'Failed to sign and broadcast');
+    }
   }
 
   /**

@@ -3,6 +3,7 @@ import {
   Get,
   Delete,
   Patch,
+  Post,
   Body,
   Param,
   Query,
@@ -34,7 +35,7 @@ export class AdminClaimsController {
    */
   @Get()
   @ApiOperation({ summary: 'List all claims (admin)' })
-  @ApiQuery({ name: 'status', required: false, enum: ['OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED'] })
+  @ApiQuery({ name: 'status', required: false, enum: ['OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'PRIVATE_TRANSFER_PENDING', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED'] })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'offset', required: false, type: Number })
   @ApiResponse({
