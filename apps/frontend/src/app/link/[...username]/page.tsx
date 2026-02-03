@@ -7,13 +7,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MessageInput } from "@/components/MessageInput";
 import { useToast } from "@/components/ui/use-toast";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
+import { Switch } from "@/components/ui/switch";
 import { useQuery } from "@tanstack/react-query";
+import { PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
 import { usePrivy } from "@privy-io/react-auth";
 import { isDemoMode } from "@/config/demoMode";
 import { useRouter } from "next/navigation";
-// Privacy Cash import is lazy-loaded to avoid Turbopack WASM issues
-// Only import when actually needed (inside the function)
-
 // Check demo mode at module level for consistent behavior
 const DEMO_MODE = isDemoMode();
 
@@ -133,7 +132,7 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
       return;
     }
 
-    // Validate minimum amount for private payments (Privacy Cash requires $2 minimum)
+    // Validate minimum amount for private payments (when available)
     if (isPrivate && Number(amountUSD) < 2) {
       toast({
         variant: "destructive",
@@ -215,7 +214,7 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
                       </div>
                       <p className="text-base text-gray-600">
                         {requiresPrivatePayments
-                          ? "Choose the amount you want to pay privately. Payment will be processed through Privacy Cash. Both addresses remain hidden."
+                          ? "Choose the amount you want to pay privately. Payment will be processed through privacy pools. Both addresses remain hidden."
                           : "Choose the amount you want to pay, you'll be redirected to settle it in any token on any chain you want"
                         }
                       </p>
@@ -234,49 +233,33 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
                       className="text-3xl md:text-4xl font-semibold text-gray-900 h-16"
                       min={isPrivate ? "2" : "0.01"}
                     />
-                    {isPrivate && (
-                      <div className="mt-2 text-sm text-gray-500">
-                        Minimum amount: $3.00
-                      </div>
-                    )}
 
-                    {/* Payment Type Selection - Only show if not required private */}
+                    <div className="mt-2 text-sm text-gray-500">
+                      Minimum amount: $3.00
+                    </div>
+
+                    {/* Payment Type — Private coming soon (disabled) */}
                     {!requiresPrivatePayments && (
-                      <div className="mt-6">
-                        <div className="text-base text-gray-700 mb-3">Payment Type</div>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setIsPrivate(false)}
-                            className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all ${!isPrivate
-                              ? 'bg-orange-500 text-white'
-                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                              }`}
-                          >
-                            Standard
-                            <div className="text-xs font-normal mt-1 opacity-90">
-                              Lower fees
-                            </div>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setIsPrivate(true)}
-                            className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all ${isPrivate
-                              ? 'bg-amber-500 text-gray-900'
-                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                              }`}
-                          >
-                            🔒 Private
-                            <div className="text-xs font-normal mt-1 opacity-90">
-                              +0.35% + $0.74
-                            </div>
-                          </button>
-                        </div>
-                        {isPrivate && (
-                          <div className="mt-2 text-sm text-gray-600">
-                            Payment will be processed through Privacy Cash pool for complete privacy
+                      <div className="mt-6 p-4 rounded-xl border border-gray-200 bg-gray-50">
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-lg font-semibold text-gray-900">
+                              🔒 Private payment
+                            </span>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
+                              Coming soon
+                            </span>
                           </div>
-                        )}
+                          <Switch
+                            checked={false}
+                            onCheckedChange={() => { }}
+                            disabled={PRIVATE_PAYMENT_COMING_SOON}
+                            aria-label="Private payment — coming soon"
+                          />
+                        </div>
+                        <p className="text-base text-gray-600 mt-3 w-full block">
+                          When available, payment will be processed through privacy pools for complete privacy (+0.35% + $0.74).
+                        </p>
                       </div>
                     )}
 
@@ -293,6 +276,7 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
                         maxLength={500}
                         gifUrl={gifUrl}
                         onGifChange={setGifUrl}
+                        className="[&_input]:h-16"
                       />
                     </div>
 

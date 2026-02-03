@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
+type AppUserRow = {
+  id: string;
+  privy_user_id: string;
+  email: string | null;
+  username?: string | null;
+  skip_onboarding?: boolean;
+  created_at: string;
+};
+
 /**
  * Check if user exists and return user data
  * POST /api/users/check
@@ -45,18 +54,12 @@ export async function POST(request: NextRequest) {
       // PGRST116 = no rows returned, which is fine
       // 42703 = column does not exist (username column)
       if (error.code === "42703" && error.message?.includes("username")) {
-        // Username column doesn't exist - return user without username
+        // Username column doesn't exist - query failed so we don't have user; ask client to retry after migration
         console.warn("[users/check] Username column not found. Please run migration: supabase migration up");
         return NextResponse.json({
-          exists: true,
-          user: {
-            id: user?.id,
-            privyUserId: user?.privy_user_id,
-            email: user?.email,
-            username: null,
-            createdAt: user?.created_at,
-          },
-          needsUsername: false, // Can't set username until migration is run
+          exists: false,
+          user: null,
+          needsUsername: false,
           migrationNeeded: true,
         });
       }
@@ -68,18 +71,19 @@ export async function POST(request: NextRequest) {
     }
 
     // User exists
-    if (user) {
+    const userRow = user as AppUserRow | null;
+    if (userRow) {
       return NextResponse.json({
         exists: true,
         user: {
-          id: user.id,
-          privyUserId: user.privy_user_id,
-          email: user.email,
-          username: user.username,
-          skipOnboarding: user.skip_onboarding || false,
-          createdAt: user.created_at,
+          id: userRow.id,
+          privyUserId: userRow.privy_user_id,
+          email: userRow.email,
+          username: userRow.username ?? null,
+          skipOnboarding: userRow.skip_onboarding ?? false,
+          createdAt: userRow.created_at,
         },
-        needsUsername: !user.username,
+        needsUsername: !userRow.username,
       });
     }
 

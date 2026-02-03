@@ -132,8 +132,8 @@ export class UsersController {
     },
   })
   async getMyBalance(@PrivyUser() user: { id: string }) {
-    const balance = await this.usersService.getSolanaWalletBalanceUSD(user.id);
-    return { balanceUSD: balance };
+    const { balanceUSD, walletAddress } = await this.usersService.getSolanaWalletBalanceAndAddress(user.id);
+    return { balanceUSD, walletAddress };
   }
 
   /**

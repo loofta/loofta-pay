@@ -5,7 +5,15 @@ import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import type { TokenSelection } from "@/app/utils/types";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
@@ -15,9 +23,8 @@ import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { useClaimPayStore } from "@/store/claimPay";
 import { TokenIcon } from "@/components/TokenIcon";
 import Image from "next/image";
-import { getChainIcon } from "@/lib/chains";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, ArrowRight } from "lucide-react";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send } from "lucide-react";
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { QRCodeSVG } from "qrcode.react";
 import { motion } from "framer-motion";
@@ -26,11 +33,82 @@ import { createSwapTransaction, getSwapStatus, checkSwapEligibility } from "@/se
 import { ACTIVE_SWAP_PROVIDER, getProviderDisplayName, type SwapProvider } from "@/config/swapProvider";
 import { ethers } from "ethers";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
-import { useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
+import { useConnectedStandardWallets, useStandardSignAndSendTransaction, useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
+import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
-import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES } from "@/services/privacyCash";
-import { Connection, VersionedTransaction, PublicKey } from "@solana/web3.js";
+import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES, PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
+import { Connection, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import {
+  getAssociatedTokenAddressSync,
+  createTransferInstruction,
+  createAssociatedTokenAccountInstruction,
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+} from "@solana/spl-token";
+import { USDC_MINT } from "@/services/solanaBalance";
 import { getRefundToForChain } from "@/lib/refundAddresses";
+import { useSolanaPayment } from "@/hooks/useSolanaPayment";
+
+/** Inline Loofta logo SVG (no Image component). */
+function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
+  const id = React.useId().replace(/:/g, "-");
+  return (
+    <svg
+      viewBox="0 0 56 57"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden
+      {...props}
+    >
+      <g filter={`url(#loofta-shadow-${id})`}>
+        <path
+          d="M27.9532 49C20.655 49 14.8226 46.8696 10.4561 42.6087C6.15205 38.2861 4 32.2035 4 24.3611C4 19.5444 4.99805 15.3144 6.99415 11.6711C8.99025 8.02773 11.7661 5.18714 15.3216 3.14934C18.9396 1.04978 23.1501 0 27.9532 0C33.3177 0 37.7778 1.04978 41.3333 3.14934C44.8889 5.18714 47.54 8.02773 49.2865 11.6711C51.0955 15.3144 52 19.5444 52 24.3611C52 32.2035 50.0039 38.2861 46.0117 42.6087C42.0819 46.8696 36.0624 49 27.9532 49ZM15.1345 22.7864C15.1345 24.7007 16.1014 26.0592 18.0351 26.862C19.9688 27.603 23.2749 27.9735 27.9532 27.9735C32.6316 27.9735 35.9376 27.603 37.8713 26.862C39.8051 26.0592 40.7719 24.7007 40.7719 22.7864C40.7719 20.9338 39.8051 19.637 37.8713 18.896C35.9376 18.155 32.6316 17.7845 27.9532 17.7845C23.2749 17.7845 19.9688 18.155 18.0351 18.896C16.1014 19.637 15.1345 20.9338 15.1345 22.7864Z"
+          fill="#FF4A26"
+        />
+      </g>
+      <defs>
+        <filter id={`loofta-shadow-${id}`} x="0" y="0" width="56" height="57" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+          <feFlood floodOpacity="0" result="BackgroundImageFix" />
+          <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha" />
+          <feOffset dy="4" />
+          <feGaussianBlur stdDeviation="2" />
+          <feComposite in2="hardAlpha" operator="out" />
+          <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.12 0" />
+          <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_617_42" />
+          <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_617_42" result="shape" />
+        </filter>
+      </defs>
+    </svg>
+  );
+}
+
+/** Poll until tx is confirmed or failed on-chain; only return true if confirmed without error. */
+async function waitForConfirmation(
+  connection: Connection,
+  signature: string,
+  timeoutMs: number
+): Promise<boolean> {
+  const start = Date.now();
+  const pollIntervalMs = 1500;
+  while (Date.now() - start < timeoutMs) {
+    const { value: status } = await connection.getSignatureStatus(signature);
+    if (status?.err) {
+      // Tx failed on-chain (e.g. insufficient SOL for fee)
+      throw new Error(
+        `Transaction failed on-chain: ${typeof status.err === "object" ? JSON.stringify(status.err) : String(status.err)}. You may need a small amount of SOL for gas.`
+      );
+    }
+    if (
+      status?.confirmationStatus === "confirmed" ||
+      status?.confirmationStatus === "finalized"
+    ) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  return false;
+}
 
 /** Phantom wallet provider (injected by Phantom extension). Use for USDC-on-Solana payments. */
 function getPhantomProvider(): { connect: () => Promise<{ publicKey: PublicKey }>; publicKey: PublicKey | null; signMessage: (msg: Uint8Array, display?: string) => Promise<{ signature: Uint8Array }>; signTransaction: (tx: VersionedTransaction) => Promise<VersionedTransaction> } | null {
@@ -57,7 +135,7 @@ async function fetchClaim(id: string) {
     if (r.ok) {
       const data = await r.json();
       return {
-        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean; paid_with_token?: string; paid_with_chain?: string },
+        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
         latestIntent: data.intent ? {
           depositAddress: data.intent.deposit_address || null,
           memo: data.intent.memo ?? null,
@@ -80,10 +158,9 @@ async function fetchClaim(id: string) {
     throw new Error(errorData?.error || errorData?.message || "Claim not found");
   }
   const data = await r.json();
-  console.log('r lisa here data', data);
 
   return {
-    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean; paid_with_token?: string; paid_with_chain?: string },
+    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -258,10 +335,21 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const userCancelled = React.useRef<boolean>(false); // Track if user manually cancelled to prevent re-hydration
   const privateTransferTriggeredRef = React.useRef<Set<string>>(new Set()); // Auto-run Privacy Cash once per claim when PRIVATE_TRANSFER_PENDING
   const onPayPrivatelyRef = React.useRef<(() => Promise<void>) | null>(null);
-  const { logout, login, authenticated, user } = usePrivy();
+  const { logout, login, authenticated, user, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
+  const { wallets: standardWallets } = useConnectedStandardWallets();
+  const { signAndSendTransaction } = useStandardSignAndSendTransaction();
+  const [showPayNowModal, setShowPayNowModal] = useState(false);
+  const [payingWithLoofta, setPayingWithLoofta] = useState(false);
+  const [payWithLooftaError, setPayWithLooftaError] = useState<string | null>(null);
+  const [payingWithWallet, setPayingWithWallet] = useState(false);
+  const [payWithWalletError, setPayWithWalletError] = useState<string | null>(null);
+  /** When set, we're waiting for on-chain confirmation; show tracker UI in Pay Now modal. */
+  const [confirmingTxSignature, setConfirmingTxSignature] = useState<string | null>(null);
+  const [confirmingTxSource, setConfirmingTxSource] = useState<"loofta" | "wallet" | null>(null);
   const { signMessage: privySignMessage } = usePrivySignMessage();
   const { signTransaction: privySignTransaction } = usePrivySignTransaction();
+  const solanaPayment = useSolanaPayment({ enabled: showPayNowModal });
 
   // Enforce private mode if claim requires it
   const requiresPrivate = claim?.is_private === true;
@@ -747,6 +835,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   }
 
   async function onPayPrivately() {
+    if (PRIVATE_PAYMENT_COMING_SOON) {
+      toast({ title: "Coming soon", description: "Private payments will be available soon." });
+      return;
+    }
     console.log("[PrivateTransfer] onPayPrivately called", { claimId: claim?.id, isPrivate: claim?.is_private, isPrivateMode, authenticated });
     // Enforce private mode if claim requires it
     if (claim?.is_private && !isPrivateMode) {
@@ -871,6 +963,209 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       toast({ variant: "destructive", title: "Payment failed", description: error?.message || "Could not complete private payment" });
     } finally {
       setPreparing(false);
+    }
+  }
+
+  // Get Solana *embedded* wallet address (must match Privy signer and backend balance)
+  // Prefer solana_embedded_wallet / solana type so we don't use a smart_wallet (8McJ...) by mistake
+  // Fetch Loofta balance when Pay Now modal is open (for "Pay with Loofta" option).
+  // This is USDC only (backend uses getTokenAccountsByOwner for USDC mint).
+  // Note: Privy’s confirm modal shows the wallet’s SOL balance (for gas), not USDC — so you may see "$0.00" there even when you have USDC; gas sponsorship covers fees.
+  const claimAmountUSD = parseFloat(claim?.amount || "0") || 0;
+  const looftaBalanceUSD = solanaPayment.balanceUSD;
+  const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(claimAmountUSD);
+  const balanceData = solanaPayment.isBalanceLoading ? undefined : { balanceUSD: looftaBalanceUSD };
+
+  async function payWithWallet() {
+    if (!claim?.id || !claim?.recipient_address || !claim?.amount) {
+      toast({ variant: "destructive", title: "Missing info", description: "Claim or recipient address is missing." });
+      return;
+    }
+    const amountUSD = parseFloat(claim.amount) || 0;
+    if (amountUSD <= 0) {
+      toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
+      return;
+    }
+    const phantom = getPhantomProvider();
+    if (!phantom) {
+      toast({ variant: "destructive", title: "Phantom not found", description: "Install the Phantom extension to pay with wallet." });
+      return;
+    }
+    setPayingWithWallet(true);
+    setPayWithWalletError(null);
+    try {
+      // Connect and get sender address from Phantom
+      const { publicKey } = await phantom.connect();
+      if (!publicKey) throw new Error("Could not get wallet address from Phantom.");
+      const senderAddressWallet = publicKey.toBase58();
+
+      const rpc =
+        process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+        (process.env.NEXT_PUBLIC_HELIUS_API_KEY
+          ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
+          : "https://api.mainnet-beta.solana.com");
+      const connection = new Connection(rpc, "confirmed");
+      const mint = new PublicKey(USDC_MINT);
+      const sender = new PublicKey(senderAddressWallet);
+      const recipient = new PublicKey(claim.recipient_address.trim());
+      const amountRaw = Math.floor(amountUSD * 1e6);
+      if (amountRaw <= 0) throw new Error("Amount must be greater than 0");
+
+      const senderAta = getAssociatedTokenAddressSync(mint, sender, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+      const recipientAta = getAssociatedTokenAddressSync(mint, recipient, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+
+      const instructions = [];
+      const recipientAccountInfo = await connection.getAccountInfo(recipientAta);
+      if (!recipientAccountInfo) {
+        instructions.push(
+          createAssociatedTokenAccountInstruction(sender, recipientAta, recipient, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
+        );
+      }
+      instructions.push(
+        createTransferInstruction(senderAta, recipientAta, sender, amountRaw, [], TOKEN_PROGRAM_ID)
+      );
+
+      const { blockhash } = await connection.getLatestBlockhash("confirmed");
+      const message = new TransactionMessage({
+        payerKey: sender,
+        recentBlockhash: blockhash,
+        instructions,
+      }).compileToV0Message();
+      const transaction = new VersionedTransaction(message);
+
+      const signedTx = await phantom.signTransaction(transaction);
+      const sig = await connection.sendRawTransaction(signedTx.serialize(), {
+        skipPreflight: true,
+        maxRetries: 3,
+        preflightCommitment: "processed",
+      });
+      setConfirmingTxSignature(sig);
+      setConfirmingTxSource("wallet");
+
+      const confirmed = await waitForConfirmation(connection, sig, 90_000);
+      if (!confirmed) {
+        throw new Error(
+          "Transaction did not confirm in time. Check Solscan for status."
+        );
+      }
+
+      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana wallet)" });
+      setStatus("SUCCESS");
+      useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
+      await claimQuery.refetch();
+      setShowPayNowModal(false);
+      toast({ title: "Payment confirmed", description: `$${amountUSD.toFixed(2)} USDC sent from your wallet.` });
+    } catch (e: any) {
+      console.error("[PayWithWallet] Error:", e);
+      const message = e?.message || "Could not complete payment with wallet.";
+      setPayWithWalletError(message);
+      toast({ variant: "destructive", title: "Payment failed", description: message });
+    } finally {
+      setPayingWithWallet(false);
+      setConfirmingTxSignature(null);
+      setConfirmingTxSource(null);
+    }
+  }
+
+  async function payWithLooftaBalance() {
+    if (!claim?.id || !claim?.recipient_address || !claim?.amount) {
+      toast({ variant: "destructive", title: "Missing info", description: "Claim or recipient address is missing." });
+      return;
+    }
+    const amountUSD = parseFloat(claim.amount) || 0;
+    if (amountUSD <= 0) {
+      toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
+      return;
+    }
+    const senderAddress = solanaPayment.senderAddress;
+    if (!senderAddress) {
+      toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta Solana wallet was not found. Try logging in again." });
+      return;
+    }
+    const selectedWallet = standardWallets?.find((w) => w.address === senderAddress);
+    if (!selectedWallet) {
+      toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta Solana wallet is not available. Try refreshing." });
+      return;
+    }
+    setPayingWithLoofta(true);
+    setPayWithLooftaError(null);
+    try {
+      const rpc =
+        process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+        (process.env.NEXT_PUBLIC_HELIUS_API_KEY
+          ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
+          : "https://api.mainnet-beta.solana.com");
+      const connection = new Connection(rpc, "confirmed");
+      const mint = new PublicKey(USDC_MINT);
+      const sender = new PublicKey(senderAddress);
+      const recipient = new PublicKey(claim.recipient_address.trim());
+      const amountRaw = Math.floor(amountUSD * 1e6);
+      if (amountRaw <= 0) throw new Error("Amount must be greater than 0");
+
+      const senderAta = getAssociatedTokenAddressSync(mint, sender, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+      const recipientAta = getAssociatedTokenAddressSync(mint, recipient, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+
+      const instructions = [];
+      const recipientAccountInfo = await connection.getAccountInfo(recipientAta);
+      if (!recipientAccountInfo) {
+        instructions.push(
+          createAssociatedTokenAccountInstruction(sender, recipientAta, recipient, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
+        );
+      }
+      instructions.push(
+        createTransferInstruction(senderAta, recipientAta, sender, amountRaw, [], TOKEN_PROGRAM_ID)
+      );
+
+      const { blockhash } = await connection.getLatestBlockhash("confirmed");
+      const message = new TransactionMessage({
+        payerKey: sender,
+        recentBlockhash: blockhash,
+        instructions,
+      }).compileToV0Message();
+      const transaction = new VersionedTransaction(message);
+      const transactionBytes = new Uint8Array(transaction.serialize());
+
+      const result = await signAndSendTransaction({
+        transaction: transactionBytes,
+        wallet: selectedWallet,
+        options: {
+          sponsor: true,
+          skipPreflight: true,
+        } as Parameters<typeof signAndSendTransaction>[0]["options"],
+      });
+      const sig = typeof result?.signature !== "undefined" ? bs58.encode(result.signature) : String(result);
+      setConfirmingTxSignature(sig);
+      setConfirmingTxSource("loofta");
+
+      const confirmed = await waitForConfirmation(connection, sig, 90_000);
+      if (!confirmed) {
+        throw new Error(
+          "Transaction did not confirm in time. Check Solscan for status — do not mark as paid until the transaction confirms."
+        );
+      }
+
+      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana)" });
+      setStatus("SUCCESS");
+      useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
+      await claimQuery.refetch();
+      setShowPayNowModal(false);
+      toast({
+        title: "Payment confirmed",
+        description: `$${amountUSD.toFixed(2)} USDC sent successfully.`,
+      });
+    } catch (e: any) {
+      console.error("[PayWithLoofta] Error:", e);
+      const message = e?.message || "Could not send from Loofta balance. Try again or use wallet.";
+      setPayWithLooftaError(message);
+      toast({
+        variant: "destructive",
+        title: "Payment failed",
+        description: message,
+      });
+    } finally {
+      setPayingWithLoofta(false);
+      setConfirmingTxSignature(null);
+      setConfirmingTxSource(null);
     }
   }
 
@@ -1713,34 +2008,28 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
                     {String(status || "").toUpperCase() !== "SUCCESS" && (!deposit ? (
                       <>
-                        {/* Standard/Private Toggle - Hide if claim requires private */}
-                        {!requiresPrivate && (
-                          <div className="mt-5">
-                            <div className="flex gap-2 rounded-xl bg-gray-100 p-1.5">
-                              <button
-                                type="button"
-                                onClick={() => handleSetPrivateMode(false)}
-                                className={`flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all ${!isPrivateMode
-                                  ? 'bg-orange-500 text-white'
-                                  : 'bg-transparent text-gray-600 hover:text-gray-900'
-                                  }`}
-                              >
-                                Standard
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleSetPrivateMode(true)}
-                                className={`flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 ${isPrivateMode
-                                  ? 'bg-orange-500 text-white'
-                                  : 'bg-transparent text-gray-600 hover:text-gray-900'
-                                  }`}
-                              >
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="opacity-80">
-                                  <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" fill="currentColor" />
-                                </svg>
-                                Private
-                              </button>
+                        {/* Private payment switch — only show when is_private was not set at creation (null/undefined) */}
+                        {claim?.is_private == null && !requiresPrivate && (
+                          <div className="mt-5 p-4 rounded-xl border border-gray-200 bg-gray-50">
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-base font-semibold text-gray-900">
+                                  🔒 Private payment
+                                </span>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
+                                  Coming soon
+                                </span>
+                              </div>
+                              <Switch
+                                checked={false}
+                                onCheckedChange={() => { }}
+                                disabled={PRIVATE_PAYMENT_COMING_SOON}
+                                aria-label="Private payment — coming soon"
+                              />
                             </div>
+                            <p className="text-sm text-gray-600 mt-3 w-full block">
+                              When available, payment will be processed through privacy pools for complete privacy.
+                            </p>
                           </div>
                         )}
 
@@ -1751,7 +2040,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                             </svg>
                             <span className="font-medium">
-                              Private payment only - This link requires Privacy Cash for complete privacy
+                              Private payment only — coming soon
                             </span>
                           </div>
                         )}
@@ -1763,12 +2052,20 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                           {requiresPrivate || isPrivateMode ? (
                             /* Private mode (required or optional) - Show USDC on SOL as best option, but allow other tokens */
                             <>
-                              {/* Best option: Pay USDC on SOL (FREE) - uses Privacy Cash directly */}
+                              {/* Best option: Pay USDC on SOL (FREE) - pay now with Phantom or Loofta balance */}
                               {usdcSolanaToken && (
                                 <div className="mb-4">
                                   <button
                                     type="button"
-                                    onClick={() => {
+                                    onClick={async () => {
+                                      const phantom = getPhantomProvider();
+                                      if (phantom) {
+                                        try {
+                                          await phantom.connect();
+                                        } catch (e) {
+                                          // User cancelled or Phantom not available
+                                        }
+                                      }
                                       setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
                                     }}
                                     className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
@@ -1786,7 +2083,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
                                       </div>
                                       <div className="text-sm text-gray-600 mt-0.5">
-                                        Fastest option • Uses Privacy Cash for privacy
+                                        Pay now with Phantom or your Loofta balance
                                       </div>
                                     </div>
                                     {selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain && (
@@ -1808,7 +2105,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                 </div>
                               </div>
 
-                              {/* Token selector - hide Solana to avoid swapping to USDC before Privacy Cash */}
+                              {/* Token selector - hide Solana for private flow */}
                               <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
                                 <TokenCombobox
                                   tokens={filteredTokens as any}
@@ -1828,7 +2125,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   }}
                                   placeholder="Select token to pay with"
                                   onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                                  hideChains={['solana', 'sol']} // Hide Solana to avoid swapping to USDC before Privacy Cash
+                                  hideChains={['solana', 'sol']}
                                   className={`bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain)
                                     ? 'border-emerald-400 hover:bg-emerald-50'
                                     : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'
@@ -1877,12 +2174,12 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                 </motion.div>
                               ) : selectedFrom && selectedFrom.symbol === usdcSolanaToken?.symbol && selectedFrom.chain === usdcSolanaToken?.chain ? (
                                 <div className="mt-2 text-sm text-amber-700">
-                                  Payment will use Privacy Cash for complete privacy
+                                  Private payments coming soon
                                 </div>
                               ) : null}
                               {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) && (
                                 <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
-                                  <span className="font-medium">Private payment:</span> Your token will be swapped to USDC on Solana via Near-Intents, then processed through Privacy Cash for privacy.
+                                  <span className="font-medium">Private payment:</span> Coming soon.
                                 </div>
                               )}
                               {(() => {
@@ -1937,7 +2234,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                           <span className="font-semibold text-lg text-gray-900">${totalToPay.toFixed(6)}</span>
                                         </div>
                                         <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
-                                          Fees are deducted automatically by Privacy Cash during withdrawal
+                                          Fees apply when private payments are available
                                         </div>
                                       </div>
                                     </div>
@@ -1951,14 +2248,21 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                           ) : (
                             /* Standard mode - Show USDC on SOL (FREE) option first, then token selector */
                             <>
-                              {/* Best option: Pay USDC on SOL (FREE) - uses Privacy Cash */}
+                              {/* Best option: Pay USDC on SOL (FREE) - pay now with Phantom or Loofta balance */}
                               {usdcSolanaToken && (
                                 <div className="mb-4">
                                   <button
                                     type="button"
-                                    onClick={() => {
+                                    onClick={async () => {
+                                      const phantom = getPhantomProvider();
+                                      if (phantom) {
+                                        try {
+                                          await phantom.connect();
+                                        } catch (e) {
+                                          // User cancelled or Phantom not available
+                                        }
+                                      }
                                       setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
-                                      setIsPrivateMode(true); // Switch to private mode for USDC on SOL
                                     }}
                                     className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
                                       ? 'border-green-400 bg-green-100'
@@ -1974,7 +2278,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                         </span>
                                       </div>
                                       <div className="text-sm text-gray-600 mt-0.5">
-                                        Fastest option • Uses Privacy Cash for privacy
+                                        Pay now with Phantom or your Loofta balance
                                       </div>
                                     </div>
                                     {selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain && (
@@ -1996,7 +2300,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                 </div>
                               </div>
 
-                              {/* Token selector - hide Solana to avoid swapping to USDC before Privacy Cash */}
+                              {/* Token selector - hide Solana for private flow */}
                               <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
                                 <TokenCombobox
                                   tokens={filteredTokens as any}
@@ -2016,7 +2320,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   }}
                                   placeholder="Select token to pay with"
                                   onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                                  hideChains={['solana', 'sol']} // Hide Solana to avoid swapping to USDC before Privacy Cash
+                                  hideChains={['solana', 'sol']}
                                   className={`bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain)
                                     ? 'border-emerald-400 hover:bg-emerald-50'
                                     : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'
@@ -2081,7 +2385,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   setRefundAddress(e.target.value);
                                   setRefundAddressError(null);
                                 }}
-                                placeholder={`Enter ${selectedFrom.chain.toUpperCase()} address for refunds (pre-filled with a safe placeholder)`}
+                                placeholder={`Enter ${selectedFrom.chain.toUpperCase()} address for refunds`}
                                 className={refundAddressError ? "border-red-500 focus:border-red-500" : ""}
                               />
                               {refundAddressError && (
@@ -2103,50 +2407,68 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                 Demo Mode - Payments Disabled
                               </Button>
                             ) : (
-                              <GradientActionButton
-                                onClick={() => {
-                                  const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
-                                    selectedFrom?.chain === usdcSolanaToken?.chain;
-                                  if (!authenticated && !isUSDCOnSolana) {
-                                    login();
-                                    return;
-                                  }
-                                  if ((isPrivateMode || requiresPrivate) && isUSDCOnSolana) {
-                                    onPayPrivately();
-                                  } else {
-                                    onPrepare();
-                                  }
-                                }}
-                                disabled={
-                                  requiresPrivate && !isPrivateMode
-                                    ? true
-                                    : (() => {
-                                      const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
-                                        selectedFrom?.chain === usdcSolanaToken?.chain;
-                                      if (!authenticated && !isUSDCOnSolana) return false;
-                                      if (isPrivateMode || requiresPrivate) {
+                              <>
+                                <GradientActionButton
+                                  onClick={() => {
+                                    const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                                      selectedFrom?.chain === usdcSolanaToken?.chain;
+                                    if (!authenticated && !isUSDCOnSolana) {
+                                      login();
+                                      return;
+                                    }
+                                    // USDC on Solana = Pay now → show modal (Login to Loofta or Use wallet / Pay with Loofta or Use wallet)
+                                    if (isUSDCOnSolana) {
+                                      setPayWithLooftaError(null);
+                                      setPayWithWalletError(null);
+                                      setConfirmingTxSignature(null);
+                                      setConfirmingTxSource(null);
+                                      setShowPayNowModal(true);
+                                      return;
+                                    }
+                                    if ((isPrivateMode || requiresPrivate)) {
+                                      onPayPrivately();
+                                    } else {
+                                      onPrepare();
+                                    }
+                                  }}
+                                  disabled={
+                                    requiresPrivate && !isPrivateMode
+                                      ? true
+                                      : (() => {
+                                        const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                                          selectedFrom?.chain === usdcSolanaToken?.chain;
+                                        if (!authenticated && !isUSDCOnSolana) return false;
                                         if (isUSDCOnSolana) {
                                           return (!usdcSolanaToken || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
                                         }
+                                        if (isPrivateMode || requiresPrivate) {
+                                          return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
+                                        }
                                         return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
-                                      }
-                                      return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
-                                    })()
-                                }
-                                loading={preparing}
-                                loadingText={isPrivateMode || requiresPrivate ? "Processing private payment…" : "Preparing…"}
-                              >
-                                {(() => {
-                                  const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
-                                    selectedFrom?.chain === usdcSolanaToken?.chain;
-                                  if (!authenticated && !isUSDCOnSolana) return "Login to pay";
-                                  if (requiresPrivate && !isPrivateMode) return "Private payment required";
-                                  if (isPrivateMode || requiresPrivate) {
-                                    return isUSDCOnSolana ? "Pay with Privacy Cash" : "Get deposit address";
+                                      })()
                                   }
-                                  return "Get deposit address";
-                                })()}
-                              </GradientActionButton>
+                                  loading={preparing}
+                                  loadingText={(() => {
+                                    const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                                      selectedFrom?.chain === usdcSolanaToken?.chain;
+                                    if (isUSDCOnSolana) return "Opening…";
+                                    if (isPrivateMode || requiresPrivate) return "Processing private payment…";
+                                    return "Preparing…";
+                                  })()}
+                                >
+                                  {(() => {
+                                    const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                                      selectedFrom?.chain === usdcSolanaToken?.chain;
+                                    if (!authenticated && !isUSDCOnSolana) return "Login to pay";
+                                    if (requiresPrivate && !isPrivateMode) return "Private payment required";
+                                    if (isUSDCOnSolana) return "Pay now";
+                                    if (isPrivateMode || requiresPrivate) {
+                                      return "Get deposit address";
+                                    }
+                                    return "Get deposit address";
+                                  })()}
+                                </GradientActionButton>
+                              </>
                             )}
                           </div>
                         </div>
@@ -2585,31 +2907,12 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     );
                                   })()}
 
-                                  {/* PRIVATE_TRANSFER_PENDING: auto-runs Privacy Cash from embedded wallet; show progress or retry */}
+                                  {/* PRIVATE_TRANSFER_PENDING: private payments coming soon */}
                                   {String(status || "").toUpperCase() === "PRIVATE_TRANSFER_PENDING" && claim?.is_private && (
                                     <div className="mb-6 p-4 rounded-xl border-2 border-amber-200 bg-amber-50">
-                                      {preparing ? (
-                                        <p className="text-sm text-amber-900 flex items-center gap-2">
-                                          <Loader2 className="h-4 w-4 animate-spin" />
-                                          Completing private transfer…
-                                        </p>
-                                      ) : (
-                                        <>
-                                          <p className="text-sm text-amber-900 mb-3">
-                                            Private transfer did not complete. You can retry below.
-                                          </p>
-                                          <GradientActionButton
-                                            onClick={async () => {
-                                              await onPayPrivately();
-                                            }}
-                                            disabled={preparing}
-                                            loading={preparing}
-                                            loadingText="Completing…"
-                                          >
-                                            Retry private transfer
-                                          </GradientActionButton>
-                                        </>
-                                      )}
+                                      <p className="text-sm text-amber-900">
+                                        Private payments — coming soon.
+                                      </p>
                                     </div>
                                   )}
 
@@ -2694,6 +2997,206 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
           </div>
         </div>
       </div>
+
+      {/* Pay Now modal: same centered style as onboarding (emoji + amount + subtitle), then 2 options */}
+      <Dialog
+        open={showPayNowModal}
+        onOpenChange={(open) => {
+          setShowPayNowModal(open);
+          if (open) {
+            setPayWithLooftaError(null);
+            setPayWithWalletError(null);
+            setConfirmingTxSignature(null);
+            setConfirmingTxSource(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md p-8" aria-describedby={undefined}>
+          <DialogTitle id="pay-now-dialog-title" className="sr-only">
+            {confirmingTxSignature ? "Transaction on the way" : claim?.amount ? `Pay $${Number(claim.amount).toFixed(2)}` : "Pay now"}
+          </DialogTitle>
+          {confirmingTxSignature ? (
+            <>
+              <DialogHeader className="flex flex-col items-center justify-center text-center space-y-0 pb-4 sm:text-center" aria-hidden>
+                <div className="mb-4 flex justify-center">
+                  <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center">
+                    <Loader2 className="w-8 h-8 animate-spin text-orange-600" />
+                  </div>
+                </div>
+                <h2 className="text-2xl font-semibold text-gray-900 text-center">
+                  Transaction on the way
+                </h2>
+                <p className="pt-2 text-base text-center text-muted-foreground">
+                  Your payment is submitted. We're waiting for Solana to confirm — usually 10–30 seconds.
+                </p>
+                {confirmingTxSource && (
+                  <p className="pt-1 text-sm text-gray-500">
+                    Paying with {confirmingTxSource === "loofta" ? "Loofta balance" : "your wallet"}
+                  </p>
+                )}
+              </DialogHeader>
+              <div className="space-y-3 py-2">
+                <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50/80 p-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-gray-900">Signed & sent</p>
+                    <p className="text-xs text-gray-600">Transaction is on the network</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-lg border border-orange-200 bg-orange-50 p-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-100">
+                    <Send className="h-5 w-5 text-orange-600" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-gray-900">Confirming</p>
+                    <p className="text-xs text-gray-600">Waiting for on-chain confirmation…</p>
+                  </div>
+                  <Loader2 className="h-5 w-5 shrink-0 animate-spin text-orange-500" />
+                </div>
+                <a
+                  href={`https://solscan.io/tx/${confirmingTxSignature}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 py-2.5 text-sm font-medium text-orange-600 hover:bg-orange-50 hover:border-orange-200 transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
+                  tabIndex={0}
+                >
+                  View transaction on Solscan
+                </a>
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader className="flex flex-col items-center justify-center text-center space-y-0 pb-8 sm:text-center" aria-hidden>
+                <div className="mb-6 flex justify-center">
+                  <div className="text-6xl mb-4" aria-hidden>💳</div>
+                </div>
+                <h2 className="text-5xl font-semibold text-gray-900 tracking-tight text-center">
+                  {claim?.amount ? `$${Number(claim.amount).toFixed(2)}` : "Pay now"}
+                </h2>
+                <DialogDescription className="pt-2 text-base text-center">Choose how you'd like to pay</DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-3">
+                {!authenticated ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowPayNowModal(false);
+                        login();
+                      }}
+                      className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-orange-50 hover:border-orange-200 transition-all text-left"
+                    >
+                      <div className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center shrink-0 p-1.5">
+                        <LooftaIcon className="w-full h-full object-contain" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className="font-semibold text-gray-900 block">Login to pay with Loofta</span>
+                        <span className="text-sm text-gray-500">Use your Loofta account & balance</span>
+                      </div>
+                      <ArrowRight className="w-5 h-5 text-gray-400 shrink-0" />
+                    </button>
+
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-px bg-gray-200" />
+                      <span className="text-sm font-medium text-gray-400">or</span>
+                      <div className="flex-1 h-px bg-gray-200" />
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={payingWithWallet}
+                      onClick={() => payWithWallet()}
+                      className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
+                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-700" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className="font-semibold text-gray-900 block">Use wallet</span>
+                        <span className="text-sm text-gray-500">
+                          {payingWithWallet ? "Sign in Phantom & sending…" : "Phantom or other Solana wallet"}
+                        </span>
+                      </div>
+                      {!payingWithWallet && <ArrowRight className="w-5 h-5 text-gray-400 shrink-0" />}
+                    </button>
+                    {payWithWalletError && (
+                      <div className="mt-2 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-800">
+                        <strong>Wallet payment failed:</strong> {payWithWalletError}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      disabled={(balanceData !== undefined && !hasEnoughLooftaBalance) || payingWithLoofta}
+                      onClick={() => payWithLooftaBalance()}
+                      title={balanceData !== undefined && !hasEnoughLooftaBalance ? `Need $${claimAmountUSD.toFixed(2)} (you have $${looftaBalanceUSD.toFixed(2)})` : undefined}
+                      className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-orange-50 hover:border-orange-200 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-gray-50 disabled:hover:border-gray-200"
+                    >
+                      <div className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center shrink-0 p-1.5">
+                        {payingWithLoofta ? <Loader2 className="w-5 h-5 animate-spin text-orange-600" /> : <LooftaIcon className="w-full h-full object-contain" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className="font-semibold text-gray-900 block">Pay with Loofta</span>
+                        <span className="text-sm text-gray-500">
+                          {payingWithLoofta
+                            ? "Sending…"
+                            : balanceData === undefined
+                              ? "Loading balance…"
+                              : `Your balance: $${looftaBalanceUSD.toFixed(2)}${!hasEnoughLooftaBalance ? " · Need more" : ""}`}
+                        </span>
+                      </div>
+                      {!payingWithLoofta && balanceData !== undefined && hasEnoughLooftaBalance && (
+                        <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full shrink-0">Ready</span>
+                      )}
+                      {!payingWithLoofta && balanceData !== undefined && !hasEnoughLooftaBalance && (
+                        <span className="text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-full shrink-0">Low balance</span>
+                      )}
+                    </button>
+                    {payWithLooftaError && (
+                      <div className="mt-2 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-800">
+                        <strong>Payment failed:</strong> {payWithLooftaError}
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-px bg-gray-200" />
+                      <span className="text-sm font-medium text-gray-400">or</span>
+                      <div className="flex-1 h-px bg-gray-200" />
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={payingWithWallet}
+                      onClick={() => payWithWallet()}
+                      className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
+                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-700" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className="font-semibold text-gray-900 block">Use wallet</span>
+                        <span className="text-sm text-gray-500">
+                          {payingWithWallet ? "Sign in Phantom & sending…" : "Phantom or other Solana wallet"}
+                        </span>
+                      </div>
+                      {!payingWithWallet && <ArrowRight className="w-5 h-5 text-gray-400 shrink-0" />}
+                    </button>
+                    {payWithWalletError && (
+                      <div className="mt-2 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-800">
+                        <strong>Wallet payment failed:</strong> {payWithWalletError}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Debug Section - Rhinestone Companion Account Recovery */}
       {process.env.NODE_ENV === "development" && (

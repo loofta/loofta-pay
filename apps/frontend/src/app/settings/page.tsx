@@ -12,9 +12,10 @@ import { useRouter } from "next/navigation";
 import { getSolanaBalanceUSD } from "@/services/solanaBalance";
 import { useWallets } from "@privy-io/react-auth";
 
+// Private payments — coming soon; fee display kept for when feature is available
 const PRIVACY_CASH_FEES = {
-  withdraw_fee_rate: 0.0035, // 0.35%
-  withdraw_rent_fee: 0.744548676, // USDC rent fee
+  withdraw_fee_rate: 0.0035,
+  withdraw_rent_fee: 0.744548676,
 };
 
 async function getUserPreferences(getAccessToken: () => Promise<string>, userId: string) {
@@ -112,14 +113,14 @@ export default function SettingsPage() {
   // Fetch preferences
   const { data: preferences, isLoading: loadingPrefs } = useQuery({
     queryKey: ['userPreferences'],
-    queryFn: () => getUserPreferences(getAccessToken, user?.id || ''),
+    queryFn: () => getUserPreferences(async () => (await getAccessToken()) ?? '', user?.id ?? ''),
     enabled: authenticated === true && !!getAccessToken && !!user?.id,
   });
 
   // Fetch balance
   const { data: balanceData, isLoading: loadingBalance } = useQuery({
     queryKey: ['walletBalance'],
-    queryFn: () => getWalletBalance(getAccessToken, user?.id || ''),
+    queryFn: () => getWalletBalance(async () => (await getAccessToken()) ?? '', user?.id ?? ''),
     enabled: authenticated === true && !!getAccessToken && !!user?.id,
     refetchInterval: 30000, // Refetch every 30 seconds
   });
@@ -129,7 +130,7 @@ export default function SettingsPage() {
 
   // Update preferences mutation
   const updatePrefsMutation = useMutation({
-    mutationFn: (requirePrivatePayments: boolean) => updateUserPreferences(getAccessToken, user?.id || '', requirePrivatePayments),
+    mutationFn: (requirePrivatePayments: boolean) => updateUserPreferences(async () => (await getAccessToken()) ?? '', user?.id ?? '', requirePrivatePayments),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['userPreferences'] });
       toast({
@@ -148,7 +149,7 @@ export default function SettingsPage() {
 
   // Generate new wallet mutation
   const generateWalletMutation = useMutation({
-    mutationFn: () => generateNewWallet(getAccessToken, user?.id || ''),
+    mutationFn: () => generateNewWallet(async () => (await getAccessToken()) ?? '', user?.id ?? ''),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['walletBalance'] });
       toast({
@@ -207,7 +208,7 @@ export default function SettingsPage() {
                       )}
                     </div>
                     <p className="text-sm text-gray-600 mb-2">
-                      When enabled, all payments to your username link (@{user?.id?.slice(0, 8)}...) must use Privacy Cash for complete privacy.
+                      Private payments — coming soon. When available, you can require payments to your link to use private transfer.
                     </p>
                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                       <div className="text-sm text-amber-800">

@@ -17,16 +17,8 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
-import { useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
-import { Connection, VersionedTransaction } from "@solana/web3.js";
-import { payPrivatelyWithPrivacyCash } from "@/services/privacyCash";
-import { CheckCircle2, AlertTriangle, Loader2, ShieldCheck } from "lucide-react";
-
-const SOLANA_RPC_URL =
-  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-  (process.env.NEXT_PUBLIC_HELIUS_API_KEY
-    ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-    : "https://api.mainnet-beta.solana.com");
+import { CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
+import { PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
 
 export interface BalanceModalProps {
   open: boolean;
@@ -47,8 +39,6 @@ export function BalanceModal({
 }: BalanceModalProps) {
   const { toast } = useToast();
   const { data: tokens = [] } = useTokensQuery();
-  const { signMessage: privySignMessage } = usePrivySignMessage();
-  const { signTransaction: privySignTransaction } = usePrivySignTransaction();
 
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawAddress, setWithdrawAddress] = useState("");
@@ -105,108 +95,18 @@ export function BalanceModal({
   }, [withdrawAddress, checkAddressRisk]);
 
   const handleWithdraw = async () => {
-    if (!solanaAddress || !withdrawAddress.trim() || !withdrawAmount.trim()) {
+    if (PRIVATE_PAYMENT_COMING_SOON) {
       toast({
-        variant: "destructive",
-        title: "Missing information",
-        description: "Please enter amount and destination wallet address.",
+        title: "Coming soon",
+        description: "Private withdrawals will be available soon.",
       });
       return;
     }
-    const amount = parseFloat(withdrawAmount);
-    if (isNaN(amount) || amount <= 0) {
-      toast({
-        variant: "destructive",
-        title: "Invalid amount",
-        description: "Please enter a valid amount greater than 0.",
-      });
-      return;
-    }
-    if (amount > balanceNum) {
-      toast({
-        variant: "destructive",
-        title: "Insufficient balance",
-        description: `You have $${balanceUSD} available.`,
-      });
-      return;
-    }
-    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(withdrawAddress.trim())) {
-      toast({
-        variant: "destructive",
-        title: "Invalid address",
-        description: "Please enter a valid Solana address.",
-      });
-      return;
-    }
-
-    const { safe } = await checkAddressRisk(withdrawAddress.trim());
-    if (!safe) {
-      toast({
-        variant: "destructive",
-        title: "Address not safe to send to",
-        description: "This wallet was flagged by our risk check. Withdrawal blocked for your protection.",
-      });
-      return;
-    }
-
-    if (!isUSDCOnSolana) {
-      toast({
-        variant: "destructive",
-        title: "Withdraw only USDC on Solana",
-        description: "Your embedded wallet balance is USDC on Solana. Other tokens coming soon.",
-      });
-      return;
-    }
-
-    setWithdrawing(true);
-    try {
-      const connection = new Connection(SOLANA_RPC_URL, "confirmed");
-      const signMessage = async (msg: string): Promise<Uint8Array> => {
-        const sig = await privySignMessage({
-          message: new TextEncoder().encode(msg),
-          options: { address: solanaAddress },
-        });
-        return sig;
-      };
-      const signTransaction = async (tx: VersionedTransaction): Promise<VersionedTransaction> => {
-        const signed = await privySignTransaction({
-          transaction: tx,
-          connection,
-          address: solanaAddress,
-        });
-        return signed as VersionedTransaction;
-      };
-
-      const result = await payPrivatelyWithPrivacyCash({
-        walletAddress: solanaAddress,
-        amountUSD: amount,
-        recipientAddress: withdrawAddress.trim(),
-        signMessage,
-        signTransaction,
-        recipientPaysFees: true, // Fees deducted on destination side, not on top of amount
-      });
-
-      if (!result.success) {
-        throw new Error(result.error || "Private withdrawal failed");
-      }
-      toast({
-        title: "Private withdrawal sent",
-        description: `$${amount.toFixed(2)} USDC sent privately. Recipient receives amount minus Privacy Cash fees.`,
-      });
-      setWithdrawAmount("");
-      setWithdrawAddress("");
-      onRefresh();
-      onClose();
-    } catch (error: any) {
-      console.error("[BalanceModal] Withdraw error:", error);
-      toast({
-        variant: "destructive",
-        title: "Withdrawal failed",
-        description: error?.message || "Could not complete withdrawal. Please try again.",
-      });
-    } finally {
-      setWithdrawing(false);
-    }
+    toast({
+      variant: "destructive",
+      title: "Not available",
+      description: "Withdrawals are coming soon.",
+    });
   };
 
   return (
@@ -323,7 +223,7 @@ export function BalanceModal({
               </p>
             )}
             <p className="text-xs text-gray-500 mt-1.5">
-              Withdrawals use Privacy Cash (private). Fees are deducted on the recipient side, not added on top.
+              Private withdrawals — coming soon.
             </p>
           </div>
 
@@ -333,27 +233,11 @@ export function BalanceModal({
             </Button>
             <Button
               onClick={handleWithdraw}
-              disabled={
-                withdrawing ||
-                !withdrawAmount ||
-                !withdrawAddress.trim() ||
-                loadingBalance ||
-                balanceNum <= 0 ||
-                !solanaAddress ||
-                addressRiskStatus !== "safe"
-              }
+              disabled={withdrawing}
               className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-              title={
-                addressRiskStatus === "unsafe"
-                  ? "Address flagged — withdrawal blocked"
-                  : addressRiskStatus !== "safe"
-                    ? "Enter a valid Solana address and wait for AML compliance check"
-                    : balanceNum <= 0
-                      ? "No balance to withdraw"
-                      : undefined
-              }
+              title="Private withdrawals coming soon"
             >
-              {withdrawing ? "Sending…" : "Withdraw"}
+              {PRIVATE_PAYMENT_COMING_SOON ? "Coming soon" : withdrawing ? "Sending…" : "Withdraw"}
             </Button>
           </div>
           {!loadingBalance && balanceNum <= 0 && (

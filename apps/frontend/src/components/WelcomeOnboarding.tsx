@@ -78,7 +78,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
     "Top up with your favorite\nwallet and token",
     "Welcome to universal\nprivate payment account",
   ];
-  
+
   // Reset step when modal opens
   useEffect(() => {
     if (open) {
@@ -149,9 +149,9 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
   // Check username availability with debounce
   useEffect(() => {
     if (step !== 1) return; // Only check on step 1
-    
+
     const trimmed = newUsername.trim();
-    
+
     // Reset state if empty
     if (!trimmed) {
       setUsernameError(null);
@@ -181,7 +181,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
     const timeoutId = setTimeout(async () => {
       setCheckingAvailability(true);
       setUsernameError(null);
-      
+
       try {
         const response = await fetch("/api/users/check-username", {
           method: "POST",
@@ -229,7 +229,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
   // Handle username save (called when clicking Next on step 1)
   const handleSaveUsername = async (): Promise<boolean> => {
     const trimmed = newUsername.trim();
-    
+
     if (!trimmed) {
       setUsernameError("Username cannot be empty");
       return false;
@@ -271,14 +271,14 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
 
       // Username saved successfully
       setUsernameError(null);
-      
+
       // Trigger a callback to update parent component
       if (onEditUsername) {
         setTimeout(() => {
           onEditUsername();
         }, 100);
       }
-      
+
       return true;
     } catch (err: any) {
       setUsernameError(err.message || "Failed to set username. Please try again.");
@@ -525,15 +525,14 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                             }
                           }}
                           placeholder="username"
-                          className={`w-full pl-8 pr-4 py-3 rounded-xl border-2 text-lg font-semibold text-center transition-colors ${
-                            checkingAvailability
-                              ? "border-gray-300"
-                              : usernameAvailable === true
+                          className={`w-full pl-8 pr-4 py-3 rounded-xl border-2 text-lg font-semibold text-center transition-colors ${checkingAvailability
+                            ? "border-gray-300"
+                            : usernameAvailable === true
                               ? "border-green-500 focus:border-green-500 focus:ring-green-500"
                               : usernameAvailable === false
-                              ? "border-red-500 focus:border-red-500 focus:ring-red-500"
-                              : "border-orange-300 focus:border-orange-500 focus:ring-orange-500"
-                          } focus:outline-none focus:ring-2`}
+                                ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                                : "border-orange-300 focus:border-orange-500 focus:ring-orange-500"
+                            } focus:outline-none focus:ring-2`}
                           autoFocus
                           maxLength={20}
                         />
@@ -769,8 +768,8 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <span className="text-sm font-semibold text-gray-900">🔒 Require Private Payments Only</span>
-                        <p className="text-xs text-gray-600 mt-1">
-                          When enabled, all payments to your link must use Privacy Cash. Fees: 0.35% + $0.74 per payment.
+                        <p className="text-sm text-gray-600 mt-1">
+                          Private payments — coming soon. When available, you can require private-only payments.
                         </p>
                       </div>
                       {loadingPreferences ? (
@@ -804,7 +803,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                   Back
                 </button>
               )}
-              
+
               {/* Next button */}
               <button
                 onClick={handleNext}
@@ -815,7 +814,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                 {step < 5 ? "Next" : "Get Started"}
               </button>
             </div>
-            
+
             {/* Don't show again checkbox - below buttons */}
             <div className="mt-4 flex items-center justify-center gap-2">
               <input
@@ -842,6 +841,6 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
   if (typeof window !== "undefined") {
     return createPortal(modalContent, document.body);
   }
-  
+
   return null;
 }

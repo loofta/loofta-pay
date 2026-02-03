@@ -2,12 +2,6 @@
   "folders": [
     {
       "path": "../../.."
-    },
-    {
-      "path": "../../../../privacy-cash-sdk"
-    },
-    {
-      "path": "../../../../program-libs"
     }
   ]
 }

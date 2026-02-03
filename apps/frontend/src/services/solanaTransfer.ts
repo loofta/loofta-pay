@@ -28,7 +28,7 @@ const USDC_DECIMALS = 6;
 
 /**
  * Build and return an unsigned VersionedTransaction for USDC transfer.
- * Caller must sign with signTransaction and then send.
+ * Uses sender as fee payer; Privy's native gas sponsorship (dashboard) covers fees when enabled.
  */
 export async function buildUSDCTransferTransaction(params: {
   senderAddress: string;
@@ -62,9 +62,18 @@ export async function buildUSDCTransferTransaction(params: {
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
+  console.log("[buildUSDCTransferTransaction]", {
+    senderWallet: params.senderAddress,
+    recipientWallet: params.recipientAddress,
+    senderAta: senderAta.toBase58(),
+    recipientAta: recipientAta.toBase58(),
+    amountUSDC: params.amountUSDC,
+    amountRaw,
+  });
+
   const instructions = [];
 
-  // Optional: create recipient ATA if it doesn't exist (check and add createAssociatedTokenAccountInstruction)
+  // Create recipient ATA if it doesn't exist
   const recipientAccountInfo = await connection.getAccountInfo(recipientAta);
   if (!recipientAccountInfo) {
     instructions.push(
@@ -90,7 +99,8 @@ export async function buildUSDCTransferTransaction(params: {
     )
   );
 
-  const { blockhash, lastValidBlockHeight } =
+  // Use a real blockhash so RPC simulation succeeds; Privy still handles signing/broadcast.
+  const { blockhash } =
     await connection.getLatestBlockhash("confirmed");
   const message = new TransactionMessage({
     payerKey: sender,

@@ -7,6 +7,8 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  BadRequestException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -18,6 +20,7 @@ import {
 import { AuthGuard } from '@/common/guards';
 import { ClaimsService } from './claims.service';
 import { DepositService, DepositResult } from './deposit.service';
+import { SolanaSponsorService } from './solana-sponsor.service';
 import { CreateClaimDto, CreateClaimFromUsernameDto, RequestDepositDto } from './dto';
 import { Claim, ClaimIntent } from './entities/claim.entity';
 
@@ -27,6 +30,7 @@ export class ClaimsController {
   constructor(
     private readonly claimsService: ClaimsService,
     private readonly depositService: DepositService,
+    private readonly solanaSponsor: SolanaSponsorService,
   ) {}
 
   /**
@@ -72,6 +76,21 @@ export class ClaimsController {
     @Body() createDto: CreateClaimFromUsernameDto,
   ): Promise<{ id: string; link: string }> {
     return this.claimsService.createFromUsername(createDto);
+  }
+
+  /**
+   * Get fee payer address for Solana sponsored transactions (Pay with Loofta).
+   * Declared before :id so "solana-sponsor/fee-payer" is not captured as claim id.
+   */
+  @Get('solana-sponsor/fee-payer')
+  @ApiOperation({ summary: 'Get Solana fee payer address for sponsorship' })
+  @ApiResponse({
+    status: 200,
+    description: 'Fee payer address if sponsorship is enabled',
+    schema: { properties: { feePayerAddress: { type: 'string', nullable: true } } },
+  })
+  getSolanaFeePayer(): { feePayerAddress: string | null } {
+    return { feePayerAddress: this.solanaSponsor.getFeePayerAddress() };
   }
 
   /**
@@ -158,6 +177,41 @@ export class ClaimsController {
       paidWith: body.paidWith,
       isPrivate: body.isPrivate,
     });
+  }
+
+  /**
+   * Sign a user-signed sponsored transaction with the fee payer and broadcast.
+   * Body: { transaction: base64 serialized VersionedTransaction (user already signed) }.
+   */
+  @Post('solana-sponsor/sign-and-broadcast')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Sign and broadcast sponsored Solana transaction' })
+  @ApiResponse({
+    status: 200,
+    description: 'Transaction signature',
+    schema: { properties: { signature: { type: 'string' } } },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid transaction' })
+  @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
+  async signAndBroadcastSponsored(
+    @Body() body: { transaction: string },
+  ): Promise<{ signature: string }> {
+    if (!body?.transaction || typeof body.transaction !== 'string') {
+      throw new BadRequestException('Missing or invalid transaction');
+    }
+    if (!this.solanaSponsor.isAvailable()) {
+      throw new ServiceUnavailableException('Solana fee sponsorship is not configured');
+    }
+    try {
+      return await this.solanaSponsor.signAndBroadcast(body.transaction);
+    } catch (e: any) {
+      if (e?.message?.includes('not configured')) {
+        throw new ServiceUnavailableException('Solana sponsorship is not configured');
+      }
+      throw new BadRequestException(e?.message || 'Failed to sign and broadcast');
+    }
   }
 
   /**

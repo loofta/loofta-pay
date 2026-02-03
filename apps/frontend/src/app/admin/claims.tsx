@@ -261,7 +261,7 @@ export function ClaimsManager() {
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Claims Management</h2>
           <p className="mt-1 text-sm text-gray-600">
-            View, manage, and delete payment claims. Private cross-chain payments show as "PRIVATE_TRANSFER_PENDING" - execute Privacy Cash manually and update status to SUCCESS.
+            View, manage, and delete payment claims. Private payments — coming soon. Private cross-chain claims may show PRIVATE_TRANSFER_PENDING until the feature is available.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -325,7 +325,7 @@ export function ClaimsManager() {
           </CardHeader>
           <CardContent className="p-0 pt-2">
             <div className="text-2xl font-bold text-purple-600">{stats.privateTransferPending}</div>
-            <p className="text-xs text-gray-500 mt-1">Waiting for Privacy Cash</p>
+            <p className="text-xs text-gray-500 mt-1">Private transfer — coming soon</p>
           </CardContent>
         </Card>
         <Card className="p-4">

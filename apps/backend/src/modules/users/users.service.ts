@@ -220,19 +220,30 @@ export class UsersService {
   }
 
   /**
+   * Get Solana embedded wallet balance in USD and address (same wallet Privy uses to sign).
+   */
+  async getSolanaWalletBalanceAndAddress(privyUserId: string): Promise<{ balanceUSD: number; walletAddress: string }> {
+    const walletAddress = await this.getSolanaWalletAddress(privyUserId);
+    const balanceUSD = await this.getSolanaWalletBalanceUSDInternal(walletAddress);
+    return { balanceUSD, walletAddress };
+  }
+
+  /**
    * Get Solana wallet balance in USD (for checking if wallet can be regenerated)
    */
   async getSolanaWalletBalanceUSD(privyUserId: string): Promise<number> {
     const walletAddress = await this.getSolanaWalletAddress(privyUserId);
-    
-    // Use Solana RPC to get USDC balance
-    const solanaRpcUrl = process.env.SOLANA_RPC_URL || 
-      (process.env.HELIUS_API_KEY 
+    return this.getSolanaWalletBalanceUSDInternal(walletAddress);
+  }
+
+  private async getSolanaWalletBalanceUSDInternal(walletAddress: string): Promise<number> {
+    const solanaRpcUrl = process.env.SOLANA_RPC_URL ||
+      (process.env.HELIUS_API_KEY
         ? `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`
         : 'https://api.mainnet-beta.solana.com');
-    
+
     const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-    
+
     try {
       const response = await fetch(solanaRpcUrl, {
         method: 'POST',
@@ -250,14 +261,14 @@ export class UsersService {
       });
 
       const data = await response.json();
-      
+
       if (data.error || !data.result?.value || data.result.value.length === 0) {
         return 0;
       }
 
       const account = data.result.value[0];
       const balance = account.account.data.parsed.info.tokenAmount.uiAmount;
-      
+
       return balance || 0;
     } catch (error) {
       this.logger.error('Error fetching Solana balance:', error);

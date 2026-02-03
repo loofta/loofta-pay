@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { useExportWallet } from "@privy-io/react-auth/solana";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
 import { useAuthStore } from "@/store/auth";
@@ -19,6 +20,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Settings } from "lucide-react";
+import { PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
 
 interface UserMenuProps {
   username: string | null;
@@ -37,6 +39,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const username = usernameProp ?? storeUsername;
   const email = emailProp ?? storeEmail;
 
+  const openShareModalFromStore = useAuthStore((s) => s.openShareModal);
+  const setOpenShareModal = useAuthStore((s) => s.setOpenShareModal);
+
   // Sync props to store to ensure persistence
   useEffect(() => {
     if (emailProp || usernameProp !== undefined) {
@@ -47,6 +52,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       });
     }
   }, [emailProp, usernameProp, storeEmail, storeUsername, setAuth]);
+
+  // Open share modal when requested from elsewhere (e.g. payments page)
+  useEffect(() => {
+    if (openShareModalFromStore) {
+      setShowShareModal(true);
+      setOpenShareModal(false);
+    }
+  }, [openShareModalFromStore, setOpenShareModal]);
 
   const [isOpen, setIsOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
@@ -418,6 +431,33 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               </div>
             )}
 
+            {/* Payment history */}
+            <div className="mb-2">
+              <Link
+                href="/payments"
+                onClick={() => setIsOpen(false)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${isDarkPage
+                  ? "text-gray-300 hover:bg-gray-800"
+                  : "text-gray-700 hover:bg-gray-100"
+                  }`}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="12" y1="1" x2="12" y2="23"></line>
+                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                </svg>
+                Payment history
+              </Link>
+            </div>
+
             {/* Settings - opens modal with wallet address & export private keys */}
             <div className="mb-2">
               <button
@@ -459,8 +499,39 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       )}
 
       {/* Share Modal - matching onboarding style */}
-      {showShareModal && username && (() => {
-        const modalContent = (
+      {showShareModal && (() => {
+        const modalContent = !username ? (
+          <AnimatePresence>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+              onClick={() => setShowShareModal(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white rounded-[24px] w-full max-w-md shadow-2xl overflow-hidden p-8 text-center"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="mb-6 text-5xl">💳</div>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">Share your payment link</h2>
+                <p className="text-base text-gray-600 mb-6">
+                  Set up your username in the account menu to get your payment link and start receiving payments.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowShareModal(false)}
+                  className="rounded-2xl bg-gray-900 px-6 py-3 font-semibold text-white hover:bg-gray-800 transition-colors"
+                >
+                  Got it
+                </button>
+              </motion.div>
+            </motion.div>
+          </AnimatePresence>
+        ) : (
           <AnimatePresence>
             <motion.div
               initial={{ opacity: 0 }}
@@ -576,39 +647,37 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     </div>
                   </motion.div>
 
-                  {/* Private Payment Option */}
+                  {/* Private Payment Option — Coming soon */}
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.15 }}
-                    className={`mb-6 p-4 rounded-xl border ${requirePrivatePayments
-                      ? 'bg-amber-50 border-amber-200'
-                      : 'bg-gray-50 border-gray-200'
-                      }`}
+                    className="mb-6 p-4 rounded-xl border bg-gray-50 border-gray-200 opacity-90"
                   >
                     <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-base font-semibold text-gray-900">
-                            🔒 Require Private Payments Only
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-600">
-                          When enabled, all payments to your link must use Privacy Cash for complete privacy.
-                          You will be charged additional fees: 0.35% + $0.74 per payment.
-                        </p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-base font-semibold text-gray-900">
+                          🔒 Require Private Payments Only
+                        </span>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
+                          Coming soon
+                        </span>
                       </div>
-                      {loadingPreferences ? (
+                      {loadingPreferences && !PRIVATE_PAYMENT_COMING_SOON ? (
                         <div className="h-6 w-11 rounded-full bg-gray-200 animate-pulse" />
                       ) : (
                         <Switch
-                          checked={requirePrivatePayments}
-                          onCheckedChange={handleTogglePrivatePayments}
-                          disabled={updatingPreferences}
+                          checked={PRIVATE_PAYMENT_COMING_SOON ? false : requirePrivatePayments}
+                          onCheckedChange={PRIVATE_PAYMENT_COMING_SOON ? undefined : handleTogglePrivatePayments}
+                          disabled={PRIVATE_PAYMENT_COMING_SOON || updatingPreferences}
                           className="data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
+                          aria-label={PRIVATE_PAYMENT_COMING_SOON ? "Private payments — coming soon" : "Require private payments only"}
                         />
                       )}
                     </div>
+                    <p className="text-sm text-gray-600 mt-3 w-full block">
+                      When available, you can require payments to your link to use private transfer.
+                    </p>
                   </motion.div>
 
                   {/* Share Buttons */}
@@ -824,9 +893,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           });
                           return;
                         }
-                        const privateKey = await exportWallet({ address: walletAddress });
-                        if (privateKey && typeof privateKey === 'string') {
-                          setExportedPrivateKey(privateKey);
+                        const result = await exportWallet({ address: walletAddress });
+                        if (typeof result === 'string') {
+                          setExportedPrivateKey(result);
                           setShowExportModal(true);
                         } else {
                           toast({
@@ -1023,13 +1092,13 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     title: "Withdrawal initiated",
                     description: `Withdrawing $${amount.toFixed(2)} USDC to ${withdrawAddress.slice(0, 8)}...`,
                   });
-                  
+
                   // TODO: Implement actual withdrawal logic
                   // This would involve:
                   // 1. Getting the Solana wallet from useWallets
                   // 2. Creating a USDC transfer transaction
                   // 3. Signing and sending the transaction
-                  
+
                   setShowWithdrawModal(false);
                   setWithdrawAddress("");
                   setWithdrawAmount("");

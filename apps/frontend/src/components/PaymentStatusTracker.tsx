@@ -71,10 +71,10 @@ const STEP_CONFIG: Record<string, Omit<PaymentStep, 'status'>> = {
   },
   privacyCash: {
     id: 'privacy-cash',
-    label: 'Privacy Cash Execution',
-    description: 'Executing private payment through Privacy Cash pool',
+    label: 'Private Transfer',
+    description: 'Private payments coming soon',
     icon: <Loader2 className="w-5 h-5" />,
-    estimatedTime: 45, // Privacy Cash deposit + withdraw takes ~45 seconds
+    estimatedTime: 45,
   },
   success: {
     id: 'success',
@@ -223,8 +223,8 @@ function getStatusMessage(status: PaymentStatus | null): { title: string; subtit
       };
     case 'PRIVATE_TRANSFER_PENDING':
       return {
-        title: 'Executing Private Transfer',
-        subtitle: 'Your payment is being processed through Privacy Cash. This ensures your transaction remains private.',
+        title: 'Private Transfer',
+        subtitle: 'Private payments coming soon.',
       };
     case 'INCOMPLETE_DEPOSIT':
       return {

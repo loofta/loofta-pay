@@ -236,7 +236,7 @@ export default function ClaimPage() {
       setTimeout(() => setShowConfetti(false), 2500);
       toast({ title: "Payment link created", description: "Share the link with your recipient." });
     } catch (e: any) {
-      toast({ variant: "destructive", title: "Failed to create payment link", description: e?.message || "Unknown error" });
+      toast({ variant: "destructive", title: "Failed to create payment link ", description: e?.message || "Unknown error" });
     } finally {
       setCreating(false);
     }
@@ -825,7 +825,7 @@ export default function ClaimPage() {
                           loading={creating}
                           loadingText="Creating…"
                         >
-                          Create payment link
+                          Create Payment
                         </GradientActionButton>
                       ) : (
                         <button
@@ -835,7 +835,7 @@ export default function ClaimPage() {
                         >
                           <span className="flex items-center justify-center gap-2">
 
-                            Login to create your  link
+                            Login to create new payment
                           </span>
                         </button>
                       )
