@@ -32,8 +32,8 @@ import { isEvmChainId } from "@/config/biconomy";
 import { createSwapTransaction, getSwapStatus, checkSwapEligibility } from "@/services/swapProvider";
 import { ACTIVE_SWAP_PROVIDER, getProviderDisplayName, type SwapProvider } from "@/config/swapProvider";
 import { ethers } from "ethers";
-import { usePrivy, useWallets } from "@privy-io/react-auth";
-import { useConnectedStandardWallets, useStandardSignAndSendTransaction, useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
+import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
+import { useWallets, useSignAndSendTransaction, useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
 import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES, PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
@@ -336,9 +336,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const privateTransferTriggeredRef = React.useRef<Set<string>>(new Set()); // Auto-run Privacy Cash once per claim when PRIVATE_TRANSFER_PENDING
   const onPayPrivatelyRef = React.useRef<(() => Promise<void>) | null>(null);
   const { logout, login, authenticated, user, getAccessToken } = usePrivy();
-  const { wallets } = useWallets();
-  const { wallets: standardWallets } = useConnectedStandardWallets();
-  const { signAndSendTransaction } = useStandardSignAndSendTransaction();
+  const { wallets } = useEvmWallets();
+  const { wallets: standardWallets } = useWallets();
+  const { signAndSendTransaction } = useSignAndSendTransaction();
   const [showPayNowModal, setShowPayNowModal] = useState(false);
   const [payingWithLoofta, setPayingWithLoofta] = useState(false);
   const [payWithLooftaError, setPayWithLooftaError] = useState<string | null>(null);
@@ -1840,6 +1840,20 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     );
                                     // Show the actual amount requested (not fees - fees are deducted from recipient for private)
                                     const amountPaid = parseFloat(claim?.amount || "0");
+                                    
+                                    // Special formatting for USDC on Solana (Loofta Pay)
+                                    const isUSDCOnSolana = claim.paid_with_token.toUpperCase() === "USDC" && 
+                                                          (claim.paid_with_chain.toLowerCase() === "solana" || claim.paid_with_chain.toLowerCase() === "sol");
+                                    
+                                    if (isUSDCOnSolana) {
+                                      return (
+                                        <>
+                                          <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={18} />
+                                          <span>usdc on SOL</span>
+                                        </>
+                                      );
+                                    }
+                                    
                                     return (
                                       <>
                                         <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={18} />
@@ -1908,6 +1922,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               deposit?.isDirect ? 'direct' :
                                 deposit?.isCompanionSwap ? 'companion-swap' :
                                   'near-intent'
+                            }
+                            isLooftaPay={
+                              claim?.paid_with_token?.toUpperCase() === "USDC" && 
+                              (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
                             }
                           />
                         </div>
@@ -2543,6 +2561,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                           'near-intent'
                                     }
                                     isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
+                                    isLooftaPay={
+                                      claim?.paid_with_token?.toUpperCase() === "USDC" && 
+                                      (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
+                                    }
                                   />
                                 </div>
                                 <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -2571,6 +2593,20 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                             );
                                             // Show the actual amount requested (not fees - fees are deducted from recipient for private)
                                             const amountPaid = parseFloat(claim?.amount || "0");
+                                            
+                                            // Special formatting for USDC on Solana (Loofta Pay)
+                                            const isUSDCOnSolana = claim.paid_with_token.toUpperCase() === "USDC" && 
+                                                                  (claim.paid_with_chain.toLowerCase() === "solana" || claim.paid_with_chain.toLowerCase() === "sol");
+                                            
+                                            if (isUSDCOnSolana) {
+                                              return (
+                                                <>
+                                                  <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={24} />
+                                                  <span>usdc on SOL</span>
+                                                </>
+                                              );
+                                            }
+                                            
                                             return (
                                               <>
                                                 <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={24} />
@@ -2954,6 +2990,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                             'near-intent'
                                       }
                                       isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
+                                      isLooftaPay={
+                                        claim?.paid_with_token?.toUpperCase() === "USDC" && 
+                                        (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
+                                      }
                                     />
                                   </div>
 

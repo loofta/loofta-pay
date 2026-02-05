@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import {
-  useConnectedStandardWallets,
-  useStandardSignAndSendTransaction,
+  useWallets,
+  useSignAndSendTransaction,
 } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
 import bs58 from "bs58";
@@ -51,8 +51,8 @@ export interface UseSolanaPaymentOptions {
 export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
   const { enabled = true } = options;
   const { getAccessToken, user, authenticated } = usePrivy();
-  const { wallets: standardWallets } = useConnectedStandardWallets();
-  const { signAndSendTransaction } = useStandardSignAndSendTransaction();
+  const { wallets: standardWallets } = useWallets();
+  const { signAndSendTransaction } = useSignAndSendTransaction();
   const [isLoading, setIsLoading] = useState(false);
 
   const { data: balanceData, refetch: refreshBalance } = useQuery({
