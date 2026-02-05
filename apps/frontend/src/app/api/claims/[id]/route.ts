@@ -124,7 +124,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
             updateData.paid_with_token = parts[0];
             // Try to find chain in remaining parts
             const chainKeywords = ['solana', 'sol', 'base', 'arbitrum', 'arb', 'ethereum', 'eth', 'polygon', 'poly'];
-            const foundChain = parts.find(p => chainKeywords.includes(p.toLowerCase()));
+            const foundChain = parts.find((p: string) => chainKeywords.includes(p.toLowerCase()));
             if (foundChain) {
               updateData.paid_with_chain = foundChain.toLowerCase();
             }
