@@ -4,7 +4,6 @@ import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useWallets } from "@privy-io/react-auth";
 import Link from "next/link";
-import { useAuthStore } from "@/store/auth";
 
 type Tab = "all" | "received" | "sent";
 
@@ -37,6 +36,12 @@ const STATUS_LABELS: Record<string, string> = {
   CANCELLED: "Cancelled",
 };
 
+function statusStyles(status: string): string {
+  const s = String(status).toUpperCase();
+  if (s === "SUCCESS") return "bg-green-100 text-green-700";
+  return "bg-gray-100 text-gray-600";
+}
+
 function PaymentRow({
   claim,
   direction,
@@ -46,12 +51,14 @@ function PaymentRow({
 }) {
   const date = claim.paid_at || claim.created_at;
   const statusLabel = STATUS_LABELS[String(claim.status).toUpperCase()] ?? claim.status;
-  const isSuccess = claim.status === "SUCCESS";
+  const isSent = direction === "sent";
 
   return (
     <Link
       href={`/c/${claim.id}`}
-      className="flex items-center gap-4 rounded-2xl border border-gray-200/80 bg-white p-4 shadow-sm hover:border-gray-300 hover:shadow transition-all duration-200"
+      className={`flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 hover:border-gray-300 transition-colors
+        ${isSent ? "border-l-4 border-l-amber-400" : "border-l-4 border-l-green-400"}
+      `}
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
@@ -59,18 +66,18 @@ function PaymentRow({
             {claim.amount} {claim.to_symbol}
           </span>
           {claim.is_private && (
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-sm text-gray-500">
               Private
             </span>
           )}
         </div>
         <p className="mt-0.5 text-sm text-gray-500">
-          {direction === "sent" ? "To " : "From "}
-          {direction === "sent"
+          {isSent ? "To " : "From "}
+          {isSent
             ? `${claim.recipient_address.slice(0, 6)}...${claim.recipient_address.slice(-4)}`
             : claim.creator_email || "—"}
         </p>
-        <p className="mt-0.5 text-xs text-gray-400">
+        <p className="mt-0.5 text-sm text-gray-400">
           {new Date(date).toLocaleDateString(undefined, {
             month: "short",
             day: "numeric",
@@ -82,8 +89,7 @@ function PaymentRow({
       </div>
       <div className="shrink-0">
         <span
-          className={`inline-block rounded-full px-2.5 py-1 text-xs font-medium ${isSuccess ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"
-            }`}
+          className={`inline-block rounded-full px-2.5 py-1 text-sm font-medium ${statusStyles(claim.status)}`}
         >
           {statusLabel}
         </span>
@@ -95,7 +101,6 @@ function PaymentRow({
 export default function PaymentsPage() {
   const { authenticated, userId, ready, login } = useAuth();
   const { wallets } = useWallets();
-  const username = useAuthStore((s) => s.username ?? null);
   const [tab, setTab] = useState<Tab>("all");
   const [sent, setSent] = useState<PaymentHistoryClaim[]>([]);
   const [received, setReceived] = useState<PaymentHistoryClaim[]>([]);
@@ -195,22 +200,32 @@ export default function PaymentsPage() {
 
   if (!authenticated) {
     return (
-      <div className="min-h-[60vh] bg-gradient-to-b from-gray-50 to-white flex items-center justify-center px-4">
-        <div className="max-w-md w-full text-center">
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-orange-100 text-orange-600">
-            <svg className="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+      <div className="min-h-[60vh] bg-gradient-to-b from-gray-50 to-white">
+        <div className="max-w-2xl mx-auto px-4 py-8 sm:py-10">
+          <div className="mb-8">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
+              Payment history
+            </h1>
+            <p className="mt-1 text-gray-500">
+              Send and receive payments via your link.
+            </p>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Payment history</h1>
-          <p className="text-gray-600 mb-8">Log in to see payments you sent and received.</p>
-          <button
-            type="button"
-            onClick={() => login()}
-            className="w-full max-w-xs mx-auto px-6 py-3.5 rounded-2xl font-semibold bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600 shadow-lg hover:shadow-xl transition-all"
-          >
-            Log in
-          </button>
+          {/* Start making payments — shown when not logged in */}
+          <div className="rounded-xl bg-white p-6 text-center border border-gray-200">
+            <h2 className="text-xl font-bold text-gray-900 mb-1">
+              Start making payments
+            </h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Log in to see your payment history and share your link to get paid.
+            </p>
+            <button
+              type="button"
+              onClick={() => login()}
+              className="inline-block rounded-lg bg-amber-500 px-5 py-2.5 font-medium text-white hover:bg-amber-600 transition-colors"
+            >
+              Log in
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -231,61 +246,32 @@ export default function PaymentsPage() {
           </p>
         </div>
 
-        {/* Start making payments — onboarding-style */}
-        <div className="mb-8 rounded-[24px] bg-white p-8 text-center shadow-lg border border-gray-100">
-          <div className="mb-6 text-5xl">💳</div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">
-            Start making payments
-          </h2>
-          <p className="text-base text-gray-600 mb-6">
-            {username
-              ? "Share your payment link so others can pay you, or open a link to pay someone."
-              : "Set up your username and share your link from the account menu to get paid."}
-          </p>
-          {username ? (
-            <Link
-              href={`/link/${username}`}
-              className="inline-block rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-3 font-semibold text-white shadow-md hover:from-amber-600 hover:to-orange-600 hover:shadow-lg transition-all"
-            >
-              Your payment link
-            </Link>
-          ) : (
-            <button
-              type="button"
-              onClick={() => useAuthStore.getState().setOpenShareModal(true)}
-              className="inline-block rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-3 font-semibold text-white shadow-md hover:from-amber-600 hover:to-orange-600 hover:shadow-lg transition-all"
-            >
-              Share my link
-            </button>
-          )}
-        </div>
-
         {/* Overview cards */}
         <div className="grid grid-cols-2 gap-4 mb-8">
-          <div className="rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm">
-            <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Received</p>
-            <p className="mt-2 text-2xl font-bold text-gray-900">
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <p className="text-sm font-medium text-gray-500">Received</p>
+            <p className="mt-1 text-xl font-bold text-gray-900">
               ${totals.received.toFixed(2)}
             </p>
-            <p className="mt-0.5 text-xs text-gray-400">{received.length} payment(s)</p>
+            <p className="text-sm text-gray-400">{received.length} payment(s)</p>
           </div>
-          <div className="rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm">
-            <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Sent</p>
-            <p className="mt-2 text-2xl font-bold text-gray-900">
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <p className="text-sm font-medium text-gray-500">Sent</p>
+            <p className="mt-1 text-xl font-bold text-gray-900">
               ${totals.sent.toFixed(2)}
             </p>
-            <p className="mt-0.5 text-xs text-gray-400">{sent.length} payment(s)</p>
+            <p className="text-sm text-gray-400">{sent.length} payment(s)</p>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 p-1 rounded-xl bg-gray-100 mb-6">
+        <div className="flex gap-1 p-1 rounded-lg bg-gray-100 mb-6">
           {(["all", "received", "sent"] as const).map((t) => (
             <button
               key={t}
               type="button"
               onClick={() => setTab(t)}
-              className={`flex-1 rounded-lg py-2.5 text-sm font-medium transition-colors ${tab === t
+              className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === t
                 ? "bg-white text-gray-900 shadow-sm"
                 : "text-gray-600 hover:text-gray-900"
                 }`}
@@ -296,7 +282,7 @@ export default function PaymentsPage() {
         </div>
 
         {error && (
-          <div className="rounded-xl bg-red-50 text-red-700 px-4 py-3 text-sm mb-4 border border-red-100">
+          <div className="rounded-lg bg-red-50 text-red-700 px-4 py-3 text-sm mb-4 border border-red-100">
             {error}
           </div>
         )}
@@ -354,7 +340,7 @@ function EmptyState({
   description: string;
 }) {
   return (
-    <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50/50 py-12 px-6 text-center">
+    <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-10 px-4 text-center">
       <h3 className="font-semibold text-gray-900">{title}</h3>
       <p className="mt-1 text-sm text-gray-500 max-w-xs mx-auto">{description}</p>
     </div>

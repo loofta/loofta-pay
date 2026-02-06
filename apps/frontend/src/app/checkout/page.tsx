@@ -17,6 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PaymentDepositView } from "@/components/PaymentDepositView";
 import { findTokenBySelection } from "@/lib/tokens";
 import { roundUpDecimals } from "@/lib/format";
+import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { TokenIcon } from "@/components/TokenIcon";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -94,36 +95,6 @@ export default function CheckoutPage() {
     if (!organization?.token_symbol || !organization?.token_chain) return null;
     return tokens.find(t => t.symbol === organization.token_symbol && t.chain === organization.token_chain);
   }, [tokens, organization?.token_symbol, organization?.token_chain]);
-
-  // Validate refund address based on selected token's chain
-  const validateRefundAddress = (address: string, chain: string): boolean => {
-    if (!address.trim()) return false;
-    const chainLower = chain.toLowerCase();
-
-    // EVM chains
-    const evmChains = ['eth', 'ethereum', 'base', 'arb', 'arbitrum', 'op', 'optimism', 'polygon', 'pol', 'bsc', 'avax', 'avalanche'];
-    if (evmChains.includes(chainLower)) {
-      return /^0x[a-fA-F0-9]{40}$/.test(address);
-    }
-
-    // Solana
-    if (chainLower === 'sol' || chainLower === 'solana') {
-      return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
-    }
-
-    // NEAR
-    if (chainLower === 'near') {
-      return /^[a-z0-9_-]+\.near$|^[a-f0-9]{64}$/i.test(address);
-    }
-
-    // Bitcoin
-    if (chainLower === 'btc' || chainLower === 'bitcoin') {
-      return /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/.test(address);
-    }
-
-    // Default to EVM pattern for unknown chains
-    return /^0x[a-fA-F0-9]{40}$/.test(address);
-  };
 
   // Check if same token and same chain (direct transfer, no swap needed)
   const sameTokenAndChain = useMemo(() => {
@@ -285,7 +256,7 @@ export default function CheckoutPage() {
       toast({ variant: "destructive", title: "Error", description: "Please enter a refund address." });
       return;
     }
-    if (!selectedFrom || !validateRefundAddress(refundAddress, selectedFrom.chain)) {
+    if (!selectedFrom || !isValidAddressForChain(refundAddress, selectedFrom.chain)) {
       setRefundAddressError(`Invalid ${selectedFrom?.chain || ''} address format`);
       toast({ variant: "destructive", title: "Error", description: `Invalid refund address format for ${selectedFrom?.chain.toUpperCase() || ''}.` });
       return;
@@ -347,7 +318,7 @@ export default function CheckoutPage() {
       return;
     }
     // Validate refund address for non-direct payments
-    if (!sameTokenAndChain && selectedFrom && !validateRefundAddress(refundAddress, selectedFrom.chain)) {
+    if (!sameTokenAndChain && selectedFrom && !isValidAddressForChain(refundAddress, selectedFrom.chain)) {
       setRefundAddressError(`Invalid ${selectedFrom?.chain || ''} address format`);
       toast({ variant: "destructive", title: "Error", description: `Invalid refund address format for ${selectedFrom?.chain.toUpperCase() || ''}.` });
       return;

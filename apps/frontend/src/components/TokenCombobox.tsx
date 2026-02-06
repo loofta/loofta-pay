@@ -28,6 +28,8 @@ type Props = {
 	className?: string;
 	onQuery?: (q: string) => Promise<NearToken[]>;
 	hideChains?: string[]; // Chains to hide from selection (e.g., ['solana'])
+	/** When true, "All networks" is selected by default so all chains are visible (e.g. for withdraw token picker). */
+	defaultShowAllChains?: boolean;
 };
 
 export function TokenCombobox({
@@ -37,7 +39,8 @@ export function TokenCombobox({
 	placeholder = "Select token...",
 	className,
 	onQuery,
-	hideChains = []
+	hideChains = [],
+	defaultShowAllChains = false
 }: Props) {
 	const [open, setOpen] = React.useState(false);
 	const [query, setQuery] = React.useState("");
@@ -51,7 +54,9 @@ export function TokenCombobox({
 	const selectedToken = React.useMemo(() => {
 		return findTokenBySelection(tokens, value);
 	}, [tokens, value]);
-	const [selectedChain, setSelectedChain] = React.useState<string | undefined>(value?.chain);
+	const [selectedChain, setSelectedChain] = React.useState<string | undefined>(
+		defaultShowAllChains ? undefined : value?.chain
+	);
 
 	// keep options in sync if tokens prop changes and no query
 	React.useEffect(() => {

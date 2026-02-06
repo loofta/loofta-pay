@@ -18,7 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { motion } from "framer-motion";
 import { Ticket, Info, Trophy, Zap, Wallet, Loader2, ArrowLeft } from "lucide-react";
 import { isEvmChainId } from "@/config/biconomy";
-import { getRefundToForChain } from "@/lib/refundAddresses";
+import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
 import { encodeTicketPurchase, getTicketAutomatorAddress } from "@/services/lottery";
 import { pollCompanionBalance } from "@/services/lotteryPurchase";
 import { listAllCompanionWallets, recoverFundsFromCompanion } from "@/services/rhinestone";
@@ -182,6 +182,20 @@ export default function LotteryPage() {
     findTokenBySelection(tokens, fromSel),
     [tokens, fromSel]
   );
+
+  // Validate refund address for selected chain
+  useEffect(() => {
+    if (!selectedFrom || !refundAddress.trim()) {
+      setRefundAddressError(null);
+      return;
+    }
+    const trimmed = refundAddress.trim();
+    if (isValidAddressForChain(trimmed, selectedFrom.chain)) {
+      setRefundAddressError(null);
+    } else {
+      setRefundAddressError(`Invalid ${selectedFrom.chain} address format`);
+    }
+  }, [refundAddress, selectedFrom]);
 
   // Calculate costs in USD
   const totalTicketCostUSD = useMemo(() => {
@@ -393,6 +407,15 @@ export default function LotteryPage() {
         variant: "destructive",
         title: "Recipient address required",
         description: "Please provide a wallet address where tickets will be sent."
+      });
+      return;
+    }
+
+    if (selectedFrom && !isValidAddressForChain(refundAddress.trim(), selectedFrom.chain)) {
+      toast({
+        variant: "destructive",
+        title: "Invalid refund address",
+        description: `Please enter a valid ${selectedFrom.chain} address for refunds.`
       });
       return;
     }
@@ -1142,7 +1165,7 @@ export default function LotteryPage() {
 
                     <Button
                       onClick={handlePurchase}
-                      disabled={preparing || !selectedFrom || !numTickets || parseFloat(numTickets) <= 0 || !finalRecipientAddress || !refundAddress.trim()}
+                      disabled={preparing || !selectedFrom || !numTickets || parseFloat(numTickets) <= 0 || !finalRecipientAddress || !refundAddress.trim() || !!refundAddressError}
                       className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50"
                     >
                       {preparing ? (

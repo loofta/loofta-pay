@@ -46,7 +46,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import { USDC_MINT } from "@/services/solanaBalance";
-import { getRefundToForChain } from "@/lib/refundAddresses";
+import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 
 /** Inline Loofta logo SVG (no Image component). */
@@ -401,35 +401,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     return token || null;
   }, [tokens, claim?.to_symbol, claim?.to_chain]);
 
-  // Validate refund address based on selected token's chain
-  const validateRefundAddress = (address: string, chain: string): boolean => {
-    if (!address.trim()) return false;
-    const chainLower = chain.toLowerCase();
-
-    // EVM chains
-    const evmChains = ['eth', 'ethereum', 'base', 'arb', 'arbitrum', 'op', 'optimism', 'polygon', 'pol', 'bsc', 'avax', 'avalanche'];
-    if (evmChains.includes(chainLower)) {
-      return /^0x[a-fA-F0-9]{40}$/.test(address);
-    }
-
-    // Solana
-    if (chainLower === 'sol' || chainLower === 'solana') {
-      return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
-    }
-
-    // NEAR
-    if (chainLower === 'near') {
-      return /^[a-z0-9_-]+\.near$|^[a-f0-9]{64}$/i.test(address);
-    }
-
-    // Bitcoin
-    if (chainLower === 'btc' || chainLower === 'bitcoin') {
-      return /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/.test(address);
-    }
-
-    // Default to EVM pattern for unknown chains
-    return /^0x[a-fA-F0-9]{40}$/.test(address);
-  };
   const destUSD = useMemo(() => {
     const amt = Number(claim?.amount || 0);
     return Number.isFinite(amt) ? amt : null;
@@ -697,7 +668,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     const finalRefundAddress = refundAddress.trim();
 
     // Validate refund address format
-    if (!validateRefundAddress(finalRefundAddress, selectedFrom.chain)) {
+    if (!isValidAddressForChain(finalRefundAddress, selectedFrom.chain)) {
       setRefundAddressError(`Invalid ${selectedFrom.chain} address format`);
       toast({ variant: "destructive", title: "Error", description: `Invalid refund address format for ${selectedFrom.chain.toUpperCase()}.` });
       return;
