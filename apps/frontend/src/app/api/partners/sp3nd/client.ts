@@ -45,6 +45,23 @@ export async function getCart(cartId: string) {
   return data;
 }
 
+/** Add an item to an existing partner cart. Requires SP3ND to expose addToPartnerCart (or equivalent). */
+export async function addItemToCart(
+  cartId: string,
+  item: { product_url: string; quantity: number }
+) {
+  const res = await fetch(`${SP3ND_BASE}/addToPartnerCart`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ cart_id: cartId, items: [item] }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.error || `SP3ND addToCart ${res.status}`);
+  }
+  return data;
+}
+
 export async function updateCartShippingAddress(
   cartId: string,
   shipping_address: {

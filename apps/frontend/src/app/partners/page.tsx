@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Handshake, CheckCircle2, Globe, Zap, Shield, Users, ShoppingBag } from "lucide-react";
+import { Handshake, CheckCircle2, Globe, Zap, Shield, Users, ShoppingBag, Ticket } from "lucide-react";
 
 const PARTNERS = [
   {
@@ -12,6 +12,16 @@ const PARTNERS = [
     description: "Paste any Amazon product URL to get started. Pay with USDC or other stablecoins via Loofta Pay.",
     href: "/partners/sp3nd",
     icon: <ShoppingBag className="w-6 h-6" />,
+  },
+  {
+    id: "theinternettoken",
+    name: "Internet Lottery",
+    tagline: "Official lottery tickets with crypto",
+    description: "Buy lottery tickets with any token. Pay from any supported chain; we convert to ETH on Base for your ticket.",
+    href: "/checkout/lottery?organizationId=theinternettoken",
+    organizationId: "theinternettoken",
+    logoUrl: "/partners/internet-lottery-logo.png",
+    icon: <Ticket className="w-6 h-6" />,
   },
   {
     id: "partner-2",
@@ -113,13 +123,23 @@ export default function PartnersPage() {
               <Link
                 key={partner.id}
                 href={partner.href}
+                target={partner.href === "#" ? undefined : "_blank"}
+                rel={partner.href === "#" ? undefined : "noopener noreferrer"}
                 className={`rounded-2xl border border-gray-200 bg-white p-8 shadow-sm hover:shadow-md transition-all block text-left ${partner.href === "#" ? "pointer-events-none opacity-75" : ""}`}
               >
                 <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center"
+                  <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden"
                     style={{ background: 'linear-gradient(to right, rgba(255,15,0,0.1), rgba(234,179,8,0.1))' }}
                   >
-                    <div className="text-orange-600">{partner.icon}</div>
+                    {"logoUrl" in partner && partner.logoUrl ? (
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={partner.logoUrl} alt={partner.name} className="w-full h-full object-contain" onError={(e) => { e.currentTarget.style.display = "none"; const next = e.currentTarget.nextElementSibling as HTMLElement; if (next) { next.style.display = ""; next.classList.remove("hidden"); } }} />
+                        <div className="text-orange-600 hidden">{partner.icon}</div>
+                      </>
+                    ) : (
+                      <div className="text-orange-600">{partner.icon}</div>
+                    )}
                   </div>
                   <div>
                     <h3 className="text-xl font-semibold text-slate-900 mb-1">{partner.name}</h3>

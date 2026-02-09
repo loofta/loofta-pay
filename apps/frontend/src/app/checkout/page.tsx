@@ -91,19 +91,21 @@ export default function CheckoutPage() {
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1); // 1: Token selection, 2: Refund address (skipped for direct), 3: Complete Payment (shows deposit when ready)
   const [uploadedLogoUrl, setUploadedLogoUrl] = useState<string | null>(null);
 
-  const selectedFrom = findTokenBySelection(tokens, tokenSelection || null);
+  // Checkout only allows cross-chain payment: exclude tokens and network same as recipient
+  const recipientChainLower = organization?.token_chain?.toLowerCase() ?? "";
+  const checkoutPaymentTokens = useMemo(() => {
+    if (!recipientChainLower) return tokens;
+    return tokens.filter((t) => (t.chain ?? "").toLowerCase() !== recipientChainLower);
+  }, [tokens, recipientChainLower]);
+
+  const selectedFrom = findTokenBySelection(checkoutPaymentTokens, tokenSelection || null);
   const destToken = useMemo(() => {
     if (!organization?.token_symbol || !organization?.token_chain) return null;
     return tokens.find(t => t.symbol === organization.token_symbol && t.chain === organization.token_chain);
   }, [tokens, organization?.token_symbol, organization?.token_chain]);
 
-  // Check if same token and same chain (direct transfer, no swap needed)
-  const sameTokenAndChain = useMemo(() => {
-    if (!selectedFrom || !destToken) return false;
-    const sameChain = String(selectedFrom.chain || "").toLowerCase() === String(destToken.chain || "").toLowerCase();
-    const sameToken = String(selectedFrom.symbol || "").toUpperCase() === String(destToken.symbol || "").toUpperCase();
-    return sameChain && sameToken;
-  }, [selectedFrom, destToken]);
+  // Checkout is cross-chain only: same-token-same-chain is not offered (no direct transfer)
+  const sameTokenAndChain = false;
 
   // Get display step number (for direct payments, complete payment is step 2)
   const getStepNumber = (step: number): number => {
@@ -125,15 +127,13 @@ export default function CheckoutPage() {
     loadOrganization();
   }, [organizationId]);
 
+  // Clear selection if it was on the recipient chain (e.g. after org load)
   useEffect(() => {
-    // Set default token from organization if available
-    if (organization?.token_symbol && organization?.token_chain && !tokenSelection) {
-      setTokenSelection({
-        symbol: organization.token_symbol,
-        chain: organization.token_chain,
-      });
-    }
-  }, [organization, tokenSelection]);
+    if (!organization?.token_chain || !tokenSelection) return;
+    const selChain = (tokenSelection.chain ?? "").toLowerCase();
+    const recChain = organization.token_chain.toLowerCase();
+    if (selChain === recChain) setTokenSelection(null);
+  }, [organization?.token_chain, tokenSelection]);
 
   // Fetch quote when token selection or amount changes
   useEffect(() => {
@@ -144,14 +144,11 @@ export default function CheckoutPage() {
         return;
       }
 
-      // Wait for tokens to load and selectedFrom to be found
+      // Wait for payment tokens to load and selectedFrom to be found
       if (!selectedFrom) {
-        // Token might not be in the list yet, wait a bit
-        if (tokens.length > 0) {
-          // Tokens are loaded but token not found - don't show loading
+        if (checkoutPaymentTokens.length > 0) {
           setQuoteLoading(false);
         } else {
-          // Still loading tokens
           setQuoteLoading(true);
         }
         return;
@@ -226,7 +223,7 @@ export default function CheckoutPage() {
         setQuoteLoading(false);
       }
     })();
-  }, [organization, selectedFrom, destToken, amount, sameTokenAndChain, tokens, tokenSelection]);
+  }, [organization, selectedFrom, destToken, amount, sameTokenAndChain, checkoutPaymentTokens, tokenSelection]);
 
   async function handleProceedToPayment() {
     if (!organization) {
@@ -679,11 +676,12 @@ export default function CheckoutPage() {
                       </div>
                     ) : (
                       <TokenCombobox
-                        tokens={tokens}
+                        tokens={checkoutPaymentTokens}
                         value={tokenSelection || undefined}
                         onChange={setTokenSelection}
                         placeholder="Select token and network..."
                         className="w-full"
+                        hideChains={recipientChainLower ? [recipientChainLower] : []}
                       />
                     )}
                     <p className="text-sm text-gray-500 mt-1">

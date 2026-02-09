@@ -385,22 +385,7 @@ export async function POST(request: Request) {
     }
     const finalRefundAddress = refundAddress;
     
-    let originDecimals = Number(fromToken.decimals) || 8;
-    let originPrice: number | undefined = undefined;
-    try {
-      const tokens: any = await (OneClickService as any).getTokens();
-      const arr: any[] = Array.isArray(tokens) ? tokens : (tokens?.tokens || []);
-      const foundOrigin = arr.find((t: any) => String(t?.assetId || t?.tokenId || "").toLowerCase() === String(fromToken.tokenId).toLowerCase());
-      if (foundOrigin && typeof foundOrigin.decimals === "number") originDecimals = foundOrigin.decimals;
-      if (foundOrigin && typeof foundOrigin.price === "number") originPrice = foundOrigin.price;
-    } catch {}
-    
-    const amountInHuman = (Number.isFinite(amountUsd) && typeof originPrice === "number" && originPrice > 0)
-      ? (amountUsd / originPrice)
-      : 0;
-    const amountInWithBuffer = amountInHuman * 1.02;
-    const amountInAtomic = toAtomic(String(amountInWithBuffer || "0"), originDecimals);
-    
+    // EXACT_OUTPUT: request ensures recipient gets exactly amountOutAtomic; API returns required input (minAmountIn)
     const NON_EVM_DEST_CHAINS = new Set(['sol', 'solana', 'btc', 'bitcoin', 'xrp', 'xlm', 'stellar', 'ton', 'tron', 'sui', 'ada', 'cardano', 'doge', 'dogecoin', 'ltc', 'litecoin', 'zec', 'zcash']);
     const isNonEvmDestination = NON_EVM_DEST_CHAINS.has(destChain);
     
@@ -413,12 +398,12 @@ export async function POST(request: Request) {
     
     const req: QuoteRequest = useIntentsMode ? {
       dry: false,
-      swapType: "EXACT_INPUT" as any,
+      swapType: (QuoteRequest.swapType as any).EXACT_OUTPUT ?? "EXACT_OUTPUT",
       slippageTolerance: 100,
       originAsset: fromToken.tokenId,
       depositType: "INTENTS" as any,
       destinationAsset,
-      amount: amountInAtomic,
+      amount: amountOutAtomic,
       refundTo: userAddress || finalRefundAddress,
       refundType: "INTENTS" as any,
       recipient: recipientAddress,
@@ -428,12 +413,12 @@ export async function POST(request: Request) {
       ...(userAddress ? { authMethod: "evm", userAddress } : {}),
     } as any : {
       dry: false,
-      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      swapType: (QuoteRequest.swapType as any).EXACT_OUTPUT ?? QuoteRequest.swapType.EXACT_OUTPUT ?? "EXACT_OUTPUT",
       slippageTolerance: 100,
       originAsset: fromToken.tokenId,
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
-      amount: amountInAtomic,
+      amount: amountOutAtomic,
       refundTo: finalRefundAddress,
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
       recipient: recipientAddress,

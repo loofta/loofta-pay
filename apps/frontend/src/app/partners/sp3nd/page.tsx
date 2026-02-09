@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Loader2, ArrowLeft, ShoppingBag } from "lucide-react";
 import { organizationsApi } from "@/services/api/organizations";
 
-type Step = "url" | "cart" | "shipping" | "redirect";
+type Step = "url" | "cart" | "payment" | "redirect";
 
 const SP3ND_CHECKOUT_ORG = "sp3nd";
 
@@ -20,8 +20,10 @@ export default function Sp3ndPartnerPage() {
   const router = useRouter();
   const [org, setOrg] = useState<{ name: string; logo_url: string | null } | null>(null);
   const [step, setStep] = useState<Step>("url");
-  const [productUrl, setProductUrl] = useState("");
-  const [quantity, setQuantity] = useState(1);
+  const [cartItems, setCartItems] = useState<Array<{ url: string; quantity: number }>>([{ url: "", quantity: 1 }]);
+  const [addMoreUrl, setAddMoreUrl] = useState("");
+  const [addMoreQty, setAddMoreQty] = useState(1);
+  const [addingMore, setAddingMore] = useState(false);
   const [cartId, setCartId] = useState<string | null>(null);
   const [cartDetails, setCartDetails] = useState<{
     items?: { title?: string; price?: number; quantity?: number }[];
@@ -63,9 +65,11 @@ export default function Sp3ndPartnerPage() {
   }, []);
 
   async function handleAddUrl() {
-    const url = productUrl.trim();
-    if (!url) {
-      toast({ variant: "destructive", title: "Error", description: "Please enter an Amazon product URL." });
+    const items = cartItems
+      .map((i) => ({ url: i.url.trim(), quantity: i.quantity || 1 }))
+      .filter((i) => i.url.length > 0);
+    if (items.length === 0) {
+      toast({ variant: "destructive", title: "Error", description: "Please enter at least one Amazon product URL." });
       return;
     }
     setLoading(true);
@@ -73,24 +77,20 @@ export default function Sp3ndPartnerPage() {
       const res = await fetch("/api/partners/sp3nd/cart", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ product_url: url, quantity: quantity || 1 }),
+        body: JSON.stringify({
+          items: items.map((i) => ({ product_url: i.url, quantity: i.quantity })),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.error || "Failed to add product");
+        throw new Error(data?.error || "Failed to add products");
       }
       const cid = data?.cart?.cart_id || data?.cart_id;
       if (!cid) {
         throw new Error("No cart ID returned");
       }
       setCartId(cid);
-      const cartRes = await fetch("/api/partners/sp3nd/cart", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cart_id: cid }),
-      });
-      const cartData = await cartRes.json();
-      const cart = cartData?.cart || cartData;
+      const cart = data?.cart || data;
       setCartDetails({
         items: cart?.items,
         subtotal: cart?.subtotal ?? cart?.total,
@@ -98,11 +98,49 @@ export default function Sp3ndPartnerPage() {
         tax: cart?.tax,
       });
       setStep("cart");
-      toast({ title: "Added to cart", description: "Review your cart and proceed to shipping." });
+      toast({ title: "Added to cart", description: "Confirm your address, then proceed to payment." });
     } catch (e: any) {
-      toast({ variant: "destructive", title: "Error", description: e?.message || "Could not add product." });
+      toast({ variant: "destructive", title: "Error", description: e?.message || "Could not add products." });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleAddMoreItem() {
+    const url = addMoreUrl.trim();
+    if (!url || !cartId) {
+      toast({ variant: "destructive", title: "Error", description: "Please enter an Amazon product URL." });
+      return;
+    }
+    setAddingMore(true);
+    try {
+      const res = await fetch("/api/partners/sp3nd/cart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cart_id: cartId,
+          product_url: url,
+          quantity: addMoreQty || 1,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to add item");
+      }
+      const cart = data?.cart || data;
+      setCartDetails({
+        items: cart?.items,
+        subtotal: cart?.subtotal ?? cart?.total,
+        total: cart?.total ?? cart?.subtotal,
+        tax: cart?.tax,
+      });
+      setAddMoreUrl("");
+      setAddMoreQty(1);
+      toast({ title: "Item added", description: "Cart updated." });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Error", description: e?.message || "Could not add item." });
+    } finally {
+      setAddingMore(false);
     }
   }
 
@@ -141,8 +179,8 @@ export default function Sp3ndPartnerPage() {
       if (!res.ok) {
         throw new Error(data?.error || "Failed to update shipping");
       }
-      setStep("shipping");
-      toast({ title: "Shipping updated", description: "Confirm and pay." });
+      setStep("payment");
+      toast({ title: "Address confirmed", description: "Proceed to payment." });
     } catch (e: any) {
       toast({ variant: "destructive", title: "Error", description: e?.message || "Could not update shipping." });
     } finally {
@@ -231,44 +269,87 @@ export default function Sp3ndPartnerPage() {
               <ShoppingBag className="w-6 h-6 text-orange-600" />
             </div>
           )}
-          <div>
+          <div className="flex-1 min-w-0">
             <h1 className="text-2xl md:text-3xl font-semibold text-slate-900">{org?.name ?? "Sp3nd"}</h1>
             <p className="text-slate-600">Shop Amazon with Stablecoins</p>
+            <p className="mt-1 text-sm text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <a href="https://sp3nd.shop" target="_blank" rel="noopener noreferrer" className="text-orange-600 hover:text-orange-700 font-medium underline">
+                sp3nd.shop
+              </a>
+              <a href="https://x.com/SP3NDdotshop" target="_blank" rel="noopener noreferrer" className="text-orange-600 hover:text-orange-700 font-medium underline">
+                X @SP3NDdotshop
+              </a>
+            </p>
           </div>
         </div>
 
         {step === "url" && (
           <div className="rounded-2xl border border-gray-200 bg-white p-6 md:p-8 shadow-sm">
             <p className="text-slate-600 mb-4">
-              Paste any Amazon product URL below. We’ll fetch the product and you can pay with USDC or other stablecoins via Loofta Pay.
+              Paste Amazon product URL(s) below. Add as many as you like, then add all to cart. Pay with USDC or other stablecoins via Loofta Pay.
             </p>
             <div className="space-y-4">
-              <div>
-                <Label htmlFor="product_url">Amazon product URL</Label>
-                <Input
-                  id="product_url"
-                  type="url"
-                  placeholder="https://www.amazon.com/dp/..."
-                  value={productUrl}
-                  onChange={(e) => setProductUrl(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label htmlFor="quantity">Quantity</Label>
-                <Input
-                  id="quantity"
-                  type="number"
-                  min={1}
-                  value={quantity}
-                  onChange={(e) => setQuantity(parseInt(e.target.value, 10) || 1)}
-                  className="mt-1 w-24"
-                />
-              </div>
+              {cartItems.map((item, index) => (
+                <div key={index} className="flex flex-col sm:flex-row gap-3 items-start sm:items-end border-b border-gray-100 pb-4 last:border-0 last:pb-0">
+                  <div className="flex-1 w-full min-w-0">
+                    <Label>Amazon product URL {cartItems.length > 1 ? `#${index + 1}` : ""}</Label>
+                    <Input
+                      type="url"
+                      placeholder="https://www.amazon.com/dp/..."
+                      value={item.url}
+                      onChange={(e) =>
+                        setCartItems((prev) =>
+                          prev.map((p, i) => (i === index ? { ...p, url: e.target.value } : p))
+                        )
+                      }
+                      className="mt-1"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div>
+                      <Label>Qty</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={item.quantity}
+                        onChange={(e) =>
+                          setCartItems((prev) =>
+                            prev.map((p, i) =>
+                              i === index ? { ...p, quantity: parseInt(e.target.value, 10) || 1 } : p
+                            )
+                          )
+                        }
+                        className="mt-1 w-16"
+                      />
+                    </div>
+                    {cartItems.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50 mt-6"
+                        onClick={() =>
+                          setCartItems((prev) => prev.filter((_, i) => i !== index))
+                        }
+                      >
+                        ×
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                onClick={() => setCartItems((prev) => [...prev, { url: "", quantity: 1 }])}
+              >
+                + Add another product
+              </Button>
               <Button
                 onClick={handleAddUrl}
                 disabled={loading}
-                className="w-full"
+                className="w-full mt-4"
                 style={{ background: "linear-gradient(to right, #FF0F00, #EAB308)" }}
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Add to cart & continue"}
@@ -302,7 +383,7 @@ export default function Sp3ndPartnerPage() {
             </div>
 
             <div className="rounded-2xl border border-gray-200 bg-white p-6 md:p-8 shadow-sm">
-              <h2 className="text-lg font-semibold text-slate-900 mb-4">Shipping address</h2>
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">Step 1: Confirm shipping address</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <Label>First name *</Label>
@@ -380,38 +461,86 @@ export default function Sp3ndPartnerPage() {
                   placeholder="you@example.com"
                 />
               </div>
-              <Button
-                onClick={handleUpdateShipping}
-                disabled={loading}
-                className="w-full mt-6"
-                variant="outline"
-              >
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Update shipping & continue"}
-              </Button>
+            </div>
+
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 md:p-8 shadow-sm">
+              <h3 className="text-base font-semibold text-slate-900 mb-3">Add another item</h3>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="flex-1 min-w-0">
+                  <Label className="sr-only">Amazon product URL</Label>
+                  <Input
+                    type="url"
+                    placeholder="https://www.amazon.com/dp/..."
+                    value={addMoreUrl}
+                    onChange={(e) => setAddMoreUrl(e.target.value)}
+                    className="mt-0"
+                  />
+                </div>
+                <div className="w-20">
+                  <Label className="sr-only">Quantity</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={addMoreQty}
+                    onChange={(e) => setAddMoreQty(parseInt(e.target.value, 10) || 1)}
+                    className="mt-0"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={addingMore || !addMoreUrl.trim()}
+                  onClick={handleAddMoreItem}
+                  className="sm:mt-0"
+                >
+                  {addingMore ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add"}
+                </Button>
+              </div>
             </div>
 
             <Button
-              onClick={handleCreateOrderAndPay}
+              onClick={handleUpdateShipping}
               disabled={loading}
               className="w-full"
-              style={{ background: "linear-gradient(to right, #FF0F00, #EAB308)" }}
+              style={{ background: "linear-gradient(to right, #FF0F00, #EAB308)", color: "#fff" }}
             >
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : `Pay $${typeof totalUsd === "number" ? totalUsd.toFixed(2) : "0.00"} with Loofta Pay`}
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Confirm address & continue"}
             </Button>
           </div>
         )}
 
-        {step === "shipping" && cartId && (
-          <div className="rounded-2xl border border-gray-200 bg-white p-6 md:p-8 shadow-sm">
-            <p className="text-slate-600 mb-4">Shipping updated. Click below to create your order and pay with USDC/stablecoins.</p>
-            <Button
-              onClick={handleCreateOrderAndPay}
-              disabled={loading}
-              className="w-full"
-              style={{ background: "linear-gradient(to right, #FF0F00, #EAB308)" }}
-            >
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : `Pay $${typeof totalUsd === "number" ? totalUsd.toFixed(2) : "0.00"} with Loofta Pay`}
-            </Button>
+        {step === "payment" && cartId && (
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 md:p-8 shadow-sm">
+              <h2 className="text-lg font-semibold text-slate-900 mb-2">Step 2: Proceed to payment</h2>
+              <p className="text-slate-600 mb-4">
+                Your shipping address is confirmed. Click below to complete your order and pay with USDC or other stablecoins via Loofta Pay.
+              </p>
+              <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 text-sm text-slate-700 mb-4">
+                <p className="font-medium text-slate-900 mb-2">Shipping to</p>
+                <p>
+                  {shipping.first_name} {shipping.last_name}
+                </p>
+                <p>
+                  {shipping.address_line_1}
+                  {shipping.address_line_2 ? `, ${shipping.address_line_2}` : ""}
+                </p>
+                <p>
+                  {shipping.city}
+                  {shipping.state ? `, ${shipping.state}` : ""} {shipping.postal_code}
+                </p>
+                <p>{shipping.country}</p>
+                <p className="mt-2 text-slate-600">{email}</p>
+              </div>
+              <Button
+                onClick={handleCreateOrderAndPay}
+                disabled={loading}
+                className="w-full"
+                style={{ background: "linear-gradient(to right, #FF0F00, #EAB308)" }}
+              >
+                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : `Proceed to payment — $${typeof totalUsd === "number" ? totalUsd.toFixed(2) : "0.00"}`}
+              </Button>
+            </div>
           </div>
         )}
 

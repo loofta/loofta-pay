@@ -54,6 +54,7 @@ export default function LotteryPage() {
   // Get organization referral from query params (passed from checkout page)
   const orgReferral = searchParams.get("orgReferral") || undefined;
   const organizationId = searchParams.get("organizationId") || undefined;
+  const isInternetLotteryPartner = organizationId?.toLowerCase() === "theinternettoken";
 
   const [numTickets, setNumTickets] = useState<string>("1");
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
@@ -100,6 +101,12 @@ export default function LotteryPage() {
     );
   }, [tokens]);
 
+  // Internet Lottery partner: no Base payment (no companion wallet); pay with Base on official website
+  const lotteryPaymentTokens = useMemo(() => {
+    if (!isInternetLotteryPartner) return tokens;
+    return tokens.filter((t) => (t.chain ?? "").toLowerCase() !== "base");
+  }, [tokens, isInternetLotteryPartner]);
+
   // Get cached data from Zustand
   const cachedPaymentToken = useCompanionWalletStore((s) => s.selectedPaymentToken);
   const setSelectedPaymentToken = useCompanionWalletStore((s) => s.setSelectedPaymentToken);
@@ -109,10 +116,10 @@ export default function LotteryPage() {
   // Restore cached token on mount when tokens are loaded (run FIRST, before default initialization)
   useEffect(() => {
     // Only restore if we have a cached token, no current selection, and tokens are loaded
-    if (cachedPaymentToken && fromSel === undefined && tokens.length > 0) {
+    if (cachedPaymentToken && fromSel === undefined && lotteryPaymentTokens.length > 0) {
       console.log("[Lottery Page] Attempting to restore cached token:", cachedPaymentToken);
-      // Restore cached token selection
-      const restoredToken = findTokenBySelection(tokens, cachedPaymentToken);
+      // Restore cached token selection (use lotteryPaymentTokens so Base is not restored for Internet Lottery)
+      const restoredToken = findTokenBySelection(lotteryPaymentTokens, cachedPaymentToken);
       if (restoredToken) {
         console.log("[Lottery Page] ✓ Found cached token in tokens list, restoring...");
         setFromSel(cachedPaymentToken);
@@ -123,7 +130,7 @@ export default function LotteryPage() {
         setSelectedPaymentToken(null);
       }
     }
-  }, [tokens.length, cachedPaymentToken]); // Depend on both to restore when either changes
+  }, [lotteryPaymentTokens.length, cachedPaymentToken]); // Depend on both to restore when either changes
 
   // Cache selected token when it changes (including when user selects via TokenCombobox)
   useEffect(() => {
@@ -281,22 +288,21 @@ export default function LotteryPage() {
 
   // Initialize default token selection - only if no cached token and no current selection
   useEffect(() => {
-    // Only set default if no cached token exists and no current selection
-    if (!cachedPaymentToken && !fromSel && tokens.length > 0) {
-      // Prefer ETH on Ethereum (most common), but allow any chain
-      const preferred = tokens.find(t =>
+    if (!cachedPaymentToken && !fromSel && lotteryPaymentTokens.length > 0) {
+      // Prefer ETH on Ethereum, then USDC/USDT (not Base for Internet Lottery partner), then USDT, then first
+      const preferred = lotteryPaymentTokens.find(t =>
         t.symbol === "ETH" &&
         String(t.chain).toLowerCase() === "ethereum"
-      ) || tokens.find(t =>
+      ) || lotteryPaymentTokens.find(t =>
         (t.symbol === "USDC" || t.symbol === "USDT") &&
         String(t.chain).toLowerCase() === "base"
-      ) || tokens.find(t => t.symbol === "USDT") || tokens[0];
+      ) || lotteryPaymentTokens.find(t => t.symbol === "USDT") || lotteryPaymentTokens[0];
 
       if (preferred) {
         setFromSel({ symbol: preferred.symbol, chain: preferred.chain });
       }
     }
-  }, [tokens.length, cachedPaymentToken, fromSel]); // Check cachedPaymentToken to avoid overriding
+  }, [lotteryPaymentTokens, cachedPaymentToken, fromSel]);
 
   // Get user's wallet address
   useEffect(() => {
@@ -781,7 +787,7 @@ export default function LotteryPage() {
             <div className="mb-5 p-3 bg-gray-50 rounded-lg border border-gray-200">
               <div className="flex items-center gap-2 mb-2">
                 <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
-                <span className="text-sm font-semibold text-gray-900">Purchase Progress</span>
+                <span className="text-base font-semibold text-gray-900">Purchase Progress</span>
               </div>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600">
                 <div className={`flex items-center gap-1 ${executionStep === "quote" ? "text-blue-600 font-medium" : ["deposit", "polling", "executing", "complete"].includes(executionStep) ? "text-green-600" : ""}`}>
@@ -819,7 +825,7 @@ export default function LotteryPage() {
                 <div className="flex items-center gap-2">
                   <div className={`w-2 h-2 rounded-full ${parseFloat(remainingDeposit || "0") <= 0 ? "bg-green-500" : "bg-blue-500 animate-pulse"
                     }`}></div>
-                  <span className="text-sm text-gray-700">
+                  <span className="text-base text-gray-700">
                     {parseFloat(companionBalance) > 0
                       ? `Balance: ${companionBalance} ETH`
                       : "Waiting for deposit..."}
@@ -1052,7 +1058,7 @@ export default function LotteryPage() {
                     <Skeleton className="h-11 w-full" />
                   ) : (
                     <TokenCombobox
-                      tokens={tokens}
+                      tokens={lotteryPaymentTokens}
                       value={fromSel}
                       onChange={(token) => {
                         setFromSel(token);
@@ -1062,8 +1068,9 @@ export default function LotteryPage() {
                         }
                       }}
                       placeholder="Select payment token"
+                      hideChains={isInternetLotteryPartner ? ["base"] : []}
                       onQuery={async (q) =>
-                        tokens.filter(t =>
+                        lotteryPaymentTokens.filter(t =>
                           t.symbol.toLowerCase().includes((q || '').toLowerCase())
                         )
                       }
@@ -1073,6 +1080,25 @@ export default function LotteryPage() {
                   <p className="mt-1 text-sm text-gray-500">
                     We'll automatically convert to ETH on Base
                   </p>
+                  {isInternetLotteryPartner && (
+                    <div className="mt-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 space-y-1">
+                      <p>
+                        To pay using Base, please go to our{" "}
+                        <a href="https://theinternettoken.com/" target="_blank" rel="noopener noreferrer" className="font-semibold underline hover:text-amber-900">
+                          official website
+                        </a>
+                        .
+                      </p>
+                      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 border-t border-amber-200/60">
+                        <a href="https://theinternettoken.com/" target="_blank" rel="noopener noreferrer" className="font-semibold underline hover:text-amber-900">
+                          theinternettoken.com
+                        </a>
+                        <a href="https://x.com/internet_token" target="_blank" rel="noopener noreferrer" className="font-semibold underline hover:text-amber-900">
+                          X @internet_token
+                        </a>
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Refund Address Input */}
@@ -1350,14 +1376,22 @@ export default function LotteryPage() {
                 </p>
               </div>
 
-              <div className="mt-6 pt-6 border-t border-gray-200">
+              <div className="mt-6 pt-6 border-t border-gray-200 space-y-2">
                 <a
-                  href="https://theinternettoken.com/faq"
+                  href="https://theinternettoken.com/"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-blue-600 hover:text-blue-700 font-semibold flex items-center gap-2"
                 >
-                  Learn more about the Internet Token Lottery →
+                  Official website: theinternettoken.com →
+                </a>
+                <a
+                  href="https://x.com/internet_token"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:text-blue-700 font-semibold flex items-center gap-2"
+                >
+                  Follow on X @internet_token →
                 </a>
               </div>
             </div>
