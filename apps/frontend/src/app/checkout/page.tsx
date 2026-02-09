@@ -60,6 +60,7 @@ export default function CheckoutPage() {
   const organizationId = searchParams.get("organizationId");
   const amountParam = searchParams.get("amount");
   const bgColorParam = searchParams.get("bgColor");
+  const memoParam = searchParams.get("memo");
   const deserializedAmount = useMemo(() => deserializeAmount(amountParam), [amountParam]);
 
   // Decode bgColor if URL encoded
@@ -340,6 +341,8 @@ export default function CheckoutPage() {
         orgReferral: organization.org_referral,
         // Only include refundAddress for non-direct payments
         ...(sameTokenAndChain ? {} : { refundAddress: refundAddress.trim() }),
+        // Optional memo (e.g. for partner orders like SP3ND)
+        ...(memoParam && memoParam.trim() ? { memo: memoParam.trim() } : {}),
       };
 
       console.log("[Checkout] Preparing deposit with:", {

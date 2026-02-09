@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type SVGProps, useRef, useEffect } from "react";
+import React, { useState, type SVGProps, useRef, useEffect } from "react";
 import Image from "next/image";
 import { useAuth } from "@/hooks/useAuth";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
@@ -14,7 +14,33 @@ import { findTokenBySelection } from "@/lib/tokens";
 import { maskLink } from "@/lib/format";
 import { isValidZcashShielded } from "@/lib/zcash";
 import { useClaimStore } from "@/store/claim";
-import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { ArrowRight, Wallet } from "lucide-react";
+import { usePrivy } from "@privy-io/react-auth";
+import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
+
+/** Inline Loofta logo SVG (matches pay modal). */
+function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
+  const id = React.useId().replace(/:/g, "-");
+  return (
+    <svg viewBox="0 0 56 57" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} aria-hidden {...props}>
+      <g filter={`url(#loofta-shadow-${id})`}>
+        <path d="M27.9532 49C20.655 49 14.8226 46.8696 10.4561 42.6087C6.15205 38.2861 4 32.2035 4 24.3611C4 19.5444 4.99805 15.3144 6.99415 11.6711C8.99025 8.02773 11.7661 5.18714 15.3216 3.14934C18.9396 1.04978 23.1501 0 27.9532 0C33.3177 0 37.7778 1.04978 41.3333 3.14934C44.8889 5.18714 47.54 8.02773 49.2865 11.6711C51.0955 15.3144 52 19.5444 52 24.3611C52 32.2035 50.0039 38.2861 46.0117 42.6087C42.0819 46.8696 36.0624 49 27.9532 49ZM15.1345 22.7864C15.1345 24.7007 16.1014 26.0592 18.0351 26.862C19.9688 27.603 23.2749 27.9735 27.9532 27.9735C32.6316 27.9735 35.9376 27.603 37.8713 26.862C39.8051 26.0592 40.7719 24.7007 40.7719 22.7864C40.7719 20.9338 39.8051 19.637 37.8713 18.896C35.9376 18.155 32.6316 17.7845 27.9532 17.7845C23.2749 17.7845 19.9688 18.155 18.0351 18.896C16.1014 19.637 15.1345 20.9338 15.1345 22.7864Z" fill="#FF4A26" />
+      </g>
+      <defs>
+        <filter id={`loofta-shadow-${id}`} x="0" y="0" width="56" height="57" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+          <feFlood floodOpacity="0" result="BackgroundImageFix" />
+          <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha" />
+          <feOffset dy="4" />
+          <feGaussianBlur stdDeviation="2" />
+          <feComposite in2="hardAlpha" operator="out" />
+          <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.12 0" />
+          <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_617_42" />
+          <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_617_42" result="shape" />
+        </filter>
+      </defs>
+    </svg>
+  );
+}
 
 async function createClaim(formData: {
   amount: string;
@@ -48,13 +74,14 @@ function CheckIcon(props: SVGProps<SVGSVGElement>) {
 export default function ClaimPage() {
   const { authenticated, email: userEmail, userId, login, ready } = useAuth();
   const { login: privyLogin } = usePrivy();
-  const { wallets } = useWallets();
+  const { wallets: solanaWallets } = useSolanaWallets();
   const { toast } = useToast();
   const { data: tokens = [] } = useTokensQuery();
   const [toSel, setToSel] = useState<TokenSelection | undefined>(undefined);
   const [amount, setAmount] = useState<string>("");
   const [recipient, setRecipient] = useState<string>("");
   const [recipientPrefilled, setRecipientPrefilled] = useState(false);
+  const [receiveDestination, setReceiveDestination] = useState<"loofta" | "other">("loofta");
   const [creating, setCreating] = useState(false);
   const [notifyChecked, setNotifyChecked] = useState<boolean>(Boolean(userEmail));
   const [notifyEmail, setNotifyEmail] = useState<string>(userEmail || "");
@@ -86,19 +113,24 @@ export default function ClaimPage() {
     }
   }, [authenticated, pendingAccessRequest]);
 
+  const solanaWallet = solanaWallets?.[0];
+  const defaultLooftaToken = tokens.find((t) => t.symbol === "USDC" && String(t.chain).toLowerCase().includes("sol"));
+
   // Prefill recipient with logged-in user's Solana wallet when they have one
   useEffect(() => {
-    if (authenticated && wallets?.length && !recipientPrefilled) {
-      const solanaWallet = wallets.find((w: { walletClientType?: string; chainType?: string; address?: string }) =>
-        (w.walletClientType === 'privy' && (w.chainType === 'solana' || w.chainType === 'sol')) ||
-        (w.chainType === 'solana' || w.chainType === 'sol')
-      );
-      if (solanaWallet?.address) {
-        setRecipient((prev) => (prev ? prev : solanaWallet.address));
-        setRecipientPrefilled(true);
-      }
+    if (authenticated && solanaWallets?.length && !recipientPrefilled && solanaWallet?.address) {
+      setRecipient((prev) => (prev ? prev : solanaWallet.address));
+      setRecipientPrefilled(true);
     }
-  }, [authenticated, wallets, recipientPrefilled]);
+  }, [authenticated, solanaWallets, solanaWallet?.address, recipientPrefilled]);
+
+  // When Loofta is selected, keep recipient + token in sync with Loofta defaults
+  useEffect(() => {
+    if (authenticated && receiveDestination === "loofta" && solanaWallet?.address && defaultLooftaToken) {
+      setRecipient(solanaWallet.address);
+      setToSel({ symbol: defaultLooftaToken.symbol, chain: defaultLooftaToken.chain });
+    }
+  }, [authenticated, receiveDestination, solanaWallet?.address, defaultLooftaToken?.symbol, defaultLooftaToken?.chain]);
 
   const selectedTo = findTokenBySelection(tokens, toSel || null);
 
@@ -709,7 +741,110 @@ export default function ClaimPage() {
                           </div>
                         </div>
                       </>
+                    ) : authenticated ? (
+                      /* Logged in: Receive on Loofta (no token/wallet) or Use another wallet — like pay modal */
+                      <>
+                        <div className="flex flex-col gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setReceiveDestination("loofta")}
+                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "loofta" ? "border-orange-300 bg-orange-50/80" : "border-gray-200 bg-gray-50 hover:bg-orange-50 hover:border-orange-200"}`}
+                          >
+                            <div className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center shrink-0 p-1.5">
+                              <LooftaIcon className="w-full h-full object-contain" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <span className="font-semibold text-gray-900 block">Receive on Loofta</span>
+                              <span className="text-sm text-gray-500">
+                                {solanaWallet?.address && defaultLooftaToken
+                                  ? `Your Loofta wallet · ${defaultLooftaToken.symbol}`
+                                  : "Your Loofta wallet · USDC"}
+                              </span>
+                            </div>
+                            {receiveDestination === "loofta" && solanaWallet?.address && defaultLooftaToken && (
+                              <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full shrink-0">Ready</span>
+                            )}
+                          </button>
+
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1 h-px bg-gray-200" />
+                            <span className="text-sm font-medium text-gray-400">or</span>
+                            <div className="flex-1 h-px bg-gray-200" />
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReceiveDestination("other");
+                              setRecipient("");
+                              setToSel(undefined);
+                            }}
+                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "other" ? "border-orange-300 bg-orange-50/80" : "border-gray-200 bg-gray-50 hover:bg-orange-50 hover:border-orange-200"}`}
+                          >
+                            <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
+                              <Wallet className="w-5 h-5 text-gray-700" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <span className="font-semibold text-gray-900 block">Use another wallet</span>
+                              <span className="text-sm text-gray-500">Different token or network</span>
+                            </div>
+                            {receiveDestination === "other" ? (
+                              <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full shrink-0">Selected</span>
+                            ) : (
+                              <ArrowRight className="w-5 h-5 text-gray-400 shrink-0" />
+                            )}
+                          </button>
+                        </div>
+
+                        {receiveDestination === "other" && (
+                          <>
+                            <div>
+                              <label className="text-gray-600 mb-1 block">Token you want to receive</label>
+                              <TokenCombobox
+                                tokens={tokens}
+                                value={toSel}
+                                onChange={setToSel}
+                                placeholder="Select token"
+                                onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                                className="bg-white text-gray-900 border border-gray-200 hover:border-orange-300 w-full h-12"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-gray-600 mb-1 block">Wallet address</label>
+                              <Input
+                                type="text"
+                                value={recipient}
+                                onChange={(e) => setRecipient(e.target.value)}
+                                placeholder={(() => {
+                                  const chain = String(selectedTo?.chain || '').toLowerCase();
+                                  if (['solana', 'sol'].includes(chain)) return 'So1ana...';
+                                  if (['near'].includes(chain)) return 'account.near';
+                                  if (['bitcoin', 'btc'].includes(chain)) return 'bc1...';
+                                  if (['zec', 'zcash'].includes(chain)) return 'zs1... or t1...';
+                                  if (['cosmos', 'atom'].includes(chain)) return 'cosmos1...';
+                                  if (['tron', 'trx'].includes(chain)) return 'T...';
+                                  return '0x...';
+                                })()}
+                                className="h-12 text-gray-900 placeholder:text-gray-400 border-gray-200 focus:border-orange-400"
+                                autoCapitalize="none"
+                                autoCorrect="off"
+                                spellCheck={false}
+                                onPaste={(e) => {
+                                  try {
+                                    const pasted = e.clipboardData?.getData('text/plain') || '';
+                                    if (pasted) {
+                                      e.preventDefault();
+                                      setRecipient(pasted.trim());
+                                    }
+                                  } catch { }
+                                }}
+                              />
+                            </div>
+                          </>
+                        )}
+                      </>
                     ) : (
+                      /* Not logged in: token + address only */
                       <>
                         <div>
                           <label className="text-gray-600 mb-1 block">Token you want to receive</label>
@@ -736,7 +871,6 @@ export default function ClaimPage() {
                               if (['zec', 'zcash'].includes(chain)) return 'zs1... or t1...';
                               if (['cosmos', 'atom'].includes(chain)) return 'cosmos1...';
                               if (['tron', 'trx'].includes(chain)) return 'T...';
-                              // Default to EVM format
                               return '0x...';
                             })()}
                             className="h-12 text-gray-900 placeholder:text-gray-400 border-gray-200 focus:border-orange-400"
@@ -821,7 +955,13 @@ export default function ClaimPage() {
                       authenticated && !showAccessRequested ? (
                         <GradientActionButton
                           onClick={() => onCreate()}
-                          disabled={creating || !(parsedAmount > 0 && !!selectedTo && !!(recipient || "").trim())}
+                          disabled={
+                            creating ||
+                            !(parsedAmount > 0 &&
+                              (receiveDestination === "loofta"
+                                ? !!(solanaWallet?.address && defaultLooftaToken)
+                                : !!selectedTo && !!(recipient || "").trim()))
+                          }
                           loading={creating}
                           loadingText="Creating…"
                         >

@@ -31,7 +31,7 @@ const INTENTS_ONLY_CHAINS = new Set(['zec', 'zcash', 'btc', 'bitcoin', 'xrp', 'x
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { organizationId, fromToken, amount, userAddress, orgReferral, refundAddress } = body || {};
+    const { organizationId, fromToken, amount, userAddress, orgReferral, refundAddress, memo: requestMemo } = body || {};
     if (!organizationId || !fromToken?.tokenId || !fromToken?.decimals || !amount) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
@@ -186,6 +186,7 @@ export async function POST(request: Request) {
           amount: tokenAmount,
           minAmountInFormatted: tokenAmount,
           message: `Send ${organization.token_symbol} directly to the recipient address.`,
+          ...(typeof requestMemo === "string" && requestMemo.trim() ? { memo: requestMemo.trim() } : {}),
         }, { status: 200 });
       }
       
