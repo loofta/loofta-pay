@@ -1,4 +1,37 @@
 /**
+ * Validate that an address matches the expected format for the given chain/network.
+ * Use for destination addresses and refund addresses across the app.
+ */
+export function isValidAddressForChain(address: string, chain: string): boolean {
+  const raw = (address || "").trim();
+  if (!raw) return false;
+  const ch = String(chain || "").toLowerCase();
+
+  const evmChains = new Set([
+    "eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism",
+    "bsc", "berachain", "pol", "polygon", "avax", "avalanche", "gnosis",
+    "fantom", "ftm", "linea", "scroll", "zksync", "zk", "blast", "matic",
+  ]);
+  if (evmChains.has(ch)) return /^0x[a-fA-F0-9]{40}$/.test(raw);
+
+  if (ch === "solana" || ch === "sol") return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw);
+  if (ch === "near") return /^[a-z0-9_.-]+\.(near|testnet)$/i.test(raw) || /^[a-f0-9]{64}$/i.test(raw);
+  if (ch === "btc" || ch === "bitcoin") return /^bc1[0-9a-zA-Z]{20,90}$/.test(raw) || /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(raw);
+  if (ch === "ton") return /^[A-Za-z0-9_-]{48,66}$/.test(raw);
+  if (ch === "sui") return /^0x[a-fA-F0-9]{64}$/.test(raw);
+  if (ch === "ada" || ch === "cardano") return /^addr1[0-9a-z]+$/.test(raw);
+  if (ch === "zec" || ch === "zcash") return /^t1[0-9A-Za-z]{33}$/.test(raw) || /^zs1[0-9a-zA-Z]{75}$/.test(raw);
+  if (ch === "xlm" || ch === "stellar") return /^G[2-7A-Z]{55}$/.test(raw);
+  if (ch === "trx" || ch === "tron") return /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(raw);
+  if (ch === "xrp" || ch === "xrpledger") return /^r[1-9A-HJ-NP-Za-km-z]{25,35}$/.test(raw);
+  if (ch === "ltc" || ch === "litecoin") return /^ltc1[0-9a-z]{20,90}$/.test(raw) || /^[LM3][a-km-zA-HJ-NP-Z1-9]{26,33}$/.test(raw);
+  if (ch === "doge" || ch === "dogecoin") return /^D[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(raw);
+  if (ch === "aptos") return /^0x[a-fA-F0-9]{64}$/.test(raw);
+
+  return raw.length >= 20;
+}
+
+/**
  * Get default placeholder refund address for a given chain.
  * Used for quotes (dry runs) when user hasn't provided a refund address yet.
  * These are placeholder addresses (not real addresses) - only used for quote estimation.

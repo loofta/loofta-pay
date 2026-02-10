@@ -27,8 +27,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				// Email only for login/create account
 				loginMethods: ["email"],
 				embeddedWallets: {
-					createOnLogin: "all-users", // Create wallet for all users on login
-					requireUserPasswordOnCreate: false,
 					// Don't create EVM wallets - only Solana
 					ethereum: {
 						createOnLogin: "off", // Explicitly disable EVM wallet creation

@@ -8,6 +8,7 @@ import {
   PublicKey,
   TransactionMessage,
   VersionedTransaction,
+  TransactionInstruction,
 } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -17,6 +18,8 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import { USDC_MINT } from "./solanaBalance";
+
+const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
 const SOLANA_RPC_URL =
   process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
@@ -35,6 +38,8 @@ export async function buildUSDCTransferTransaction(params: {
   recipientAddress: string;
   amountUSDC: number;
   connection?: Connection;
+  /** Optional memo (e.g. for Near Intents deposit); added as SPL Memo instruction. */
+  memo?: string | null;
 }): Promise<VersionedTransaction> {
   const connection =
     params.connection || new Connection(SOLANA_RPC_URL, "confirmed");
@@ -62,16 +67,28 @@ export async function buildUSDCTransferTransaction(params: {
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
-  console.log("[buildUSDCTransferTransaction]", {
+  console.log("[buildUSDCTransferTransaction] Privy transaction deposit address (recipient):", params.recipientAddress, {
     senderWallet: params.senderAddress,
     recipientWallet: params.recipientAddress,
     senderAta: senderAta.toBase58(),
     recipientAta: recipientAta.toBase58(),
     amountUSDC: params.amountUSDC,
     amountRaw,
+    memo: params.memo ?? undefined,
   });
 
-  const instructions = [];
+  const instructions: TransactionInstruction[] = [];
+
+  // Memo first (if present) so it appears in transaction logs
+  if (params.memo && params.memo.trim()) {
+    instructions.push(
+      new TransactionInstruction({
+        programId: MEMO_PROGRAM_ID,
+        keys: [],
+        data: Buffer.from(params.memo.trim(), "utf8"),
+      })
+    );
+  }
 
   // Create recipient ATA if it doesn't exist
   const recipientAccountInfo = await connection.getAccountInfo(recipientAta);

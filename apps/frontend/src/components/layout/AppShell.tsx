@@ -15,11 +15,12 @@ function ShellContent({ children }: { children: ReactNode }) {
   const isHomepage = pathname === '/';
   // Don't show header/footer on checkout page (Stripe-like design)
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
+  const hideShell = isCheckoutPage;
   return (
     <>
-      {!isCheckoutPage && <Header />}
+      {!hideShell && <Header />}
       {children}
-      {!isHomepage && !isCheckoutPage && <Footer />}
+      {!isHomepage && !hideShell && <Footer />}
       {showHistory && <HistoryModal open={open} onOpenChange={setOpen} />}
     </>
   );

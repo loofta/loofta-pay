@@ -99,6 +99,40 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       updateData.is_private = isPrivate;
     }
     
+    // Parse paidWith string to extract token and chain
+    // Format examples: "USDC (Solana)", "USDC (Solana wallet)", "ETH on base", "USDC on sol"
+    if (paidWith) {
+      // Try to parse formats like "USDC (Solana)" or "USDC (Solana wallet)"
+      const parenMatch = paidWith.match(/^([^(]+)\s*\(([^)]+)\)/);
+      if (parenMatch) {
+        const token = parenMatch[1].trim();
+        let chain = parenMatch[2].trim();
+        // Remove "wallet" suffix if present
+        chain = chain.replace(/\s+wallet$/i, "");
+        updateData.paid_with_token = token;
+        updateData.paid_with_chain = chain.toLowerCase();
+      } else {
+        // Try to parse formats like "USDC on sol" or "ETH on base"
+        const onMatch = paidWith.match(/^([^on]+)\s+on\s+(.+)$/i);
+        if (onMatch) {
+          updateData.paid_with_token = onMatch[1].trim();
+          updateData.paid_with_chain = onMatch[2].trim().toLowerCase();
+        } else {
+          // Fallback: try to extract token symbol (first word)
+          const parts = paidWith.trim().split(/\s+/);
+          if (parts.length > 0) {
+            updateData.paid_with_token = parts[0];
+            // Try to find chain in remaining parts
+            const chainKeywords = ['solana', 'sol', 'base', 'arbitrum', 'arb', 'ethereum', 'eth', 'polygon', 'poly'];
+            const foundChain = parts.find((p: string) => chainKeywords.includes(p.toLowerCase()));
+            if (foundChain) {
+              updateData.paid_with_chain = foundChain.toLowerCase();
+            }
+          }
+        }
+      }
+    }
+    
     // Set paid_at timestamp when status becomes SUCCESS
     if (status === "SUCCESS") {
       updateData.paid_at = new Date().toISOString();

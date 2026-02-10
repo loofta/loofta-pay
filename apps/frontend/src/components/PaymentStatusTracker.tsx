@@ -38,6 +38,7 @@ interface PaymentStatusTrackerProps {
   paidAt?: string | null; // Timestamp when payment was completed
   paymentType?: PaymentType; // Type of payment: 'direct' (same chain, same token), 'companion-swap' (same chain, different token), 'near-intent' (cross-chain)
   isPrivate?: boolean; // Whether this is a private payment (requires Privacy Cash execution step)
+  isLooftaPay?: boolean; // Whether this is a Loofta Pay payment (USDC on Solana) - shows simplified steps
 }
 
 const STEP_CONFIG: Record<string, Omit<PaymentStep, 'status'>> = {
@@ -90,7 +91,8 @@ function getStepsForStatus(
   fromChain?: string | null,
   toChain?: string | null,
   paymentType?: PaymentType,
-  isPrivate?: boolean
+  isPrivate?: boolean,
+  isLooftaPay?: boolean
 ): PaymentStep[] {
   const isSameChain = fromChain && toChain && String(fromChain).toLowerCase() === String(toChain).toLowerCase();
 
@@ -149,19 +151,22 @@ function getStepsForStatus(
     privacyCashStatus: 'pending' | 'active' | 'completed',
     successStatus: 'pending' | 'active' | 'completed'
   ) => {
-    const steps: PaymentStep[] = [
-      {
+    const steps: PaymentStep[] = [];
+
+    // For Loofta Pay (USDC on Solana), skip deposit and routing steps
+    if (!isLooftaPay) {
+      steps.push({
         ...configWithTimes.deposit,
         status: depositStatus,
         ...(depositStatus === 'active' && upperStatus === 'PENDING_DEPOSIT' ? {
           label: 'Waiting for Deposit',
           description: 'Send the exact amount to the deposit address shown above',
         } : {}),
-      },
-    ];
+      });
 
-    if (includeRouting) {
-      steps.push({ ...configWithTimes.routing, status: routingStatus });
+      if (includeRouting) {
+        steps.push({ ...configWithTimes.routing, status: routingStatus });
+      }
     }
 
     steps.push({ ...configWithTimes.processing, status: processingStatus });
@@ -181,6 +186,18 @@ function getStepsForStatus(
 
   if (upperStatus === 'SUCCESS') {
     return buildSteps('completed', 'completed', 'completed', 'completed', 'completed', 'completed');
+  }
+
+  // For Loofta Pay, start from processing step
+  if (isLooftaPay) {
+    if (upperStatus === 'SUCCESS') {
+      return buildSteps('completed', 'completed', 'completed', 'completed', 'completed', 'completed');
+    }
+    if (upperStatus === 'PROCESSING' || upperStatus === 'KNOWN_DEPOSIT_TX') {
+      return buildSteps('completed', 'completed', 'active', 'pending', 'pending', 'pending');
+    }
+    // For Loofta Pay, if status is not SUCCESS or PROCESSING, show processing as active
+    return buildSteps('completed', 'completed', 'active', 'pending', 'pending', 'pending');
   }
 
   // For private cross-chain: PRIVATE_TRANSFER_PENDING means Near Intents completed, Privacy Cash is executing
@@ -499,6 +516,7 @@ export function PaymentStatusTracker({
   paidAt,
   paymentType,
   isPrivate,
+  isLooftaPay,
 }: PaymentStatusTrackerProps) {
   const [averagePaymentTime, setAveragePaymentTime] = useState<number | null>(null);
   const [loadingAverages, setLoadingAverages] = useState(false);
@@ -527,7 +545,7 @@ export function PaymentStatusTracker({
     setAveragePaymentTime(null);
   }, [timeEstimate, isSameChain, fromChain]);
 
-  const steps = useMemo(() => getStepsForStatus(status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate), [status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate]);
+  const steps = useMemo(() => getStepsForStatus(status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate, isLooftaPay), [status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate, isLooftaPay]);
   const statusMessage = useMemo(() => getStatusMessage(status), [status]);
   const upperStatus = String(status || '').toUpperCase();
 

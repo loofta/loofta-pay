@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import { getPaymentHistory } from "@/services/companionApi";
+import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import type { PaymentLog } from "@/services/companionApi";
 import { Loader2, Shield, Users, DollarSign, CheckCircle, XCircle, Clock, Building2, Receipt } from "lucide-react";
 import { OrganizationsManager } from "./organizations";
@@ -380,7 +381,7 @@ export default function AdminPage() {
                               <td className="p-4">
                                 {payment.txHash ? (
                                   <a
-                                    href={`https://basescan.org/tx/${payment.txHash}`}
+                                    href={getExplorerTxUrl("base", payment.txHash)}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-blue-600 hover:underline font-mono text-sm"
@@ -389,7 +390,7 @@ export default function AdminPage() {
                                   </a>
                                 ) : payment.refundTxHash ? (
                                   <a
-                                    href={`https://basescan.org/tx/${payment.refundTxHash}`}
+                                    href={getExplorerTxUrl("base", payment.refundTxHash)}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-orange-600 hover:underline font-mono text-sm"
