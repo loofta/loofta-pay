@@ -1,6 +1,8 @@
 # Deploy backend to Railway when pushing to main.
-# Secrets: RAILWAY_TOKEN (project token from Railway → Project → Settings → Tokens).
-# Optional: RAILWAY_SERVICE_ID (service ID if project has multiple services).
+# Secrets (required): RAILWAY_TOKEN (project token from Railway → Project → Settings → Tokens).
+# Secrets (required when project has multiple services): RAILWAY_SERVICE_ID
+#   - In Railway: open your backend service → Settings → copy Service ID, or use the service name (e.g. "backend").
+#   - In GitHub: Settings → Secrets and variables → Actions → New repository secret → RAILWAY_SERVICE_ID.
 name: Deploy Backend (Railway)
 
 on:
@@ -26,9 +28,9 @@ jobs:
 
       - name: Deploy to Railway
         run: |
-          if [ -n "${{ secrets.RAILWAY_SERVICE_ID }}" ]; then
-            railway up --service "${{ secrets.RAILWAY_SERVICE_ID }}" --detach
-          else
-            railway up --detach
+          SERVICE="${{ secrets.RAILWAY_SERVICE_ID }}"
+          if [ -z "$SERVICE" ]; then
+            SERVICE="backend"
           fi
+          railway up --service "$SERVICE" --detach
         working-directory: apps/backend
