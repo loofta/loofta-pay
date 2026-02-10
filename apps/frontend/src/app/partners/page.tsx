@@ -24,21 +24,14 @@ const PARTNERS = [
     icon: <Ticket className="w-6 h-6" />,
   },
   {
-    id: "partner-2",
-    name: "Coming soon",
-    tagline: "Next partner",
-    description: "More partners and integrations coming soon.",
-    href: "#",
+    id: "blackw3b",
+    name: "BlackW3B",
+    tagline: "Gold For Everyone.",
+    description: "Gold Backed Directly In Your Pocket. In the heart of blockchain innovation, we're building tomorrow's digital gold standard today.",
+    href: "/partners/blackw3b",
+    organizationId: "BLKW3B",
     icon: <Zap className="w-6 h-6" />,
-  },
-  {
-    id: "partner-3",
-    name: "Coming soon",
-    tagline: "Next partner",
-    description: "More partners and integrations coming soon.",
-    href: "#",
-    icon: <Globe className="w-6 h-6" />,
-  },
+  }
 ];
 
 export default function PartnersPage() {
