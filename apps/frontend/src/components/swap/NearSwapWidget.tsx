@@ -14,6 +14,7 @@ import { findTokenBySelection } from "@/lib/tokens";
 import { searchTokens, getDepositInfo } from "@/services/nearIntents";
 import { getKnownGoodAddressForFamily } from "@/lib/mockAddresses";
 import { trimDecimals } from "@/lib/format";
+import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { TokenIcon } from "@/components/TokenIcon";
 import Image from "next/image";
 import { getChainIcon } from "@/lib/chains";
@@ -103,37 +104,6 @@ export function NearSwapWidget({
 		if (evm.has(c)) return "ethereum";
 		return "ethereum";
 	}
-	function isValidRecipientByFamily(addr: string, fam: string): boolean {
-		const v = (addr || "").trim();
-		if (!v) return false;
-		if (fam === "ethereum") return /^0x[0-9a-fA-F]{40}$/.test(v);
-		if (fam === "solana") return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v);
-		if (fam === "near") return v.endsWith(".near") || v.endsWith(".testnet") || /^[0-9a-f]{64}$/i.test(v);
-		if (fam === "cardano") return /^addr1[0-9a-z]+$/.test(v);
-		if (fam === "aptos") return /^0x[0-9a-fA-F]{64}$/.test(v);
-		if (fam === "ton") return /^[A-Za-z0-9_\-]{48,66}$/.test(v);
-		if (fam === "bitcoin") {
-			if (/^bc1[0-9a-zA-Z]{20,90}$/.test(v)) return true;
-			if (/^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(v)) return true;
-			return false;
-		}
-		if (fam === "sui") return /^0x[0-9a-fA-F]{64}$/.test(v);
-		if (fam === "zcash") return /^t1[0-9A-Za-z]{33}$/.test(v);
-		if (fam === "stellar") return /^G[2-7A-Z]{55}$/.test(v);
-		if (fam === "tron") return /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(v);
-		if (fam === "xrp") return /^r[1-9A-HJ-NP-Za-km-z]{25,35}$/.test(v);
-		if (fam === "litecoin") {
-			if (/^ltc1[0-9a-z]{20,90}$/.test(v)) return true;
-			if (/^[LM3][a-km-zA-HJ-NP-Z1-9]{26,33}$/.test(v)) return true;
-			return false;
-		}
-		if (fam === "dogecoin") return /^D[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(v);
-		return false;
-	}
-	// Validate refund address based on origin chain family
-	function validateRefundAddress(addr: string, originFamily: string): boolean {
-		return isValidRecipientByFamily(addr, originFamily);
-	}
 	// Reset shielded toggle if destination stops being ZEC
 	useEffect(() => {
 		const isZec = (selectedTo?.symbol || "").toUpperCase() === "ZEC" || inferFamilyFromChain(selectedTo?.chain) === "zcash";
@@ -188,7 +158,7 @@ export function NearSwapWidget({
 				return;
 			}
 		} else {
-			if (!isValidRecipientByFamily(trimmedRecipient, destFamily)) {
+			if (!isValidAddressForChain(trimmedRecipient, selectedTo.chain)) {
 				setRecipientError(`Invalid ${destFamily} address format`);
 				setDeposit(null);
 				setExpired(false);
@@ -210,7 +180,7 @@ export function NearSwapWidget({
 		}
 		const originFamily = inferFamilyFromChain(selectedFrom?.chain);
 		const trimmedRefund = refundAddress.trim();
-		if (!validateRefundAddress(trimmedRefund, originFamily)) {
+		if (!isValidAddressForChain(trimmedRefund, selectedFrom.chain)) {
 			setRefundAddressError(`Invalid ${originFamily} address format`);
 		} else {
 			setRefundAddressError(null);

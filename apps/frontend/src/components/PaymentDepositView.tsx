@@ -363,9 +363,28 @@ export function PaymentDepositView({
             </div>
           )}
           {deposit?.memo && (
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <span className="text-gray-600">Memo (required)</span>
-              <span className="text-sm font-mono text-gray-900">{deposit.memo}</span>
+              <div className="flex items-center gap-2 flex-1 justify-end min-w-0">
+                <span className="text-sm font-mono text-gray-900 truncate">{deposit.memo}</span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(deposit.memo);
+                      toast({ title: 'Copied', description: 'Memo copied to clipboard' });
+                    } catch {
+                      toast({ variant: 'destructive', title: 'Copy failed' });
+                    }
+                  }}
+                  className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 flex-shrink-0"
+                  title="Copy memo"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
+                  </svg>
+                </button>
+              </div>
             </div>
           )}
         </div>

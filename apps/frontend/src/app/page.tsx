@@ -229,7 +229,7 @@ export default function Home() {
                   <Link
                     href="/claim"
                     prefetch={true}
-                    className="rounded-[21px] px-6 sm:px-12 py-2.5 text-sm sm:text-base font-medium text-white border-0 shadow-md hover:scale-[1.02] transition-transform inline-flex items-center justify-center text-center w-full sm:w-auto"
+                    className="rounded-[21px] px-6 sm:px-12 py-2.5 text-base font-medium text-white border-0 shadow-md hover:scale-[1.02] transition-transform inline-flex items-center justify-center text-center w-full sm:w-auto"
                     style={{ background: 'linear-gradient(to right, #FF1301, #EAB308)' }}
                   >
                     Create a payment
@@ -238,7 +238,7 @@ export default function Home() {
                     href="https://loofta.gitbook.io/docs"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="rounded-[21px] px-6 sm:px-12 py-2.5 text-sm sm:text-base font-medium border-2 border-slate-300 bg-white text-slate-900 shadow-md hover:scale-[1.02] transition-transform hover:bg-slate-50 inline-flex items-center justify-center text-center w-full sm:w-auto"
+                    className="rounded-[21px] px-6 sm:px-12 py-2.5 text-base font-medium border-2 border-slate-300 bg-white text-slate-900 shadow-md hover:scale-[1.02] transition-transform hover:bg-slate-50 inline-flex items-center justify-center text-center w-full sm:w-auto"
                   >
                     Learn more
                   </Link>

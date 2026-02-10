@@ -130,6 +130,16 @@ See `apps/backend/supabase/REMOTE_DEV.md` for using a remote Supabase project in
 - `npm run db:migrate:local` — Reset local DB and apply migrations
 - `npm run db:migrate:prod` — Push migrations to linked remote project (see `apps/backend/supabase/REMOTE_DEV.md`)
 
+## Deployment
+
+Deploys run from the **`main`** branch via GitHub Actions.
+
+| App      | Platform | Behavior |
+|----------|----------|----------|
+| Backend  | Railway  | **Action** `.github/workflows/deploy-backend.yml` runs on push to `main` when `apps/backend/**` or root package files change. Add repo secret **`RAILWAY_TOKEN`** (Railway → Project → Settings → Tokens). Optional **`RAILWAY_SERVICE_ID`** if the project has multiple services. |
+| Frontend | Vercel   | Auto-deploys on push to `main`. |
+| DB       | GitHub Actions | Migrations when `apps/backend/supabase/migrations/**` change on `main` (`.github/workflows/deploy-migrations.yml`). |
+
 ## Privacy Cash & withdraw flow
 
 1. **Pay privately (claim page)**  
@@ -147,8 +157,8 @@ Ethereum, Arbitrum, Base, Polygon, BNB Chain, Solana, Bitcoin, Zcash, TON, Carda
 
 ## Links
 
-- **Website**: [loofta.com](https://loofta.xyz)
-- **Twitter**: [@loofta](https://x.com/lisabeyy)
+- **Website**: [loofta.xyz](https://pay.loofta.xyz)
+- **Twitter**: [@looftapay](https://x.com/looftapay)
 - **Telegram**: [t.me/looftaxyz](https://t.me/looftaxyz)
 - **Privacy Cash**: [privacy.cash](https://privacy.cash/)
 - **Range**: [range.org](https://range.org/)

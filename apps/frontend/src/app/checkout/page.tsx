@@ -17,6 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PaymentDepositView } from "@/components/PaymentDepositView";
 import { findTokenBySelection } from "@/lib/tokens";
 import { roundUpDecimals } from "@/lib/format";
+import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { TokenIcon } from "@/components/TokenIcon";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -59,6 +60,7 @@ export default function CheckoutPage() {
   const organizationId = searchParams.get("organizationId");
   const amountParam = searchParams.get("amount");
   const bgColorParam = searchParams.get("bgColor");
+  const memoParam = searchParams.get("memo");
   const deserializedAmount = useMemo(() => deserializeAmount(amountParam), [amountParam]);
 
   // Decode bgColor if URL encoded
@@ -89,49 +91,21 @@ export default function CheckoutPage() {
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1); // 1: Token selection, 2: Refund address (skipped for direct), 3: Complete Payment (shows deposit when ready)
   const [uploadedLogoUrl, setUploadedLogoUrl] = useState<string | null>(null);
 
-  const selectedFrom = findTokenBySelection(tokens, tokenSelection || null);
+  // Checkout only allows cross-chain payment: exclude tokens and network same as recipient
+  const recipientChainLower = organization?.token_chain?.toLowerCase() ?? "";
+  const checkoutPaymentTokens = useMemo(() => {
+    if (!recipientChainLower) return tokens;
+    return tokens.filter((t) => (t.chain ?? "").toLowerCase() !== recipientChainLower);
+  }, [tokens, recipientChainLower]);
+
+  const selectedFrom = findTokenBySelection(checkoutPaymentTokens, tokenSelection || null);
   const destToken = useMemo(() => {
     if (!organization?.token_symbol || !organization?.token_chain) return null;
     return tokens.find(t => t.symbol === organization.token_symbol && t.chain === organization.token_chain);
   }, [tokens, organization?.token_symbol, organization?.token_chain]);
 
-  // Validate refund address based on selected token's chain
-  const validateRefundAddress = (address: string, chain: string): boolean => {
-    if (!address.trim()) return false;
-    const chainLower = chain.toLowerCase();
-
-    // EVM chains
-    const evmChains = ['eth', 'ethereum', 'base', 'arb', 'arbitrum', 'op', 'optimism', 'polygon', 'pol', 'bsc', 'avax', 'avalanche'];
-    if (evmChains.includes(chainLower)) {
-      return /^0x[a-fA-F0-9]{40}$/.test(address);
-    }
-
-    // Solana
-    if (chainLower === 'sol' || chainLower === 'solana') {
-      return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
-    }
-
-    // NEAR
-    if (chainLower === 'near') {
-      return /^[a-z0-9_-]+\.near$|^[a-f0-9]{64}$/i.test(address);
-    }
-
-    // Bitcoin
-    if (chainLower === 'btc' || chainLower === 'bitcoin') {
-      return /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/.test(address);
-    }
-
-    // Default to EVM pattern for unknown chains
-    return /^0x[a-fA-F0-9]{40}$/.test(address);
-  };
-
-  // Check if same token and same chain (direct transfer, no swap needed)
-  const sameTokenAndChain = useMemo(() => {
-    if (!selectedFrom || !destToken) return false;
-    const sameChain = String(selectedFrom.chain || "").toLowerCase() === String(destToken.chain || "").toLowerCase();
-    const sameToken = String(selectedFrom.symbol || "").toUpperCase() === String(destToken.symbol || "").toUpperCase();
-    return sameChain && sameToken;
-  }, [selectedFrom, destToken]);
+  // Checkout is cross-chain only: same-token-same-chain is not offered (no direct transfer)
+  const sameTokenAndChain = false;
 
   // Get display step number (for direct payments, complete payment is step 2)
   const getStepNumber = (step: number): number => {
@@ -153,15 +127,13 @@ export default function CheckoutPage() {
     loadOrganization();
   }, [organizationId]);
 
+  // Clear selection if it was on the recipient chain (e.g. after org load)
   useEffect(() => {
-    // Set default token from organization if available
-    if (organization?.token_symbol && organization?.token_chain && !tokenSelection) {
-      setTokenSelection({
-        symbol: organization.token_symbol,
-        chain: organization.token_chain,
-      });
-    }
-  }, [organization, tokenSelection]);
+    if (!organization?.token_chain || !tokenSelection) return;
+    const selChain = (tokenSelection.chain ?? "").toLowerCase();
+    const recChain = organization.token_chain.toLowerCase();
+    if (selChain === recChain) setTokenSelection(null);
+  }, [organization?.token_chain, tokenSelection]);
 
   // Fetch quote when token selection or amount changes
   useEffect(() => {
@@ -172,14 +144,11 @@ export default function CheckoutPage() {
         return;
       }
 
-      // Wait for tokens to load and selectedFrom to be found
+      // Wait for payment tokens to load and selectedFrom to be found
       if (!selectedFrom) {
-        // Token might not be in the list yet, wait a bit
-        if (tokens.length > 0) {
-          // Tokens are loaded but token not found - don't show loading
+        if (checkoutPaymentTokens.length > 0) {
           setQuoteLoading(false);
         } else {
-          // Still loading tokens
           setQuoteLoading(true);
         }
         return;
@@ -254,7 +223,7 @@ export default function CheckoutPage() {
         setQuoteLoading(false);
       }
     })();
-  }, [organization, selectedFrom, destToken, amount, sameTokenAndChain, tokens, tokenSelection]);
+  }, [organization, selectedFrom, destToken, amount, sameTokenAndChain, checkoutPaymentTokens, tokenSelection]);
 
   async function handleProceedToPayment() {
     if (!organization) {
@@ -285,7 +254,7 @@ export default function CheckoutPage() {
       toast({ variant: "destructive", title: "Error", description: "Please enter a refund address." });
       return;
     }
-    if (!selectedFrom || !validateRefundAddress(refundAddress, selectedFrom.chain)) {
+    if (!selectedFrom || !isValidAddressForChain(refundAddress, selectedFrom.chain)) {
       setRefundAddressError(`Invalid ${selectedFrom?.chain || ''} address format`);
       toast({ variant: "destructive", title: "Error", description: `Invalid refund address format for ${selectedFrom?.chain.toUpperCase() || ''}.` });
       return;
@@ -347,7 +316,7 @@ export default function CheckoutPage() {
       return;
     }
     // Validate refund address for non-direct payments
-    if (!sameTokenAndChain && selectedFrom && !validateRefundAddress(refundAddress, selectedFrom.chain)) {
+    if (!sameTokenAndChain && selectedFrom && !isValidAddressForChain(refundAddress, selectedFrom.chain)) {
       setRefundAddressError(`Invalid ${selectedFrom?.chain || ''} address format`);
       toast({ variant: "destructive", title: "Error", description: `Invalid refund address format for ${selectedFrom?.chain.toUpperCase() || ''}.` });
       return;
@@ -369,6 +338,8 @@ export default function CheckoutPage() {
         orgReferral: organization.org_referral,
         // Only include refundAddress for non-direct payments
         ...(sameTokenAndChain ? {} : { refundAddress: refundAddress.trim() }),
+        // Optional memo (e.g. for partner orders like SP3ND)
+        ...(memoParam && memoParam.trim() ? { memo: memoParam.trim() } : {}),
       };
 
       console.log("[Checkout] Preparing deposit with:", {
@@ -480,6 +451,8 @@ export default function CheckoutPage() {
     gcTime: 5 * 60_000,
   });
 
+  const callbackParam = searchParams.get("callback");
+
   useEffect(() => {
     if (!statusQuery.data) return;
     const s = statusQuery.data?.status || statusQuery.data?.executionStatus || null;
@@ -487,16 +460,31 @@ export default function CheckoutPage() {
       setStatus(s);
       setStatusData(statusQuery.data || null);
 
-      // When payment is successful, notify parent window (for popup mode)
-      if (String(s).toUpperCase() === 'SUCCESS' && typeof window !== 'undefined' && window.opener) {
+      if (String(s).toUpperCase() !== 'SUCCESS' || typeof window === 'undefined') return;
+
+      // Popup mode: notify parent
+      if (window.opener) {
         window.opener.postMessage({
           type: 'loofta-payment-success',
           paymentId: depositAddress || statusQuery.data?.paymentId || 'unknown',
           status: s,
         }, '*');
+        return;
+      }
+
+      // Redirect/tab mode: redirect back to callback URL when provided
+      if (callbackParam) {
+        try {
+          const url = decodeURIComponent(callbackParam);
+          if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+            window.location.href = url;
+          }
+        } catch (_) {
+          // ignore
+        }
       }
     }
-  }, [statusQuery.data, depositAddress]);
+  }, [statusQuery.data, depositAddress, callbackParam]);
 
   const loadOrganization = async () => {
     try {
@@ -705,11 +693,12 @@ export default function CheckoutPage() {
                       </div>
                     ) : (
                       <TokenCombobox
-                        tokens={tokens}
+                        tokens={checkoutPaymentTokens}
                         value={tokenSelection || undefined}
                         onChange={setTokenSelection}
                         placeholder="Select token and network..."
                         className="w-full"
+                        hideChains={recipientChainLower ? [recipientChainLower] : []}
                       />
                     )}
                     <p className="text-sm text-gray-500 mt-1">

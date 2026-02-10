@@ -32,8 +32,8 @@ import { isEvmChainId } from "@/config/biconomy";
 import { createSwapTransaction, getSwapStatus, checkSwapEligibility } from "@/services/swapProvider";
 import { ACTIVE_SWAP_PROVIDER, getProviderDisplayName, type SwapProvider } from "@/config/swapProvider";
 import { ethers } from "ethers";
-import { usePrivy, useWallets } from "@privy-io/react-auth";
-import { useConnectedStandardWallets, useStandardSignAndSendTransaction, useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
+import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
+import { useWallets, useSignAndSendTransaction, useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
 import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES, PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
@@ -46,7 +46,8 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import { USDC_MINT } from "@/services/solanaBalance";
-import { getRefundToForChain } from "@/lib/refundAddresses";
+import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
+import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 
 /** Inline Loofta logo SVG (no Image component). */
@@ -336,9 +337,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const privateTransferTriggeredRef = React.useRef<Set<string>>(new Set()); // Auto-run Privacy Cash once per claim when PRIVATE_TRANSFER_PENDING
   const onPayPrivatelyRef = React.useRef<(() => Promise<void>) | null>(null);
   const { logout, login, authenticated, user, getAccessToken } = usePrivy();
-  const { wallets } = useWallets();
-  const { wallets: standardWallets } = useConnectedStandardWallets();
-  const { signAndSendTransaction } = useStandardSignAndSendTransaction();
+  const { wallets } = useEvmWallets();
+  const { wallets: standardWallets } = useWallets();
+  const { signAndSendTransaction } = useSignAndSendTransaction();
   const [showPayNowModal, setShowPayNowModal] = useState(false);
   const [payingWithLoofta, setPayingWithLoofta] = useState(false);
   const [payWithLooftaError, setPayWithLooftaError] = useState<string | null>(null);
@@ -401,35 +402,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     return token || null;
   }, [tokens, claim?.to_symbol, claim?.to_chain]);
 
-  // Validate refund address based on selected token's chain
-  const validateRefundAddress = (address: string, chain: string): boolean => {
-    if (!address.trim()) return false;
-    const chainLower = chain.toLowerCase();
-
-    // EVM chains
-    const evmChains = ['eth', 'ethereum', 'base', 'arb', 'arbitrum', 'op', 'optimism', 'polygon', 'pol', 'bsc', 'avax', 'avalanche'];
-    if (evmChains.includes(chainLower)) {
-      return /^0x[a-fA-F0-9]{40}$/.test(address);
-    }
-
-    // Solana
-    if (chainLower === 'sol' || chainLower === 'solana') {
-      return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
-    }
-
-    // NEAR
-    if (chainLower === 'near') {
-      return /^[a-z0-9_-]+\.near$|^[a-f0-9]{64}$/i.test(address);
-    }
-
-    // Bitcoin
-    if (chainLower === 'btc' || chainLower === 'bitcoin') {
-      return /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/.test(address);
-    }
-
-    // Default to EVM pattern for unknown chains
-    return /^0x[a-fA-F0-9]{40}$/.test(address);
-  };
   const destUSD = useMemo(() => {
     const amt = Number(claim?.amount || 0);
     return Number.isFinite(amt) ? amt : null;
@@ -697,7 +669,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     const finalRefundAddress = refundAddress.trim();
 
     // Validate refund address format
-    if (!validateRefundAddress(finalRefundAddress, selectedFrom.chain)) {
+    if (!isValidAddressForChain(finalRefundAddress, selectedFrom.chain)) {
       setRefundAddressError(`Invalid ${selectedFrom.chain} address format`);
       toast({ variant: "destructive", title: "Error", description: `Invalid refund address format for ${selectedFrom.chain.toUpperCase()}.` });
       return;
@@ -1840,6 +1812,20 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     );
                                     // Show the actual amount requested (not fees - fees are deducted from recipient for private)
                                     const amountPaid = parseFloat(claim?.amount || "0");
+                                    
+                                    // Special formatting for USDC on Solana (Loofta Pay)
+                                    const isUSDCOnSolana = claim.paid_with_token.toUpperCase() === "USDC" && 
+                                                          (claim.paid_with_chain.toLowerCase() === "solana" || claim.paid_with_chain.toLowerCase() === "sol");
+                                    
+                                    if (isUSDCOnSolana) {
+                                      return (
+                                        <>
+                                          <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={18} />
+                                          <span>usdc on SOL</span>
+                                        </>
+                                      );
+                                    }
+                                    
                                     return (
                                       <>
                                         <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={18} />
@@ -1908,6 +1894,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               deposit?.isDirect ? 'direct' :
                                 deposit?.isCompanionSwap ? 'companion-swap' :
                                   'near-intent'
+                            }
+                            isLooftaPay={
+                              claim?.paid_with_token?.toUpperCase() === "USDC" && 
+                              (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
                             }
                           />
                         </div>
@@ -2543,6 +2533,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                           'near-intent'
                                     }
                                     isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
+                                    isLooftaPay={
+                                      claim?.paid_with_token?.toUpperCase() === "USDC" && 
+                                      (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
+                                    }
                                   />
                                 </div>
                                 <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -2571,6 +2565,20 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                             );
                                             // Show the actual amount requested (not fees - fees are deducted from recipient for private)
                                             const amountPaid = parseFloat(claim?.amount || "0");
+                                            
+                                            // Special formatting for USDC on Solana (Loofta Pay)
+                                            const isUSDCOnSolana = claim.paid_with_token.toUpperCase() === "USDC" && 
+                                                                  (claim.paid_with_chain.toLowerCase() === "solana" || claim.paid_with_chain.toLowerCase() === "sol");
+                                            
+                                            if (isUSDCOnSolana) {
+                                              return (
+                                                <>
+                                                  <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={24} />
+                                                  <span>usdc on SOL</span>
+                                                </>
+                                              );
+                                            }
+                                            
                                             return (
                                               <>
                                                 <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={24} />
@@ -2954,6 +2962,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                             'near-intent'
                                       }
                                       isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
+                                      isLooftaPay={
+                                        claim?.paid_with_token?.toUpperCase() === "USDC" && 
+                                        (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
+                                      }
                                     />
                                   </div>
 
@@ -3056,13 +3068,13 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                   <Loader2 className="h-5 w-5 shrink-0 animate-spin text-orange-500" />
                 </div>
                 <a
-                  href={`https://solscan.io/tx/${confirmingTxSignature}`}
+                  href={getExplorerTxUrl(selectedFrom?.chain ?? undefined, confirmingTxSignature)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 py-2.5 text-sm font-medium text-orange-600 hover:bg-orange-50 hover:border-orange-200 transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
                   tabIndex={0}
                 >
-                  View transaction on Solscan
+                  View transaction on {getExplorerName(selectedFrom?.chain ?? undefined)}
                 </a>
               </div>
             </>
