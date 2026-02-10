@@ -15,9 +15,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   const isHomepage = pathname === '/';
   // Don't show header/footer on checkout page (Stripe-like design)
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
-  // Don't show header/footer on partner integration pages (e.g. Sp3nd) – white-label experience
-  const isPartnerIntegrationPage = pathname?.startsWith('/partners/sp3nd') === true;
-  const hideShell = isCheckoutPage || isPartnerIntegrationPage;
+  const hideShell = isCheckoutPage;
   return (
     <>
       {!hideShell && <Header />}

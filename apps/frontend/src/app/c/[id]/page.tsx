@@ -47,6 +47,7 @@ import {
 } from "@solana/spl-token";
 import { USDC_MINT } from "@/services/solanaBalance";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
+import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 
 /** Inline Loofta logo SVG (no Image component). */
@@ -3067,13 +3068,13 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                   <Loader2 className="h-5 w-5 shrink-0 animate-spin text-orange-500" />
                 </div>
                 <a
-                  href={`https://solscan.io/tx/${confirmingTxSignature}`}
+                  href={getExplorerTxUrl(selectedFrom?.chain ?? undefined, confirmingTxSignature)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 py-2.5 text-sm font-medium text-orange-600 hover:bg-orange-50 hover:border-orange-200 transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
                   tabIndex={0}
                 >
-                  View transaction on Solscan
+                  View transaction on {getExplorerName(selectedFrom?.chain ?? undefined)}
                 </a>
               </div>
             </>

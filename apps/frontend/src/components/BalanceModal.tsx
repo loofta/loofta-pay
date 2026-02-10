@@ -26,6 +26,7 @@ import { getDepositInfo } from "@/services/nearIntents";
 import type { NearToken } from "@/services/nearIntents";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { addWithdrawal, getWithdrawalHistory, type WithdrawalHistoryItem } from "@/lib/withdrawalHistory";
+import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { ExternalLink } from "lucide-react";
 
 const SOLANA_RPC_URL =
@@ -274,7 +275,6 @@ export function BalanceModal({
     }
   };
 
-  const SOLSCAN_TX = "https://solscan.io/tx";
   const shortAddr = (addr: string, h = 6, t = 4) =>
     addr.length > h + t ? `${addr.slice(0, h)}…${addr.slice(-t)}` : addr;
 
@@ -318,7 +318,7 @@ export function BalanceModal({
                 {recentWithdrawals.map((item) => (
                   <li key={item.id}>
                     <a
-                      href={`${SOLSCAN_TX}/${item.txSignature}`}
+                      href={getExplorerTxUrl("solana", item.txSignature)}
                       target="_blank"
                       rel="noreferrer"
                       className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3 hover:border-gray-300 transition-colors"

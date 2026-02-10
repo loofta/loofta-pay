@@ -91,16 +91,17 @@ export function PayButton({
   const effectiveButtonBgColor = buttonBgColor || bgColor;
 
   const getCheckoutUrl = useCallback(() => {
-    const baseUrl = typeof window !== 'undefined' 
+    const baseUrl = typeof window !== 'undefined'
       ? `${window.location.origin}/checkout`
       : 'https://loofta.pay/checkout';
-    
+
     const params = new URLSearchParams();
     params.set('organizationId', organizationId);
     if (amount) params.set('amount', String(amount));
     if (pageBgColor) params.set('bgColor', encodeURIComponent(pageBgColor));
-    if (callbackUrl) params.set('callback', encodeURIComponent(callbackUrl));
-    
+    const effectiveCallback = callbackUrl ?? (typeof window !== 'undefined' ? window.location.href : '');
+    if (effectiveCallback) params.set('callback', encodeURIComponent(effectiveCallback));
+
     return `${baseUrl}?${params.toString()}`;
   }, [organizationId, amount, pageBgColor, callbackUrl]);
 

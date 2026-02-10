@@ -251,15 +251,17 @@ export default function Sp3ndPartnerPage() {
 
         <div className="flex items-center gap-3 mb-8">
           {org?.logo_url ? (
-            <div className="relative w-12 h-12 rounded-xl overflow-hidden bg-gray-100 flex-shrink-0">
-              <Image
-                src={org.logo_url}
-                alt={org.name}
-                fill
-                className="object-contain"
-                sizes="48px"
-                unoptimized
-              />
+            <div className="w-24 h-24 p-3 rounded-xl overflow-hidden bg-gray-100 flex-shrink-0 flex items-center justify-center">
+              <div className="relative w-full h-full">
+                <Image
+                  src={org.logo_url}
+                  alt={org.name}
+                  fill
+                  className="object-contain"
+                  sizes="48px"
+                  unoptimized
+                />
+              </div>
             </div>
           ) : (
             <div

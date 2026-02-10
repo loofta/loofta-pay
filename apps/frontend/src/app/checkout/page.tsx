@@ -451,6 +451,8 @@ export default function CheckoutPage() {
     gcTime: 5 * 60_000,
   });
 
+  const callbackParam = searchParams.get("callback");
+
   useEffect(() => {
     if (!statusQuery.data) return;
     const s = statusQuery.data?.status || statusQuery.data?.executionStatus || null;
@@ -458,16 +460,31 @@ export default function CheckoutPage() {
       setStatus(s);
       setStatusData(statusQuery.data || null);
 
-      // When payment is successful, notify parent window (for popup mode)
-      if (String(s).toUpperCase() === 'SUCCESS' && typeof window !== 'undefined' && window.opener) {
+      if (String(s).toUpperCase() !== 'SUCCESS' || typeof window === 'undefined') return;
+
+      // Popup mode: notify parent
+      if (window.opener) {
         window.opener.postMessage({
           type: 'loofta-payment-success',
           paymentId: depositAddress || statusQuery.data?.paymentId || 'unknown',
           status: s,
         }, '*');
+        return;
+      }
+
+      // Redirect/tab mode: redirect back to callback URL when provided
+      if (callbackParam) {
+        try {
+          const url = decodeURIComponent(callbackParam);
+          if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+            window.location.href = url;
+          }
+        } catch (_) {
+          // ignore
+        }
       }
     }
-  }, [statusQuery.data, depositAddress]);
+  }, [statusQuery.data, depositAddress, callbackParam]);
 
   const loadOrganization = async () => {
     try {

@@ -19,6 +19,7 @@ import { motion } from "framer-motion";
 import { Ticket, Info, Trophy, Zap, Wallet, Loader2, ArrowLeft } from "lucide-react";
 import { isEvmChainId } from "@/config/biconomy";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
+import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { encodeTicketPurchase, getTicketAutomatorAddress } from "@/services/lottery";
 import { pollCompanionBalance } from "@/services/lotteryPurchase";
 import { listAllCompanionWallets, recoverFundsFromCompanion } from "@/services/rhinestone";
@@ -1236,12 +1237,12 @@ export default function LotteryPage() {
                 </div>
                 {txHash && (
                   <a
-                    href={`https://basescan.org/tx/${txHash}`}
+                    href={getExplorerTxUrl("base", txHash)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600 hover:text-blue-700 transition-colors"
                   >
-                    View on Basescan →
+                    View on {getExplorerName("base")} →
                   </a>
                 )}
                 <div className="mt-4 pt-4 border-t border-green-200">
@@ -1291,12 +1292,12 @@ export default function LotteryPage() {
                 </div>
                 {txHash && (
                   <a
-                    href={`https://basescan.org/tx/${txHash}`}
+                    href={getExplorerTxUrl("base", txHash)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600 hover:text-blue-700 transition-colors"
                   >
-                    View Refund on Basescan →
+                    View Refund on {getExplorerName("base")} →
                   </a>
                 )}
                 <div className="mt-4 pt-4 border-t border-amber-200">
@@ -1455,7 +1456,7 @@ export default function LotteryPage() {
                                 });
                                 console.log("[Recovery] ✓ Funds sent to:", userAddress);
                                 console.log("[Recovery] TX:", result.txHash);
-                                console.log("[Recovery] View: https://basescan.org/tx/" + result.txHash);
+                                if (result.txHash) console.log("[Recovery] View:", getExplorerTxUrl("base", result.txHash));
                                 // Refresh wallet list
                                 const wallets = await listAllCompanionWallets();
                                 setRecoveryWallets(wallets);
