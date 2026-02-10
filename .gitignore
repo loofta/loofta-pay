@@ -40,3 +40,9 @@ apps/frontend/.next
 
 # Vercel
 .vercel
+
+# Anchor / Solana (solana/ folder)
+solana/.anchor
+solana/target
+**/*-keypair.json
+!**/private_payments.json

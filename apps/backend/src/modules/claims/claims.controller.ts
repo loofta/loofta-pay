@@ -21,6 +21,7 @@ import { AuthGuard } from '@/common/guards';
 import { ClaimsService } from './claims.service';
 import { DepositService, DepositResult } from './deposit.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
+import { PrivatePaymentsService } from './private-payments.service';
 import { CreateClaimDto, CreateClaimFromUsernameDto, RequestDepositDto } from './dto';
 import { Claim, ClaimIntent } from './entities/claim.entity';
 
@@ -31,6 +32,7 @@ export class ClaimsController {
     private readonly claimsService: ClaimsService,
     private readonly depositService: DepositService,
     private readonly solanaSponsor: SolanaSponsorService,
+    private readonly privatePayments: PrivatePaymentsService,
   ) {}
 
   /**
@@ -127,6 +129,83 @@ export class ClaimsController {
     intent: ClaimIntent | null;
   }> {
     return this.claimsService.findWithLatestIntent(id);
+  }
+
+  /**
+   * Private USDC pay: get recipient deposit PDA and amount (wallet never exposed).
+   */
+  @Get(':id/private-pay-info')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Get private pay info for claim (recipient deposit PDA, amount)' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Private pay info',
+    schema: {
+      properties: {
+        recipientDepositPda: { type: 'string' },
+        amount: { type: 'string' },
+        tokenMint: { type: 'string' },
+        claimId: { type: 'string' },
+      },
+    },
+  })
+  async getPrivatePayInfo(@Param('id') id: string) {
+    return this.privatePayments.getPrivatePayInfo(id);
+  }
+
+  /**
+   * Build private-pay tx (message only). Client signs with session key; backend adds platform sig and submits.
+   */
+  @Post(':id/build-private-pay-tx')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Build private pay transaction' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Serialized transaction (base64) to sign with session key',
+    schema: { properties: { serializedMessageBase64: { type: 'string' } } },
+  })
+  async buildPrivatePayTx(
+    @Param('id') id: string,
+    @Body() body: { payerPublicKey: string; sessionPublicKey: string; amountLamports: string },
+  ) {
+    if (!body?.payerPublicKey || !body?.sessionPublicKey || !body?.amountLamports) {
+      throw new BadRequestException('Missing payerPublicKey, sessionPublicKey, or amountLamports');
+    }
+    return this.privatePayments.buildPrivatePayTx({
+      claimId: id,
+      payerPublicKey: body.payerPublicKey,
+      sessionPublicKey: body.sessionPublicKey,
+      amountLamports: body.amountLamports,
+    });
+  }
+
+  /**
+   * Submit private pay: add platform signature and send to PER.
+   */
+  @Post(':id/submit-private-pay')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Submit signed private pay transaction' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Transaction signature',
+    schema: { properties: { signature: { type: 'string' } } },
+  })
+  async submitPrivatePay(
+    @Param('id') id: string,
+    @Body() body: { signedTxBase64: string },
+  ) {
+    if (!body?.signedTxBase64 || typeof body.signedTxBase64 !== 'string') {
+      throw new BadRequestException('Missing signedTxBase64');
+    }
+    return this.privatePayments.submitPrivatePay(id, body.signedTxBase64);
   }
 
   /**

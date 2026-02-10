@@ -37,6 +37,7 @@ import { useWallets, useSignAndSendTransaction, useSignMessage as usePrivySignMe
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
 import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES, PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
+import { usePrivateSolanaPayment } from "@/hooks/usePrivateSolanaPayment";
 import { Connection, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -351,6 +352,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const { signMessage: privySignMessage } = usePrivySignMessage();
   const { signTransaction: privySignTransaction } = usePrivySignTransaction();
   const solanaPayment = useSolanaPayment({ enabled: showPayNowModal });
+  const privateSolanaPayment = usePrivateSolanaPayment({
+    enabled: showPayNowModal && claim?.is_private === true && claim?.to_chain === "solana" && claim?.to_symbol === "USDC",
+  });
 
   // Enforce private mode if claim requires it
   const requiresPrivate = claim?.is_private === true;
@@ -807,10 +811,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   }
 
   async function onPayPrivately() {
-    if (PRIVATE_PAYMENT_COMING_SOON) {
-      toast({ title: "Coming soon", description: "Private payments will be available soon." });
-      return;
-    }
     console.log("[PrivateTransfer] onPayPrivately called", { claimId: claim?.id, isPrivate: claim?.is_private, isPrivateMode, authenticated });
     // Enforce private mode if claim requires it
     if (claim?.is_private && !isPrivateMode) {
@@ -830,17 +830,57 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       return;
     }
 
-    const recipient = String(claim?.recipient_address || "").trim();
-    if (!recipient) {
-      console.log("[PrivateTransfer] Early exit: no recipient");
-      toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
-      return;
-    }
-
     const amountUSD = parseFloat(claim.amount);
     if (!amountUSD || amountUSD <= 0) {
       console.log("[PrivateTransfer] Early exit: invalid amount", { amount: claim.amount });
       toast({ variant: "destructive", title: "Invalid amount", description: "Please enter a valid amount." });
+      return;
+    }
+
+    // PER-based private pay (Solana USDC): use backend + session key; no recipient exposed to client
+    const isSolanaUsdcPrivate =
+      claim.to_chain === "solana" && claim.to_symbol === "USDC" && claim.is_private;
+    const payerAddress = solanaPayment.senderAddress ?? null;
+
+    if (isSolanaUsdcPrivate && authenticated && payerAddress && privateSolanaPayment.isReady) {
+      setPreparing(true);
+      try {
+        const signature = await privateSolanaPayment.makePrivatePayment({
+          claimId: claim.id,
+          amountUSD,
+          payerAddress,
+        });
+        toast({ title: "Payment successful!", description: "Your private payment has been completed." });
+        await updateClaimStatus(claim.id, "SUCCESS", {
+          txHash: signature,
+          paidWith: "USDC (Private)",
+          isPrivate: true,
+        });
+        setStatus("SUCCESS");
+        useClaimPayStore.getState().setStatus(id, "SUCCESS");
+        await claimQuery.refetch();
+      } catch (error: any) {
+        console.error("[PrivateTransfer] PER private pay error:", error);
+        toast({
+          variant: "destructive",
+          title: "Payment failed",
+          description: error?.message ?? "Could not complete private payment",
+        });
+      } finally {
+        setPreparing(false);
+      }
+      return;
+    }
+
+    if (PRIVATE_PAYMENT_COMING_SOON) {
+      toast({ title: "Coming soon", description: "Private payments will be available soon." });
+      return;
+    }
+
+    const recipient = String(claim?.recipient_address || "").trim();
+    if (!recipient) {
+      console.log("[PrivateTransfer] Early exit: no recipient");
+      toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
       return;
     }
 
