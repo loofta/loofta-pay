@@ -336,6 +336,7 @@ export class ClaimsService {
    */
   async findAll(options?: {
     status?: ClaimStatus;
+    org_referral?: string;
     limit?: number;
     offset?: number;
   }): Promise<{ claims: Claim[]; total: number }> {
@@ -343,6 +344,9 @@ export class ClaimsService {
 
     if (options?.status) {
       query = query.eq('status', options.status);
+    }
+    if (options?.org_referral) {
+      query = query.eq('org_referral', options.org_referral);
     }
 
     query = query.order('created_at', { ascending: false });

@@ -22,6 +22,7 @@ export const adminClaimsApi = {
   async list(
     options?: {
       status?: Claim['status'];
+      org_referral?: string;
       limit?: number;
       offset?: number;
     },
@@ -29,6 +30,7 @@ export const adminClaimsApi = {
   ): Promise<ListClaimsResponse> {
     const params = new URLSearchParams();
     if (options?.status) params.set('status', options.status);
+    if (options?.org_referral) params.set('org_referral', options.org_referral);
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.offset) params.set('offset', String(options.offset));
     
