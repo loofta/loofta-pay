@@ -73,6 +73,7 @@ export async function updateCartShippingAddress(
     state?: string;
     postal_code: string;
     country: string;
+    phone: string;
   }
 ) {
   const res = await fetch(`${SP3ND_BASE}/updateCartShippingAddress/${cartId}`, {
@@ -98,6 +99,7 @@ export async function createOrder(params: {
     state?: string;
     postal_code: string;
     country: string;
+    phone: string;
   };
   customer_email: string;
   test?: boolean;

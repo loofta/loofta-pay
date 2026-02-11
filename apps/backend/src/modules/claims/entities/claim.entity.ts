@@ -57,6 +57,9 @@ export class Claim {
 
   @ApiPropertyOptional({ description: 'Last update timestamp' })
   updated_at: string | null;
+
+  @ApiPropertyOptional({ description: 'Organization referral code (links claim to organization)' })
+  org_referral: string | null;
 }
 
 export class ClaimIntent {

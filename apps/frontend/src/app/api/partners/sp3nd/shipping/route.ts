@@ -24,11 +24,12 @@ export async function PATCH(request: Request) {
       state,
       postal_code,
       country,
+      phone,
     } = shipping_address;
 
-    if (!first_name || !last_name || !address_line_1 || !city || !postal_code || !country) {
+    if (!first_name || !last_name || !address_line_1 || !city || !postal_code || !country || !phone) {
       return NextResponse.json(
-        { error: "Missing required shipping fields: first_name, last_name, address_line_1, city, postal_code, country" },
+        { error: "Missing required shipping fields: first_name, last_name, address_line_1, city, postal_code, country, phone" },
         { status: 400 }
       );
     }
@@ -42,6 +43,7 @@ export async function PATCH(request: Request) {
       ...(state ? { state: String(state).trim() } : {}),
       postal_code: String(postal_code).trim(),
       country: String(country).trim(),
+      phone: String(phone).trim(),
     });
     return NextResponse.json(result);
   } catch (e: any) {

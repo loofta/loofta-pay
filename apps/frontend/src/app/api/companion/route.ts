@@ -167,9 +167,9 @@ export async function GET(request: NextRequest) {
       }
 
       const redis = await getRedis();
-      
-      // Get last 50 payment IDs
-      const paymentIds = await redis.lRange(PAYMENT_LIST_KEY, 0, 49);
+      // Return all payment IDs we keep (up to 1000); admin sees full list
+      const maxLogs = 500;
+      const paymentIds = await redis.lRange(PAYMENT_LIST_KEY, 0, maxLogs - 1);
       
       if (!paymentIds || paymentIds.length === 0) {
         return NextResponse.json({ payments: [], count: 0 });
