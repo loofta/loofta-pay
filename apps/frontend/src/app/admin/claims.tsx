@@ -7,6 +7,8 @@ import { useToast } from "@/components/ui/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { adminClaimsApi } from "@/services/api/adminClaims";
 import type { Claim, ClaimIntent } from "@/services/api/claims";
+import type { Organization } from "@/services/api/organizations";
+import { organizationsApi } from "@/services/api/organizations";
 import {
   Loader2,
   Trash2,
@@ -69,6 +71,8 @@ export function ClaimsManager() {
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(0);
   const [statusFilter, setStatusFilter] = useState<Claim['status'] | 'all'>('all');
+  const [organizationFilter, setOrganizationFilter] = useState<string>('all');
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
 
   // Selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -93,6 +97,7 @@ export function ClaimsManager() {
       const response = await adminClaimsApi.list(
         {
           status: statusFilter === 'all' ? undefined : statusFilter,
+          org_referral: organizationFilter === 'all' ? undefined : organizationFilter,
           limit: PAGE_SIZE,
           offset: page * PAGE_SIZE,
         },
@@ -110,11 +115,20 @@ export function ClaimsManager() {
     } finally {
       setLoading(false);
     }
-  }, [userId, statusFilter, page, toast]);
+  }, [userId, statusFilter, organizationFilter, page, toast]);
 
   useEffect(() => {
     loadClaims();
   }, [loadClaims]);
+
+  // Load organizations for filter dropdown
+  useEffect(() => {
+    if (!userId) return;
+    organizationsApi
+      .list(userId)
+      .then((res) => setOrganizations(res.organizations || []))
+      .catch(() => setOrganizations([]));
+  }, [userId]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -245,6 +259,12 @@ export function ClaimsManager() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
+  const getOrgDisplay = (orgReferral: string | null | undefined) => {
+    if (!orgReferral) return "—";
+    const org = organizations.find((o) => o.org_referral === orgReferral);
+    return org ? `${org.name} (${org.organization_id})` : orgReferral;
+  };
+
   // Statistics
   const stats = {
     total,
@@ -340,7 +360,7 @@ export function ClaimsManager() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-4 mb-4">
+      <div className="flex flex-wrap items-center gap-4 mb-4">
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-600">Status:</span>
           <Select
@@ -358,6 +378,28 @@ export function ClaimsManager() {
               {CLAIM_STATUSES.map((status) => (
                 <SelectItem key={status} value={status}>
                   {status}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-600">Organization:</span>
+          <Select
+            value={organizationFilter}
+            onValueChange={(value) => {
+              setOrganizationFilter(value);
+              setPage(0);
+            }}
+          >
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="All organizations" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All organizations</SelectItem>
+              {organizations.map((org) => (
+                <SelectItem key={org.id} value={org.org_referral}>
+                  {org.name} ({org.organization_id})
                 </SelectItem>
               ))}
             </SelectContent>
@@ -388,6 +430,7 @@ export function ClaimsManager() {
                       />
                     </th>
                     <th className="p-4 text-left font-medium text-gray-700">ID</th>
+                    <th className="p-4 text-left font-medium text-gray-700">Organization</th>
                     <th className="p-4 text-left font-medium text-gray-700">Amount</th>
                     <th className="p-4 text-left font-medium text-gray-700">Token</th>
                     <th className="p-4 text-left font-medium text-gray-700">Recipient</th>
@@ -407,6 +450,9 @@ export function ClaimsManager() {
                       </td>
                       <td className="p-4 text-sm font-mono">
                         {claim.id.slice(0, 8)}...
+                      </td>
+                      <td className="p-4 text-sm text-gray-700">
+                        {getOrgDisplay(claim.org_referral)}
                       </td>
                       <td className="p-4 text-sm font-semibold">
                         ${claim.amount}
@@ -530,6 +576,10 @@ export function ClaimsManager() {
                 <div>
                   <span className="text-gray-500">Token:</span>
                   <span className="ml-2">{detailClaim.to_symbol} / {detailClaim.to_chain}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Organization:</span>
+                  <span className="ml-2">{getOrgDisplay(detailClaim.org_referral)}</span>
                 </div>
                 <div>
                   <span className="text-gray-500">Created:</span>

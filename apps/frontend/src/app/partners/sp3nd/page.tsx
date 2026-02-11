@@ -3,46 +3,157 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, ArrowLeft, ShoppingBag } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Loader2, ArrowLeft, ShoppingBag, Check, ChevronsUpDown } from "lucide-react";
 import { organizationsApi } from "@/services/api/organizations";
+import { cn } from "@/lib/utils";
+import { useSp3ndStore, type Sp3ndStep } from "@/store/sp3nd";
 
-type Step = "url" | "cart" | "payment" | "redirect";
+const SP3ND_LAST_CART_KEY = "sp3nd_last_cart";
 
 const SP3ND_CHECKOUT_ORG = "sp3nd";
+
+/** Common countries for shipping (code + full name for API). */
+const COUNTRY_OPTIONS: { code: string; name: string }[] = [
+  { code: "US", name: "United States" },
+  { code: "CA", name: "Canada" },
+  { code: "GB", name: "United Kingdom" },
+  { code: "AU", name: "Australia" },
+  { code: "DE", name: "Germany" },
+  { code: "FR", name: "France" },
+  { code: "ES", name: "Spain" },
+  { code: "IT", name: "Italy" },
+  { code: "NL", name: "Netherlands" },
+  { code: "BE", name: "Belgium" },
+  { code: "AT", name: "Austria" },
+  { code: "CH", name: "Switzerland" },
+  { code: "IE", name: "Ireland" },
+  { code: "PT", name: "Portugal" },
+  { code: "PL", name: "Poland" },
+  { code: "SE", name: "Sweden" },
+  { code: "NO", name: "Norway" },
+  { code: "DK", name: "Denmark" },
+  { code: "FI", name: "Finland" },
+  { code: "JP", name: "Japan" },
+  { code: "MX", name: "Mexico" },
+  { code: "BR", name: "Brazil" },
+  { code: "IN", name: "India" },
+  { code: "CN", name: "China" },
+  { code: "KR", name: "South Korea" },
+  { code: "NZ", name: "New Zealand" },
+  { code: "SG", name: "Singapore" },
+  { code: "AE", name: "United Arab Emirates" },
+  { code: "IL", name: "Israel" },
+  { code: "ZA", name: "South Africa" },
+  { code: "OTHER", name: "Other" },
+];
+
+/** Phone dial codes for country code selector. */
+const PHONE_DIAL_CODES: { dialCode: string; label: string }[] = [
+  { dialCode: "+1", label: "+1 (US/CA)" },
+  { dialCode: "+44", label: "+44 (UK)" },
+  { dialCode: "+61", label: "+61 (AU)" },
+  { dialCode: "+49", label: "+49 (DE)" },
+  { dialCode: "+33", label: "+33 (FR)" },
+  { dialCode: "+34", label: "+34 (ES)" },
+  { dialCode: "+39", label: "+39 (IT)" },
+  { dialCode: "+31", label: "+31 (NL)" },
+  { dialCode: "+32", label: "+32 (BE)" },
+  { dialCode: "+43", label: "+43 (AT)" },
+  { dialCode: "+41", label: "+41 (CH)" },
+  { dialCode: "+353", label: "+353 (IE)" },
+  { dialCode: "+351", label: "+351 (PT)" },
+  { dialCode: "+48", label: "+48 (PL)" },
+  { dialCode: "+46", label: "+46 (SE)" },
+  { dialCode: "+47", label: "+47 (NO)" },
+  { dialCode: "+45", label: "+45 (DK)" },
+  { dialCode: "+358", label: "+358 (FI)" },
+  { dialCode: "+81", label: "+81 (JP)" },
+  { dialCode: "+52", label: "+52 (MX)" },
+  { dialCode: "+55", label: "+55 (BR)" },
+  { dialCode: "+91", label: "+91 (IN)" },
+  { dialCode: "+86", label: "+86 (CN)" },
+  { dialCode: "+82", label: "+82 (KR)" },
+  { dialCode: "+64", label: "+64 (NZ)" },
+  { dialCode: "+65", label: "+65 (SG)" },
+  { dialCode: "+971", label: "+971 (AE)" },
+  { dialCode: "+972", label: "+972 (IL)" },
+  { dialCode: "+27", label: "+27 (ZA)" },
+];
 
 export default function Sp3ndPartnerPage() {
   const { toast } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const step = useSp3ndStore((s) => s.step);
+  const lastOrderNumber = useSp3ndStore((s) => s.lastOrderNumber);
+  const cartItems = useSp3ndStore((s) => s.cartItems);
+  const addMoreUrl = useSp3ndStore((s) => s.addMoreUrl);
+  const addMoreQty = useSp3ndStore((s) => s.addMoreQty);
+  const cartId = useSp3ndStore((s) => s.cartId);
+  const cartDetails = useSp3ndStore((s) => s.cartDetails);
+  const shipping = useSp3ndStore((s) => s.shipping);
+  const email = useSp3ndStore((s) => s.email);
+  const hydrated = useSp3ndStore((s) => s.hydrated);
+  const setStep = useSp3ndStore((s) => s.setStep);
+  const setLastOrderNumber = useSp3ndStore((s) => s.setLastOrderNumber);
+  const setCartItems = useSp3ndStore((s) => s.setCartItems);
+  const setCartItemsBy = useSp3ndStore((s) => s.setCartItemsBy);
+  const setAddMoreUrl = useSp3ndStore((s) => s.setAddMoreUrl);
+  const setAddMoreQty = useSp3ndStore((s) => s.setAddMoreQty);
+  const setCartId = useSp3ndStore((s) => s.setCartId);
+  const setCartDetails = useSp3ndStore((s) => s.setCartDetails);
+  const setShipping = useSp3ndStore((s) => s.setShipping);
+  const setEmail = useSp3ndStore((s) => s.setEmail);
+  const resetOrder = useSp3ndStore((s) => s.resetOrder);
+
   const [org, setOrg] = useState<{ name: string; logo_url: string | null } | null>(null);
-  const [step, setStep] = useState<Step>("url");
-  const [cartItems, setCartItems] = useState<Array<{ url: string; quantity: number }>>([{ url: "", quantity: 1 }]);
-  const [addMoreUrl, setAddMoreUrl] = useState("");
-  const [addMoreQty, setAddMoreQty] = useState(1);
   const [addingMore, setAddingMore] = useState(false);
-  const [cartId, setCartId] = useState<string | null>(null);
-  const [cartDetails, setCartDetails] = useState<{
-    items?: { title?: string; price?: number; quantity?: number }[];
-    subtotal?: number;
-    total?: number;
-    tax?: number;
-  } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [shipping, setShipping] = useState({
-    first_name: "",
-    last_name: "",
-    address_line_1: "",
-    address_line_2: "",
-    city: "",
-    state: "",
-    postal_code: "",
-    country: "US",
-  });
-  const [email, setEmail] = useState("");
+  const [dialCodeOpen, setDialCodeOpen] = useState(false);
+
+  /** Build shipping_address payload with all fields for API (trimmed; optional fields only when set). */
+  function getShippingAddressPayload() {
+    const fullPhone = (shipping.phoneCountryCode + shipping.phone.replace(/\D/g, "")).trim();
+    return {
+      first_name: shipping.first_name.trim(),
+      last_name: shipping.last_name.trim(),
+      address_line_1: shipping.address_line_1.trim(),
+      ...(shipping.address_line_2.trim() ? { address_line_2: shipping.address_line_2.trim() } : {}),
+      city: shipping.city.trim(),
+      ...(shipping.state.trim() ? { state: shipping.state.trim() } : {}),
+      postal_code: shipping.postal_code.trim(),
+      country: shipping.country.trim(),
+      phone: fullPhone || shipping.phone.trim(),
+    };
+  }
+
+  const isLocalhost = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
 
   useEffect(() => {
     let cancelled = false;
@@ -63,6 +174,25 @@ export default function Sp3ndPartnerPage() {
       cancelled = true;
     };
   }, []);
+
+  // When returning from checkout success callback, show paid step and restore basket from localStorage
+  useEffect(() => {
+    const payment = searchParams.get("payment");
+    const order = searchParams.get("order");
+    if (payment === "success" && order?.trim()) {
+      setLastOrderNumber(order.trim());
+      try {
+        const raw = typeof window !== "undefined" ? localStorage.getItem(SP3ND_LAST_CART_KEY) : null;
+        if (raw) {
+          const parsed = JSON.parse(raw) as { orderNumber?: string; cartDetails?: typeof cartDetails; totalUsd?: number };
+          if (parsed.cartDetails) setCartDetails(parsed.cartDetails);
+        }
+      } catch {
+        // ignore
+      }
+      setStep("paid");
+    }
+  }, [searchParams]);
 
   async function handleAddUrl() {
     const items = cartItems
@@ -92,10 +222,13 @@ export default function Sp3ndPartnerPage() {
       setCartId(cid);
       const cart = data?.cart || data;
       setCartDetails({
-        items: cart?.items,
+        items: cart?.items ?? [],
         subtotal: cart?.subtotal ?? cart?.total,
-        total: cart?.total ?? cart?.subtotal,
-        tax: cart?.tax,
+        total: cart?.total ?? cart?.subtotal ?? cart?.total_amount,
+        tax: cart?.tax ?? cart?.tax_amount,
+        tax_amount: cart?.tax_amount ?? cart?.tax,
+        shipping_amount: cart?.shipping_amount ?? 0,
+        platform_fee: cart?.platform_fee,
       });
       setStep("cart");
       toast({ title: "Added to cart", description: "Confirm your address, then proceed to payment." });
@@ -129,10 +262,13 @@ export default function Sp3ndPartnerPage() {
       }
       const cart = data?.cart || data;
       setCartDetails({
-        items: cart?.items,
+        items: cart?.items ?? [],
         subtotal: cart?.subtotal ?? cart?.total,
-        total: cart?.total ?? cart?.subtotal,
-        tax: cart?.tax,
+        total: cart?.total ?? cart?.subtotal ?? cart?.total_amount,
+        tax: cart?.tax ?? cart?.tax_amount,
+        tax_amount: cart?.tax_amount ?? cart?.tax,
+        shipping_amount: cart?.shipping_amount ?? 0,
+        platform_fee: cart?.platform_fee,
       });
       setAddMoreUrl("");
       setAddMoreQty(1);
@@ -146,9 +282,9 @@ export default function Sp3ndPartnerPage() {
 
   async function handleUpdateShipping() {
     if (!cartId) return;
-    const required = [shipping.first_name, shipping.last_name, shipping.address_line_1, shipping.city, shipping.postal_code, shipping.country];
+    const required = [shipping.first_name, shipping.last_name, shipping.address_line_1, shipping.city, shipping.postal_code, shipping.country, shipping.phone];
     if (required.some((v) => !String(v).trim())) {
-      toast({ variant: "destructive", title: "Error", description: "Please fill all required shipping fields." });
+      toast({ variant: "destructive", title: "Error", description: "Please fill all required shipping fields (including phone)." });
       return;
     }
     if (!email.trim()) {
@@ -162,22 +298,24 @@ export default function Sp3ndPartnerPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cart_id: cartId,
-          shipping_address: {
-            ...shipping,
-            first_name: shipping.first_name.trim(),
-            last_name: shipping.last_name.trim(),
-            address_line_1: shipping.address_line_1.trim(),
-            address_line_2: shipping.address_line_2.trim() || undefined,
-            city: shipping.city.trim(),
-            state: shipping.state.trim() || undefined,
-            postal_code: shipping.postal_code.trim(),
-            country: shipping.country.trim(),
-          },
+          shipping_address: getShippingAddressPayload(),
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data?.error || "Failed to update shipping");
+      }
+      const cart = data?.cart || data;
+      if (cart && (cart.subtotal != null || cart.total_amount != null)) {
+        setCartDetails({
+          items: cart?.items ?? cartDetails?.items ?? [],
+          subtotal: cart?.subtotal ?? cart?.total,
+          total: cart?.total ?? cart?.subtotal ?? cart?.total_amount,
+          tax: cart?.tax ?? cart?.tax_amount,
+          tax_amount: cart?.tax_amount ?? cart?.tax,
+          shipping_amount: cart?.shipping_amount ?? 0,
+          platform_fee: cart?.platform_fee,
+        });
       }
       setStep("payment");
       toast({ title: "Address confirmed", description: "Proceed to payment." });
@@ -190,9 +328,9 @@ export default function Sp3ndPartnerPage() {
 
   async function handleCreateOrderAndPay() {
     if (!cartId) return;
-    const required = [shipping.first_name, shipping.last_name, shipping.address_line_1, shipping.city, shipping.postal_code, shipping.country];
+    const required = [shipping.first_name, shipping.last_name, shipping.address_line_1, shipping.city, shipping.postal_code, shipping.country, shipping.phone];
     if (required.some((v) => !String(v).trim())) {
-      toast({ variant: "destructive", title: "Error", description: "Please fill all required shipping fields." });
+      toast({ variant: "destructive", title: "Error", description: "Please fill all required shipping fields (including phone)." });
       return;
     }
     if (!email.trim()) {
@@ -206,18 +344,9 @@ export default function Sp3ndPartnerPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cart_id: cartId,
-          shipping_address: {
-            first_name: shipping.first_name.trim(),
-            last_name: shipping.last_name.trim(),
-            address_line_1: shipping.address_line_1.trim(),
-            address_line_2: shipping.address_line_2.trim() || undefined,
-            city: shipping.city.trim(),
-            state: shipping.state.trim() || undefined,
-            postal_code: shipping.postal_code.trim(),
-            country: shipping.country.trim(),
-          },
+          shipping_address: getShippingAddressPayload(),
           customer_email: email.trim(),
-          test: false,
+          test: isLocalhost,
         }),
       });
       const data = await res.json();
@@ -226,9 +355,19 @@ export default function Sp3ndPartnerPage() {
       }
       const totalAmount = data?.total_amount ?? cartDetails?.total ?? 0;
       const memo = data?.memo || `SP3ND Order: ${data?.order_number}`;
-      setStep("redirect");
-      const checkoutUrl = `/checkout?organizationId=${encodeURIComponent(SP3ND_CHECKOUT_ORG)}&amount=${encodeURIComponent(String(totalAmount))}&memo=${encodeURIComponent(memo)}`;
-      router.push(checkoutUrl);
+      const orderNumber = data?.order_number ?? "";
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      const returnUrl = `${origin}/partners/sp3nd?payment=success&order=${encodeURIComponent(orderNumber)}`;
+      const checkoutUrl = `/checkout?organizationId=${encodeURIComponent(SP3ND_CHECKOUT_ORG)}&amount=${encodeURIComponent(String(totalAmount))}&memo=${encodeURIComponent(memo)}&callback=${encodeURIComponent(returnUrl)}`;
+      try {
+        localStorage.setItem(
+          SP3ND_LAST_CART_KEY,
+          JSON.stringify({ orderNumber, cartDetails, totalUsd: totalUsd })
+        );
+      } catch {
+        // ignore
+      }
+      window.open(checkoutUrl, "_blank");
     } catch (e: any) {
       toast({ variant: "destructive", title: "Error", description: e?.message || "Could not create order." });
     } finally {
@@ -236,7 +375,16 @@ export default function Sp3ndPartnerPage() {
     }
   }
 
-  const totalUsd = cartDetails?.total ?? cartDetails?.subtotal ?? 0;
+  // Total = sum of breakdown so display always matches (API may return total as item-only)
+  const subtotalNum = cartDetails?.subtotal ?? 0;
+  const shippingNum = cartDetails?.shipping_amount ?? 0;
+  const taxNum = cartDetails?.tax_amount ?? 0;
+  const platformFeeNum = cartDetails?.platform_fee ?? 0;
+  const totalFromBreakdown = subtotalNum + shippingNum + taxNum + platformFeeNum;
+  const totalUsd =
+    totalFromBreakdown > 0
+      ? totalFromBreakdown
+      : (cartDetails?.total ?? cartDetails?.subtotal ?? 0);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-gray-50">
@@ -285,6 +433,13 @@ export default function Sp3ndPartnerPage() {
           </div>
         </div>
 
+        {!hydrated ? (
+          <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
+            <Loader2 className="w-8 h-8 animate-spin text-slate-400 mx-auto mb-2" />
+            <p className="text-slate-600 text-sm">Loading…</p>
+          </div>
+        ) : (
+        <>
         {step === "url" && (
           <div className="rounded-2xl border border-gray-200 bg-white p-6 md:p-8 shadow-sm">
             <p className="text-slate-600 mb-4">
@@ -300,7 +455,7 @@ export default function Sp3ndPartnerPage() {
                       placeholder="https://www.amazon.com/dp/..."
                       value={item.url}
                       onChange={(e) =>
-                        setCartItems((prev) =>
+                        setCartItemsBy((prev) =>
                           prev.map((p, i) => (i === index ? { ...p, url: e.target.value } : p))
                         )
                       }
@@ -315,7 +470,7 @@ export default function Sp3ndPartnerPage() {
                         min={1}
                         value={item.quantity}
                         onChange={(e) =>
-                          setCartItems((prev) =>
+                          setCartItemsBy((prev) =>
                             prev.map((p, i) =>
                               i === index ? { ...p, quantity: parseInt(e.target.value, 10) || 1 } : p
                             )
@@ -331,7 +486,7 @@ export default function Sp3ndPartnerPage() {
                         size="icon"
                         className="text-red-600 hover:text-red-700 hover:bg-red-50 mt-6"
                         onClick={() =>
-                          setCartItems((prev) => prev.filter((_, i) => i !== index))
+                          setCartItemsBy((prev) => prev.filter((_, i) => i !== index))
                         }
                       >
                         ×
@@ -344,7 +499,7 @@ export default function Sp3ndPartnerPage() {
                 type="button"
                 variant="outline"
                 className="w-full sm:w-auto"
-                onClick={() => setCartItems((prev) => [...prev, { url: "", quantity: 1 }])}
+                onClick={() => setCartItemsBy((prev) => [...prev, { url: "", quantity: 1 }])}
               >
                 + Add another product
               </Button>
@@ -365,12 +520,32 @@ export default function Sp3ndPartnerPage() {
             <div className="rounded-2xl border border-gray-200 bg-white p-6 md:p-8 shadow-sm">
               <h2 className="text-lg font-semibold text-slate-900 mb-4">Your cart</h2>
               {cartDetails?.items?.length ? (
-                <ul className="space-y-2 mb-4">
+                <ul className="space-y-3 mb-4">
                   {cartDetails.items.map((item: any, i: number) => (
-                    <li key={i} className="flex justify-between text-sm">
-                      <span className="text-slate-700 truncate max-w-[200px]">{item?.title || "Item"}</span>
-                      <span className="text-slate-900 font-medium">
-                        ${typeof item?.price === "number" ? item.price.toFixed(2) : "—"} × {item?.quantity ?? 1}
+                    <li key={item?.product_id ?? i} className="flex gap-3 items-center text-sm border-b border-gray-100 pb-3 last:border-0 last:pb-0">
+                      {item?.image_url ? (
+                        <div className="relative shrink-0 w-14 h-14 rounded-lg overflow-hidden bg-gray-100">
+                          <Image
+                            src={item.image_url}
+                            alt={item?.product_title || item?.title || "Product"}
+                            fill
+                            className="object-contain"
+                            sizes="56px"
+                          />
+                        </div>
+                      ) : (
+                        <div className="shrink-0 w-14 h-14 rounded-lg bg-gray-100 flex items-center justify-center">
+                          <ShoppingBag className="w-6 h-6 text-gray-400" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <span className="text-slate-700 line-clamp-2">{item?.product_title || item?.title || "Item"}</span>
+                        <span className="text-slate-500 text-xs mt-0.5 block">
+                          ${typeof item?.price === "number" ? item.price.toFixed(2) : "—"} × {item?.quantity ?? 1}
+                        </span>
+                      </div>
+                      <span className="text-slate-900 font-medium shrink-0">
+                        ${typeof item?.price === "number" && typeof item?.quantity === "number" ? (item.price * item.quantity).toFixed(2) : "—"}
                       </span>
                     </li>
                   ))}
@@ -378,9 +553,35 @@ export default function Sp3ndPartnerPage() {
               ) : (
                 <p className="text-slate-600 text-sm mb-4">Cart loaded. Total below.</p>
               )}
-              <div className="border-t border-gray-200 pt-4 flex justify-between text-lg font-semibold text-slate-900">
-                <span>Total (USD)</span>
-                <span>${typeof totalUsd === "number" ? totalUsd.toFixed(2) : "0.00"}</span>
+              <div className="border-t border-gray-200 pt-4 space-y-2 text-sm">
+                {typeof cartDetails?.subtotal === "number" && (
+                  <div className="flex justify-between text-slate-600">
+                    <span>Subtotal</span>
+                    <span>${cartDetails.subtotal.toFixed(2)}</span>
+                  </div>
+                )}
+                {typeof cartDetails?.shipping_amount === "number" && (
+                  <div className="flex justify-between text-slate-600">
+                    <span>Shipping</span>
+                    <span>${cartDetails.shipping_amount.toFixed(2)}</span>
+                  </div>
+                )}
+                {typeof cartDetails?.tax_amount === "number" && cartDetails.tax_amount > 0 && (
+                  <div className="flex justify-between text-slate-600">
+                    <span>Tax</span>
+                    <span>${cartDetails.tax_amount.toFixed(2)}</span>
+                  </div>
+                )}
+                {typeof cartDetails?.platform_fee === "number" && cartDetails.platform_fee > 0 && (
+                  <div className="flex justify-between text-slate-600">
+                    <span>Platform fee</span>
+                    <span>${cartDetails.platform_fee.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-lg font-semibold text-slate-900 pt-2 border-t border-gray-100">
+                  <span>Total (USD)</span>
+                  <span>${typeof totalUsd === "number" ? totalUsd.toFixed(2) : "0.00"}</span>
+                </div>
               </div>
             </div>
 
@@ -448,11 +649,78 @@ export default function Sp3ndPartnerPage() {
               </div>
               <div className="mt-4">
                 <Label>Country *</Label>
-                <Input
+                <Select
                   value={shipping.country}
-                  onChange={(e) => setShipping((s) => ({ ...s, country: e.target.value }))}
-                  placeholder="US"
-                />
+                  onValueChange={(value) => setShipping((s) => ({ ...s, country: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select country" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COUNTRY_OPTIONS.map((c) => (
+                      <SelectItem key={c.code} value={c.name}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="mt-4">
+                <Label>Phone *</Label>
+                <div className="flex gap-2">
+                  <Popover open={dialCodeOpen} onOpenChange={setDialCodeOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        className={cn(
+                          "w-[140px] shrink-0 justify-between font-normal",
+                          !shipping.phoneCountryCode && "text-muted-foreground"
+                        )}
+                      >
+                        {shipping.phoneCountryCode
+                          ? PHONE_DIAL_CODES.find((p) => p.dialCode === shipping.phoneCountryCode)?.label ?? shipping.phoneCountryCode
+                          : "Dial code"}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[240px] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search code or country (e.g. +1, US, UK)..." />
+                        <CommandList>
+                          <CommandEmpty>No dial code found.</CommandEmpty>
+                          <CommandGroup>
+                            {PHONE_DIAL_CODES.map((p) => (
+                              <CommandItem
+                                key={p.dialCode}
+                                value={`${p.dialCode} ${p.label}`}
+                                onSelect={() => {
+                                  setShipping((s) => ({ ...s, phoneCountryCode: p.dialCode }));
+                                  setDialCodeOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    shipping.phoneCountryCode === p.dialCode ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                {p.label}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                  <Input
+                    type="tel"
+                    value={shipping.phone}
+                    onChange={(e) => setShipping((s) => ({ ...s, phone: e.target.value }))}
+                    placeholder="555 123 4567"
+                    className="flex-1"
+                  />
+                </div>
               </div>
               <div className="mt-4">
                 <Label>Email *</Label>
@@ -514,6 +782,74 @@ export default function Sp3ndPartnerPage() {
         {step === "payment" && cartId && (
           <div className="space-y-6">
             <div className="rounded-2xl border border-gray-200 bg-white p-6 md:p-8 shadow-sm">
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">Your basket</h2>
+              {cartDetails?.items?.length ? (
+                <ul className="space-y-3 mb-4">
+                  {(cartDetails.items ?? []).map((item: any, i: number) => (
+                    <li key={item?.product_id ?? i} className="flex gap-3 items-center text-sm border-b border-gray-100 pb-3 last:border-0 last:pb-0">
+                      {item?.image_url ? (
+                        <div className="relative shrink-0 w-14 h-14 rounded-lg overflow-hidden bg-gray-100">
+                          <Image
+                            src={item.image_url}
+                            alt={item?.product_title || item?.title || "Product"}
+                            fill
+                            className="object-contain"
+                            sizes="56px"
+                          />
+                        </div>
+                      ) : (
+                        <div className="shrink-0 w-14 h-14 rounded-lg bg-gray-100 flex items-center justify-center">
+                          <ShoppingBag className="w-6 h-6 text-gray-400" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <span className="text-slate-700 line-clamp-2">{item?.product_title || item?.title || "Item"}</span>
+                        <span className="text-slate-500 text-xs mt-0.5 block">
+                          ${typeof item?.price === "number" ? item.price.toFixed(2) : "—"} × {item?.quantity ?? 1}
+                        </span>
+                      </div>
+                      <span className="text-slate-900 font-medium shrink-0">
+                        ${typeof item?.price === "number" && typeof item?.quantity === "number" ? (item.price * item.quantity).toFixed(2) : "—"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-slate-600 text-sm mb-4">Cart loaded. Total below.</p>
+              )}
+              <div className="border-t border-gray-200 pt-4 space-y-2 text-sm">
+                {typeof cartDetails?.subtotal === "number" && (
+                  <div className="flex justify-between text-slate-600">
+                    <span>Subtotal</span>
+                    <span>${cartDetails.subtotal.toFixed(2)}</span>
+                  </div>
+                )}
+                {typeof cartDetails?.shipping_amount === "number" && (
+                  <div className="flex justify-between text-slate-600">
+                    <span>Shipping</span>
+                    <span>${cartDetails.shipping_amount.toFixed(2)}</span>
+                  </div>
+                )}
+                {typeof cartDetails?.tax_amount === "number" && cartDetails.tax_amount > 0 && (
+                  <div className="flex justify-between text-slate-600">
+                    <span>Tax</span>
+                    <span>${cartDetails.tax_amount.toFixed(2)}</span>
+                  </div>
+                )}
+                {typeof cartDetails?.platform_fee === "number" && cartDetails.platform_fee > 0 && (
+                  <div className="flex justify-between text-slate-600">
+                    <span>Platform fee</span>
+                    <span>${cartDetails.platform_fee.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-lg font-semibold text-slate-900 pt-2 border-t border-gray-100">
+                  <span>Total (USD)</span>
+                  <span>${typeof totalUsd === "number" ? totalUsd.toFixed(2) : "0.00"}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 md:p-8 shadow-sm">
               <h2 className="text-lg font-semibold text-slate-900 mb-2">Step 2: Proceed to payment</h2>
               <p className="text-slate-600 mb-4">
                 Your shipping address is confirmed. Click below to complete your order and pay with USDC or other stablecoins via Loofta Pay.
@@ -532,6 +868,9 @@ export default function Sp3ndPartnerPage() {
                   {shipping.state ? `, ${shipping.state}` : ""} {shipping.postal_code}
                 </p>
                 <p>{shipping.country}</p>
+                {(shipping.phoneCountryCode || shipping.phone) ? (
+                  <p>{shipping.phoneCountryCode}{shipping.phone.replace(/\D/g, "")}</p>
+                ) : null}
                 <p className="mt-2 text-slate-600">{email}</p>
               </div>
               <Button
@@ -541,6 +880,15 @@ export default function Sp3ndPartnerPage() {
                 style={{ background: "linear-gradient(to right, #FF0F00, #EAB308)" }}
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : `Proceed to payment — $${typeof totalUsd === "number" ? totalUsd.toFixed(2) : "0.00"}`}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full mt-3 text-slate-600 hover:text-slate-900"
+                onClick={() => setStep("cart")}
+              >
+                <ArrowLeft className="w-4 h-4 mr-2 inline" />
+                Go back to address
               </Button>
             </div>
           </div>
@@ -558,6 +906,102 @@ export default function Sp3ndPartnerPage() {
               Open checkout
             </Link>
           </div>
+        )}
+
+        {step === "paid" && (
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-green-200 bg-green-50/50 p-6 md:p-8 text-center">
+              <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-green-100 text-green-600 mb-4">
+                <Check className="w-8 h-8" />
+              </div>
+              <h2 className="text-xl font-semibold text-slate-900 mb-1">Payment successful</h2>
+              <p className="text-slate-700">
+                Order <span className="font-mono font-medium">{lastOrderNumber || "—"}</span> has been paid.
+              </p>
+            </div>
+            {cartDetails && (cartDetails.items?.length ?? 0) > 0 && (
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 md:p-8">
+                <h2 className="text-lg font-semibold text-slate-900 mb-4">Order summary</h2>
+                <ul className="space-y-3 mb-4">
+                  {(cartDetails.items ?? []).map((item: any, i: number) => (
+                    <li key={item?.product_id ?? i} className="flex gap-3 items-center text-sm border-b border-gray-100 pb-3 last:border-0 last:pb-0">
+                      {item?.image_url ? (
+                        <div className="relative shrink-0 w-14 h-14 rounded-lg overflow-hidden bg-gray-100">
+                          <Image
+                            src={item.image_url}
+                            alt={item?.product_title || item?.title || "Product"}
+                            fill
+                            className="object-contain"
+                            sizes="56px"
+                          />
+                        </div>
+                      ) : (
+                        <div className="shrink-0 w-14 h-14 rounded-lg bg-gray-100 flex items-center justify-center">
+                          <ShoppingBag className="w-6 h-6 text-gray-400" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <span className="text-slate-700 line-clamp-2">{item?.product_title || item?.title || "Item"}</span>
+                        <span className="text-slate-500 text-xs mt-0.5 block">
+                          ${typeof item?.price === "number" ? item.price.toFixed(2) : "—"} × {item?.quantity ?? 1}
+                        </span>
+                      </div>
+                      <span className="text-slate-900 font-medium shrink-0">
+                        ${typeof item?.price === "number" && typeof item?.quantity === "number" ? (item.price * item.quantity).toFixed(2) : "—"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="border-t border-gray-200 pt-4 space-y-2 text-sm">
+                  {typeof cartDetails?.subtotal === "number" && (
+                    <div className="flex justify-between text-slate-600">
+                      <span>Subtotal</span>
+                      <span>${cartDetails.subtotal.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {typeof cartDetails?.shipping_amount === "number" && (
+                    <div className="flex justify-between text-slate-600">
+                      <span>Shipping</span>
+                      <span>${cartDetails.shipping_amount.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {typeof cartDetails?.tax_amount === "number" && cartDetails.tax_amount > 0 && (
+                    <div className="flex justify-between text-slate-600">
+                      <span>Tax</span>
+                      <span>${cartDetails.tax_amount.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {typeof cartDetails?.platform_fee === "number" && cartDetails.platform_fee > 0 && (
+                    <div className="flex justify-between text-slate-600">
+                      <span>Platform fee</span>
+                      <span>${cartDetails.platform_fee.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-lg font-semibold text-slate-900 pt-2 border-t border-gray-100">
+                    <span>Total (USD)</span>
+                    <span>${typeof totalUsd === "number" ? totalUsd.toFixed(2) : "0.00"}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            <Button
+              onClick={() => {
+                try {
+                  localStorage.removeItem(SP3ND_LAST_CART_KEY);
+                } catch {
+                  // ignore
+                }
+                resetOrder();
+                router.replace("/partners/sp3nd");
+              }}
+              className="w-full"
+              style={{ background: "linear-gradient(to right, #FF0F00, #EAB308)" }}
+            >
+              Start new order
+            </Button>
+          </div>
+        )}
+        </>
         )}
       </div>
     </div>

@@ -36,6 +36,7 @@ export class AdminClaimsController {
   @Get()
   @ApiOperation({ summary: 'List all claims (admin)' })
   @ApiQuery({ name: 'status', required: false, enum: ['OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'PRIVATE_TRANSFER_PENDING', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED'] })
+  @ApiQuery({ name: 'org_referral', required: false, description: 'Filter by organization referral code' })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'offset', required: false, type: Number })
   @ApiResponse({
@@ -50,11 +51,13 @@ export class AdminClaimsController {
   })
   async findAll(
     @Query('status') status?: ClaimStatus,
+    @Query('org_referral') org_referral?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ): Promise<{ claims: Claim[]; total: number }> {
     return this.claimsService.findAll({
       status,
+      org_referral: org_referral?.trim() || undefined,
       limit: limit ? parseInt(limit, 10) : 50,
       offset: offset ? parseInt(offset, 10) : 0,
     });
