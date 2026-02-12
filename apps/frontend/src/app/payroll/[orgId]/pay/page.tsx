@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
-import { payrollApi, type PayrollOrganization, type PayrollContributor } from "@/services/api/payroll";
+import { payrollApi, type PayrollOrganization, type PayrollContributor, type PayrollRunListItem, type PayrollRunResponse } from "@/services/api/payroll";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
@@ -24,6 +24,10 @@ import {
   FilePlus,
   Upload,
   Wallet,
+  Copy,
+  ChevronRight,
+  Check,
+  Clock,
 } from "lucide-react";
 import {
   Dialog,
@@ -56,8 +60,11 @@ export default function PayrollPayPage() {
 
   const [organization, setOrganization] = useState<PayrollOrganization | null>(null);
   const [contributors, setContributors] = useState<PayrollContributor[]>([]);
+  const [runs, setRuns] = useState<PayrollRunListItem[]>([]);
+  const [selectedRun, setSelectedRun] = useState<PayrollRunResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [showNewPaymentDialog, setShowNewPaymentDialog] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // New payment form
   const [paymentMode, setPaymentMode] = useState<PaymentMode>("individual");
@@ -80,11 +87,13 @@ export default function PayrollPayPage() {
     Promise.all([
       payrollApi.organizations.get(orgId, userId),
       payrollApi.contributors.list(orgId, userId),
+      payrollApi.runs.list(orgId, userId),
     ])
-      .then(([org, contribs]) => {
+      .then(([org, contribs, runsList]) => {
         if (!cancelled) {
           setOrganization(org);
           setContributors(contribs);
+          setRuns(runsList || []);
         }
       })
       .catch((err: unknown) => {
@@ -100,6 +109,20 @@ export default function PayrollPayPage() {
       cancelled = true;
     };
   }, [userId, orgId]);
+
+  const loadRunDetail = (runId: string) => {
+    if (!userId || !orgId) return;
+    payrollApi.runs.get(orgId, runId, userId).then(setSelectedRun).catch((err: unknown) => {
+      toast({ variant: "destructive", title: "Failed to load run", description: err instanceof Error ? err.message : "Error" });
+    });
+  };
+
+  const copyDepositAddress = (addr: string, id: string) => {
+    navigator.clipboard.writeText(addr);
+    setCopiedId(id);
+    toast({ title: "Copied", description: "Deposit address copied to clipboard." });
+    setTimeout(() => setCopiedId(null), 2000);
+  };
 
   const payables = contributors.filter((c) => c.status === "joined" && c.wallet_address && c.network && c.token_symbol);
   const canPayIndividual = payables.length > 0;
@@ -138,15 +161,26 @@ export default function PayrollPayPage() {
       toast({ variant: "destructive", title: "Select token", description: "Choose network and token." });
       return;
     }
+    const entries =
+      paymentMode === "individual" && selectedContributorId
+        ? [{ contributorId: selectedContributorId, amount: amt }]
+        : Array.from(selectedBulkIds).map((id) => ({ contributorId: id, amount: amt }));
+
     setSubmitting(true);
     try {
-      // MVP: no backend payment execution yet
-      toast({
-        title: "Payment created (MVP)",
-        description: `${num} recipient(s), ${amt} ${tokenSymbol} on ${network}. Execution coming soon.`,
-      });
+      const run = await payrollApi.runs.create(
+        orgId,
+        { entries, tokenSymbol, network },
+        userId,
+      );
+      setRuns((prev) => [{ id: run.id, organization_id: run.organization_id, created_by: run.created_by, status: run.status, total_entries: run.total_entries, completed_entries: run.completed_entries, created_at: run.created_at, updated_at: run.updated_at }, ...prev]);
+      setSelectedRun(run);
       setShowNewPaymentDialog(false);
       resetForm();
+      toast({
+        title: "Payment run created",
+        description: run.entries.some((e) => e.deposit_address) ? "Send funds to the deposit addresses below. Status will update automatically." : "Run created; some entries may need manual payment.",
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed";
       toast({ variant: "destructive", title: "Error", description: message });
@@ -216,29 +250,128 @@ export default function PayrollPayPage() {
 
       <Card className="border-gray-200 bg-white">
         <CardHeader className="px-6 pt-6 pb-2">
-          <CardTitle className="flex items-center gap-2">
-            <Send className="h-5 w-5" />
-            Payments
-          </CardTitle>
-          <CardDescription className="mt-1.5">
-            Individual and bulk payments. Gas abstracted via NEAR Intents when execution is wired.
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Send className="h-5 w-5" />
+                Payments
+              </CardTitle>
+              <CardDescription className="mt-1.5">
+                Individual and bulk payments via NEAR Intents. Send to deposit addresses; status updates automatically.
+              </CardDescription>
+            </div>
+            {selectedRun && (
+              <Button variant="ghost" size="sm" onClick={() => setSelectedRun(null)}>
+                Back to list
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="px-6 pb-6 pt-4">
-          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-8 py-14 text-center">
-            <Send className="mx-auto h-10 w-10 text-gray-300" />
-            <p className="mt-3 text-sm font-medium text-gray-600">No payments yet</p>
-            <p className="mt-1.5 text-xs text-gray-500">Create a payment to send to one or more contributors.</p>
-            <Button
-              variant="outline"
-              className="mt-5"
-              onClick={() => setShowNewPaymentDialog(true)}
-              disabled={!canPayIndividual}
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              New payment
-            </Button>
-          </div>
+          {selectedRun ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge variant={selectedRun.status === "completed" ? "default" : selectedRun.status === "failed" ? "destructive" : "secondary"}>
+                  {selectedRun.status}
+                </Badge>
+                <span className="text-sm text-gray-500">
+                  {selectedRun.completed_entries}/{selectedRun.total_entries} completed
+                </span>
+                <span className="text-xs text-gray-400">
+                  {new Date(selectedRun.created_at).toLocaleString()}
+                </span>
+              </div>
+              <div className="rounded-lg border border-gray-200 overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-gray-50">
+                      <th className="text-left p-3 font-medium">Recipient</th>
+                      <th className="text-left p-3 font-medium">Amount</th>
+                      <th className="text-left p-3 font-medium">Status</th>
+                      <th className="text-left p-3 font-medium">Deposit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedRun.entries.map((e) => (
+                      <tr key={e.id} className="border-b last:border-0">
+                        <td className="p-3">{e.recipient_address.slice(0, 8)}...{e.recipient_address.slice(-6)}</td>
+                        <td className="p-3">{e.amount} {e.token_symbol}</td>
+                        <td className="p-3">
+                          <Badge variant={e.status === "completed" ? "default" : e.status === "failed" || e.status === "expired" ? "destructive" : "outline"}>
+                            {e.status}
+                          </Badge>
+                        </td>
+                        <td className="p-3">
+                          {e.deposit_address ? (
+                            <div className="flex items-center gap-2">
+                              <code className="text-xs bg-gray-100 px-2 py-1 rounded truncate max-w-[180px]">{e.deposit_address}</code>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 shrink-0"
+                                onClick={() => copyDepositAddress(e.deposit_address!, e.id)}
+                              >
+                                {copiedId === e.id ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                              </Button>
+                            </div>
+                          ) : (
+                            <span className="text-gray-400 text-xs">No deposit address</span>
+                          )}
+                          {e.deadline && e.status !== "completed" && e.status !== "failed" && e.status !== "expired" && (
+                            <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                              <Clock className="h-3 w-3" /> Deadline: {new Date(e.deadline).toLocaleString()}
+                            </p>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : runs.length > 0 ? (
+            <div className="space-y-2">
+              {runs.map((run) => (
+                <div
+                  key={run.id}
+                  className="flex items-center justify-between rounded-lg border border-gray-200 p-4 hover:bg-gray-50/50"
+                >
+                  <div className="flex items-center gap-3">
+                    <Send className="h-5 w-5 text-gray-400" />
+                    <div>
+                      <p className="font-medium text-gray-900">
+                        {run.completed_entries}/{run.total_entries} entries
+                      </p>
+                      <p className="text-xs text-gray-500">{new Date(run.created_at).toLocaleString()}</p>
+                    </div>
+                    <Badge variant={run.status === "completed" ? "default" : run.status === "failed" ? "destructive" : "secondary"}>{run.status}</Badge>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => loadRunDetail(run.id)}>
+                    View <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              ))}
+              <Button variant="outline" className="w-full mt-4" onClick={() => setShowNewPaymentDialog(true)} disabled={!canPayIndividual}>
+                <Plus className="h-4 w-4 mr-2" />
+                New payment
+              </Button>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-8 py-14 text-center">
+              <Send className="mx-auto h-10 w-10 text-gray-300" />
+              <p className="mt-3 text-sm font-medium text-gray-600">No payments yet</p>
+              <p className="mt-1.5 text-xs text-gray-500">Create a payment run to get deposit addresses for each recipient.</p>
+              <Button
+                variant="outline"
+                className="mt-5"
+                onClick={() => setShowNewPaymentDialog(true)}
+                disabled={!canPayIndividual}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                New payment
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

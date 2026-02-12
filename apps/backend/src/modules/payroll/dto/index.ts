@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsEmail, IsOptional, IsUUID, IsIn } from 'class-validator';
+import { IsString, IsEmail, IsOptional, IsUUID, IsIn, IsArray, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 
 // Organization DTOs
 export class CreatePayrollOrganizationDto {
@@ -161,4 +162,57 @@ export class OnboardContributorDto {
   @IsOptional()
   @IsString()
   username?: string;
+}
+
+// Payment run DTOs
+export class CreatePayrollRunEntryDto {
+  @ApiProperty({ description: 'Contributor UUID' })
+  @IsUUID()
+  contributorId: string;
+
+  @ApiProperty({ description: 'Amount (human-readable, e.g. "100")' })
+  @IsString()
+  amount: string;
+}
+
+export class CreatePayrollRunDto {
+  @ApiProperty({ description: 'Entries to pay', type: [CreatePayrollRunEntryDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreatePayrollRunEntryDto)
+  entries: CreatePayrollRunEntryDto[];
+
+  @ApiProperty({ description: 'Token symbol (e.g., USDC)' })
+  @IsString()
+  tokenSymbol: string;
+
+  @ApiProperty({ description: 'Network (e.g., solana, base)' })
+  @IsString()
+  network: string;
+}
+
+export interface PayrollRunEntryWithIntent {
+  id: string;
+  contributor_id: string;
+  amount: string;
+  token_symbol: string;
+  network: string;
+  recipient_address: string;
+  status: string;
+  deposit_address?: string | null;
+  memo?: string | null;
+  deadline?: string | null;
+  created_at: string;
+}
+
+export interface PayrollRunResponse {
+  id: string;
+  organization_id: string;
+  created_by: string;
+  status: string;
+  total_entries: number;
+  completed_entries: number;
+  created_at: string;
+  updated_at: string;
+  entries: PayrollRunEntryWithIntent[];
 }

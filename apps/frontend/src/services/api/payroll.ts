@@ -156,6 +156,28 @@ export const payrollApi = {
     },
   },
 
+  runs: {
+    async create(
+      orgId: string,
+      data: { entries: Array<{ contributorId: string; amount: string }>; tokenSymbol: string; network: string },
+      userId?: string,
+    ): Promise<PayrollRunResponse> {
+      return fetchApi<PayrollRunResponse>(`/payroll/organizations/${orgId}/runs`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+        userId,
+      });
+    },
+
+    async list(orgId: string, userId?: string): Promise<PayrollRunListItem[]> {
+      return fetchApi<PayrollRunListItem[]>(`/payroll/organizations/${orgId}/runs`, { userId });
+    },
+
+    async get(orgId: string, runId: string, userId?: string): Promise<PayrollRunResponse> {
+      return fetchApi<PayrollRunResponse>(`/payroll/organizations/${orgId}/runs/${runId}`, { userId });
+    },
+  },
+
   invite: {
     async getByToken(token: string): Promise<PayrollInviteInfo> {
       const res = await fetch(`/api/payroll/invite/${encodeURIComponent(token)}`);
@@ -187,4 +209,41 @@ export interface PayrollInviteInfo {
   email: string;
   firstName: string | null;
   lastName: string | null;
+}
+
+export interface PayrollRunEntryWithIntent {
+  id: string;
+  contributor_id: string;
+  amount: string;
+  token_symbol: string;
+  network: string;
+  recipient_address: string;
+  status: string;
+  deposit_address?: string | null;
+  memo?: string | null;
+  deadline?: string | null;
+  created_at: string;
+}
+
+export interface PayrollRunResponse {
+  id: string;
+  organization_id: string;
+  created_by: string;
+  status: string;
+  total_entries: number;
+  completed_entries: number;
+  created_at: string;
+  updated_at: string;
+  entries: PayrollRunEntryWithIntent[];
+}
+
+export interface PayrollRunListItem {
+  id: string;
+  organization_id: string;
+  created_by: string;
+  status: string;
+  total_entries: number;
+  completed_entries: number;
+  created_at: string;
+  updated_at: string;
 }
