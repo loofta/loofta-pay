@@ -15,7 +15,8 @@ function ShellContent({ children }: { children: ReactNode }) {
   const isHomepage = pathname === '/';
   // Don't show header/footer on checkout page (Stripe-like design)
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
-  const hideShell = isCheckoutPage;
+  const isPayrollArea = pathname?.startsWith('/payroll') === true;
+  const hideShell = isCheckoutPage || isPayrollArea;
   return (
     <>
       {!hideShell && <Header />}

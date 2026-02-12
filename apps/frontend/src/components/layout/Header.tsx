@@ -325,7 +325,7 @@ export function Header() {
               <button
                 type="button"
                 onClick={() => setProductMenuOpen((o) => !o)}
-                className={`flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isActive('/swap') || isActive('/b2b') || isActive('/partners')
+                className={`flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isActive('/swap') || isActive('/b2b') || isActive('/partners') || isActive('/payroll')
                   ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm'
                   : isDarkPage
                     ? 'text-white/90 hover:text-white hover:bg-white/10'
@@ -362,6 +362,14 @@ export function Header() {
                     className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors first:rounded-t-[11px] last:rounded-b-[11px] ${isDarkPage ? 'text-white hover:bg-white/10' : 'text-gray-900 hover:bg-gray-100'}`}
                   >
                     Partners
+                  </Link>
+                  <Link
+                    href="/payroll"
+                    prefetch
+                    onClick={() => setProductMenuOpen(false)}
+                    className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors first:rounded-t-[11px] last:rounded-b-[11px] ${isDarkPage ? 'text-white hover:bg-white/10' : 'text-gray-900 hover:bg-gray-100'}`}
+                  >
+                    Payroll
                   </Link>
                 </div>
               )}
@@ -554,6 +562,17 @@ export function Header() {
                     }`}
                 >
                   Partners
+                </Link>
+                <Link
+                  href="/payroll"
+                  prefetch
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${isActive('/payroll')
+                    ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
+                    : 'text-gray-900 hover:bg-gray-100'
+                    }`}
+                >
+                  Payroll
                 </Link>
 
                 <span className="mt-4 px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Payments</span>

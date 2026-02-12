@@ -138,5 +138,53 @@ export const payrollApi = {
         },
       );
     },
+
+    async sendInvite(
+      orgId: string,
+      contributorId: string,
+      userId?: string,
+      baseUrl?: string,
+    ): Promise<{ inviteLink: string }> {
+      return fetchApi<{ inviteLink: string }>(
+        `/payroll/organizations/${orgId}/contributors/${contributorId}/send-invite`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ baseUrl: baseUrl || (typeof window !== 'undefined' ? window.location.origin : undefined) }),
+          userId,
+        },
+      );
+    },
+  },
+
+  invite: {
+    async getByToken(token: string): Promise<PayrollInviteInfo> {
+      const res = await fetch(`/api/payroll/invite/${encodeURIComponent(token)}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || err.error || 'Invalid invite');
+      }
+      return res.json();
+    },
+    async onboard(token: string, data: { walletAddress: string; network: string; tokenSymbol: string; username?: string }): Promise<PayrollContributor> {
+      const res = await fetch(`/api/payroll/invite/${encodeURIComponent(token)}/onboard`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || err.error || 'Onboarding failed');
+      }
+      return res.json();
+    },
   },
 };
+
+export interface PayrollInviteInfo {
+  organizationName: string;
+  organizationId: string;
+  contributorId: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+}

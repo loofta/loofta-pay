@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 import { payrollApi, type PayrollOrganization, type PayrollContributor } from "@/services/api/payroll";
+import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import {
   Loader2,
@@ -23,6 +24,8 @@ import {
   Check,
   Clock,
   X,
+  Link2,
+  Copy,
 } from "lucide-react";
 import {
   Dialog,
@@ -77,6 +80,8 @@ export default function PayrollOrgPage() {
   const [editingContributor, setEditingContributor] = useState<PayrollContributor | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PayrollContributor | null>(null);
   const [saving, setSaving] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [loadingInviteLink, setLoadingInviteLink] = useState(false);
 
   // Form state
   const [formEmail, setFormEmail] = useState("");
@@ -90,6 +95,15 @@ export default function PayrollOrgPage() {
   // Predefined departments
   const DEPARTMENTS = ["Engineering", "Marketing", "Finance", "Operations", "Design", "Sales", "HR", "Legal", "Other"];
 
+  const loginRef = useRef(login);
+  loginRef.current = login;
+
+  useEffect(() => {
+    if (ready && !authenticated) {
+      loginRef.current();
+    }
+  }, [ready, authenticated]);
+
   const loadData = useCallback(async () => {
     if (!userId || !orgId) return;
     try {
@@ -100,23 +114,13 @@ export default function PayrollOrgPage() {
       ]);
       setOrganization(org);
       setContributors(contribs);
-    } catch (error: any) {
-      console.error("Failed to load data:", error);
-      toast({
-        variant: "destructive",
-        title: "Failed to load organization",
-        description: error?.message || "Please try again",
-      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Please try again";
+      toast({ variant: "destructive", title: "Failed to load organization", description: message });
     } finally {
       setLoading(false);
     }
-  }, [userId, orgId, toast]);
-
-  useEffect(() => {
-    if (ready && !authenticated) {
-      login();
-    }
-  }, [ready, authenticated, login]);
+  }, [userId, orgId]);
 
   useEffect(() => {
     if (ready && authenticated && userId && orgId) {
@@ -133,6 +137,23 @@ export default function PayrollOrgPage() {
     setFormTokenSymbol(null);
     setFormDepartment(null);
   };
+
+  const handleGetInviteLink = async (contrib: PayrollContributor) => {
+    if (!userId || !orgId) return;
+    setLoadingInviteLink(true);
+    setInviteLink(null);
+    try {
+      const { inviteLink: link } = await payrollApi.contributors.sendInvite(orgId, contrib.id, userId);
+      setInviteLink(link);
+      await navigator.clipboard.writeText(link);
+      toast({ title: "Invite link copied", description: "Share it with the contributor so they can set their wallet." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Failed to get link", description: err?.message });
+    } finally {
+      setLoadingInviteLink(false);
+    }
+  };
+
 
   const handleAddContributor = async () => {
     if (!formEmail.trim()) {
@@ -347,10 +368,10 @@ export default function PayrollOrgPage() {
               </div>
             </div>
 
-            <Button onClick={() => setShowAddDialog(true)}>
+            <GradientActionButton onClick={() => setShowAddDialog(true)} className="w-auto px-5">
               <Plus className="w-4 h-4 mr-2" />
               Add Contributor
-            </Button>
+            </GradientActionButton>
           </div>
         </div>
 
@@ -370,10 +391,10 @@ export default function PayrollOrgPage() {
               <div className="text-center py-12">
                 <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                 <p className="text-gray-500 mb-4">No contributors yet</p>
-                <Button variant="outline" onClick={() => setShowAddDialog(true)}>
+                <GradientActionButton onClick={() => setShowAddDialog(true)} className="w-auto px-5">
                   <Plus className="w-4 h-4 mr-2" />
                   Add your first contributor
-                </Button>
+                </GradientActionButton>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -439,9 +460,18 @@ export default function PayrollOrgPage() {
                             <Button
                               variant="ghost"
                               size="sm"
+                              onClick={() => handleGetInviteLink(contrib)}
+                              disabled={loadingInviteLink}
+                              title="Get invite link"
+                            >
+                              {loadingInviteLink ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => openEditDialog(contrib)}
                             >
-                              <Edit className="w-4 h-4" />
+                              <Edit className="h-4 w-4" />
                             </Button>
                             <Button
                               variant="ghost"
@@ -449,7 +479,7 @@ export default function PayrollOrgPage() {
                               onClick={() => setDeleteTarget(contrib)}
                               className="text-red-600 hover:text-red-700 hover:bg-red-50"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
                         </td>
@@ -559,10 +589,9 @@ export default function PayrollOrgPage() {
             <Button variant="outline" onClick={() => { setShowAddDialog(false); resetForm(); }} disabled={saving}>
               Cancel
             </Button>
-            <Button onClick={handleAddContributor} disabled={saving}>
-              {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            <GradientActionButton onClick={handleAddContributor} disabled={saving} loading={saving} loadingText="Adding...">
               Add Contributor
-            </Button>
+            </GradientActionButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -646,10 +675,9 @@ export default function PayrollOrgPage() {
             <Button variant="outline" onClick={() => { setShowEditDialog(false); setEditingContributor(null); resetForm(); }} disabled={saving}>
               Cancel
             </Button>
-            <Button onClick={handleEditContributor} disabled={saving}>
-              {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            <GradientActionButton onClick={handleEditContributor} disabled={saving} loading={saving} loadingText="Saving...">
               Save Changes
-            </Button>
+            </GradientActionButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

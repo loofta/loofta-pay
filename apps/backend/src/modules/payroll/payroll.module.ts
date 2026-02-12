@@ -3,9 +3,14 @@ import { PayrollOrganizationsController } from './payroll-organizations.controll
 import { PayrollOrganizationsService } from './payroll-organizations.service';
 import { PayrollContributorsController } from './payroll-contributors.controller';
 import { PayrollContributorsService } from './payroll-contributors.service';
+import { PayrollInviteController } from './payroll-invite.controller';
 
 @Module({
-  controllers: [PayrollOrganizationsController, PayrollContributorsController],
+  controllers: [
+    PayrollOrganizationsController,
+    PayrollContributorsController,
+    PayrollInviteController,
+  ],
   providers: [PayrollOrganizationsService, PayrollContributorsService],
   exports: [PayrollOrganizationsService, PayrollContributorsService],
 })

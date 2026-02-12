@@ -143,3 +143,22 @@ export interface PayrollContributor {
 }
 
 export type ContributorStatus = 'invited' | 'joined' | 'removed';
+
+export class OnboardContributorDto {
+  @ApiProperty({ description: 'Wallet address to receive payments' })
+  @IsString()
+  walletAddress: string;
+
+  @ApiProperty({ description: 'Blockchain network (e.g., base, ethereum)' })
+  @IsString()
+  network: string;
+
+  @ApiProperty({ description: 'Token symbol (e.g., USDC, ETH)' })
+  @IsString()
+  tokenSymbol: string;
+
+  @ApiPropertyOptional({ description: 'Loofta username for receiving payments' })
+  @IsOptional()
+  @IsString()
+  username?: string;
+}

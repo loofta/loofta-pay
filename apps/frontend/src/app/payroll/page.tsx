@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 import { payrollApi, type PayrollOrganization } from "@/services/api/payroll";
+import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import {
   Loader2,
   Plus,
@@ -136,27 +137,24 @@ export default function PayrollPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-              <Building2 className="w-8 h-8 text-blue-600" />
-              Payroll
-            </h1>
-            <p className="mt-2 text-gray-600">
-              Manage your organizations and pay contributors
-            </p>
-          </div>
-
-          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" />
-                Create Organization
-              </Button>
-            </DialogTrigger>
+    <div className="space-y-8">
+      {/* Hero + CTA — minimal clicks */}
+      <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-gray-900 sm:text-3xl">
+            Organizations
+          </h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Create an org, invite contributors, and pay in one go. Gas abstracted via NEAR Intents.
+          </p>
+        </div>
+        <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+          <DialogTrigger asChild>
+            <GradientActionButton className="shrink-0 w-auto px-5">
+              <Plus className="mr-2 h-4 w-4" />
+              New organization
+            </GradientActionButton>
+          </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Create Organization</DialogTitle>
@@ -217,78 +215,70 @@ export default function PayrollPage() {
                 >
                   Cancel
                 </Button>
-                <Button onClick={handleCreateOrganization} disabled={creating}>
-                  {creating ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    "Create"
-                  )}
-                </Button>
+                <GradientActionButton onClick={handleCreateOrganization} disabled={creating} loading={creating} loadingText="Creating...">
+                  Create
+                </GradientActionButton>
               </DialogFooter>
             </DialogContent>
           </Dialog>
-        </div>
-
-        {/* Organizations List */}
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-          </div>
-        ) : organizations.length === 0 ? (
-          <Card className="p-12">
-            <div className="text-center">
-              <Building2 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                No organizations yet
-              </h3>
-              <p className="text-gray-500 mb-6">
-                Create your first organization to start managing contributor payments.
-              </p>
-              <Button onClick={() => setShowCreateDialog(true)}>
-                <Plus className="w-4 h-4 mr-2" />
-                Create Organization
-              </Button>
-            </div>
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {organizations.map((org) => (
-              <Card
-                key={org.id}
-                className="hover:shadow-md transition-shadow cursor-pointer p-4"
-                onClick={() => router.push(`/payroll/${org.id}`)}
-              >
-                <CardHeader className="flex flex-row items-center gap-4">
-                  {org.logo_url ? (
-                    <div className="relative w-12 h-12 rounded-lg overflow-hidden">
-                      <Image
-                        src={org.logo_url}
-                        alt={org.name}
-                        fill
-                        className="object-cover"
-                      />
-                    </div>
-                  ) : (
-                    <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center">
-                      <Building2 className="w-6 h-6 text-blue-600" />
-                    </div>
-                  )}
-                  <div className="flex-1">
-                    <CardTitle className="text-lg">{org.name}</CardTitle>
-                    <CardDescription>
-                      Created {new Date(org.created_at).toLocaleDateString()}
-                    </CardDescription>
-                  </div>
-                  <ArrowRight className="w-5 h-5 text-gray-400" />
-                </CardHeader>
-              </Card>
-            ))}
-          </div>
-        )}
       </div>
+
+      {/* Organizations List */}
+      {loading ? (
+        <div className="flex justify-center py-16">
+          <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        </div>
+      ) : organizations.length === 0 ? (
+        <Card className="overflow-hidden border-gray-200 bg-white">
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-100">
+              <Building2 className="h-7 w-7 text-gray-400" />
+            </div>
+            <h2 className="text-lg font-semibold text-gray-900">No organizations yet</h2>
+            <p className="mt-1 max-w-sm text-sm text-gray-500">
+              Create your first organization to invite contributors and run payroll. One payment, gas abstracted.
+            </p>
+            <GradientActionButton className="mt-6 w-auto px-6" onClick={() => setShowCreateDialog(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Create organization
+            </GradientActionButton>
+          </div>
+        </Card>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {organizations.map((org) => (
+            <Card
+              key={org.id}
+              className="cursor-pointer border-gray-200 bg-white transition-shadow hover:shadow-md"
+              onClick={() => router.push(`/payroll/${org.id}`)}
+            >
+              <div className="flex items-center gap-4 p-4">
+                {org.logo_url ? (
+                  <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl">
+                    <Image
+                      src={org.logo_url}
+                      alt={org.name}
+                      fill
+                      className="object-cover"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gray-100">
+                    <Building2 className="h-6 w-6 text-gray-500" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <CardTitle className="truncate text-base font-semibold">{org.name}</CardTitle>
+                  <CardDescription className="text-xs">
+                    {new Date(org.created_at).toLocaleDateString()}
+                  </CardDescription>
+                </div>
+                <ArrowRight className="h-5 w-5 shrink-0 text-gray-400" />
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

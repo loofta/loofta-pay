@@ -145,4 +145,23 @@ export class PayrollContributorsController {
   ): Promise<{ created: number; skipped: number; errors: string[] }> {
     return this.service.bulkInvite(orgId, body.contributors, userId);
   }
+
+  /**
+   * Get or create invite link for a contributor (copy link or send email)
+   */
+  @Post(':id/send-invite')
+  @ApiOperation({ summary: 'Get invite link for contributor' })
+  @ApiParam({ name: 'orgId', description: 'Organization UUID' })
+  @ApiParam({ name: 'id', description: 'Contributor UUID' })
+  @ApiResponse({ status: 200, description: 'Invite link' })
+  async sendInvite(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Headers('x-privy-user-id') userId: string,
+    @Body() body: { baseUrl?: string } = {},
+  ): Promise<{ inviteLink: string }> {
+    const baseUrl = body.baseUrl || process.env.FRONTEND_URL || 'https://swap.loofta.xyz';
+    const { inviteLink } = await this.service.getOrCreateInviteLink(orgId, id, userId, baseUrl);
+    return { inviteLink };
+  }
 }

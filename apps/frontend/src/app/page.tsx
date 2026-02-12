@@ -572,6 +572,7 @@ export default function Home() {
                 <ul className="space-y-2">
                   <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Cross-chain swap</a></li>
                   <li><a href="/claim" className="text-slate-400 hover:text-white transition-colors">Payment request</a></li>
+                  <li><a href="/payroll" className="text-slate-400 hover:text-white transition-colors">Payroll</a></li>
                 </ul>
               </div>
 
