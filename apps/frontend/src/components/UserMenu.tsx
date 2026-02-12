@@ -20,7 +20,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Settings } from "lucide-react";
-import { PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
+import { PRIVATE_PAYMENT_COMING_SOON } from "@/services/privatePayment";
 
 interface UserMenuProps {
   username: string | null;
@@ -647,7 +647,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     </div>
                   </motion.div>
 
-                  {/* Private Payment Option — Coming soon */}
+                  {/* Private Payment Option */}
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -660,7 +660,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           🔒 Require Private Payments Only
                         </span>
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
-                          Coming soon
+                          Require private payments only
                         </span>
                       </div>
                       {loadingPreferences && !PRIVATE_PAYMENT_COMING_SOON ? (
@@ -671,7 +671,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           onCheckedChange={PRIVATE_PAYMENT_COMING_SOON ? undefined : handleTogglePrivatePayments}
                           disabled={PRIVATE_PAYMENT_COMING_SOON || updatingPreferences}
                           className="data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
-                          aria-label={PRIVATE_PAYMENT_COMING_SOON ? "Private payments — coming soon" : "Require private payments only"}
+                          aria-label="Require private payments only"
                         />
                       )}
                     </div>

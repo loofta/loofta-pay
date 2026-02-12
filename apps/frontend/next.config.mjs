@@ -4,8 +4,34 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Vendored Umbra SDK (dist copied into lib/umbra-sdk) - run "npm run copy-umbra-sdk" after building umbra-sdk-old
+const umbraSdkPath = path.join(__dirname, 'lib', 'umbra-sdk');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  webpack: (config, { isServer }) => {
+    // Use CJS Anchor so Wallet is available (browser/esm build only exports it when !isBrowser)
+    const anchorCjs = path.join(__dirname, '../../node_modules/@coral-xyz/anchor/dist/cjs/index.js');
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      '@coral-xyz/anchor': path.join(__dirname, 'lib', 'anchor-browser-shim.cjs'),
+      '@coral-xyz/anchor-node': anchorCjs,
+      'umbra-sdk': umbraSdkPath,
+      // @noble/hashes exports "./utils" not "./utils.js" – alias .js subpaths so umbra-sdk dist resolves
+      '@noble/hashes/utils.js': '@noble/hashes/utils',
+      '@noble/hashes/sha3-addons.js': '@noble/hashes/sha3-addons',
+      '@noble/hashes/sha3.js': '@noble/hashes/sha3',
+    };
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        path: false,
+        process: false,
+      };
+    }
+    return config;
+  },
   // Externalize problematic packages to avoid bundling issues
   serverExternalPackages: [
     'pino',
@@ -17,6 +43,7 @@ const nextConfig = {
   ],
   turbopack: {
     resolveAlias: {
+      'umbra-sdk': umbraSdkPath,
       fs: { browser: './empty-module.js' },
       net: { browser: './empty-module.js' },
       tls: { browser: './empty-module.js' },
@@ -64,7 +91,7 @@ const nextConfig = {
               "frame-ancestors 'none'",
               "child-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org blob:",
               "frame-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org https://challenges.cloudflare.com https://*.spline.design https://*.splinetool.com",
-              "connect-src 'self' https://auth.privy.io https://*.privy.io wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org https://*.rpc.privy.systems https://explorer-api.walletconnect.com https://api.web3modal.com https://api.web3modal.org https://*.walletconnect.com https://*.walletconnect.org https://*.reown.com https://1click.chaindefuser.com https://*.chaindefuser.com https://*.defuse.org https://*.near.org https://*.near-intents.org https://explorer.near-intents.org https://*.rhinestone.dev https://*.biconomy.io https://network.biconomy.io https://api.loom.com https://*.vercel-insights.com https://*.vercel-analytics.com https://*.spline.design https://*.splinetool.com https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com https://cdn.fontshare.com https://api.fontshare.com https://mainnet.base.org https://eth.llamarpc.com https://*.llamarpc.com https://mainnet.optimism.io https://arb1.arbitrum.io https://*.arbitrum.io https://ipapi.co https://*.ipapi.co http://localhost:3001 https://*.up.railway.app https://*.railway.app https://api.giphy.com https://api.mainnet-beta.solana.com https://*.solana.com https://mainnet.helius-rpc.com https://*.helius-rpc.com wss://mainnet.helius-rpc.com wss://*.helius-rpc.com",
+              "connect-src 'self' https://auth.privy.io https://*.privy.io wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org https://*.rpc.privy.systems https://explorer-api.walletconnect.com https://api.web3modal.com https://api.web3modal.org https://*.walletconnect.com https://*.walletconnect.org https://*.reown.com https://1click.chaindefuser.com https://*.chaindefuser.com https://*.defuse.org https://*.near.org https://*.near-intents.org https://explorer.near-intents.org https://*.rhinestone.dev https://*.biconomy.io https://network.biconomy.io https://api.loom.com https://*.vercel-insights.com https://*.vercel-analytics.com https://*.spline.design https://*.splinetool.com https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com https://cdn.fontshare.com https://api.fontshare.com https://mainnet.base.org https://eth.llamarpc.com https://*.llamarpc.com https://mainnet.optimism.io https://arb1.arbitrum.io https://*.arbitrum.io https://ipapi.co https://*.ipapi.co http://localhost:3001 https://*.up.railway.app https://*.railway.app https://api.giphy.com https://api.mainnet-beta.solana.com https://*.solana.com https://mainnet.helius-rpc.com https://*.helius-rpc.com wss://mainnet.helius-rpc.com wss://*.helius-rpc.com https://relayer.umbraprivacy.com https://*.umbraprivacy.com",
               "worker-src 'self' blob:",
               "manifest-src 'self'",
               "media-src 'self' blob:",

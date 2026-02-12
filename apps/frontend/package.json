@@ -3,13 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postinstall": "node scripts/copy-umbra-sdk.js",
+    "copy-umbra-sdk": "node scripts/copy-umbra-sdk.js"
   },
   "dependencies": {
+    "@arcium-hq/client": "^0.4.0",
     "@biconomy/abstractjs": "^1.1.18",
+    "@coral-xyz/anchor": "^0.32.1",
     "@defuse-protocol/one-click-sdk-typescript": "0.1.1",
     "@duneanalytics/client-sdk": "^0.2.5",
     "@giphy/js-fetch-api": "^5.7.0",
@@ -76,9 +80,11 @@
     "react-time-ago": "^7.3.3",
     "react-tweet": "^3.2.2",
     "redis": "^5.10.0",
+    "snarkjs": "^0.7.4",
     "tailwind-merge": "^2.5.2",
     "tailwindcss-animate": "^1.0.7",
     "tonweb": "^0.0.66",
+    "umbra-sdk": "file:./lib/umbra-sdk",
     "uuid": "^10.0.0",
     "viem": "^2.40.3",
     "xlsx": "^0.18.5",

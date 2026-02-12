@@ -9,7 +9,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { Switch } from "@/components/ui/switch";
 import { useQuery } from "@tanstack/react-query";
-import { PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
+import { PRIVATE_PAYMENT_COMING_SOON } from "@/services/privatePayment";
 import { usePrivy } from "@privy-io/react-auth";
 import { isDemoMode } from "@/config/demoMode";
 import { useRouter } from "next/navigation";
@@ -238,7 +238,7 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
                       Minimum amount: $3.00
                     </div>
 
-                    {/* Payment Type — Private coming soon (disabled) */}
+                    {/* Payment Type — Private (Umbra) */}
                     {!requiresPrivatePayments && (
                       <div className="mt-6 p-4 rounded-xl border border-gray-200 bg-gray-50">
                         <div className="flex items-center justify-between gap-4">
@@ -246,19 +246,16 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
                             <span className="text-lg font-semibold text-gray-900">
                               🔒 Private payment
                             </span>
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
-                              Coming soon
-                            </span>
                           </div>
                           <Switch
-                            checked={false}
-                            onCheckedChange={() => { }}
+                            checked={isPrivate}
+                            onCheckedChange={setIsPrivate}
                             disabled={PRIVATE_PAYMENT_COMING_SOON}
-                            aria-label="Private payment — coming soon"
+                            aria-label="Use private payment (Umbra)"
                           />
                         </div>
                         <p className="text-base text-gray-600 mt-3 w-full block">
-                          When available, payment will be processed through privacy pools for complete privacy (+0.35% + $0.74).
+                          When enabled, payment will be processed through Umbra for privacy (+0.35% + $0.74).
                         </p>
                       </div>
                     )}

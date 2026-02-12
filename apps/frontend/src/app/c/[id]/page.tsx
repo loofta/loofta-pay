@@ -36,7 +36,7 @@ import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction, useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
-import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES, PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
+import { payPrivately, PRIVATE_PAYMENT_FEES, PRIVATE_PAYMENT_COMING_SOON } from "@/services/privatePayment";
 import { Connection, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -808,7 +808,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
   async function onPayPrivately() {
     if (PRIVATE_PAYMENT_COMING_SOON) {
-      toast({ title: "Coming soon", description: "Private payments will be available soon." });
       return;
     }
     console.log("[PrivateTransfer] onPayPrivately called", { claimId: claim?.id, isPrivate: claim?.is_private, isPrivateMode, authenticated });
@@ -898,8 +897,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       console.log("[PrivateTransfer] Payment details:", { walletAddress, amountUSD, recipientAddress: recipient, claimId: claim.id, recipientPaysFees: requiresPrivate });
 
       // Execute private payment
-      console.log("[PrivateTransfer] Calling payPrivatelyWithPrivacyCash…");
-      const result = await payPrivatelyWithPrivacyCash({
+      console.log("[PrivateTransfer] Calling payPrivately…");
+      const result = await payPrivately({
         walletAddress,
         amountUSD,
         recipientAddress: recipient,
@@ -908,7 +907,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         recipientPaysFees: requiresPrivate, // If claim requires private, recipient pays fees
       });
 
-      console.log("[PrivateTransfer] payPrivatelyWithPrivacyCash result:", result);
+      console.log("[PrivateTransfer] payPrivately result:", result);
 
       if (result.success) {
         console.log("[PrivateTransfer] Success, updating claim status to SUCCESS", { signature: result.signature });
@@ -949,6 +948,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const balanceData = solanaPayment.isBalanceLoading ? undefined : { balanceUSD: looftaBalanceUSD };
 
   async function payWithWallet() {
+    if (PRIVATE_PAYMENT_COMING_SOON) {
+      toast({ variant: "destructive", title: "Coming soon", description: "Private payments are not available yet." });
+      return;
+    }
     if (!claim?.id || !claim?.recipient_address || !claim?.amount) {
       toast({ variant: "destructive", title: "Missing info", description: "Claim or recipient address is missing." });
       return;
@@ -966,67 +969,50 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     setPayingWithWallet(true);
     setPayWithWalletError(null);
     try {
-      // Connect and get sender address from Phantom
       const { publicKey } = await phantom.connect();
       if (!publicKey) throw new Error("Could not get wallet address from Phantom.");
-      const senderAddressWallet = publicKey.toBase58();
+      const walletAddress = publicKey.toBase58();
 
-      const rpc =
+      const signMessage = async (msg: string): Promise<Uint8Array> => {
+        const encoded = new TextEncoder().encode(msg);
+        const { signature } = await phantom.signMessage(encoded, "utf8");
+        return signature;
+      };
+      const signTransaction = async (tx: VersionedTransaction): Promise<VersionedTransaction> =>
+        phantom.signTransaction(tx);
+
+      const solanaRpcUrl =
         process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
         (process.env.NEXT_PUBLIC_HELIUS_API_KEY
           ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
           : "https://api.mainnet-beta.solana.com");
-      const connection = new Connection(rpc, "confirmed");
-      const mint = new PublicKey(USDC_MINT);
-      const sender = new PublicKey(senderAddressWallet);
-      const recipient = new PublicKey(claim.recipient_address.trim());
-      const amountRaw = Math.floor(amountUSD * 1e6);
-      if (amountRaw <= 0) throw new Error("Amount must be greater than 0");
 
-      const senderAta = getAssociatedTokenAddressSync(mint, sender, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const recipientAta = getAssociatedTokenAddressSync(mint, recipient, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-
-      const instructions = [];
-      const recipientAccountInfo = await connection.getAccountInfo(recipientAta);
-      if (!recipientAccountInfo) {
-        instructions.push(
-          createAssociatedTokenAccountInstruction(sender, recipientAta, recipient, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
-        );
-      }
-      instructions.push(
-        createTransferInstruction(senderAta, recipientAta, sender, amountRaw, [], TOKEN_PROGRAM_ID)
-      );
-
-      const { blockhash } = await connection.getLatestBlockhash("confirmed");
-      const message = new TransactionMessage({
-        payerKey: sender,
-        recentBlockhash: blockhash,
-        instructions,
-      }).compileToV0Message();
-      const transaction = new VersionedTransaction(message);
-
-      const signedTx = await phantom.signTransaction(transaction);
-      const sig = await connection.sendRawTransaction(signedTx.serialize(), {
-        skipPreflight: true,
-        maxRetries: 3,
-        preflightCommitment: "processed",
+      const result = await payPrivately({
+        walletAddress,
+        amountUSD,
+        recipientAddress: claim.recipient_address.trim(),
+        signMessage,
+        signTransaction,
+        recipientPaysFees: requiresPrivate,
+        solanaRpcUrl,
       });
-      setConfirmingTxSignature(sig);
-      setConfirmingTxSource("wallet");
 
-      const confirmed = await waitForConfirmation(connection, sig, 90_000);
-      if (!confirmed) {
-        throw new Error(
-          "Transaction did not confirm in time. Check Solscan for status."
-        );
+      if (result.success) {
+        toast({ title: "Payment successful!", description: "Your private payment has been completed." });
+        if (result.signature) {
+          await updateClaimStatus(claim.id, "SUCCESS", { txHash: result.signature, paidWith: "USDC (Private)", isPrivate: true });
+        } else {
+          await updateClaimStatus(claim.id, "SUCCESS", { paidWith: "USDC (Private)", isPrivate: true });
+        }
+        setStatus("SUCCESS");
+        useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
+        await claimQuery.refetch();
+        setShowPayNowModal(false);
+      } else {
+        const message = result.error || "Could not complete payment with wallet.";
+        setPayWithWalletError(message);
+        toast({ variant: "destructive", title: "Payment failed", description: message });
       }
-
-      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana wallet)" });
-      setStatus("SUCCESS");
-      useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
-      await claimQuery.refetch();
-      setShowPayNowModal(false);
-      toast({ title: "Payment confirmed", description: `$${amountUSD.toFixed(2)} USDC sent from your wallet.` });
     } catch (e: any) {
       console.error("[PayWithWallet] Error:", e);
       const message = e?.message || "Could not complete payment with wallet.";
@@ -1034,8 +1020,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       toast({ variant: "destructive", title: "Payment failed", description: message });
     } finally {
       setPayingWithWallet(false);
-      setConfirmingTxSignature(null);
-      setConfirmingTxSource(null);
     }
   }
 
@@ -1059,72 +1043,125 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta Solana wallet is not available. Try refreshing." });
       return;
     }
+
+    const usePrivate = (requiresPrivate || isPrivateMode) && !PRIVATE_PAYMENT_COMING_SOON;
+
     setPayingWithLoofta(true);
     setPayWithLooftaError(null);
     try {
-      const rpc =
-        process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-        (process.env.NEXT_PUBLIC_HELIUS_API_KEY
-          ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-          : "https://api.mainnet-beta.solana.com");
-      const connection = new Connection(rpc, "confirmed");
-      const mint = new PublicKey(USDC_MINT);
-      const sender = new PublicKey(senderAddress);
-      const recipient = new PublicKey(claim.recipient_address.trim());
-      const amountRaw = Math.floor(amountUSD * 1e6);
-      if (amountRaw <= 0) throw new Error("Amount must be greater than 0");
+      if (usePrivate) {
+        const signMessage = async (msg: string): Promise<Uint8Array> => {
+          const { signature } = await privySignMessage({
+            message: new TextEncoder().encode(msg),
+            wallet: selectedWallet,
+          });
+          return signature;
+        };
+        const signTransaction = async (tx: VersionedTransaction): Promise<VersionedTransaction> => {
+          const { signedTransaction } = await privySignTransaction({
+            transaction: tx.serialize(),
+            wallet: selectedWallet,
+          });
+          return VersionedTransaction.deserialize(signedTransaction);
+        };
 
-      const senderAta = getAssociatedTokenAddressSync(mint, sender, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const recipientAta = getAssociatedTokenAddressSync(mint, recipient, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+        const solanaRpcUrl =
+          process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+          (process.env.NEXT_PUBLIC_HELIUS_API_KEY
+            ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
+            : "https://api.mainnet-beta.solana.com");
 
-      const instructions = [];
-      const recipientAccountInfo = await connection.getAccountInfo(recipientAta);
-      if (!recipientAccountInfo) {
+        const result = await payPrivately({
+          walletAddress: senderAddress,
+          amountUSD,
+          recipientAddress: claim.recipient_address.trim(),
+          signMessage,
+          signTransaction,
+          recipientPaysFees: requiresPrivate,
+          solanaRpcUrl,
+        });
+
+        if (result.success) {
+          toast({ title: "Payment successful!", description: "Your private payment has been completed." });
+          if (result.signature) {
+            await updateClaimStatus(claim.id, "SUCCESS", { txHash: result.signature, paidWith: "USDC (Private)", isPrivate: true });
+          } else {
+            await updateClaimStatus(claim.id, "SUCCESS", { paidWith: "USDC (Private)", isPrivate: true });
+          }
+          setStatus("SUCCESS");
+          useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
+          await claimQuery.refetch();
+          setShowPayNowModal(false);
+        } else {
+          const message = result.error || "Could not send from Loofta balance. Try again or use wallet.";
+          setPayWithLooftaError(message);
+          toast({ variant: "destructive", title: "Payment failed", description: message });
+        }
+      } else {
+        const rpc =
+          process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+          (process.env.NEXT_PUBLIC_HELIUS_API_KEY
+            ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
+            : "https://api.mainnet-beta.solana.com");
+        const connection = new Connection(rpc, "confirmed");
+        const mint = new PublicKey(USDC_MINT);
+        const sender = new PublicKey(senderAddress);
+        const recipient = new PublicKey(claim.recipient_address.trim());
+        const amountRaw = Math.floor(amountUSD * 1e6);
+        if (amountRaw <= 0) throw new Error("Amount must be greater than 0");
+
+        const senderAta = getAssociatedTokenAddressSync(mint, sender, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+        const recipientAta = getAssociatedTokenAddressSync(mint, recipient, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+
+        const instructions = [];
+        const recipientAccountInfo = await connection.getAccountInfo(recipientAta);
+        if (!recipientAccountInfo) {
+          instructions.push(
+            createAssociatedTokenAccountInstruction(sender, recipientAta, recipient, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
+          );
+        }
         instructions.push(
-          createAssociatedTokenAccountInstruction(sender, recipientAta, recipient, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
+          createTransferInstruction(senderAta, recipientAta, sender, amountRaw, [], TOKEN_PROGRAM_ID)
         );
+
+        const { blockhash } = await connection.getLatestBlockhash("confirmed");
+        const message = new TransactionMessage({
+          payerKey: sender,
+          recentBlockhash: blockhash,
+          instructions,
+        }).compileToV0Message();
+        const transaction = new VersionedTransaction(message);
+        const transactionBytes = new Uint8Array(transaction.serialize());
+
+        const result = await signAndSendTransaction({
+          transaction: transactionBytes,
+          wallet: selectedWallet,
+          options: {
+            sponsor: true,
+            skipPreflight: true,
+          } as Parameters<typeof signAndSendTransaction>[0]["options"],
+        });
+        const sig = typeof result?.signature !== "undefined" ? bs58.encode(result.signature) : String(result);
+        setConfirmingTxSignature(sig);
+        setConfirmingTxSource("loofta");
+
+        const confirmed = await waitForConfirmation(connection, sig, 90_000);
+        if (!confirmed) {
+          throw new Error(
+            "Transaction did not confirm in time. Check Solscan for status — do not mark as paid until the transaction confirms."
+          );
+        }
+
+        await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana)" });
+        setStatus("SUCCESS");
+        useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
+        await claimQuery.refetch();
+        setShowPayNowModal(false);
+        toast({
+          title: "Payment confirmed",
+          description: `$${amountUSD.toFixed(2)} USDC sent successfully.`,
+        });
       }
-      instructions.push(
-        createTransferInstruction(senderAta, recipientAta, sender, amountRaw, [], TOKEN_PROGRAM_ID)
-      );
-
-      const { blockhash } = await connection.getLatestBlockhash("confirmed");
-      const message = new TransactionMessage({
-        payerKey: sender,
-        recentBlockhash: blockhash,
-        instructions,
-      }).compileToV0Message();
-      const transaction = new VersionedTransaction(message);
-      const transactionBytes = new Uint8Array(transaction.serialize());
-
-      const result = await signAndSendTransaction({
-        transaction: transactionBytes,
-        wallet: selectedWallet,
-        options: {
-          sponsor: true,
-          skipPreflight: true,
-        } as Parameters<typeof signAndSendTransaction>[0]["options"],
-      });
-      const sig = typeof result?.signature !== "undefined" ? bs58.encode(result.signature) : String(result);
-      setConfirmingTxSignature(sig);
-      setConfirmingTxSource("loofta");
-
-      const confirmed = await waitForConfirmation(connection, sig, 90_000);
-      if (!confirmed) {
-        throw new Error(
-          "Transaction did not confirm in time. Check Solscan for status — do not mark as paid until the transaction confirms."
-        );
-      }
-
-      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana)" });
-      setStatus("SUCCESS");
-      useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
-      await claimQuery.refetch();
-      setShowPayNowModal(false);
-      toast({
-        title: "Payment confirmed",
-        description: `$${amountUSD.toFixed(2)} USDC sent successfully.`,
-      });
     } catch (e: any) {
       console.error("[PayWithLoofta] Error:", e);
       const message = e?.message || "Could not send from Loofta balance. Try again or use wallet.";
@@ -1837,8 +1874,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   // Fallback: For private payments, calculate the total amount paid (requested + fees)
                                   if (claim?.is_private) {
                                     const requestedAmount = parseFloat(claim?.amount || "0");
-                                    const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-                                    const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+                                    const rentFee = PRIVATE_PAYMENT_FEES.usdc_withdraw_rent_fee;
+                                    const feeRate = PRIVATE_PAYMENT_FEES.withdraw_fee_rate;
                                     const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
                                     return (
                                       <>
@@ -2006,19 +2043,16 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                 <span className="text-base font-semibold text-gray-900">
                                   🔒 Private payment
                                 </span>
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
-                                  Coming soon
-                                </span>
                               </div>
                               <Switch
-                                checked={false}
-                                onCheckedChange={() => { }}
+                                checked={isPrivateMode}
+                                onCheckedChange={setIsPrivateMode}
                                 disabled={PRIVATE_PAYMENT_COMING_SOON}
-                                aria-label="Private payment — coming soon"
+                                aria-label="Use private payment (Umbra)"
                               />
                             </div>
                             <p className="text-sm text-gray-600 mt-3 w-full block">
-                              When available, payment will be processed through privacy pools for complete privacy.
+                              When enabled, payment will be processed through Umbra for privacy.
                             </p>
                           </div>
                         )}
@@ -2030,7 +2064,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                             </svg>
                             <span className="font-medium">
-                              Private payment only — coming soon
+                              Private payment only (Umbra)
                             </span>
                           </div>
                         )}
@@ -2163,13 +2197,13 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   </div>
                                 </motion.div>
                               ) : selectedFrom && selectedFrom.symbol === usdcSolanaToken?.symbol && selectedFrom.chain === usdcSolanaToken?.chain ? (
-                                <div className="mt-2 text-sm text-amber-700">
-                                  Private payments coming soon
+                                <div className="mt-2 text-sm text-emerald-700">
+                                  Pay with USDC on Solana for private transfer (Umbra).
                                 </div>
                               ) : null}
                               {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) && (
                                 <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
-                                  <span className="font-medium">Private payment:</span> Coming soon.
+                                  <span className="font-medium">Private payment:</span> Select USDC on Solana above for private transfer.
                                 </div>
                               )}
                               {(() => {
@@ -2196,8 +2230,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
                                 // Optional private payment - payer covers fees (only for USDC)
                                 if (isUSDCSelected && !requiresPrivate) {
-                                  const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-                                  const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+                                  const rentFee = PRIVATE_PAYMENT_FEES.usdc_withdraw_rent_fee;
+                                  const feeRate = PRIVATE_PAYMENT_FEES.withdraw_fee_rate;
                                   const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
                                   const withdrawalFee = withdrawalAmountNeeded * feeRate;
                                   const rentFeeAmount = rentFee;
@@ -2590,8 +2624,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                           // Fallback: For private payments, calculate the total amount paid (requested + fees)
                                           if (claim?.is_private) {
                                             const requestedAmount = parseFloat(claim?.amount || "0");
-                                            const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-                                            const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+                                            const rentFee = PRIVATE_PAYMENT_FEES.usdc_withdraw_rent_fee;
+                                            const feeRate = PRIVATE_PAYMENT_FEES.withdraw_fee_rate;
                                             const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
                                             return (
                                               <>
@@ -2915,11 +2949,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     );
                                   })()}
 
-                                  {/* PRIVATE_TRANSFER_PENDING: private payments coming soon */}
+                                  {/* PRIVATE_TRANSFER_PENDING: private transfer in progress */}
                                   {String(status || "").toUpperCase() === "PRIVATE_TRANSFER_PENDING" && claim?.is_private && (
                                     <div className="mb-6 p-4 rounded-xl border-2 border-amber-200 bg-amber-50">
                                       <p className="text-sm text-amber-900">
-                                        Private payments — coming soon.
+                                        Private transfer in progress (Umbra).
                                       </p>
                                     </div>
                                   )}

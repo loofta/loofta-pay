@@ -70,10 +70,10 @@ const STEP_CONFIG: Record<string, Omit<PaymentStep, 'status'>> = {
     icon: <Send className="w-5 h-5" />,
     estimatedTime: 30, // 30 seconds for cross-chain transfer
   },
-  privacyCash: {
-    id: 'privacy-cash',
+  privatePayment: {
+    id: 'private-payment',
     label: 'Private Transfer',
-    description: 'Private payments coming soon',
+    description: 'Executing private transfer via Umbra',
     icon: <Loader2 className="w-5 h-5" />,
     estimatedTime: 45,
   },
@@ -129,7 +129,7 @@ function getStepsForStatus(
     routing: { ...STEP_CONFIG.routing, estimatedTime: routingTime },
     processing: { ...STEP_CONFIG.processing, estimatedTime: processingTime },
     sending: { ...STEP_CONFIG.sending, estimatedTime: sendingTime },
-    privacyCash: { ...STEP_CONFIG.privacyCash, estimatedTime: 45 },
+    privatePayment: { ...STEP_CONFIG.privatePayment, estimatedTime: 45 },
     success: { ...STEP_CONFIG.success }, // Success step doesn't need estimatedTime
   };
   const upperStatus = String(status || '').toUpperCase();
@@ -137,18 +137,18 @@ function getStepsForStatus(
   // For direct deposits, skip the routing step
   const includeRouting = paymentType !== 'direct';
   
-  // For private cross-chain payments, include Privacy Cash step
+  // For private cross-chain payments, include private payment step
   const isPrivateCrossChain = isPrivate && fromChain && toChain && 
                                fromChain.toLowerCase() !== toChain.toLowerCase() &&
                                toChain.toLowerCase() === 'solana';
 
-  // Helper to build steps array conditionally including routing and Privacy Cash
+  // Helper to build steps array conditionally including routing and private payment
   const buildSteps = (
     depositStatus: 'pending' | 'active' | 'completed',
     routingStatus: 'pending' | 'active' | 'completed',
     processingStatus: 'pending' | 'active' | 'completed',
     sendingStatus: 'pending' | 'active' | 'completed',
-    privacyCashStatus: 'pending' | 'active' | 'completed',
+    privatePaymentStatus: 'pending' | 'active' | 'completed',
     successStatus: 'pending' | 'active' | 'completed'
   ) => {
     const steps: PaymentStep[] = [];
@@ -171,9 +171,9 @@ function getStepsForStatus(
 
     steps.push({ ...configWithTimes.processing, status: processingStatus });
 
-    // For private cross-chain, add Privacy Cash step before sending
+    // For private cross-chain, add private payment step before sending
     if (isPrivateCrossChain) {
-      steps.push({ ...configWithTimes.privacyCash, status: privacyCashStatus });
+      steps.push({ ...configWithTimes.privatePayment, status: privatePaymentStatus });
     }
 
     steps.push(
@@ -200,12 +200,12 @@ function getStepsForStatus(
     return buildSteps('completed', 'completed', 'active', 'pending', 'pending', 'pending');
   }
 
-  // For private cross-chain: PRIVATE_TRANSFER_PENDING means Near Intents completed, Privacy Cash is executing
+  // For private cross-chain: PRIVATE_TRANSFER_PENDING means Near Intents completed, private transfer is executing
   if (isPrivateCrossChain && upperStatus === 'PRIVATE_TRANSFER_PENDING') {
     return buildSteps('completed', includeRouting ? 'completed' : 'completed', 'completed', 'pending', 'active', 'pending');
   }
 
-  // For private cross-chain: IN_FLIGHT means Near Intents completed, Privacy Cash is executing
+  // For private cross-chain: IN_FLIGHT means Near Intents completed, private transfer is executing
   if (isPrivateCrossChain && upperStatus === 'IN_FLIGHT') {
     return buildSteps('completed', includeRouting ? 'completed' : 'completed', 'completed', 'pending', 'active', 'pending');
   }
@@ -241,7 +241,7 @@ function getStatusMessage(status: PaymentStatus | null): { title: string; subtit
     case 'PRIVATE_TRANSFER_PENDING':
       return {
         title: 'Private Transfer',
-        subtitle: 'Private payments coming soon.',
+        subtitle: 'Executing private transfer via Umbra.',
       };
     case 'INCOMPLETE_DEPOSIT':
       return {

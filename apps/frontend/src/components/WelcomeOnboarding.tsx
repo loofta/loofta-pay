@@ -769,7 +769,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                       <div className="flex-1 min-w-0">
                         <span className="text-sm font-semibold text-gray-900">🔒 Require Private Payments Only</span>
                         <p className="text-sm text-gray-600 mt-1">
-                          Private payments — coming soon. When available, you can require private-only payments.
+                          When enabled, only private payments (Umbra) are accepted for your link.
                         </p>
                       </div>
                       {loadingPreferences ? (

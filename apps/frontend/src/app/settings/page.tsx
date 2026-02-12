@@ -10,13 +10,8 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { getSolanaBalanceUSD } from "@/services/solanaBalance";
+import { PRIVATE_PAYMENT_FEES } from "@/services/privatePayment";
 import { useWallets } from "@privy-io/react-auth";
-
-// Private payments — coming soon; fee display kept for when feature is available
-const PRIVACY_CASH_FEES = {
-  withdraw_fee_rate: 0.0035,
-  withdraw_rent_fee: 0.744548676,
-};
 
 async function getUserPreferences(getAccessToken: () => Promise<string>, userId: string) {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -208,7 +203,7 @@ export default function SettingsPage() {
                       )}
                     </div>
                     <p className="text-sm text-gray-600 mb-2">
-                      Private payments — coming soon. When available, you can require payments to your link to use private transfer.
+                      When enabled, payments to your link will use private transfer (Umbra).
                     </p>
                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                       <div className="text-sm text-amber-800">
@@ -221,7 +216,7 @@ export default function SettingsPage() {
                         <div className="mt-2 pt-2 border-t border-amber-200">
                           <div className="font-semibold">Additional fees:</div>
                           <div className="text-xs">
-                            {PRIVACY_CASH_FEES.withdraw_fee_rate * 100}% + ${PRIVACY_CASH_FEES.withdraw_rent_fee.toFixed(2)} per payment
+                            {PRIVATE_PAYMENT_FEES.withdraw_fee_rate * 100}% + ${PRIVATE_PAYMENT_FEES.withdraw_rent_fee.toFixed(2)} per payment
                           </div>
                           <div className="text-xs mt-1 text-amber-700">
                             Note: You will be charged these fees on private payments
