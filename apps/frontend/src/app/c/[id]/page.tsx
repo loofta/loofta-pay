@@ -1043,7 +1043,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta Solana wallet is not available. Try refreshing." });
       return;
     }
-
+-
     const usePrivate = (requiresPrivate || isPrivateMode) && !PRIVATE_PAYMENT_COMING_SOON;
 
     setPayingWithLoofta(true);

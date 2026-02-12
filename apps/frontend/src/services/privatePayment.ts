@@ -21,7 +21,8 @@ export const PRIVATE_PAYMENT_FEES = {
   usdc_withdraw_rent_fee: 0.744548676,
 };
 
-export const PRIVATE_PAYMENT_COMING_SOON = false;
+/** Set to false when official Umbra SDK is integrated and relayer is working. */
+export const PRIVATE_PAYMENT_COMING_SOON = true;
 
 /** Phantom (or similar) adapter implementing Umbra ISigner. */
 class PhantomSigner implements ISigner {
