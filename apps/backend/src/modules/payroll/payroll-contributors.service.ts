@@ -79,6 +79,7 @@ export class PayrollContributorsService {
         network: dto.network || null,
         token_symbol: dto.tokenSymbol || null,
         department: dto.department || null,
+        contributor_type: dto.contributorType || null,
         status: 'invited',
         invited_at: new Date().toISOString(),
         invite_token: inviteToken,
@@ -243,6 +244,7 @@ export class PayrollContributorsService {
     if (dto.network !== undefined) updateData.network = dto.network;
     if (dto.tokenSymbol !== undefined) updateData.token_symbol = dto.tokenSymbol;
     if (dto.department !== undefined) updateData.department = dto.department;
+    if (dto.contributorType !== undefined) updateData.contributor_type = dto.contributorType;
     if (dto.status !== undefined) {
       updateData.status = dto.status;
       if (dto.status === 'joined') {

@@ -11,6 +11,17 @@ import { DealInvoiceResponse } from './dto';
 export class DealsInvoicesController {
   constructor(private readonly service: DealsService) {}
 
+  @Get('invoices/mine')
+  @ApiOperation({ summary: 'List my invoices as freelancer for this org' })
+  @ApiParam({ name: 'orgId' })
+  @ApiResponse({ status: 200, description: 'List of deal invoices for the current user' })
+  listMine(
+    @Param('orgId') orgId: string,
+    @Headers('x-privy-user-id') userId: string,
+  ): Promise<DealInvoiceResponse[]> {
+    return this.service.listMyInvoicesForOrg(orgId, userId);
+  }
+
   @Get('invoices')
   @ApiOperation({ summary: 'List invoices for the organization' })
   @ApiParam({ name: 'orgId' })

@@ -170,6 +170,12 @@ export const dealsApi = {
     list(orgId: string, userId?: string): Promise<DealInvoiceResponse[]> {
       return fetchApi<DealInvoiceResponse[]>(`/payroll/organizations/${orgId}/invoices`, { userId });
     },
+    listMine(orgId: string, userId?: string): Promise<DealInvoiceResponse[]> {
+      return fetchApi<DealInvoiceResponse[]>(`/payroll/organizations/${orgId}/invoices/mine`, { userId });
+    },
+    listAllMine(userId?: string): Promise<(DealInvoiceResponse & { deal_title?: string; org_name?: string; invite_id?: string })[]> {
+      return fetchApi(`/payroll/my-invoices`, { userId });
+    },
     get(orgId: string, invoiceId: string, userId?: string): Promise<DealInvoiceResponse> {
       return fetchApi<DealInvoiceResponse>(`/payroll/organizations/${orgId}/invoices/${invoiceId}`, { userId });
     },

@@ -97,9 +97,11 @@ export default function PayrollOrgPage() {
   const [formNetwork, setFormNetwork] = useState<string | null>(null);
   const [formTokenSymbol, setFormTokenSymbol] = useState<string | null>(null);
   const [formDepartment, setFormDepartment] = useState<string | null>(null);
+  const [formContributorType, setFormContributorType] = useState<"internal_staff" | "contractor" | null>(null);
 
   // Predefined departments
   const DEPARTMENTS = ["Engineering", "Marketing", "Finance", "Operations", "Design", "Sales", "HR", "Legal", "Other"];
+  const CONTRIBUTOR_TYPES = [{ value: "internal_staff" as const, label: "Internal staff" }, { value: "contractor" as const, label: "Contractor" }] as const;
 
   const loginRef = useRef(login);
   loginRef.current = login;
@@ -147,6 +149,7 @@ export default function PayrollOrgPage() {
     setFormNetwork(null);
     setFormTokenSymbol(null);
     setFormDepartment(null);
+    setFormContributorType(null);
   };
 
   const handleGetInviteLink = async (contrib: PayrollContributor) => {
@@ -201,6 +204,7 @@ export default function PayrollOrgPage() {
           network: formNetwork || undefined,
           tokenSymbol: formTokenSymbol || undefined,
           department: formDepartment || undefined,
+          contributorType: formContributorType || undefined,
         },
         userId,
       );
@@ -239,6 +243,7 @@ export default function PayrollOrgPage() {
           network: formNetwork || undefined,
           tokenSymbol: formTokenSymbol || undefined,
           department: formDepartment || undefined,
+          contributorType: formContributorType || undefined,
         },
         userId,
       );
@@ -290,6 +295,7 @@ export default function PayrollOrgPage() {
     setFormNetwork(contrib.network || null);
     setFormTokenSymbol(contrib.token_symbol || null);
     setFormDepartment(contrib.department || null);
+    setFormContributorType(contrib.contributor_type === "internal_staff" || contrib.contributor_type === "contractor" ? contrib.contributor_type : null);
     setShowEditDialog(true);
   };
 
@@ -514,6 +520,7 @@ export default function PayrollOrgPage() {
                     <tr className="border-b text-left">
                       <th className="p-4 font-medium text-gray-700">Name</th>
                       <th className="p-4 font-medium text-gray-700">Email</th>
+                      <th className="p-4 font-medium text-gray-700">Type</th>
                       <th className="p-4 font-medium text-gray-700">Department</th>
                       <th className="p-4 font-medium text-gray-700">Wallet</th>
                       <th className="p-4 font-medium text-gray-700">Network / Token</th>
@@ -534,6 +541,15 @@ export default function PayrollOrgPage() {
                             <Mail className="w-4 h-4 text-gray-400" />
                             {contrib.email}
                           </div>
+                        </td>
+                        <td className="p-4">
+                          {contrib.contributor_type ? (
+                            <Badge variant="outline" className="text-xs capitalize">
+                              {contrib.contributor_type === "internal_staff" ? "Internal staff" : "Contractor"}
+                            </Badge>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
                         </td>
                         <td className="p-4">
                           {contrib.department ? (
@@ -679,6 +695,23 @@ export default function PayrollOrgPage() {
             </div>
 
             <div className="space-y-2">
+              <Label>Type</Label>
+              <Select value={formContributorType || ""} onValueChange={(v) => setFormContributorType((v === "internal_staff" || v === "contractor") ? v : null)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CONTRIBUTOR_TYPES.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-500">
+                Internal staff or contractor
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="department">Department</Label>
               <Select value={formDepartment || ""} onValueChange={(v) => setFormDepartment(v || null)}>
                 <SelectTrigger>
@@ -765,6 +798,20 @@ export default function PayrollOrgPage() {
                 onChange={(e) => setFormWalletAddress(e.target.value)}
                 disabled={!formNetwork}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Type</Label>
+              <Select value={formContributorType || ""} onValueChange={(v) => setFormContributorType((v === "internal_staff" || v === "contractor") ? v : null)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CONTRIBUTOR_TYPES.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">

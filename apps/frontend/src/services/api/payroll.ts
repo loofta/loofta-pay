@@ -31,6 +31,7 @@ export interface PayrollContributor {
   network: string | null;
   token_symbol: string | null;
   department: string | null;
+  contributor_type: string | null;
   status: 'invited' | 'joined' | 'removed';
   invited_at: string | null;
   joined_at: string | null;
@@ -74,6 +75,7 @@ export interface CreateContributorDto {
   network?: string;
   tokenSymbol?: string;
   department?: string;
+  contributorType?: 'internal_staff' | 'contractor';
 }
 
 export interface UpdateContributorDto {
@@ -83,6 +85,7 @@ export interface UpdateContributorDto {
   network?: string;
   tokenSymbol?: string;
   department?: string;
+  contributorType?: 'internal_staff' | 'contractor';
   status?: 'invited' | 'joined' | 'removed';
 }
 

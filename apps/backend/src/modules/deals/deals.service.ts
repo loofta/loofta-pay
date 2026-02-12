@@ -616,6 +616,125 @@ export class DealsService {
     }));
   }
 
+  /**
+   * List all invoices for the current user as freelancer, across all organizations.
+   */
+  async listAllMyInvoices(userId: string): Promise<(DealInvoiceResponse & { deal_title?: string; org_name?: string; invite_id?: string })[]> {
+    const client = this.supabaseService.getClient();
+    const { data: profile } = await client.from('freelancer_profiles').select('id, email').eq('user_id', userId).single();
+    if (!profile?.email) return [];
+
+    const [{ data: byProfile }, { data: byEmail }] = await Promise.all([
+      client.from('deal_invites').select('id, deal_id').eq('status', 'accepted').eq('freelancer_profile_id', profile.id),
+      client.from('deal_invites').select('id, deal_id, invitee_email').eq('status', 'accepted').eq('invitee_email', profile.email),
+    ]);
+    const byProfileList = byProfile || [];
+    const byEmailList = (byEmail || []).filter(
+      (i: { invitee_email?: string | null }) => !byProfileList.some((p: { deal_id: string }) => p.deal_id === (i as any).deal_id),
+    );
+    const myInvites = [...byProfileList, ...byEmailList];
+    const uniqueDealIds = [...new Set(myInvites.map((i: { deal_id: string }) => i.deal_id))];
+    if (!uniqueDealIds.length) return [];
+
+    const dealIdToInviteId = new Map((myInvites as { deal_id: string; id: string }[]).map((i) => [i.deal_id, i.id]));
+
+    const { data: rows, error } = await client
+      .from('deal_invoices')
+      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at, invoice_number')
+      .in('deal_id', uniqueDealIds)
+      .order('created_at', { ascending: false });
+    if (error) {
+      this.logger.error('Failed to list all my invoices:', error);
+      return [];
+    }
+    if (!rows?.length) return [];
+
+    const dealIds = [...new Set((rows as any[]).map((r) => r.deal_id))];
+    const { data: deals } = await client.from('deals').select('id, title, organization_id').in('id', dealIds);
+    const orgIds = [...new Set((deals || []).map((d: any) => d.organization_id))];
+    const { data: orgs } = await client.from('payroll_organizations').select('id, name').in('id', orgIds);
+    const dealMap = new Map((deals || []).map((d: any) => [d.id, { title: d.title, organization_id: d.organization_id }]));
+    const orgMap = new Map((orgs || []).map((o: any) => [o.id, o.name]));
+
+    return (rows as any[]).map((row) => {
+      const deal = dealMap.get(row.deal_id);
+      const orgName = deal ? orgMap.get(deal.organization_id) : undefined;
+      return {
+        id: row.id,
+        deal_id: row.deal_id,
+        deal_payment_id: row.deal_payment_id ?? null,
+        organization_id: row.organization_id,
+        amount: row.amount,
+        amount_currency: row.amount_currency,
+        recipient_email: row.recipient_email ?? null,
+        status: row.status,
+        created_at: row.created_at,
+        invoice_number: row.invoice_number ?? null,
+        deal_title: deal?.title,
+        org_name: orgName,
+        invite_id: dealIdToInviteId.get(row.deal_id),
+      };
+    });
+  }
+
+  /**
+   * List invoices for the current user as freelancer (invoices for deals where they have an accepted invite).
+   * Does not require org membership.
+   */
+  async listMyInvoicesForOrg(organizationId: string, userId: string): Promise<DealInvoiceResponse[]> {
+    const client = this.supabaseService.getClient();
+    const { data: org } = await client.from('payroll_organizations').select('id, name').eq('id', organizationId).single();
+    if (!org) throw new NotFoundException('Organization not found');
+
+    const { data: profile } = await client.from('freelancer_profiles').select('id, email').eq('user_id', userId).single();
+    if (!profile?.email) return [];
+
+    const { data: orgDeals } = await client.from('deals').select('id, title').eq('organization_id', organizationId);
+    if (!orgDeals?.length) return [];
+    const dealIdsInOrg = (orgDeals as { id: string }[]).map((d) => d.id);
+
+    const { data: invites } = await client
+      .from('deal_invites')
+      .select('id, deal_id, freelancer_profile_id, invitee_email')
+      .in('deal_id', dealIdsInOrg)
+      .eq('status', 'accepted');
+    const myInvites = (invites || []).filter(
+      (i: { freelancer_profile_id: string | null; invitee_email: string | null }) =>
+        i.freelancer_profile_id === profile.id ||
+        (i.invitee_email && i.invitee_email.toLowerCase() === profile.email.toLowerCase()),
+    );
+    const uniqueDealIds = [...new Set(myInvites.map((i: { deal_id: string }) => i.deal_id))];
+    if (!uniqueDealIds.length) return [];
+
+    const dealIdToInviteId = new Map((myInvites as { deal_id: string; id: string }[]).map((i) => [i.deal_id, i.id]));
+
+    const { data: rows, error } = await client
+      .from('deal_invoices')
+      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at, invoice_number')
+      .in('deal_id', uniqueDealIds)
+      .order('created_at', { ascending: false });
+    if (error) {
+      this.logger.error('Failed to list my invoices:', error);
+      return [];
+    }
+    const dealMap = new Map((orgDeals as { id: string; title: string }[]).map((d) => [d.id, d.title]));
+    return (rows || []).map((row: any) => ({
+      id: row.id,
+      deal_id: row.deal_id,
+      deal_payment_id: row.deal_payment_id ?? null,
+      organization_id: row.organization_id,
+      amount: row.amount,
+      amount_currency: row.amount_currency,
+      recipient_email: row.recipient_email ?? null,
+      status: row.status,
+      created_at: row.created_at,
+      invoice_number: row.invoice_number ?? null,
+      deal_title: dealMap.get(row.deal_id) ?? undefined,
+      org_name: org.name,
+      invite_id: dealIdToInviteId.get(row.deal_id) ?? undefined,
+    }));
+  }
+
   /** Get invoice for a deal by invite (freelancer view). Caller must be the invitee. */
   async getInvoiceForInvite(inviteId: string, userId: string): Promise<(DealInvoiceResponse & { deal_title?: string; org_name?: string; from_freelancer?: InvoiceFromFreelancer; to_org?: InvoiceToOrg }) | null> {
     const client = this.supabaseService.getClient();

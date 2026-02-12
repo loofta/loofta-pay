@@ -61,7 +61,7 @@ export default function PayrollLayout({
     ? isContributor
       ? [
         { href: `${basePath}/deals`, label: "Deals", icon: Handshake },
-        { href: `${basePath}/invoices`, label: "Invoices", icon: FileText },
+        { href: "/payroll/my-invoices", label: "Invoices", icon: FileText },
         { href: `${basePath}/history`, label: "History", icon: History },
         { href: `${basePath}/your-profile`, label: "Your Profile", icon: UserCircle },
       ]
@@ -146,6 +146,9 @@ export default function PayrollLayout({
                 <DropdownMenuContent align="end" className="w-52">
                   <DropdownMenuItem asChild>
                     <Link href="/payroll">Organizations</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link href="/payroll/my-invoices">My invoices</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link href="/payments">Payment history</Link>

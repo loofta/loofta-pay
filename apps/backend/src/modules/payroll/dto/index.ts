@@ -101,6 +101,11 @@ export class CreateContributorDto {
   @IsOptional()
   @IsString()
   department?: string;
+
+  @ApiPropertyOptional({ description: 'Contributor type', enum: ['internal_staff', 'contractor'] })
+  @IsOptional()
+  @IsIn(['internal_staff', 'contractor'])
+  contributorType?: 'internal_staff' | 'contractor';
 }
 
 export class UpdateContributorDto {
@@ -133,6 +138,11 @@ export class UpdateContributorDto {
   @IsOptional()
   @IsString()
   department?: string;
+
+  @ApiPropertyOptional({ description: 'Contributor type', enum: ['internal_staff', 'contractor'] })
+  @IsOptional()
+  @IsIn(['internal_staff', 'contractor'])
+  contributorType?: 'internal_staff' | 'contractor';
 
   @ApiPropertyOptional({ description: 'Status', enum: ['invited', 'joined', 'removed'] })
   @IsOptional()
@@ -252,6 +262,7 @@ export interface PayrollContributor {
   network: string | null;
   token_symbol: string | null;
   department: string | null;
+  contributor_type: string | null;
   status: 'invited' | 'joined' | 'removed';
   invited_at: string | null;
   joined_at: string | null;
