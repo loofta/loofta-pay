@@ -1,6 +1,8 @@
+import * as crypto from 'crypto';
 import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
 import { NearIntentsService } from '../intents/near-intents.service';
+import { PayrollReceiptLoggerService } from '../payroll/payroll-receipt-logger.service';
 import { DealPaymentResponse } from './dto';
 
 @Injectable()
@@ -10,6 +12,7 @@ export class DealPaymentsService {
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly nearIntentsService: NearIntentsService,
+    private readonly receiptLogger: PayrollReceiptLoggerService,
   ) {}
 
   private async checkOrgAccess(organizationId: string, userId: string): Promise<void> {
@@ -49,6 +52,20 @@ export class DealPaymentsService {
       .select('*')
       .eq('organization_id', organizationId)
       .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(`Database error: ${error.message}`);
+    return (data || []).map((row) => this.toResponse(row));
+  }
+
+  /** List payments that are pending or processing (so org can see prepared ones and mark completed when paid). */
+  async listOutstanding(organizationId: string, userId: string): Promise<DealPaymentResponse[]> {
+    await this.checkOrgAccess(organizationId, userId);
+    const client = this.supabaseService.getClient();
+    const { data, error } = await client
+      .from('deal_payments')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .in('status', ['pending', 'processing'])
       .order('created_at', { ascending: false });
     if (error) throw new Error(`Database error: ${error.message}`);
     return (data || []).map((row) => this.toResponse(row));
@@ -107,6 +124,80 @@ export class DealPaymentsService {
       }
     }
     return results;
+  }
+
+  /**
+   * Delete a pending payment. Unlinks invoice (deal_payment_id = null), reverts deal to delivered, then deletes.
+   */
+  async deletePayment(organizationId: string, paymentId: string, userId: string): Promise<void> {
+    await this.checkOrgAccess(organizationId, userId);
+    const client = this.supabaseService.getClient();
+    const { data: payment } = await client
+      .from('deal_payments')
+      .select('id, deal_id, status')
+      .eq('id', paymentId)
+      .eq('organization_id', organizationId)
+      .single();
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.status !== 'pending') {
+      throw new BadRequestException('Only pending payments can be deleted');
+    }
+    await client.from('deal_invoices').update({ deal_payment_id: null }).eq('deal_payment_id', paymentId);
+    await client.from('deals').update({ status: 'delivered', updated_at: new Date().toISOString() }).eq('id', payment.deal_id);
+    const { error } = await client.from('deal_payments').delete().eq('id', paymentId);
+    if (error) throw new Error(`Database error: ${error.message}`);
+  }
+
+  /**
+   * Mark payment as completed (e.g. after intent execution). Sets invoice to paid and posts attestation on-chain.
+   */
+  async markCompleted(organizationId: string, paymentId: string, txHash: string, userId: string): Promise<DealPaymentResponse> {
+    await this.checkOrgAccess(organizationId, userId);
+    const client = this.supabaseService.getClient();
+    const { data: payment } = await client
+      .from('deal_payments')
+      .select('*')
+      .eq('id', paymentId)
+      .eq('organization_id', organizationId)
+      .single();
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.status === 'completed') return this.toResponse(payment);
+
+    const { data: invoice } = await client
+      .from('deal_invoices')
+      .select('id, deal_id, amount, amount_currency, organization_id')
+      .eq('deal_payment_id', paymentId)
+      .single();
+    if (!invoice) throw new BadRequestException('No invoice linked to this payment');
+
+    await client
+      .from('deal_payments')
+      .update({ status: 'completed', tx_hash: txHash, updated_at: new Date().toISOString() })
+      .eq('id', paymentId);
+    await client.from('deal_invoices').update({ status: 'paid' }).eq('id', invoice.id);
+
+    const batchHash = crypto
+      .createHash('sha256')
+      .update([invoice.id, invoice.deal_id, invoice.amount, invoice.amount_currency, 'paid'].join('|'))
+      .digest('hex');
+    const nonce = Number(
+      BigInt('0x' + crypto.createHash('sha256').update(invoice.id).digest('hex').slice(0, 12)) % BigInt(Number.MAX_SAFE_INTEGER),
+    );
+    const receiptTx = await this.receiptLogger.postReceipt({
+      payrollId: invoice.id,
+      batchHash,
+      authorizerId: organizationId,
+      nonce,
+      executorId: 'deal-payment',
+      status: 'success',
+      txHashes: [txHash],
+    });
+    if (receiptTx) {
+      await client.from('deal_invoices').update({ receipt_on_chain_tx_hash: receiptTx }).eq('id', invoice.id);
+    }
+
+    const { data: updated } = await client.from('deal_payments').select('*').eq('id', paymentId).single();
+    return this.toResponse(updated);
   }
 
   private toResponse(row: any): DealPaymentResponse {

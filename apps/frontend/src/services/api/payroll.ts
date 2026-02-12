@@ -11,6 +11,14 @@ export interface PayrollOrganization {
   owner_id: string;
   created_at: string;
   updated_at: string | null;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  company_legal_name?: string | null;
+  company_registration_number?: string | null;
 }
 
 export interface PayrollContributor {
@@ -45,6 +53,19 @@ export interface CreateOrganizationDto {
   logoUrl?: string;
 }
 
+export interface UpdateOrganizationDto {
+  name?: string;
+  logoUrl?: string;
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
+  company_legal_name?: string;
+  company_registration_number?: string;
+}
+
 export interface CreateContributorDto {
   email: string;
   firstName?: string;
@@ -76,6 +97,9 @@ export interface UpdateContributorProfileDto {
   country?: string;
   businessName?: string;
   businessRegistrationNumber?: string;
+  walletAddress?: string;
+  network?: string;
+  tokenSymbol?: string;
 }
 
 export const payrollApi = {
@@ -104,7 +128,7 @@ export const payrollApi = {
       });
     },
 
-    async update(id: string, data: Partial<CreateOrganizationDto>, userId?: string): Promise<PayrollOrganization> {
+    async update(id: string, data: UpdateOrganizationDto, userId?: string): Promise<PayrollOrganization> {
       return fetchApi<PayrollOrganization>(`/payroll/organizations/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
@@ -148,6 +172,9 @@ export const payrollApi = {
       if (data.country !== undefined) body.country = data.country;
       if (data.businessName !== undefined) body.business_name = data.businessName;
       if (data.businessRegistrationNumber !== undefined) body.business_registration_number = data.businessRegistrationNumber;
+      if (data.walletAddress !== undefined) body.wallet_address = data.walletAddress;
+      if (data.network !== undefined) body.network = data.network;
+      if (data.tokenSymbol !== undefined) body.token_symbol = data.tokenSymbol;
       return fetchApi<PayrollContributor>(`/payroll/organizations/${orgId}/contributors/me`, {
         method: 'PATCH',
         body: JSON.stringify(body),

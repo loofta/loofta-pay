@@ -183,7 +183,7 @@ export default function DealsListPage() {
                   instructions: deal.instructions ?? "",
                   amount: deal.amount,
                   amount_currency: deal.amount_currency,
-                  deadline: deal.deadline ?? "",
+                  deadline: deal.deadline ? deal.deadline.slice(0, 10) : "",
                 });
               }
             };
@@ -200,7 +200,7 @@ export default function DealsListPage() {
                 instructions: form.instructions,
                 amount: form.amount,
                 amount_currency: form.amount_currency,
-                deadline: form.deadline,
+                deadline: form.deadline.trim(),
               });
             };
 

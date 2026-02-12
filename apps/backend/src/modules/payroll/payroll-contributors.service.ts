@@ -166,6 +166,16 @@ export class PayrollContributorsService {
     if (dto.country !== undefined) updateData.country = dto.country;
     if (dto.business_name !== undefined) updateData.business_name = dto.business_name;
     if (dto.business_registration_number !== undefined) updateData.business_registration_number = dto.business_registration_number;
+    if (dto.wallet_address !== undefined) {
+      const wallet = (dto.wallet_address || '').trim() || null;
+      const net = dto.network ?? (me as any).network;
+      if (wallet && net && !this.validateWalletAddress(wallet, net)) {
+        throw new BadRequestException(`Wallet address format is invalid for ${net} network`);
+      }
+      updateData.wallet_address = wallet;
+    }
+    if (dto.network !== undefined) updateData.network = dto.network;
+    if (dto.token_symbol !== undefined) updateData.token_symbol = dto.token_symbol;
 
     const { data, error } = await this.supabaseService.getClient()
       .from('payroll_contributors')

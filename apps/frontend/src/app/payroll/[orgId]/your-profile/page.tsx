@@ -10,14 +10,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 import { payrollApi, type PayrollContributor, type UpdateContributorProfileDto } from "@/services/api/payroll";
-import { Loader2, ArrowLeft, ShieldCheck, Building2, MapPin, User, Check } from "lucide-react";
+import { Loader2, ArrowLeft, ShieldCheck, Building2, MapPin, User, Check, Wallet } from "lucide-react";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
+import { TokenCombobox } from "@/components/TokenCombobox";
+import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { cn } from "@/lib/utils";
 
 const SECTIONS = [
   { id: "name", label: "Name", icon: User },
   { id: "address", label: "Address", icon: MapPin },
   { id: "business", label: "Business", icon: Building2 },
+  { id: "payout", label: "Payout", icon: Wallet },
   { id: "kyc", label: "KYC", icon: ShieldCheck },
 ] as const;
 
@@ -44,6 +47,10 @@ export default function YourProfilePage() {
   const [country, setCountry] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [businessRegistrationNumber, setBusinessRegistrationNumber] = useState("");
+  const [walletAddress, setWalletAddress] = useState("");
+  const [network, setNetwork] = useState<string | null>(null);
+  const [tokenSymbol, setTokenSymbol] = useState<string | null>(null);
+  const { data: tokens = [] } = useTokensQuery();
 
   const loadProfile = useCallback(async () => {
     if (!orgId || !userId) return;
@@ -61,6 +68,9 @@ export default function YourProfilePage() {
       setCountry(data.country ?? "");
       setBusinessName(data.business_name ?? "");
       setBusinessRegistrationNumber(data.business_registration_number ?? "");
+      setWalletAddress(data.wallet_address ?? "");
+      setNetwork(data.network ?? null);
+      setTokenSymbol(data.token_symbol ?? null);
     } catch {
       toast({ variant: "destructive", title: "Access denied", description: "You are not a contributor in this organization." });
     } finally {
@@ -108,6 +118,9 @@ export default function YourProfilePage() {
         country: country.trim() || undefined,
         businessName: businessName.trim() || undefined,
         businessRegistrationNumber: businessRegistrationNumber.trim() || undefined,
+        walletAddress: walletAddress.trim() || undefined,
+        network: network ?? undefined,
+        tokenSymbol: tokenSymbol ?? undefined,
       };
       const updated = await payrollApi.contributors.updateMe(orgId, dto, userId);
       setProfile(updated);
@@ -325,6 +338,47 @@ export default function YourProfilePage() {
                 placeholder="VAT, EIN, company number, etc."
                 className={inputClass}
               />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Payout — same wallet used for deals and payroll */}
+        <Card id="payout" ref={(el) => { sectionRefs.current.payout = el; }} className="border-gray-200 bg-white overflow-hidden scroll-mt-24">
+          <CardHeader className="px-6 pt-6 pb-2">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Wallet className="h-5 w-5 text-gray-600" />
+              Payout wallet
+            </CardTitle>
+            <CardDescription className="mt-1">
+              Where you receive payments from this organization. Used for both deals and payroll. Set once and it stays the same.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-6 pb-6 pt-4 space-y-4">
+            <div className="space-y-1.5">
+              <Label>Network & token</Label>
+              <TokenCombobox
+                tokens={tokens}
+                value={network && tokenSymbol ? { symbol: tokenSymbol, chain: network } : undefined}
+                onChange={(sel) => {
+                  setNetwork(sel?.chain ?? null);
+                  setTokenSymbol(sel?.symbol ?? null);
+                }}
+                placeholder="Select chain and token (e.g. Base + USDC)"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="wallet">Wallet address</Label>
+              <Input
+                id="wallet"
+                value={walletAddress}
+                onChange={(e) => setWalletAddress(e.target.value)}
+                placeholder={network ? `Your ${network} address` : "Select network first"}
+                className={inputClass}
+                disabled={!network}
+              />
+              <p className="text-xs text-gray-500">
+                Payments from deals and payroll for this org will be sent to this address.
+              </p>
             </div>
           </CardContent>
         </Card>

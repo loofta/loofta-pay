@@ -342,6 +342,60 @@ export default function PayrollOrgPage() {
   }
 
   if (isContributorView) {
+    const invited = myInvites.filter(({ invite }) => invite.status === "invited" || invite.status === "request_changes");
+    const inProgress = myInvites.filter(({ invite, deal }) => invite.status === "accepted" && deal.status !== "delivered" && deal.status !== "released");
+    const completed = myInvites.filter(({ deal }) => deal.status === "delivered" || deal.status === "released");
+
+    const renderDealSection = (
+      title: string,
+      subtitle: string,
+      items: Array<{ deal: DealResponse; invite: DealInviteResponse }>,
+      iconBg: string,
+      iconColor: string
+    ) => {
+      if (items.length === 0) return null;
+      return (
+        <div className="mb-8">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 mb-1">{title}</h2>
+          <p className="text-xs text-gray-500 mb-3">{subtitle}</p>
+          <div className="space-y-3">
+            {items.map(({ deal, invite }) => (
+              <Link key={invite.id} href={`/payroll/deal-invite/${invite.id}`}>
+                <Card className="hover:border-gray-300 transition-colors cursor-pointer overflow-hidden">
+                  <CardContent className="flex items-center justify-between gap-4 p-5">
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${iconBg} ${iconColor}`}>
+                        <Handshake className="h-6 w-6" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-medium text-gray-900 truncate">{deal.title}</p>
+                        <p className="text-sm text-gray-500 mt-0.5">
+                          {deal.amount} {deal.amount_currency}
+                          {deal.deadline && (
+                            <span className="ml-2 inline-flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              Due {new Date(deal.deadline).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                            </span>
+                          )}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <Badge variant="secondary" className="text-xs capitalize">{invite.status.replace(/_/g, " ")}</Badge>
+                          {deal.status !== invite.status && (
+                            <Badge variant="outline" className="text-xs capitalize text-gray-500">{deal.status.replace(/_/g, " ")}</Badge>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <ChevronRight className="h-5 w-5 text-gray-400 shrink-0" />
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
     return (
       <div className="min-h-screen bg-gray-50 py-8">
         <div className="max-w-2xl mx-auto px-4 sm:px-6">
@@ -361,42 +415,24 @@ export default function PayrollOrgPage() {
             )}
             <div>
               <h1 className="text-xl font-semibold text-gray-900">{organization.name}</h1>
-              <Badge variant="secondary" className="text-xs mt-0.5">Contributor</Badge>
+              <Badge variant="secondary" className="text-xs mt-0.5">Your deals as contributor</Badge>
             </div>
           </div>
-          <h2 className="text-lg font-semibold text-gray-900 mb-3">Your deals</h2>
-          <p className="text-sm text-gray-500 mb-4">Deals you were invited to. Open one to view details, accept or decline, and get paid.</p>
+
           {myInvites.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12 text-center">
                 <Handshake className="h-12 w-12 text-gray-300 mb-4" />
-                <p className="text-gray-500">No deal invites yet for this organization.</p>
+                <p className="text-gray-500">No deals yet for this organization.</p>
+                <p className="text-sm text-gray-400 mt-1">When you’re invited to a deal, it will appear here.</p>
               </CardContent>
             </Card>
           ) : (
-            <div className="grid gap-4">
-              {myInvites.map(({ deal, invite }) => (
-                <Link key={invite.id} href={`/payroll/deal-invite/${invite.id}`}>
-                  <Card className="hover:border-gray-300 transition-colors cursor-pointer">
-                    <CardContent className="flex items-center justify-between gap-4 p-6">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
-                          <Handshake className="h-5 w-5" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-medium text-gray-900 truncate">{deal.title}</p>
-                          <p className="text-sm text-gray-500">
-                            {deal.amount} {deal.amount_currency}
-                            <Badge variant="secondary" className="ml-2 text-xs">{invite.status}</Badge>
-                          </p>
-                        </div>
-                      </div>
-                      <ChevronRight className="h-5 w-5 text-gray-400 shrink-0" />
-                    </CardContent>
-                  </Card>
-                </Link>
-              ))}
-            </div>
+            <>
+              {renderDealSection("Invited", "Accept or request changes", invited, "bg-amber-100", "text-amber-700")}
+              {renderDealSection("In progress", "Work in progress — confirm delivery when done", inProgress, "bg-blue-100", "text-blue-700")}
+              {renderDealSection("Completed", "Delivery confirmed and payment released or pending", completed, "bg-green-100", "text-green-700")}
+            </>
           )}
         </div>
       </div>

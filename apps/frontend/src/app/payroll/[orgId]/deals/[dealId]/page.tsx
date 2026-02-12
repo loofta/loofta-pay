@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 import { payrollApi, type PayrollOrganization } from "@/services/api/payroll";
-import { dealsApi, type DealResponse, type DealInviteResponse } from "@/services/api/deals";
+import { dealsApi, type DealResponse, type DealInviteResponse, type DealInvoiceResponse } from "@/services/api/deals";
 import { DealContributorView } from "@/components/DealContributorView";
 import { ArrowLeft, Loader2, Clock, User, Mail, FileText, Send, Check, AlertTriangle, Copy } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -71,17 +71,20 @@ export default function DealDetailPage() {
   const [acceptDeliverySubmitting, setAcceptDeliverySubmitting] = useState(false);
   const [disputeSubmitting, setDisputeSubmitting] = useState(false);
   const [showDisputeConfirm, setShowDisputeConfirm] = useState(false);
+  const [linkedInvoice, setLinkedInvoice] = useState<(DealInvoiceResponse & { deal_title?: string; org_name?: string }) | null>(null);
 
   const loadData = useCallback(async () => {
     if (!userId || !orgId || !dealId) return;
     try {
       setLoading(true);
-      const [org, d] = await Promise.all([
+      const [org, d, inv] = await Promise.all([
         payrollApi.organizations.get(orgId, userId),
         dealsApi.deals.get(orgId, dealId, userId),
+        dealsApi.invoices.getByDeal(orgId, dealId, userId).catch(() => null),
       ]);
       setOrganization(org);
       setDeal(d);
+      setLinkedInvoice(inv ?? null);
     } catch (err: unknown) {
       toast({ variant: "destructive", title: "Error", description: err instanceof Error ? err.message : "Failed to load deal" });
     } finally {
@@ -362,7 +365,7 @@ export default function DealDetailPage() {
                 </div>
                 <div>
                   <p className="font-medium text-green-900">Payment created</p>
-                  <p className="text-sm text-green-700">View it under Payments.</p>
+                  <p className="text-sm text-green-700">View it under Pay.</p>
                 </div>
               </CardContent>
             </Card>
@@ -405,6 +408,35 @@ export default function DealDetailPage() {
               </div>
             </CardContent>
           </Card>
+
+          {linkedInvoice && !contributorInviteData && (
+            <Card className="border-gray-200/80 shadow-sm p-6">
+              <CardHeader className="px-0 pb-2 pt-0">
+                <CardTitle className="text-sm font-medium text-gray-500">Linked invoice</CardTitle>
+                <CardDescription>Invoice for this deal (from freelancer to org)</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 px-0 pb-0 pt-4">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Amount</span>
+                  <span className="font-medium text-gray-900">
+                    {linkedInvoice.amount} {linkedInvoice.amount_currency}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-500">Status</span>
+                  <Badge variant="outline" className="capitalize">
+                    {linkedInvoice.status}
+                  </Badge>
+                </div>
+                <Link href={`/payroll/${orgId}/invoices/${linkedInvoice.id}`}>
+                  <Button variant="outline" size="sm" className="w-full mt-2">
+                    <FileText className="h-4 w-4 mr-2" />
+                    View invoice
+                  </Button>
+                </Link>
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="border-gray-200/80 shadow-sm p-6">
             <CardHeader className="px-0 pb-2 pt-0">

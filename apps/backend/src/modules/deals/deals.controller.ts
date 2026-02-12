@@ -78,6 +78,18 @@ export class DealsController {
     return this.service.get(orgId, dealId, userId);
   }
 
+  @Get(':dealId/invoice')
+  @ApiOperation({ summary: 'Get linked invoice for this deal (org view)' })
+  @ApiParam({ name: 'orgId' })
+  @ApiParam({ name: 'dealId' })
+  getDealInvoice(
+    @Param('orgId') orgId: string,
+    @Param('dealId') dealId: string,
+    @Headers('x-privy-user-id') userId: string,
+  ): Promise<(import('./dto').DealInvoiceResponse & { deal_title?: string; org_name?: string }) | null> {
+    return this.service.getInvoiceByDealId(orgId, dealId, userId);
+  }
+
   @Put(':dealId')
   @ApiOperation({ summary: 'Update deal (draft/invited only)' })
   @ApiParam({ name: 'orgId' })

@@ -190,18 +190,29 @@ export class PayrollOrganizationsService {
   }
 
   /**
-   * Update an organization
+   * Update an organization (owner or admin)
    */
   async update(id: string, dto: UpdatePayrollOrganizationDto, userId: string): Promise<PayrollOrganization> {
-    // Verify ownership
     const org = await this.findOne(id, userId);
-    if (org.owner_id !== userId) {
-      throw new ForbiddenException('Only the owner can update the organization');
+    const client = this.supabaseService.getClient();
+    const isOwner = org.owner_id === userId;
+    const { data: member } = await client.from('payroll_org_members').select('role').eq('organization_id', id).eq('user_id', userId).single();
+    const isAdmin = member?.role === 'owner' || member?.role === 'admin';
+    if (!isOwner && !isAdmin) {
+      throw new ForbiddenException('Only the owner or an admin can update the organization');
     }
 
     const updateData: Record<string, any> = { updated_at: new Date().toISOString() };
     if (dto.name !== undefined) updateData.name = dto.name;
     if (dto.logoUrl !== undefined) updateData.logo_url = dto.logoUrl;
+    if (dto.address_line1 !== undefined) updateData.address_line1 = dto.address_line1;
+    if (dto.address_line2 !== undefined) updateData.address_line2 = dto.address_line2;
+    if (dto.city !== undefined) updateData.city = dto.city;
+    if (dto.state !== undefined) updateData.state = dto.state;
+    if (dto.postal_code !== undefined) updateData.postal_code = dto.postal_code;
+    if (dto.country !== undefined) updateData.country = dto.country;
+    if (dto.company_legal_name !== undefined) updateData.company_legal_name = dto.company_legal_name;
+    if (dto.company_registration_number !== undefined) updateData.company_registration_number = dto.company_registration_number;
 
     const { data, error } = await this.supabaseService.getClient()
       .from('payroll_organizations')

@@ -16,8 +16,8 @@ import {
   Upload,
   LogOut,
   Handshake,
-  Wallet,
   UserCircle,
+  Building,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -69,10 +69,10 @@ export default function PayrollLayout({
         { href: basePath, label: "Team", icon: Users },
         { href: `${basePath}/deals`, label: "Deals", icon: Handshake },
         { href: `${basePath}/pay`, label: "Pay", icon: Send },
-        { href: `${basePath}/payments`, label: "Payments", icon: Wallet },
         { href: `${basePath}/csv`, label: "Import CSV", icon: Upload },
         { href: `${basePath}/invoices`, label: "Invoices", icon: FileText },
         { href: `${basePath}/history`, label: "History", icon: History },
+        { href: `${basePath}/your-org`, label: "Your org", icon: Building },
       ]
     : [];
 

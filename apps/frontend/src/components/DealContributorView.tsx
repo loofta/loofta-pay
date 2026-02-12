@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import type { DealInvoiceResponse } from "@/services/api/deals";
 import { useAuth } from "@/hooks/useAuth";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { Button } from "@/components/ui/button";
@@ -69,7 +70,13 @@ export function DealContributorView({
   const [requestMessage, setRequestMessage] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showRequestChanges, setShowRequestChanges] = useState(false);
+  const [invoice, setInvoice] = useState<(DealInvoiceResponse & { deal_title?: string; org_name?: string }) | null>(null);
   const fromContributorPayout = Boolean(contributorPayout?.network && contributorPayout?.token_symbol);
+
+  useEffect(() => {
+    if (!userId || !inviteId) return;
+    dealsApi.invite.getInvoice(inviteId, userId).then(setInvoice).catch(() => setInvoice(null));
+  }, [userId, inviteId]);
 
   useEffect(() => {
     if (!fromContributorPayout && userId && invite?.id) {
@@ -169,9 +176,20 @@ export function DealContributorView({
   const isDelivered = deal.status === "delivered";
   const isReleased = deal.status === "released";
   const canConfirmDelivery = isAccepted && (deal.status === "accepted" || deal.status === "funded");
+  const isCompleted = isDelivered || isReleased;
   const inviteStatusLabel = invite.status.replace(/_/g, " ");
   const dealStatusLabel = deal.status.replace(/_/g, " ");
   const showDealStatusSeparately = deal.status !== invite.status;
+
+  const viewTitle = isCompleted ? "Deal completed" : isAccepted ? "Deal in progress" : "Deal invite";
+  const viewSubtitle = isCompleted
+    ? "Delivery confirmed and payment released or pending."
+    : isAccepted
+      ? "Work on the deal and confirm delivery when done."
+      : "You were invited to this deal. Accept to get paid, or request changes.";
+
+  const headerIconBg = isCompleted ? "bg-green-100" : isAccepted ? "bg-blue-100" : "bg-amber-100";
+  const headerIconColor = isCompleted ? "text-green-600" : isAccepted ? "text-blue-600" : "text-amber-600";
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-8">
@@ -183,18 +201,16 @@ export function DealContributorView({
         {backLabel}
       </Link>
 
-      {/* Header: same style as deal detail */}
+      {/* Header: title reflects invite/deal status */}
       <div className="flex flex-col gap-4">
         <div className="flex justify-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-100">
-            <Handshake className="h-7 w-7 text-amber-600" />
+          <div className={`flex h-14 w-14 items-center justify-center rounded-full ${headerIconBg}`}>
+            <Handshake className={`h-7 w-7 ${headerIconColor}`} />
           </div>
         </div>
         <div className="text-center space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Deal invite</h1>
-          <p className="text-sm text-gray-500">
-            You were invited to this deal. Accept to get paid, or request changes.
-          </p>
+          <h1 className="text-2xl font-semibold tracking-tight text-gray-900">{viewTitle}</h1>
+          <p className="text-sm text-gray-500">{viewSubtitle}</p>
         </div>
       </div>
 
@@ -308,6 +324,23 @@ export function DealContributorView({
                   Cancel
                 </Button>
               </div>
+            </div>
+          )}
+
+          {/* Invoice (from you to org) */}
+          {invoice && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
+              <p className="text-xs font-medium uppercase tracking-wider text-gray-400">Invoice</p>
+              <div className="flex justify-between items-center text-sm text-gray-700">
+                <span>{invoice.amount} {invoice.amount_currency}</span>
+                <Badge variant="outline" className="capitalize">{invoice.status}</Badge>
+              </div>
+              <Link href={`/payroll/deal-invite/${inviteId}/invoice`}>
+                <Button variant="outline" size="sm" className="w-full mt-1">
+                  <FileText className="h-4 w-4 mr-2" />
+                  View invoice
+                </Button>
+              </Link>
             </div>
           )}
 

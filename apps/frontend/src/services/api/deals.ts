@@ -63,6 +63,43 @@ export interface DealCommentResponse {
   created_at: string;
 }
 
+export interface InvoiceFromFreelancer {
+  email: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  billing_address?: string | null;
+  tva_number?: string | null;
+}
+
+export interface InvoiceToOrg {
+  name: string;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  company_legal_name?: string | null;
+  company_registration_number?: string | null;
+}
+
+export interface DealInvoiceResponse {
+  id: string;
+  deal_id: string;
+  deal_payment_id: string | null;
+  organization_id: string;
+  amount: string;
+  amount_currency: string;
+  recipient_email: string | null;
+  status: string;
+  created_at: string;
+  invoice_number?: string | null;
+  deal_title?: string;
+  org_name?: string;
+  from_freelancer?: InvoiceFromFreelancer;
+  to_org?: InvoiceToOrg;
+}
+
 export const dealsApi = {
   deals: {
     list(orgId: string, userId?: string): Promise<DealResponse[]> {
@@ -129,6 +166,17 @@ export const dealsApi = {
       });
     },
   },
+  invoices: {
+    list(orgId: string, userId?: string): Promise<DealInvoiceResponse[]> {
+      return fetchApi<DealInvoiceResponse[]>(`/payroll/organizations/${orgId}/invoices`, { userId });
+    },
+    get(orgId: string, invoiceId: string, userId?: string): Promise<DealInvoiceResponse> {
+      return fetchApi<DealInvoiceResponse>(`/payroll/organizations/${orgId}/invoices/${invoiceId}`, { userId });
+    },
+    getByDeal(orgId: string, dealId: string, userId?: string): Promise<DealInvoiceResponse | null> {
+      return fetchApi<DealInvoiceResponse | null>(`/payroll/organizations/${orgId}/deals/${dealId}/invoice`, { userId });
+    },
+  },
 
   invite: {
     get(
@@ -142,6 +190,9 @@ export const dealsApi = {
     },
     listPayments(inviteId: string, userId?: string): Promise<DealPaymentResponse[]> {
       return fetchApi<DealPaymentResponse[]>(`/deal-invites/${inviteId}/payments`, { userId });
+    },
+    getInvoice(inviteId: string, userId?: string): Promise<DealInvoiceResponse | null> {
+      return fetchApi<DealInvoiceResponse | null>(`/deal-invites/${inviteId}/invoice`, { userId });
     },
     accept(inviteId: string, data: { preferred_network?: string; preferred_token_symbol?: string }, userId?: string): Promise<DealInviteResponse> {
       return fetchApi<DealInviteResponse>(`/deal-invites/${inviteId}/accept`, {
@@ -172,10 +223,26 @@ export const dealsApi = {
     listPending(orgId: string, userId?: string): Promise<DealPaymentResponse[]> {
       return fetchApi<DealPaymentResponse[]>(`/payroll/organizations/${orgId}/deal-payments/pending`, { userId });
     },
+    listOutstanding(orgId: string, userId?: string): Promise<DealPaymentResponse[]> {
+      return fetchApi<DealPaymentResponse[]>(`/payroll/organizations/${orgId}/deal-payments/outstanding`, { userId });
+    },
     preparePay(orgId: string, paymentIds: string[], userId?: string): Promise<DealPaymentResponse[]> {
       return fetchApi<DealPaymentResponse[]>(`/payroll/organizations/${orgId}/deal-payments/prepare-pay`, {
         method: 'POST',
         body: JSON.stringify({ paymentIds }),
+        userId,
+      });
+    },
+    delete(orgId: string, paymentId: string, userId?: string): Promise<void> {
+      return fetchApi<void>(`/payroll/organizations/${orgId}/deal-payments/${paymentId}`, {
+        method: 'DELETE',
+        userId,
+      });
+    },
+    markCompleted(orgId: string, paymentId: string, txHash: string, userId?: string): Promise<DealPaymentResponse> {
+      return fetchApi<DealPaymentResponse>(`/payroll/organizations/${orgId}/deal-payments/${paymentId}/mark-completed`, {
+        method: 'POST',
+        body: JSON.stringify({ txHash }),
         userId,
       });
     },

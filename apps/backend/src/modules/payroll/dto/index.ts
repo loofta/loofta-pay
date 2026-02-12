@@ -24,6 +24,46 @@ export class UpdatePayrollOrganizationDto {
   @IsOptional()
   @IsString()
   logoUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Address line 1', name: 'address_line1' })
+  @IsOptional()
+  @IsString()
+  address_line1?: string;
+
+  @ApiPropertyOptional({ description: 'Address line 2', name: 'address_line2' })
+  @IsOptional()
+  @IsString()
+  address_line2?: string;
+
+  @ApiPropertyOptional({ description: 'City' })
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @ApiPropertyOptional({ description: 'State / region' })
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @ApiPropertyOptional({ description: 'Postal code', name: 'postal_code' })
+  @IsOptional()
+  @IsString()
+  postal_code?: string;
+
+  @ApiPropertyOptional({ description: 'Country' })
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @ApiPropertyOptional({ description: 'Legal company name', name: 'company_legal_name' })
+  @IsOptional()
+  @IsString()
+  company_legal_name?: string;
+
+  @ApiPropertyOptional({ description: 'Company registration number', name: 'company_registration_number' })
+  @IsOptional()
+  @IsString()
+  company_registration_number?: string;
 }
 
 // Contributor DTOs
@@ -151,6 +191,21 @@ export class UpdateContributorProfileDto {
   @IsOptional()
   @IsString()
   business_registration_number?: string;
+
+  @ApiPropertyOptional({ description: 'Payout wallet address', name: 'wallet_address' })
+  @IsOptional()
+  @IsString()
+  wallet_address?: string;
+
+  @ApiPropertyOptional({ description: 'Payout network (e.g. base, ethereum)', name: 'network' })
+  @IsOptional()
+  @IsString()
+  network?: string;
+
+  @ApiPropertyOptional({ description: 'Payout token symbol (e.g. USDC)', name: 'token_symbol' })
+  @IsOptional()
+  @IsString()
+  token_symbol?: string;
 }
 
 export class InviteContributorDto {
@@ -177,6 +232,14 @@ export interface PayrollOrganization {
   owner_id: string;
   created_at: string;
   updated_at: string | null;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  company_legal_name?: string | null;
+  company_registration_number?: string | null;
 }
 
 export interface PayrollContributor {

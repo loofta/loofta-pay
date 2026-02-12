@@ -39,6 +39,20 @@ export class DealInvitesController {
     return this.dealPaymentsService.listForInvite(inviteId, userId);
   }
 
+  @Get(':inviteId/invoice')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Get invoice for this deal (freelancer view)' })
+  @ApiParam({ name: 'inviteId' })
+  @ApiResponse({ status: 200, description: 'Invoice for the deal, or null' })
+  @ApiResponse({ status: 403 })
+  async getInvoice(
+    @Param('inviteId') inviteId: string,
+    @Headers('x-privy-user-id') userId: string,
+  ): Promise<(import('./dto').DealInvoiceResponse & { deal_title?: string; org_name?: string }) | null> {
+    return this.dealsService.getInvoiceForInvite(inviteId, userId);
+  }
+
   @Put(':inviteId/accept')
   @UseGuards(AuthGuard)
   @ApiSecurity('privy-auth')

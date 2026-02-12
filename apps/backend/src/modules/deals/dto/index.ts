@@ -147,6 +147,39 @@ export interface DealPaymentResponse {
   updated_at: string;
 }
 
+export interface DealInvoiceResponse {
+  id: string;
+  deal_id: string;
+  deal_payment_id: string | null;
+  organization_id: string;
+  amount: string;
+  amount_currency: string;
+  recipient_email: string | null;
+  status: string;
+  created_at: string;
+  invoice_number?: string | null;
+}
+
+export interface InvoiceFromFreelancer {
+  email: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  billing_address?: string | null;
+  tva_number?: string | null;
+}
+
+export interface InvoiceToOrg {
+  name: string;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  company_legal_name?: string | null;
+  company_registration_number?: string | null;
+}
+
 // ---- Deal comments ----
 export class CreateDealCommentDto {
   @ApiProperty({ description: 'Comment text' })

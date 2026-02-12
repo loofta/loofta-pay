@@ -17,6 +17,9 @@ import {
   DealInviteResponse,
   DealPaymentResponse,
   DealCommentResponse,
+  DealInvoiceResponse,
+  InvoiceFromFreelancer,
+  InvoiceToOrg,
 } from './dto';
 
 const DEAL_CONTRACTS_BUCKET = 'deal-contracts';
@@ -89,6 +92,16 @@ export class DealsService {
       this.logger.error('Failed to create deal:', error);
       throw new Error(`Database error: ${error.message}`);
     }
+    // Create invoice in prepared state (freelancer → org); becomes sent on confirm delivery, paid when payment done
+    await client.from('deal_invoices').insert({
+      deal_id: data.id,
+      organization_id: organizationId,
+      amount: data.amount,
+      amount_currency: data.amount_currency || 'USD',
+      recipient_email: null,
+      status: 'prepared',
+      deal_payment_id: null,
+    });
     return this.toDealResponse(data);
   }
 
@@ -151,7 +164,7 @@ export class DealsService {
     if (dto.instructions !== undefined) updatePayload.instructions = dto.instructions;
     if (dto.amount !== undefined) updatePayload.amount = dto.amount;
     if (dto.amount_currency !== undefined) updatePayload.amount_currency = dto.amount_currency;
-    if (dto.deadline !== undefined) updatePayload.deadline = dto.deadline;
+    if (dto.deadline !== undefined) updatePayload.deadline = dto.deadline === null || dto.deadline === "" ? null : dto.deadline;
     const { data, error } = await client.from('deals').update(updatePayload).eq('id', dealId).select().single();
     if (error) throw new Error(`Database error: ${error.message}`);
     return this.toDealResponse(data);
@@ -303,11 +316,20 @@ export class DealsService {
     const { data: deal } = await client.from('deals').select('*').eq('id', dealId).single();
     if (!deal) throw new NotFoundException('Deal not found');
     if (deal.status !== 'accepted' && deal.status !== 'funded') throw new BadRequestException('Deal must be accepted or funded to confirm delivery');
-    const { data: invite } = await client.from('deal_invites').select('freelancer_profile_id').eq('deal_id', dealId).eq('status', 'accepted').single();
+    const { data: invite } = await client.from('deal_invites').select('freelancer_profile_id, invitee_email').eq('deal_id', dealId).eq('status', 'accepted').single();
     if (!invite?.freelancer_profile_id) throw new BadRequestException('No accepted invite for this deal');
     const { data: profile } = await client.from('freelancer_profiles').select('user_id').eq('id', invite.freelancer_profile_id).single();
     if (!profile || profile.user_id !== userId) throw new ForbiddenException('Only the freelancer can confirm delivery');
     await client.from('deals').update({ delivery_confirmed_at: new Date().toISOString(), status: 'delivered', updated_at: new Date().toISOString() }).eq('id', dealId);
+    // Invoice: prepared → sent (visible to org)
+    const { data: inv } = await client.from('deal_invoices').select('id').eq('deal_id', dealId).limit(1).maybeSingle();
+    const invoice = Array.isArray(inv) ? inv[0] : inv;
+    if (invoice) {
+      await client.from('deal_invoices').update({
+        status: 'sent',
+        recipient_email: invite.invitee_email || null,
+      }).eq('id', invoice.id);
+    }
     const { data: updated } = await client.from('deals').select('*').eq('id', dealId).single();
     return this.toDealResponse(updated);
   }
@@ -331,7 +353,24 @@ export class DealsService {
         if (profile.preferred_token_symbol) preferredToken = profile.preferred_token_symbol;
       }
     }
-    if (!recipientWallet) throw new BadRequestException('Freelancer has not set a payout wallet yet');
+    // Fallback: use payout wallet from payroll contributor (your-profile) for this org + invitee email
+    if (!recipientWallet && invite.invitee_email) {
+      const { data: contrib } = await client
+        .from('payroll_contributors')
+        .select('wallet_address, network, token_symbol')
+        .eq('organization_id', organizationId)
+        .eq('email', invite.invitee_email.trim().toLowerCase())
+        .in('status', ['invited', 'joined'])
+        .limit(1)
+        .maybeSingle();
+      const c = Array.isArray(contrib) ? contrib[0] : contrib;
+      if (c?.wallet_address) {
+        recipientWallet = c.wallet_address;
+        if (c.network) preferredNetwork = c.network;
+        if (c.token_symbol) preferredToken = c.token_symbol;
+      }
+    }
+    if (!recipientWallet) throw new BadRequestException('Freelancer has not set a payout wallet yet. They can set it in Your Profile → Payout for this organization.');
     const { data: payment, error } = await client
       .from('deal_payments')
       .insert({
@@ -349,6 +388,25 @@ export class DealsService {
       .single();
     if (error) throw new Error(`Database error: ${error.message}`);
     await client.from('deals').update({ status: 'released', updated_at: new Date().toISOString() }).eq('id', dealId);
+    // Link existing invoice (created with deal) to this payment; if none exists (legacy), create one
+    const { data: existingInv } = await client.from('deal_invoices').select('id').eq('deal_id', dealId).limit(1).maybeSingle();
+    const existingInvoice = Array.isArray(existingInv) ? existingInv[0] : existingInv;
+    if (existingInvoice) {
+      await client.from('deal_invoices').update({
+        deal_payment_id: payment.id,
+        recipient_email: invite.invitee_email || null,
+      }).eq('id', existingInvoice.id);
+    } else {
+      await client.from('deal_invoices').insert({
+        deal_id: dealId,
+        deal_payment_id: payment.id,
+        organization_id: organizationId,
+        amount: deal.amount,
+        amount_currency: deal.amount_currency || 'USD',
+        recipient_email: invite.invitee_email || null,
+        status: 'sent',
+      });
+    }
     return this.toPaymentResponse(payment);
   }
 
@@ -419,6 +477,181 @@ export class DealsService {
       author_display,
       body: row.body,
       created_at: row.created_at,
+    };
+  }
+
+  private async getInvoicePartyDetails(
+    client: ReturnType<SupabaseService['getClient']>,
+    dealId: string,
+    organizationId: string,
+    recipientEmail: string | null,
+  ): Promise<{ from_freelancer: InvoiceFromFreelancer; to_org: InvoiceToOrg }> {
+    const { data: org } = await client
+      .from('payroll_organizations')
+      .select('name, address_line1, address_line2, city, state, postal_code, country, company_legal_name, company_registration_number')
+      .eq('id', organizationId)
+      .single();
+    const to_org: InvoiceToOrg = {
+      name: org?.name ?? '',
+      address_line1: org?.address_line1 ?? null,
+      address_line2: org?.address_line2 ?? null,
+      city: org?.city ?? null,
+      state: org?.state ?? null,
+      postal_code: org?.postal_code ?? null,
+      country: org?.country ?? null,
+      company_legal_name: org?.company_legal_name ?? null,
+      company_registration_number: org?.company_registration_number ?? null,
+    };
+    const { data: invite } = await client
+      .from('deal_invites')
+      .select('freelancer_profile_id')
+      .eq('deal_id', dealId)
+      .eq('status', 'accepted')
+      .limit(1)
+      .maybeSingle();
+    let from_freelancer: InvoiceFromFreelancer = { email: recipientEmail ?? null };
+    if (invite?.freelancer_profile_id) {
+      const { data: fp } = await client
+        .from('freelancer_profiles')
+        .select('email, first_name, last_name, billing_address, tva_number')
+        .eq('id', invite.freelancer_profile_id)
+        .single();
+      if (fp) {
+        from_freelancer = {
+          email: fp.email ?? recipientEmail ?? null,
+          first_name: fp.first_name ?? null,
+          last_name: fp.last_name ?? null,
+          billing_address: fp.billing_address ?? null,
+          tva_number: fp.tva_number ?? null,
+        };
+      }
+    }
+    return { from_freelancer, to_org };
+  }
+
+  async getInvoiceByDealId(organizationId: string, dealId: string, userId: string): Promise<(DealInvoiceResponse & { deal_title?: string; org_name?: string; from_freelancer?: InvoiceFromFreelancer; to_org?: InvoiceToOrg }) | null> {
+    await this.checkOrgAccess(organizationId, userId);
+    const client = this.supabaseService.getClient();
+    const { data: row } = await client
+      .from('deal_invoices')
+      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at, invoice_number')
+      .eq('deal_id', dealId)
+      .eq('organization_id', organizationId)
+      .limit(1)
+      .maybeSingle();
+    if (!row) return null;
+    const { data: deal } = await client.from('deals').select('title').eq('id', dealId).single();
+    const { from_freelancer, to_org } = await this.getInvoicePartyDetails(client, row.deal_id, row.organization_id, row.recipient_email ?? null);
+    return {
+      id: row.id,
+      deal_id: row.deal_id,
+      deal_payment_id: row.deal_payment_id ?? null,
+      organization_id: row.organization_id,
+      amount: row.amount,
+      amount_currency: row.amount_currency,
+      recipient_email: row.recipient_email ?? null,
+      status: row.status,
+      created_at: row.created_at,
+      invoice_number: row.invoice_number ?? null,
+      deal_title: deal?.title,
+      org_name: to_org.name,
+      from_freelancer,
+      to_org,
+    };
+  }
+
+  async getInvoice(organizationId: string, invoiceId: string, userId: string): Promise<DealInvoiceResponse & { deal_title?: string; org_name?: string; from_freelancer?: InvoiceFromFreelancer; to_org?: InvoiceToOrg }> {
+    await this.checkOrgAccess(organizationId, userId);
+    const client = this.supabaseService.getClient();
+    const { data: row, error } = await client
+      .from('deal_invoices')
+      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at, invoice_number')
+      .eq('id', invoiceId)
+      .eq('organization_id', organizationId)
+      .single();
+    if (error || !row) throw new NotFoundException('Invoice not found');
+    const { data: deal } = await client.from('deals').select('title').eq('id', row.deal_id).single();
+    const { from_freelancer, to_org } = await this.getInvoicePartyDetails(client, row.deal_id, row.organization_id, row.recipient_email ?? null);
+    return {
+      id: row.id,
+      deal_id: row.deal_id,
+      deal_payment_id: row.deal_payment_id ?? null,
+      organization_id: row.organization_id,
+      amount: row.amount,
+      amount_currency: row.amount_currency,
+      recipient_email: row.recipient_email ?? null,
+      status: row.status,
+      created_at: row.created_at,
+      invoice_number: row.invoice_number ?? null,
+      deal_title: deal?.title,
+      org_name: to_org.name,
+      from_freelancer,
+      to_org,
+    };
+  }
+
+  async listInvoices(organizationId: string, userId: string): Promise<DealInvoiceResponse[]> {
+    await this.checkOrgAccess(organizationId, userId);
+    const client = this.supabaseService.getClient();
+    const { data, error } = await client
+      .from('deal_invoices')
+      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at, invoice_number')
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: false });
+    if (error) {
+      this.logger.error('Failed to list deal invoices:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      deal_id: row.deal_id,
+      deal_payment_id: row.deal_payment_id ?? null,
+      organization_id: row.organization_id,
+      amount: row.amount,
+      amount_currency: row.amount_currency,
+      recipient_email: row.recipient_email ?? null,
+      status: row.status,
+      created_at: row.created_at,
+      invoice_number: row.invoice_number ?? null,
+    }));
+  }
+
+  /** Get invoice for a deal by invite (freelancer view). Caller must be the invitee. */
+  async getInvoiceForInvite(inviteId: string, userId: string): Promise<(DealInvoiceResponse & { deal_title?: string; org_name?: string; from_freelancer?: InvoiceFromFreelancer; to_org?: InvoiceToOrg }) | null> {
+    const client = this.supabaseService.getClient();
+    const { data: invite } = await client.from('deal_invites').select('id, deal_id, invitee_email, freelancer_profile_id').eq('id', inviteId).single();
+    if (!invite) throw new NotFoundException('Invite not found');
+    if (invite.freelancer_profile_id) {
+      const { data: profile } = await client.from('freelancer_profiles').select('user_id').eq('id', invite.freelancer_profile_id).single();
+      if (!profile || profile.user_id !== userId) throw new ForbiddenException('You do not have access to this invite');
+    } else {
+      const { data: profile } = await client.from('freelancer_profiles').select('email').eq('user_id', userId).single();
+      if (!profile || profile.email?.toLowerCase() !== invite.invitee_email?.toLowerCase()) throw new ForbiddenException('You do not have access to this invite');
+    }
+    const { data: row } = await client
+      .from('deal_invoices')
+      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at, invoice_number')
+      .eq('deal_id', invite.deal_id)
+      .limit(1)
+      .maybeSingle();
+    if (!row) return null;
+    const { data: deal } = await client.from('deals').select('title').eq('id', invite.deal_id).single();
+    const { from_freelancer, to_org } = await this.getInvoicePartyDetails(client, row.deal_id, row.organization_id, row.recipient_email ?? null);
+    return {
+      id: row.id,
+      deal_id: row.deal_id,
+      deal_payment_id: row.deal_payment_id ?? null,
+      organization_id: row.organization_id,
+      amount: row.amount,
+      amount_currency: row.amount_currency,
+      recipient_email: row.recipient_email ?? null,
+      status: row.status,
+      created_at: row.created_at,
+      invoice_number: row.invoice_number ?? null,
+      deal_title: deal?.title,
+      org_name: to_org.name,
+      from_freelancer,
+      to_org,
     };
   }
 
