@@ -28,6 +28,16 @@ export interface PayrollContributor {
   joined_at: string | null;
   created_at: string;
   updated_at: string | null;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  business_name?: string | null;
+  business_registration_number?: string | null;
+  kyc_status?: string | null;
+  kyc_verified_at?: string | null;
 }
 
 export interface CreateOrganizationDto {
@@ -55,15 +65,35 @@ export interface UpdateContributorDto {
   status?: 'invited' | 'joined' | 'removed';
 }
 
+export interface UpdateContributorProfileDto {
+  firstName?: string;
+  lastName?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  country?: string;
+  businessName?: string;
+  businessRegistrationNumber?: string;
+}
+
 export const payrollApi = {
   // Organizations
   organizations: {
     async list(userId?: string): Promise<PayrollOrganization[]> {
       return fetchApi<PayrollOrganization[]>('/payroll/organizations', { userId });
     },
+    async listAsContributor(userId?: string): Promise<(PayrollOrganization & { role: string })[]> {
+      return fetchApi<(PayrollOrganization & { role: string })[]>('/payroll/organizations/as-contributor', { userId });
+    },
 
     async get(id: string, userId?: string): Promise<PayrollOrganization> {
       return fetchApi<PayrollOrganization>(`/payroll/organizations/${id}`, { userId });
+    },
+
+    async getMyRole(id: string, userId?: string): Promise<{ role: 'owner' | 'admin' | 'member' | 'contributor' }> {
+      return fetchApi<{ role: 'owner' | 'admin' | 'member' | 'contributor' }>(`/payroll/organizations/${id}/my-role`, { userId });
     },
 
     async create(data: CreateOrganizationDto, userId?: string): Promise<PayrollOrganization> {
@@ -99,6 +129,30 @@ export const payrollApi = {
 
     async get(orgId: string, contributorId: string, userId?: string): Promise<PayrollContributor> {
       return fetchApi<PayrollContributor>(`/payroll/organizations/${orgId}/contributors/${contributorId}`, { userId });
+    },
+
+    async getMe(orgId: string, userId?: string): Promise<PayrollContributor> {
+      return fetchApi<PayrollContributor>(`/payroll/organizations/${orgId}/contributors/me`, { userId });
+    },
+
+    async updateMe(orgId: string, data: UpdateContributorProfileDto, userId?: string): Promise<PayrollContributor> {
+      // API expects snake_case (backend ValidationPipe whitelist)
+      const body: Record<string, string | undefined> = {};
+      if (data.firstName !== undefined) body.first_name = data.firstName;
+      if (data.lastName !== undefined) body.last_name = data.lastName;
+      if (data.addressLine1 !== undefined) body.address_line1 = data.addressLine1;
+      if (data.addressLine2 !== undefined) body.address_line2 = data.addressLine2;
+      if (data.city !== undefined) body.city = data.city;
+      if (data.state !== undefined) body.state = data.state;
+      if (data.postalCode !== undefined) body.postal_code = data.postalCode;
+      if (data.country !== undefined) body.country = data.country;
+      if (data.businessName !== undefined) body.business_name = data.businessName;
+      if (data.businessRegistrationNumber !== undefined) body.business_registration_number = data.businessRegistrationNumber;
+      return fetchApi<PayrollContributor>(`/payroll/organizations/${orgId}/contributors/me`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+        userId,
+      });
     },
 
     async create(orgId: string, data: CreateContributorDto, userId?: string): Promise<PayrollContributor> {

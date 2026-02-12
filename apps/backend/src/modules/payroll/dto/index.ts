@@ -100,6 +100,59 @@ export class UpdateContributorDto {
   status?: 'invited' | 'joined' | 'removed';
 }
 
+/** Self-service update for contributor profile (name, address, business). API expects snake_case. */
+export class UpdateContributorProfileDto {
+  @ApiPropertyOptional({ description: 'First name', name: 'first_name' })
+  @IsOptional()
+  @IsString()
+  first_name?: string;
+
+  @ApiPropertyOptional({ description: 'Last name', name: 'last_name' })
+  @IsOptional()
+  @IsString()
+  last_name?: string;
+
+  @ApiPropertyOptional({ description: 'Address line 1', name: 'address_line1' })
+  @IsOptional()
+  @IsString()
+  address_line1?: string;
+
+  @ApiPropertyOptional({ description: 'Address line 2', name: 'address_line2' })
+  @IsOptional()
+  @IsString()
+  address_line2?: string;
+
+  @ApiPropertyOptional({ description: 'City' })
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @ApiPropertyOptional({ description: 'State / region' })
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @ApiPropertyOptional({ description: 'Postal code', name: 'postal_code' })
+  @IsOptional()
+  @IsString()
+  postal_code?: string;
+
+  @ApiPropertyOptional({ description: 'Country' })
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @ApiPropertyOptional({ description: 'Business name', name: 'business_name' })
+  @IsOptional()
+  @IsString()
+  business_name?: string;
+
+  @ApiPropertyOptional({ description: 'Business registration number', name: 'business_registration_number' })
+  @IsOptional()
+  @IsString()
+  business_registration_number?: string;
+}
+
 export class InviteContributorDto {
   @ApiProperty({ description: 'Contributor email' })
   @IsEmail()
@@ -141,6 +194,16 @@ export interface PayrollContributor {
   joined_at: string | null;
   created_at: string;
   updated_at: string | null;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  business_name?: string | null;
+  business_registration_number?: string | null;
+  kyc_status?: string | null;
+  kyc_verified_at?: string | null;
 }
 
 export type ContributorStatus = 'invited' | 'joined' | 'removed';

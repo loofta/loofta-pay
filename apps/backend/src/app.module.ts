@@ -16,6 +16,7 @@ import { LotteryModule } from './modules/lottery/lottery.module';
 import { CronModule } from './modules/cron/cron.module';
 import { HealthModule } from './modules/health/health.module';
 import { PayrollModule } from './modules/payroll/payroll.module';
+import { DealsModule } from './modules/deals/deals.module';
 import { UsersModule } from './modules/users/users.module';
 
 @Module({
@@ -61,6 +62,7 @@ import { UsersModule } from './modules/users/users.module';
     LotteryModule,
     CronModule,
     PayrollModule,
+    DealsModule,
     UsersModule,
   ],
 })

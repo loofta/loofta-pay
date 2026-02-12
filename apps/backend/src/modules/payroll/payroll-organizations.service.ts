@@ -87,7 +87,33 @@ export class PayrollOrganizationsService {
   }
 
   /**
-   * Get a single organization by ID
+   * Get organizations where the user is a contributor (in payroll_contributors, matched by email from freelancer_profile).
+   */
+  async findAllAsContributor(userId: string): Promise<(PayrollOrganization & { role: string })[]> {
+    const client = this.supabaseService.getClient();
+    const { data: profile } = await client.from('freelancer_profiles').select('email').eq('user_id', userId).single();
+    if (!profile?.email) return [];
+
+    const { data: contribs, error } = await client
+      .from('payroll_contributors')
+      .select('organization_id')
+      .eq('email', profile.email)
+      .in('status', ['invited', 'joined']);
+
+    if (error || !contribs?.length) return [];
+    const orgIds = [...new Set(contribs.map((c: { organization_id: string }) => c.organization_id))];
+
+    const { data: orgs } = await client
+      .from('payroll_organizations')
+      .select('*')
+      .in('id', orgIds)
+      .order('created_at', { ascending: false });
+
+    return (orgs || []).map((o: PayrollOrganization) => ({ ...o, role: 'contributor' }));
+  }
+
+  /**
+   * Get a single organization by ID (allowed for owner, member, or contributor)
    */
   async findOne(id: string, userId: string): Promise<PayrollOrganization> {
     const { data, error } = await this.supabaseService.getClient()
@@ -100,7 +126,7 @@ export class PayrollOrganizationsService {
       throw new NotFoundException(`Organization not found`);
     }
 
-    // Check access
+    // Check access: owner, member, or contributor (by email in payroll_contributors)
     if (data.owner_id !== userId) {
       const { data: membership } = await this.supabaseService.getClient()
         .from('payroll_org_members')
@@ -110,11 +136,57 @@ export class PayrollOrganizationsService {
         .single();
 
       if (!membership) {
-        throw new ForbiddenException('You do not have access to this organization');
+        const { data: profile } = await this.supabaseService.getClient()
+          .from('freelancer_profiles')
+          .select('email')
+          .eq('user_id', userId)
+          .single();
+        const { data: contribRows } = profile?.email
+          ? await this.supabaseService.getClient()
+              .from('payroll_contributors')
+              .select('id')
+              .eq('organization_id', id)
+              .eq('email', profile.email)
+              .in('status', ['invited', 'joined'])
+              .limit(1)
+          : { data: null };
+        if (!contribRows?.length) {
+          throw new ForbiddenException('You do not have access to this organization');
+        }
       }
     }
 
     return data;
+  }
+
+  /**
+   * Get current user's role for an organization (owner | admin | member | contributor).
+   * Used by frontend to show contributor-only nav.
+   */
+  async getMyRole(orgId: string, userId: string): Promise<{ role: 'owner' | 'admin' | 'member' | 'contributor' }> {
+    const client = this.supabaseService.getClient();
+    const { data: org } = await client.from('payroll_organizations').select('id, owner_id').eq('id', orgId).single();
+    if (!org) throw new NotFoundException('Organization not found');
+    if (org.owner_id === userId) return { role: 'owner' };
+    const { data: member } = await client
+      .from('payroll_org_members')
+      .select('role')
+      .eq('organization_id', orgId)
+      .eq('user_id', userId)
+      .single();
+    if (member) return { role: member.role as 'admin' | 'member' };
+    const { data: profile } = await client.from('freelancer_profiles').select('email').eq('user_id', userId).single();
+    if (profile?.email) {
+      const { data: contribs } = await client
+        .from('payroll_contributors')
+        .select('id')
+        .eq('organization_id', orgId)
+        .eq('email', profile.email)
+        .in('status', ['invited', 'joined'])
+        .limit(1);
+      if (Array.isArray(contribs) && contribs.length > 0) return { role: 'contributor' };
+    }
+    throw new ForbiddenException('You do not have access to this organization');
   }
 
   /**

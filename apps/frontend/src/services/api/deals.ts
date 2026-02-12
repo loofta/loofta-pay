@@ -1,0 +1,247 @@
+/**
+ * Deals & freelancer API (payroll product)
+ */
+
+import { fetchApi } from './client';
+
+export interface DealResponse {
+  id: string;
+  organization_id: string;
+  created_by: string;
+  title: string;
+  description: string | null;
+  instructions: string | null;
+  contract_attachment_path: string | null;
+  contract_attachment_url?: string | null;
+  amount: string;
+  amount_currency: string;
+  status: string;
+  deadline: string | null;
+  delivery_confirmed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  invites?: DealInviteResponse[];
+}
+
+export interface DealInviteResponse {
+  id: string;
+  deal_id: string;
+  freelancer_profile_id: string | null;
+  invitee_email: string;
+  status: string;
+  request_changes_message: string | null;
+  preferred_network: string | null;
+  preferred_token_symbol: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DealPaymentResponse {
+  id: string;
+  deal_id: string;
+  deal_invite_id: string;
+  organization_id: string;
+  amount: string;
+  amount_currency: string;
+  recipient_wallet: string;
+  preferred_network: string;
+  preferred_token_symbol: string;
+  status: string;
+  deposit_address: string | null;
+  intent_deadline: string | null;
+  tx_hash: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DealCommentResponse {
+  id: string;
+  deal_id: string;
+  author_user_id: string;
+  author_display: string;
+  body: string;
+  created_at: string;
+}
+
+export const dealsApi = {
+  deals: {
+    list(orgId: string, userId?: string): Promise<DealResponse[]> {
+      return fetchApi<DealResponse[]>(`/payroll/organizations/${orgId}/deals`, { userId });
+    },
+    listMyInvites(orgId: string, userId?: string): Promise<Array<{ deal: DealResponse; invite: DealInviteResponse }>> {
+      return fetchApi<Array<{ deal: DealResponse; invite: DealInviteResponse }>>(`/payroll/organizations/${orgId}/deals/my-invites`, { userId });
+    },
+    get(orgId: string, dealId: string, userId?: string): Promise<DealResponse> {
+      return fetchApi<DealResponse>(`/payroll/organizations/${orgId}/deals/${dealId}`, { userId });
+    },
+    create(orgId: string, data: { title: string; description?: string; instructions?: string; amount: string; amount_currency?: string; deadline?: string }, userId?: string): Promise<DealResponse> {
+      return fetchApi<DealResponse>(`/payroll/organizations/${orgId}/deals`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+        userId,
+      });
+    },
+    update(orgId: string, dealId: string, data: Partial<{ title: string; description: string; instructions: string; amount: string; amount_currency: string; deadline: string }>, userId?: string): Promise<DealResponse> {
+      return fetchApi<DealResponse>(`/payroll/organizations/${orgId}/deals/${dealId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+        userId,
+      });
+    },
+    uploadContract(orgId: string, dealId: string, file: File, userId?: string): Promise<{ url: string }> {
+      const form = new FormData();
+      form.append('file', file);
+      const headers: Record<string, string> = {};
+      if (userId) headers['x-privy-user-id'] = userId;
+      return fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/payroll/organizations/${orgId}/deals/${dealId}/contract`, {
+        method: 'POST',
+        body: form,
+        headers,
+      }).then((r) => (r.ok ? r.json() : Promise.reject(new Error('Upload failed'))));
+    },
+    invite(orgId: string, dealId: string, data: { invitee_email: string }, userId?: string): Promise<DealInviteResponse> {
+      return fetchApi<DealInviteResponse>(`/payroll/organizations/${orgId}/deals/${dealId}/invites`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+        userId,
+      });
+    },
+    acceptDelivery(orgId: string, dealId: string, userId?: string): Promise<DealPaymentResponse> {
+      return fetchApi<DealPaymentResponse>(`/payroll/organizations/${orgId}/deals/${dealId}/accept-delivery`, {
+        method: 'POST',
+        userId,
+      });
+    },
+    createDispute(orgId: string, dealId: string, userId?: string): Promise<DealResponse> {
+      return fetchApi<DealResponse>(`/payroll/organizations/${orgId}/deals/${dealId}/dispute`, {
+        method: 'POST',
+        userId,
+      });
+    },
+    listComments(orgId: string, dealId: string, userId?: string): Promise<DealCommentResponse[]> {
+      return fetchApi<DealCommentResponse[]>(`/payroll/organizations/${orgId}/deals/${dealId}/comments`, { userId });
+    },
+    addComment(orgId: string, dealId: string, body: string, userId?: string): Promise<DealCommentResponse> {
+      return fetchApi<DealCommentResponse>(`/payroll/organizations/${orgId}/deals/${dealId}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ body }),
+        userId,
+      });
+    },
+  },
+
+  invite: {
+    get(
+      inviteId: string,
+      userId?: string,
+    ): Promise<{ invite: DealInviteResponse; deal: DealResponse; contributor_payout?: { network: string; token_symbol: string } }> {
+      return fetchApi<{ invite: DealInviteResponse; deal: DealResponse; contributor_payout?: { network: string; token_symbol: string } }>(
+        `/deal-invites/${inviteId}`,
+        { userId },
+      );
+    },
+    listPayments(inviteId: string, userId?: string): Promise<DealPaymentResponse[]> {
+      return fetchApi<DealPaymentResponse[]>(`/deal-invites/${inviteId}/payments`, { userId });
+    },
+    accept(inviteId: string, data: { preferred_network?: string; preferred_token_symbol?: string }, userId?: string): Promise<DealInviteResponse> {
+      return fetchApi<DealInviteResponse>(`/deal-invites/${inviteId}/accept`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+        userId,
+      });
+    },
+    decline(inviteId: string, userId?: string): Promise<DealInviteResponse> {
+      return fetchApi<DealInviteResponse>(`/deal-invites/${inviteId}/decline`, { method: 'PUT', userId });
+    },
+    requestChanges(inviteId: string, data: { message: string }, userId?: string): Promise<DealInviteResponse> {
+      return fetchApi<DealInviteResponse>(`/deal-invites/${inviteId}/request-changes`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+        userId,
+      });
+    },
+    confirmDelivery(inviteId: string, userId?: string): Promise<DealResponse> {
+      return fetchApi<DealResponse>(`/deal-invites/${inviteId}/confirm-delivery`, {
+        method: 'POST',
+        userId,
+      });
+    },
+  },
+
+  payments: {
+    listPending(orgId: string, userId?: string): Promise<DealPaymentResponse[]> {
+      return fetchApi<DealPaymentResponse[]>(`/payroll/organizations/${orgId}/deal-payments/pending`, { userId });
+    },
+    preparePay(orgId: string, paymentIds: string[], userId?: string): Promise<DealPaymentResponse[]> {
+      return fetchApi<DealPaymentResponse[]>(`/payroll/organizations/${orgId}/deal-payments/prepare-pay`, {
+        method: 'POST',
+        body: JSON.stringify({ paymentIds }),
+        userId,
+      });
+    },
+  },
+
+  freelancerProfile: {
+    get(userId?: string): Promise<FreelancerProfileResponse | null> {
+      return fetchApi<FreelancerProfileResponse | null>('/freelancer-profile', { userId });
+    },
+    create(data: CreateFreelancerProfileDto, userId?: string): Promise<FreelancerProfileResponse> {
+      return fetchApi<FreelancerProfileResponse>('/freelancer-profile', {
+        method: 'POST',
+        body: JSON.stringify(data),
+        userId,
+      });
+    },
+    update(data: UpdateFreelancerProfileDto, userId?: string): Promise<FreelancerProfileResponse> {
+      return fetchApi<FreelancerProfileResponse>('/freelancer-profile', {
+        method: 'PUT',
+        body: JSON.stringify(data),
+        userId,
+      });
+    },
+  },
+};
+
+export interface FreelancerProfileResponse {
+  id: string;
+  user_id: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  wallet_address: string | null;
+  preferred_network: string | null;
+  preferred_token_symbol: string | null;
+  billing_address: string | null;
+  tva_number: string | null;
+  verify_service: string | null;
+  verify_status: string;
+  kyc_required: boolean;
+  kyc_status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateFreelancerProfileDto {
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  wallet_address?: string;
+  preferred_network?: string;
+  preferred_token_symbol?: string;
+  billing_address?: string;
+  tva_number?: string;
+  verify_service?: string;
+  kyc_required?: boolean;
+}
+
+export interface UpdateFreelancerProfileDto {
+  first_name?: string;
+  last_name?: string;
+  wallet_address?: string;
+  preferred_network?: string;
+  preferred_token_symbol?: string;
+  billing_address?: string;
+  tva_number?: string;
+  verify_service?: string;
+  kyc_required?: boolean;
+}

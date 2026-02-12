@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
+import { payrollApi } from "@/services/api/payroll";
 import { Button } from "@/components/ui/button";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import {
@@ -13,6 +15,9 @@ import {
   History,
   Upload,
   LogOut,
+  Handshake,
+  Wallet,
+  UserCircle,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -20,7 +25,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "../../components/ui/dropdown-menu";
 
 /** Payroll area layout: no main site header, minimal nav, subdomain-ready */
 export default function PayrollLayout({
@@ -38,11 +43,33 @@ export default function PayrollLayout({
   const orgId = pathname?.match(/^\/payroll\/([a-f0-9-]{36})(?:\/|$)/)?.[1];
   const isOrgPage = Boolean(orgId);
   const basePath = orgId ? `/payroll/${orgId}` : "/payroll";
+  const [orgRole, setOrgRole] = useState<"owner" | "admin" | "member" | "contributor" | null>(null);
 
+  useEffect(() => {
+    if (!orgId || !userId) {
+      setOrgRole(null);
+      return;
+    }
+    payrollApi.organizations
+      .getMyRole(orgId, userId)
+      .then((r) => setOrgRole(r.role))
+      .catch(() => setOrgRole(null));
+  }, [orgId, userId]);
+
+  const isContributor = orgRole === "contributor";
   const navItems = isOrgPage
-    ? [
+    ? isContributor
+      ? [
+        { href: `${basePath}/deals`, label: "Deals", icon: Handshake },
+        { href: `${basePath}/invoices`, label: "Invoices", icon: FileText },
+        { href: `${basePath}/history`, label: "History", icon: History },
+        { href: `${basePath}/your-profile`, label: "Your Profile", icon: UserCircle },
+      ]
+      : [
         { href: basePath, label: "Team", icon: Users },
+        { href: `${basePath}/deals`, label: "Deals", icon: Handshake },
         { href: `${basePath}/pay`, label: "Pay", icon: Send },
+        { href: `${basePath}/payments`, label: "Payments", icon: Wallet },
         { href: `${basePath}/csv`, label: "Import CSV", icon: Upload },
         { href: `${basePath}/invoices`, label: "Invoices", icon: FileText },
         { href: `${basePath}/history`, label: "History", icon: History },

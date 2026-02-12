@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 import { payrollApi, type PayrollOrganization, type PayrollContributor } from "@/services/api/payroll";
+import { dealsApi, type DealResponse, type DealInviteResponse } from "@/services/api/deals";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import {
@@ -26,6 +28,8 @@ import {
   X,
   Link2,
   Copy,
+  Handshake,
+  ChevronRight,
 } from "lucide-react";
 import {
   Dialog,
@@ -74,6 +78,8 @@ export default function PayrollOrgPage() {
 
   const [organization, setOrganization] = useState<PayrollOrganization | null>(null);
   const [contributors, setContributors] = useState<PayrollContributor[]>([]);
+  const [isContributorView, setIsContributorView] = useState(false);
+  const [myInvites, setMyInvites] = useState<Array<{ deal: DealResponse; invite: DealInviteResponse }>>([]);
   const [loading, setLoading] = useState(true);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -108,12 +114,17 @@ export default function PayrollOrgPage() {
     if (!userId || !orgId) return;
     try {
       setLoading(true);
-      const [org, contribs] = await Promise.all([
-        payrollApi.organizations.get(orgId, userId),
-        payrollApi.contributors.list(orgId, userId),
-      ]);
+      const org = await payrollApi.organizations.get(orgId, userId);
       setOrganization(org);
-      setContributors(contribs);
+      try {
+        const contribs = await payrollApi.contributors.list(orgId, userId);
+        setContributors(contribs);
+        setIsContributorView(false);
+      } catch {
+        const invites = await dealsApi.deals.listMyInvites(orgId, userId);
+        setMyInvites(invites);
+        setIsContributorView(true);
+      }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Please try again";
       toast({ variant: "destructive", title: "Failed to load organization", description: message });
@@ -330,6 +341,68 @@ export default function PayrollOrgPage() {
     );
   }
 
+  if (isContributorView) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-8">
+        <div className="max-w-2xl mx-auto px-4 sm:px-6">
+          <Button variant="ghost" onClick={() => router.push("/payroll")} className="mb-4">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to Organizations
+          </Button>
+          <div className="flex items-center gap-3 mb-6">
+            {organization.logo_url ? (
+              <div className="relative h-12 w-12 shrink-0 rounded-xl overflow-hidden">
+                <Image src={organization.logo_url} alt={organization.name} fill className="object-cover" />
+              </div>
+            ) : (
+              <div className="h-12 w-12 rounded-xl bg-amber-100 flex items-center justify-center">
+                <Handshake className="h-6 w-6 text-amber-700" />
+              </div>
+            )}
+            <div>
+              <h1 className="text-xl font-semibold text-gray-900">{organization.name}</h1>
+              <Badge variant="secondary" className="text-xs mt-0.5">Contributor</Badge>
+            </div>
+          </div>
+          <h2 className="text-lg font-semibold text-gray-900 mb-3">Your deals</h2>
+          <p className="text-sm text-gray-500 mb-4">Deals you were invited to. Open one to view details, accept or decline, and get paid.</p>
+          {myInvites.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                <Handshake className="h-12 w-12 text-gray-300 mb-4" />
+                <p className="text-gray-500">No deal invites yet for this organization.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-4">
+              {myInvites.map(({ deal, invite }) => (
+                <Link key={invite.id} href={`/payroll/deal-invite/${invite.id}`}>
+                  <Card className="hover:border-gray-300 transition-colors cursor-pointer">
+                    <CardContent className="flex items-center justify-between gap-4 p-6">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+                          <Handshake className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-medium text-gray-900 truncate">{deal.title}</p>
+                          <p className="text-sm text-gray-500">
+                            {deal.amount} {deal.amount_currency}
+                            <Badge variant="secondary" className="ml-2 text-xs">{invite.status}</Badge>
+                          </p>
+                        </div>
+                      </div>
+                      <ChevronRight className="h-5 w-5 text-gray-400 shrink-0" />
+                    </CardContent>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -391,10 +464,12 @@ export default function PayrollOrgPage() {
               <div className="text-center py-12">
                 <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                 <p className="text-gray-500 mb-4">No contributors yet</p>
-                <GradientActionButton onClick={() => setShowAddDialog(true)} className="w-auto px-5">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add your first contributor
-                </GradientActionButton>
+                <div className="flex justify-end">
+                  <GradientActionButton onClick={() => setShowAddDialog(true)} className="w-full sm:w-auto px-5">
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add your first contributor
+                  </GradientActionButton>
+                </div>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -585,7 +660,7 @@ export default function PayrollOrgPage() {
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex flex-row justify-end gap-2">
             <Button variant="outline" onClick={() => { setShowAddDialog(false); resetForm(); }} disabled={saving}>
               Cancel
             </Button>
@@ -671,7 +746,7 @@ export default function PayrollOrgPage() {
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex flex-row justify-end gap-2">
             <Button variant="outline" onClick={() => { setShowEditDialog(false); setEditingContributor(null); resetForm(); }} disabled={saving}>
               Cancel
             </Button>

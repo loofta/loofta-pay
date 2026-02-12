@@ -7,6 +7,7 @@ import { PayrollContributorsService } from './payroll-contributors.service';
 import { PayrollInviteController } from './payroll-invite.controller';
 import { PayrollRunsController } from './payroll-runs.controller';
 import { PayrollRunsService } from './payroll-runs.service';
+import { PayrollReceiptLoggerService } from './payroll-receipt-logger.service';
 
 @Module({
   imports: [IntentsModule],
@@ -16,7 +17,7 @@ import { PayrollRunsService } from './payroll-runs.service';
     PayrollInviteController,
     PayrollRunsController,
   ],
-  providers: [PayrollOrganizationsService, PayrollContributorsService, PayrollRunsService],
-  exports: [PayrollOrganizationsService, PayrollContributorsService, PayrollRunsService],
+  providers: [PayrollOrganizationsService, PayrollContributorsService, PayrollRunsService, PayrollReceiptLoggerService],
+  exports: [PayrollOrganizationsService, PayrollContributorsService, PayrollRunsService, PayrollReceiptLoggerService],
 })
 export class PayrollModule {}

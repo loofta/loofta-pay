@@ -40,3 +40,7 @@ apps/frontend/.next
 
 # Vercel
 .vercel
+
+# NEAR / Rust contract build
+contracts/**/target/
+*.wasm

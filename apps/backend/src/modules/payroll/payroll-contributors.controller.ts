@@ -22,7 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { AuthGuard } from '@/common/guards';
 import { PayrollContributorsService } from './payroll-contributors.service';
-import { CreateContributorDto, UpdateContributorDto, PayrollContributor, ContributorStatus } from './dto';
+import { CreateContributorDto, UpdateContributorDto, UpdateContributorProfileDto, PayrollContributor, ContributorStatus } from './dto';
 
 @ApiTags('payroll/contributors')
 @Controller('payroll/organizations/:orgId/contributors')
@@ -61,6 +61,36 @@ export class PayrollContributorsController {
     @Headers('x-privy-user-id') userId: string,
   ): Promise<PayrollContributor[]> {
     return this.service.findAll(orgId, userId, status);
+  }
+
+  /**
+   * Get my contributor record for this org (for contributor info page)
+   */
+  @Get('me')
+  @ApiOperation({ summary: 'Get my contributor profile in this organization' })
+  @ApiParam({ name: 'orgId', description: 'Organization UUID' })
+  @ApiResponse({ status: 200, description: 'Current user contributor record' })
+  @ApiResponse({ status: 404, description: 'Not a contributor' })
+  async findMe(
+    @Param('orgId') orgId: string,
+    @Headers('x-privy-user-id') userId: string,
+  ): Promise<PayrollContributor> {
+    return this.service.findMe(orgId, userId);
+  }
+
+  /**
+   * Update my contributor profile (address, business registration)
+   */
+  @Patch('me')
+  @ApiOperation({ summary: 'Update my contributor profile' })
+  @ApiParam({ name: 'orgId', description: 'Organization UUID' })
+  @ApiResponse({ status: 200, description: 'Updated contributor' })
+  async updateMe(
+    @Param('orgId') orgId: string,
+    @Body() dto: UpdateContributorProfileDto,
+    @Headers('x-privy-user-id') userId: string,
+  ): Promise<PayrollContributor> {
+    return this.service.updateMe(orgId, userId, dto);
   }
 
   /**

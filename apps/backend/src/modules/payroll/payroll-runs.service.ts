@@ -14,6 +14,8 @@ import {
   PayrollRunResponse,
   PayrollRunEntryWithIntent,
 } from './dto';
+import { computeBatchHash } from './payroll-batch-hash';
+import { PayrollReceiptLoggerService } from './payroll-receipt-logger.service';
 
 @Injectable()
 export class PayrollRunsService {
@@ -23,6 +25,7 @@ export class PayrollRunsService {
     private readonly supabaseService: SupabaseService,
     private readonly payrollOrgsService: PayrollOrganizationsService,
     private readonly nearIntentsService: NearIntentsService,
+    private readonly receiptLogger: PayrollReceiptLoggerService,
   ) {}
 
   /**
@@ -220,9 +223,31 @@ export class PayrollRunsService {
     }
 
     const runStatus = anyIntentCreated ? 'pending_deposit' : 'draft';
+
+    // On-chain receipt logger: batch commitment (hash only, no amounts) + nonce for idempotency.
+    const batchHash = computeBatchHash(
+      entriesWithIntents.map((e) => ({ id: e.id, recipient_address: e.recipient_address, amount: e.amount })),
+    );
+    const { data: maxNonceRows } = await client
+      .from('payroll_runs')
+      .select('authorization_nonce')
+      .eq('authorizer_id', userId)
+      .not('authorization_nonce', 'is', null)
+      .order('authorization_nonce', { ascending: false })
+      .limit(1);
+    const nextNonce = ((maxNonceRows?.[0] as { authorization_nonce?: number } | undefined)?.authorization_nonce ?? 0) + 1;
+    const assetId = `${tokenSymbol}:${network}`;
+
     await client
       .from('payroll_runs')
-      .update({ status: runStatus, updated_at: new Date().toISOString() })
+      .update({
+        status: runStatus,
+        batch_hash: batchHash,
+        authorizer_id: userId,
+        authorization_nonce: nextNonce,
+        asset_id: assetId,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', run.id);
 
     return {
@@ -242,7 +267,7 @@ export class PayrollRunsService {
 
     const { data, error } = await this.supabaseService.getClient()
       .from('payroll_runs')
-      .select('id, organization_id, created_by, status, total_entries, completed_entries, created_at, updated_at')
+      .select('id, organization_id, created_by, status, total_entries, completed_entries, created_at, updated_at, batch_hash, receipt_on_chain_tx_hash')
       .eq('organization_id', organizationId)
       .order('created_at', { ascending: false });
 
@@ -263,7 +288,7 @@ export class PayrollRunsService {
 
     const { data: run, error: runError } = await this.supabaseService.getClient()
       .from('payroll_runs')
-      .select('id, organization_id, created_by, status, total_entries, completed_entries, created_at, updated_at')
+      .select('id, organization_id, created_by, status, total_entries, completed_entries, created_at, updated_at, batch_hash, receipt_on_chain_tx_hash')
       .eq('id', runId)
       .eq('organization_id', organizationId)
       .single();
@@ -417,14 +442,20 @@ export class PayrollRunsService {
 
       if (run && status === 'completed') {
         const newCompleted = (run.completed_entries || 0) + 1;
+        const runNowCompleted = newCompleted >= run.total_entries;
         await client
           .from('payroll_runs')
           .update({
             completed_entries: newCompleted,
-            status: newCompleted >= run.total_entries ? 'completed' : 'processing',
+            status: runNowCompleted ? 'completed' : 'processing',
             updated_at: new Date().toISOString(),
           })
           .eq('id', entry.payroll_run_id);
+        if (runNowCompleted) {
+          this.receiptLogger.postReceiptForRunIfCompleted(entry.payroll_run_id).catch((e) => {
+            this.logger.warn('Post receipt for run failed:', (e as Error).message);
+          });
+        }
       } else if (run && (status === 'failed' || status === 'expired')) {
         await client
           .from('payroll_runs')

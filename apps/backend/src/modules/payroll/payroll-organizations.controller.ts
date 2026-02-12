@@ -56,6 +56,32 @@ export class PayrollOrganizationsController {
   }
 
   /**
+   * Get organizations where the user is a contributor (by email in payroll_contributors)
+   */
+  @Get('as-contributor')
+  @ApiOperation({ summary: 'List organizations where I am a contributor' })
+  @ApiResponse({ status: 200, description: 'Organizations with role: contributor' })
+  async findAllAsContributor(
+    @Headers('x-privy-user-id') userId: string,
+  ): Promise<(PayrollOrganization & { role: string })[]> {
+    return this.service.findAllAsContributor(userId);
+  }
+
+  /**
+   * Get current user's role for this organization (for contributor nav)
+   */
+  @Get(':id/my-role')
+  @ApiOperation({ summary: 'Get my role in this organization' })
+  @ApiParam({ name: 'id', description: 'Organization UUID' })
+  @ApiResponse({ status: 200, description: 'Role: owner | admin | member | contributor' })
+  async getMyRole(
+    @Param('id') id: string,
+    @Headers('x-privy-user-id') userId: string,
+  ): Promise<{ role: 'owner' | 'admin' | 'member' | 'contributor' }> {
+    return this.service.getMyRole(id, userId);
+  }
+
+  /**
    * Get a single organization
    */
   @Get(':id')

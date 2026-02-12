@@ -2,7 +2,7 @@ import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenEx
 import { randomBytes } from 'crypto';
 import { SupabaseService } from '@/database/supabase.service';
 import { PayrollOrganizationsService } from './payroll-organizations.service';
-import { CreateContributorDto, UpdateContributorDto, PayrollContributor, ContributorStatus, OnboardContributorDto } from './dto';
+import { CreateContributorDto, UpdateContributorDto, UpdateContributorProfileDto, PayrollContributor, ContributorStatus, OnboardContributorDto } from './dto';
 
 export interface InviteInfo {
   organizationName: string;
@@ -128,6 +128,58 @@ export class PayrollContributorsService {
     }
 
     return data || [];
+  }
+
+  /**
+   * Get the current user's contributor record for this org (by email match). For contributor info page.
+   */
+  async findMe(organizationId: string, userId: string): Promise<PayrollContributor> {
+    const client = this.supabaseService.getClient();
+    const { data: profile } = await client.from('freelancer_profiles').select('email').eq('user_id', userId).single();
+    if (!profile?.email) throw new NotFoundException('No profile email found');
+    const { data, error } = await client
+      .from('payroll_contributors')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .eq('email', profile.email)
+      .in('status', ['invited', 'joined'])
+      .limit(1)
+      .maybeSingle();
+    const row = Array.isArray(data) ? data[0] : data;
+    if (error || !row) throw new NotFoundException('You are not a contributor in this organization');
+    return row;
+  }
+
+  /**
+   * Update current user's contributor profile (address, business registration). Only self.
+   */
+  async updateMe(organizationId: string, userId: string, dto: UpdateContributorProfileDto): Promise<PayrollContributor> {
+    const me = await this.findMe(organizationId, userId);
+    const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (dto.first_name !== undefined) updateData.first_name = dto.first_name;
+    if (dto.last_name !== undefined) updateData.last_name = dto.last_name;
+    if (dto.address_line1 !== undefined) updateData.address_line1 = dto.address_line1;
+    if (dto.address_line2 !== undefined) updateData.address_line2 = dto.address_line2;
+    if (dto.city !== undefined) updateData.city = dto.city;
+    if (dto.state !== undefined) updateData.state = dto.state;
+    if (dto.postal_code !== undefined) updateData.postal_code = dto.postal_code;
+    if (dto.country !== undefined) updateData.country = dto.country;
+    if (dto.business_name !== undefined) updateData.business_name = dto.business_name;
+    if (dto.business_registration_number !== undefined) updateData.business_registration_number = dto.business_registration_number;
+
+    const { data, error } = await this.supabaseService.getClient()
+      .from('payroll_contributors')
+      .update(updateData)
+      .eq('id', me.id)
+      .eq('organization_id', organizationId)
+      .select()
+      .single();
+
+    if (error) {
+      this.logger.error('Failed to update contributor profile:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+    return data;
   }
 
   /**
