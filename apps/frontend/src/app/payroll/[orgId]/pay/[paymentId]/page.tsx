@@ -66,6 +66,22 @@ export default function PayrollPayPaymentPage() {
   const showDepositUI = !!depositFromPrepare?.depositAddress;
   const amountToSend =
     depositFromPrepare?.minAmountInFormatted ?? quote?.amountInFormatted;
+  /** Fallback when backend/quote didn't return formatted amount: derive from payment USD and token price. */
+  const fallbackAmountFormatted = useMemo(() => {
+    if (amountToSend || !payment || !payWithToken) return null;
+    const amountUsd = Number(payment.amount || 0);
+    const token = tokens.find(
+      (t) =>
+        (t.symbol || "").toLowerCase() === (payWithToken?.symbol || "").toLowerCase() &&
+        (t.chain || "").toLowerCase() === (payWithToken?.chain || "").toLowerCase()
+    );
+    const price = token?.price ?? (payWithToken as { price?: number })?.price;
+    if (price && Number(price) > 0 && Number.isFinite(amountUsd)) {
+      return String((amountUsd / Number(price)).toFixed(6));
+    }
+    return null;
+  }, [amountToSend, payment?.amount, payment?.id, payWithToken, tokens]);
+  const displayAmount = amountToSend ?? fallbackAmountFormatted;
   const timeEstimate = depositFromPrepare?.timeEstimate ?? undefined;
   const memo = depositFromPrepare?.memo ?? undefined;
   const deadline = depositFromPrepare?.deadline ?? payment?.intent_deadline ?? undefined;
@@ -141,11 +157,12 @@ export default function PayrollPayPaymentPage() {
     })
       .then((r) => r.json())
       .then((data) => {
-        if (data?.amountInFormatted) setQuote({ amountInFormatted: data.amountInFormatted });
-        else if (data?.amountInEst != null && payWithToken?.price)
-          setQuote({
-            amountInFormatted: (amountUsd / payWithToken.price).toFixed(6),
-          });
+        const formatted =
+          data?.amountInFormatted ??
+          (data?.amountInEst != null && Number.isFinite(Number(data.amountInEst))
+            ? String(Number(data.amountInEst).toFixed(6))
+            : undefined);
+        if (formatted) setQuote({ amountInFormatted: formatted });
       })
       .catch(() => setQuote(null))
       .finally(() => setQuoteLoading(false));
@@ -409,7 +426,7 @@ export default function PayrollPayPaymentPage() {
             {depositView === "details" && (
               <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
                 <div className="space-y-2 text-base text-gray-700">
-                  <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between">
                     <span className="text-gray-600">Amount to pay</span>
                     <span className="inline-flex items-center gap-2 text-lg font-medium text-gray-900">
                       <TokenIcon
@@ -418,9 +435,13 @@ export default function PayrollPayPaymentPage() {
                         size={24}
                       />
                       <span>
-                        {amountToSend && payWithToken
-                          ? `${roundUpDecimals(amountToSend, 6)} ${payWithToken.symbol}`
-                          : "—"}
+                        {displayAmount && payWithToken
+                          ? `${roundUpDecimals(displayAmount, 6)} ${payWithToken.symbol}`
+                          : payWithToken
+                            ? "—"
+                            : payment
+                              ? `${payment.amount} ${payment.amount_currency}`
+                              : "—"}
                       </span>
                       <button
                         type="button"
@@ -428,8 +449,8 @@ export default function PayrollPayPaymentPage() {
                         onClick={async () => {
                           try {
                             const v =
-                              amountToSend && payWithToken
-                                ? roundUpDecimals(amountToSend, 6)
+                              displayAmount && payWithToken
+                                ? roundUpDecimals(displayAmount, 6)
                                 : "";
                             if (v) await navigator.clipboard.writeText(v);
                             toast({ title: "Copied", description: "Amount copied." });

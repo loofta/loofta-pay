@@ -90,10 +90,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ quote: q, amountInFormatted }, { status: 200 });
     } catch {
       const amountInEst = Number(fromTokenPriceUSD) ? (amountUsd / Number(fromTokenPriceUSD)) : null;
+      const amountInFormatted =
+        amountInEst != null && Number.isFinite(amountInEst)
+          ? String(Number(amountInEst).toFixed(6))
+          : null;
       return NextResponse.json({
         quote: null,
         amountInUSD: Number.isFinite(amountUsd) ? amountUsd : null,
         amountInEst: Number.isFinite(amountInEst || NaN) ? amountInEst : null,
+        amountInFormatted,
       }, { status: 200 });
     }
   } catch (e: any) {
