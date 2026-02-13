@@ -182,13 +182,12 @@ export default function PayrollInvoicesPage() {
                     </div>
                     <div className="mt-auto pt-2 flex items-center justify-between w-full flex-wrap gap-2">
                       <span
-                        className={`rounded-lg px-2.5 py-1 text-xs font-semibold capitalize ${
-                          inv.status === "paid"
+                        className={`rounded-lg px-2.5 py-1 text-xs font-semibold capitalize ${inv.status === "paid"
                             ? "bg-emerald-50 text-emerald-800"
                             : inv.status === "sent"
                               ? "bg-blue-50 text-blue-800"
                               : "bg-gray-100 text-gray-700"
-                        }`}
+                          }`}
                       >
                         {inv.status === "sent" && !isContributor ? "To be paid" : inv.status}
                       </span>
@@ -204,13 +203,7 @@ export default function PayrollInvoicesPage() {
                             View
                           </Link>
                         </Button>
-                        {!isContributor && (
-                          <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
-                            <Link href={`/payroll/${orgId}/deals/${inv.deal_id}`} title="Open deal">
-                              <ExternalLink className="h-4 w-4" />
-                            </Link>
-                          </Button>
-                        )}
+
                       </div>
                     </div>
                   </div>
