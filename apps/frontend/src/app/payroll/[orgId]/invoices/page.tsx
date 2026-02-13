@@ -164,34 +164,36 @@ export default function PayrollInvoicesPage() {
               {isContributor ? "No invoices yet. Complete a deal and confirm delivery to generate one." : "No invoices yet. Accept delivery on a deal to generate one."}
             </p>
           ) : (
-            <ul className="space-y-3">
+            <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 list-none p-0 m-0">
               {list.map((inv) => (
                 <li key={inv.id}>
-                  <Card className="border-gray-200 bg-gray-50/50">
-                    <CardContent className="flex flex-wrap items-center justify-between gap-4 px-6 py-4 md:px-8 md:py-5">
-                      <div>
-                        <span className="font-medium text-gray-900">{inv.amount} {inv.amount_currency}</span>
-                        {(inv as InvoiceWithMeta).deal_title && (
-                          <span className="text-gray-500 text-sm block">{(inv as InvoiceWithMeta).deal_title}</span>
-                        )}
-                        {!isContributor && inv.recipient_email && (
-                          <span className="text-gray-500 text-sm block">{inv.recipient_email}</span>
-                        )}
-                        <span className="text-gray-400 text-xs block">{new Date(inv.created_at).toLocaleDateString()}</span>
-                      </div>
+                  <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-md flex flex-col gap-4 h-full transition-all duration-200 hover:shadow-lg">
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900">
+                        {inv.amount} <span className="text-gray-500 font-normal">{inv.amount_currency}</span>
+                      </h3>
+                      {(inv as InvoiceWithMeta).deal_title && (
+                        <p className="mt-1.5 text-sm font-medium text-gray-600">{(inv as InvoiceWithMeta).deal_title}</p>
+                      )}
+                      {!isContributor && inv.recipient_email && (
+                        <p className="mt-0.5 text-sm text-gray-500 truncate">{inv.recipient_email}</p>
+                      )}
+                      <p className="mt-2 text-xs font-medium text-gray-400 uppercase tracking-wide">Created {new Date(inv.created_at).toLocaleDateString()}</p>
+                    </div>
+                    <div className="mt-auto pt-2 flex items-center justify-between w-full flex-wrap gap-2">
+                      <span
+                        className={`rounded-lg px-2.5 py-1 text-xs font-semibold capitalize ${
+                          inv.status === "paid"
+                            ? "bg-emerald-50 text-emerald-800"
+                            : inv.status === "sent"
+                              ? "bg-blue-50 text-blue-800"
+                              : "bg-gray-100 text-gray-700"
+                        }`}
+                      >
+                        {inv.status === "sent" && !isContributor ? "To be paid" : inv.status}
+                      </span>
                       <div className="flex items-center gap-2">
-                        <span
-                          className={`rounded px-2 py-1 text-xs capitalize ${
-                            inv.status === "paid"
-                              ? "bg-green-100 text-green-800"
-                              : inv.status === "sent"
-                                ? "bg-blue-100 text-blue-800"
-                                : "bg-gray-100 text-gray-700"
-                          }`}
-                        >
-                          {inv.status === "sent" && !isContributor ? "To be paid" : inv.status}
-                        </span>
-                        <Button variant="ghost" size="sm" asChild>
+                        <Button asChild size="sm" className="rounded-lg bg-orange-500 font-semibold text-white shadow-sm hover:shadow-md">
                           <Link
                             href={
                               isContributor && (inv as InvoiceWithMeta).invite_id
@@ -203,15 +205,15 @@ export default function PayrollInvoicesPage() {
                           </Link>
                         </Button>
                         {!isContributor && (
-                          <Button variant="ghost" size="sm" asChild>
-                            <Link href={`/payroll/${orgId}/deals/${inv.deal_id}`}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
+                            <Link href={`/payroll/${orgId}/deals/${inv.deal_id}`} title="Open deal">
                               <ExternalLink className="h-4 w-4" />
                             </Link>
                           </Button>
                         )}
                       </div>
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>

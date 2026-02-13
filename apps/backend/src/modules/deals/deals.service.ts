@@ -526,6 +526,42 @@ export class DealsService {
         };
       }
     }
+    // Fallback: use payroll_contributors (Your Profile) for name, address and business when missing
+    const emailForLookup = (from_freelancer.email ?? recipientEmail)?.trim()?.toLowerCase();
+    const needsName = !from_freelancer.first_name || !from_freelancer.last_name;
+    const needsAddressOrBusiness =
+      !from_freelancer.billing_address &&
+      !from_freelancer.address_line1 &&
+      !from_freelancer.business_name;
+    if (emailForLookup && (needsName || needsAddressOrBusiness)) {
+      const { data: contrib } = await client
+        .from('payroll_contributors')
+        .select(
+          'first_name, last_name, address_line1, address_line2, city, state, postal_code, country, business_name, business_registration_number'
+        )
+        .eq('organization_id', organizationId)
+        .eq('email', emailForLookup)
+        .in('status', ['invited', 'joined'])
+        .limit(1)
+        .maybeSingle();
+      const c = Array.isArray(contrib) ? contrib?.[0] : contrib;
+      if (c) {
+        from_freelancer = {
+          ...from_freelancer,
+          first_name: from_freelancer.first_name ?? c.first_name ?? null,
+          last_name: from_freelancer.last_name ?? c.last_name ?? null,
+          address_line1: from_freelancer.address_line1 ?? c.address_line1 ?? null,
+          address_line2: from_freelancer.address_line2 ?? c.address_line2 ?? null,
+          city: from_freelancer.city ?? c.city ?? null,
+          state: from_freelancer.state ?? c.state ?? null,
+          postal_code: from_freelancer.postal_code ?? c.postal_code ?? null,
+          country: from_freelancer.country ?? c.country ?? null,
+          business_name: from_freelancer.business_name ?? c.business_name ?? null,
+          business_registration_number:
+            from_freelancer.business_registration_number ?? c.business_registration_number ?? null,
+        };
+      }
+    }
     return { from_freelancer, to_org };
   }
 

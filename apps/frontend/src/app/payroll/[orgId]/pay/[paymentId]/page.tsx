@@ -1,0 +1,585 @@
+"use client";
+
+import { useEffect, useState, useMemo } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { useAuth } from "@/hooks/useAuth";
+import { Button } from "@/components/ui/button";
+import { TokenCombobox } from "@/components/TokenCombobox";
+import { useToast } from "@/components/ui/use-toast";
+import { dealsApi, type DealPaymentResponse } from "@/services/api/deals";
+import { tokensApi, type Token } from "@/services/api/tokens";
+import type { TokenSelection } from "@/app/utils/types";
+import { roundUpDecimals, formatUTCTimestamp } from "@/lib/format";
+import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
+import { TokenIcon } from "@/components/TokenIcon";
+import { QRCodeSVG } from "qrcode.react";
+import { useQuery } from "@tanstack/react-query";
+import { getRefundToForChain } from "@/lib/refundAddresses";
+import { usePayrollPayStore } from "@/store/payrollPay";
+import { Loader2, ArrowLeft, Send, FileText, QrCode } from "lucide-react";
+
+/** Flow: Pay → select token (see conversion) → Get deposit address → NEAR Intent deposit + PaymentStatusTracker. Cancel to choose another token. State persists in Zustand on refresh. */
+export default function PayrollPayPaymentPage() {
+  const params = useParams();
+  const router = useRouter();
+  const orgId = params?.orgId as string;
+  const paymentId = params?.paymentId as string;
+  const { authenticated, userId, ready } = useAuth();
+  const { toast } = useToast();
+  const stored = usePayrollPayStore((s) => s.byPaymentId[paymentId]);
+
+  const [payment, setPayment] = useState<DealPaymentResponse | null>(null);
+  const [tokens, setTokens] = useState<Token[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [payWithToken, setPayWithTokenState] = useState<TokenSelection | undefined>(stored?.payWithToken ?? undefined);
+  const [preparing, setPreparing] = useState(false);
+  const [quote, setQuote] = useState<{ amountInFormatted?: string } | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [status, setStatusState] = useState<string | null>(stored?.status ?? null);
+  const [statusData, setStatusData] = useState<Record<string, unknown> | null>(null);
+  const [depositFromPrepare, setDepositFromPrepareState] = useState<{
+    depositAddress: string;
+    minAmountInFormatted?: string;
+    timeEstimate?: number;
+    memo?: string | null;
+    deadline?: string | null;
+  } | null>(stored?.deposit ?? null);
+  const [depositView, setDepositView] = useState<"details" | "qr">("details");
+
+  const setPayWithToken = (v: TokenSelection | undefined) => {
+    setPayWithTokenState(v);
+    if (paymentId) usePayrollPayStore.getState().setPayWithToken(paymentId, v ?? null);
+  };
+  const setStatus = (v: string | null) => {
+    setStatusState(v);
+    if (paymentId) usePayrollPayStore.getState().setStatus(paymentId, v);
+  };
+  const setDepositFromPrepare = (v: typeof depositFromPrepare) => {
+    setDepositFromPrepareState(v);
+    if (paymentId) usePayrollPayStore.getState().setDeposit(paymentId, v ?? null);
+  };
+
+  const depositAddress =
+    depositFromPrepare?.depositAddress ?? payment?.deposit_address ?? undefined;
+  /** Only show deposit/status UI after user clicked "Get deposit address" on this page (so they always pick token first). */
+  const showDepositUI = !!depositFromPrepare?.depositAddress;
+  const amountToSend =
+    depositFromPrepare?.minAmountInFormatted ?? quote?.amountInFormatted;
+  const timeEstimate = depositFromPrepare?.timeEstimate ?? undefined;
+  const memo = depositFromPrepare?.memo ?? undefined;
+  const deadline = depositFromPrepare?.deadline ?? payment?.intent_deadline ?? undefined;
+
+  useEffect(() => {
+    if (!userId || !orgId) return;
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      dealsApi.payments.listOutstanding(orgId, userId),
+      tokensApi.list().then((r) => r.tokens || []),
+    ])
+      .then(([payments, tokenList]) => {
+        if (cancelled) return;
+        const p = (payments || []).find((x) => x.id === paymentId);
+        setPayment(p || null);
+        setTokens(tokenList);
+      })
+      .catch(() => {
+        if (!cancelled) setPayment(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, orgId, paymentId]);
+
+  const destToken = useMemo(() => {
+    if (!payment || !tokens.length) return null;
+    const sym = (payment.preferred_token_symbol || "USDC").toUpperCase();
+    const ch = (payment.preferred_network || "base").toLowerCase();
+    return (
+      tokens.find(
+        (t) =>
+          (t.symbol || "").toUpperCase() === sym &&
+          (t.chain || "").toLowerCase() === ch
+      ) ?? null
+    );
+  }, [payment, tokens]);
+
+  useEffect(() => {
+    if (!payment || !payWithToken?.tokenId || !destToken?.tokenId) {
+      setQuote(null);
+      setQuoteLoading(false);
+      return;
+    }
+    setQuoteLoading(true);
+    setQuote(null);
+    const amountUsd = Number(payment.amount || 0);
+    fetch("/api/payroll/quote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount: amountUsd,
+        fromToken: {
+          tokenId: payWithToken.tokenId || payWithToken.address,
+          decimals: payWithToken.decimals,
+          chain: payWithToken.chain,
+          price: payWithToken.price,
+        },
+        destToken: {
+          tokenId: destToken.tokenId || destToken.address,
+          decimals: destToken.decimals,
+          chain: destToken.chain,
+          price: destToken.price,
+        },
+        fromTokenPriceUSD: payWithToken.price,
+        destTokenPriceUSD: destToken.price,
+        refundAddress: getRefundToForChain(payWithToken.chain),
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.amountInFormatted) setQuote({ amountInFormatted: data.amountInFormatted });
+        else if (data?.amountInEst != null && payWithToken?.price)
+          setQuote({
+            amountInFormatted: (amountUsd / payWithToken.price).toFixed(6),
+          });
+      })
+      .catch(() => setQuote(null))
+      .finally(() => setQuoteLoading(false));
+  }, [payment?.id, payment?.amount, payWithToken?.tokenId, payWithToken?.decimals, payWithToken?.chain, payWithToken?.price, destToken?.tokenId, destToken?.decimals, destToken?.price]);
+
+  const statusQuery = useQuery({
+    queryKey: ["status", depositAddress],
+    enabled: !!depositFromPrepare?.depositAddress && !!depositAddress,
+    queryFn: async ({ queryKey }) => {
+      const addr = queryKey[1] as string;
+      if (!addr) throw new Error("No deposit address");
+      const r = await fetch(`/api/status?depositAddress=${encodeURIComponent(addr)}`, {
+        cache: "no-store",
+      });
+      if (!r.ok) throw new Error("Failed to load status");
+      return (await r.json()) as Record<string, unknown>;
+    },
+    refetchOnWindowFocus: false,
+    refetchInterval: (query) => {
+      const s = query?.state?.data?.status as string | undefined;
+      const terminal =
+        s && ["SUCCESS", "FAILED", "REFUNDED", "EXPIRED"].includes(String(s).toUpperCase());
+      return terminal ? false : 15_000;
+    },
+    staleTime: 10_000,
+    gcTime: 5 * 60_000,
+  });
+
+  useEffect(() => {
+    if (!statusQuery.data) return;
+    const s =
+      (statusQuery.data?.status as string) ||
+      (statusQuery.data?.executionStatus as string) ||
+      null;
+    if (s) {
+      setStatus(s);
+      setStatusData(statusQuery.data);
+    }
+  }, [statusQuery.data]);
+
+  // Hydrate from Zustand after persist rehydration (e.g. on refresh)
+  useEffect(() => {
+    if (!stored) return;
+    if (stored.deposit) setDepositFromPrepareState(stored.deposit);
+    if (stored.payWithToken) setPayWithTokenState(stored.payWithToken);
+    if (stored.status != null) setStatusState(stored.status);
+  }, [paymentId, stored?.deposit, stored?.payWithToken, stored?.status]);
+
+  useEffect(() => {
+    const upper = status ? String(status).toUpperCase() : "";
+    if (upper === "SUCCESS" && payment?.id && userId && orgId) {
+      dealsApi.payments
+        .checkComplete(orgId, payment.id, userId)
+        .then((res) => {
+          if (res.completed && res.payment) setPayment(res.payment);
+        })
+        .catch(() => {});
+    }
+  }, [status, payment?.id, userId, orgId]);
+
+  const handlePrepare = async () => {
+    if (!userId || !orgId || !payment || !payWithToken?.symbol || !payWithToken?.chain) {
+      toast({
+        variant: "destructive",
+        title: "Choose a token",
+        description: "Select a token to pay with.",
+      });
+      return;
+    }
+    setPreparing(true);
+    try {
+      const result = await dealsApi.payments.preparePay(
+        orgId,
+        [payment.id],
+        userId,
+        payWithToken
+      );
+      const first = result?.[0];
+      if (!first?.deposit_address) {
+        toast({
+          variant: "destructive",
+          title: "Could not prepare",
+          description: "This token may not be supported. Try another.",
+        });
+        return;
+      }
+      setDepositFromPrepare({
+        depositAddress: first.deposit_address,
+        minAmountInFormatted: first.minAmountInFormatted,
+        timeEstimate: first.timeEstimate,
+        memo: first.memo ?? undefined,
+        deadline: first.intent_deadline ?? undefined,
+      });
+      setPayment(first);
+      toast({
+        title: "Deposit address ready",
+        description: "Send the exact amount to the address below.",
+      });
+    } catch (err: unknown) {
+      toast({
+        variant: "destructive",
+        title: "Failed",
+        description: err instanceof Error ? err.message : "Error",
+      });
+    } finally {
+      setPreparing(false);
+    }
+  };
+
+  if (!ready || !authenticated) {
+    return (
+      <div className="flex min-h-[200px] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[200px] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+      </div>
+    );
+  }
+
+  if (!payment) {
+    return (
+      <div className="mx-auto max-w-2xl p-6 text-center">
+        <p className="text-gray-600">Payment not found.</p>
+        <Link href={`/payroll/${orgId}/pay`}>
+          <Button variant="outline" className="mt-4">
+            <ArrowLeft className="mr-2 h-4 w-4" /> Back to Pay
+          </Button>
+        </Link>
+      </div>
+    );
+  }
+
+  if (payment.status === "completed") {
+    return (
+      <div className="mx-auto max-w-2xl p-6 text-center">
+        <p className="text-lg font-medium text-gray-900">Payment completed.</p>
+        <Link href={`/payroll/${orgId}/pay`}>
+          <Button variant="outline" className="mt-4">
+            <ArrowLeft className="mr-2 h-4 w-4" /> Back to Pay
+          </Button>
+        </Link>
+      </div>
+    );
+  }
+
+  const upperStatus = String(status || "PENDING_DEPOSIT").toUpperCase();
+  const isProcessing = upperStatus === "PROCESSING" || upperStatus === "KNOWN_DEPOSIT_TX";
+  const isSuccess = upperStatus === "SUCCESS";
+  const depositReceived = isProcessing || isSuccess;
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-6 p-4 md:p-6">
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" size="sm" asChild>
+          <Link href={`/payroll/${orgId}/pay`}>
+            <ArrowLeft className="mr-1 h-4 w-4" /> Back to Pay
+          </Link>
+        </Button>
+      </div>
+
+      <div className="rounded-xl border-2 border-gray-200 bg-white p-6 shadow-sm">
+        <div className="mb-2 text-base text-gray-600">Amount requested</div>
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="text-3xl font-semibold text-gray-900">{payment.amount}</span>
+          <span className="text-lg text-gray-500">{payment.amount_currency}</span>
+        </div>
+        <p className="mt-2 text-sm text-gray-600">
+          {payment.recipient_email || payment.recipient_wallet || "—"}
+        </p>
+
+        {!showDepositUI ? (
+          <>
+            <div className="mt-6">
+              <div className="mb-2 text-sm font-medium text-gray-700">Pay with</div>
+              <TokenCombobox
+                tokens={
+                  tokens as {
+                    symbol: string;
+                    chain: string;
+                    tokenId?: string;
+                    decimals: number;
+                    name?: string;
+                  }
+                }
+                value={payWithToken}
+                onChange={setPayWithToken}
+                placeholder="Select token to pay with"
+                onQuery={async (q) =>
+                  tokens.filter((t) =>
+                    (t.symbol || "").toLowerCase().includes((q || "").toLowerCase())
+                  )
+                }
+                defaultShowAllChains={true}
+                className="h-12 w-full rounded-lg border border-gray-200 bg-white text-base hover:bg-gray-50 focus:border-orange-400 focus:ring-2 focus:ring-orange-400"
+              />
+            </div>
+            {payWithToken && (quoteLoading || quote?.amountInFormatted) && (
+              <p className="mt-2 text-sm text-gray-600">
+                Send approx:{" "}
+                <span className="font-medium">
+                  {quoteLoading
+                    ? "…"
+                    : quote?.amountInFormatted
+                      ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${payWithToken.symbol}`
+                      : "—"}
+                </span>
+              </p>
+            )}
+            <div className="mt-6">
+              <Button
+                size="lg"
+                className="w-full bg-orange-500 text-white hover:bg-orange-600"
+                onClick={handlePrepare}
+                disabled={!payWithToken?.symbol || preparing}
+              >
+                {preparing ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="mr-2 h-4 w-4" />
+                )}
+                Get deposit address
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Toggle: Details (amount + address) or Scan QR */}
+            <div className="mb-4 mt-6 flex rounded-lg border border-gray-200 bg-gray-100 p-1">
+              <button
+                type="button"
+                onClick={() => setDepositView("details")}
+                className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2.5 text-sm font-medium transition-colors ${
+                  depositView === "details"
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                <FileText className="h-4 w-4" />
+                Details
+              </button>
+              <button
+                type="button"
+                onClick={() => setDepositView("qr")}
+                className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2.5 text-sm font-medium transition-colors ${
+                  depositView === "qr"
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                <QrCode className="h-4 w-4" />
+                Scan QR code
+              </button>
+            </div>
+
+            {depositView === "details" && (
+              <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                <div className="space-y-2 text-base text-gray-700">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-600">Amount to pay</span>
+                    <span className="inline-flex items-center gap-2 text-lg font-medium text-gray-900">
+                      <TokenIcon
+                        token={payWithToken as { symbol?: string; chain?: string }}
+                        chain={payWithToken?.chain}
+                        size={24}
+                      />
+                      <span>
+                        {amountToSend && payWithToken
+                          ? `${roundUpDecimals(amountToSend, 6)} ${payWithToken.symbol}`
+                          : "—"}
+                      </span>
+                      <button
+                        type="button"
+                        className="ml-2 inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
+                        onClick={async () => {
+                          try {
+                            const v =
+                              amountToSend && payWithToken
+                                ? roundUpDecimals(amountToSend, 6)
+                                : "";
+                            if (v) await navigator.clipboard.writeText(v);
+                            toast({ title: "Copied", description: "Amount copied." });
+                          } catch {
+                            toast({
+                              variant: "destructive",
+                              title: "Copy failed",
+                              description: "Could not copy amount.",
+                            });
+                          }
+                        }}
+                        title="Copy amount"
+                      >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                          aria-hidden
+                        >
+                          <path d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
+                        </svg>
+                      </button>
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-600">Deposit address</span>
+                    <span className="inline-flex max-w-[70%] items-center gap-2 break-all text-sm font-medium text-gray-900">
+                      {depositAddress}
+                      <button
+                        type="button"
+                        className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
+                        onClick={async () => {
+                          try {
+                            if (depositAddress)
+                              await navigator.clipboard.writeText(depositAddress);
+                            toast({ title: "Copied", description: "Address copied." });
+                          } catch {
+                            toast({
+                              variant: "destructive",
+                              title: "Copy failed",
+                              description: "Could not copy address.",
+                            });
+                          }
+                        }}
+                        title="Copy address"
+                      >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                          aria-hidden
+                        >
+                          <path d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
+                        </svg>
+                      </button>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {depositView === "qr" && (
+              <div className="mb-6 flex justify-center">
+                <QRCodeSVG
+                  value={depositAddress || ""}
+                  size={220}
+                  level="M"
+                  includeMargin
+                  fgColor="#000000"
+                  bgColor="#ffffff"
+                  className="rounded-xl border-2 border-gray-200 bg-white p-4 shadow-sm"
+                />
+              </div>
+            )}
+
+            {memo ? (
+              <div className="mb-4 border-t border-gray-200 pt-2 text-sm text-gray-600">
+                <span className="font-medium text-gray-700">Memo:</span>{" "}
+                <span className="font-mono">{memo}</span>
+              </div>
+            ) : null}
+
+            <div className="mb-6 text-center">
+              <div className="mb-4 flex justify-center">
+                {isSuccess ? (
+                  <span className="text-6xl">🎉</span>
+                ) : isProcessing ? (
+                  <span className="text-6xl">⚡</span>
+                ) : (
+                  <span className="text-6xl">💳</span>
+                )}
+              </div>
+              <h3 className="mb-2 text-2xl font-semibold text-gray-900">
+                {isSuccess
+                  ? "Payment Complete! 🎉"
+                  : isProcessing
+                    ? "Processing Your Payment"
+                    : "Waiting for Deposit"}
+              </h3>
+              <p className="text-base text-gray-600">
+                {isSuccess
+                  ? "Your funds have been successfully sent to the recipient."
+                  : isProcessing
+                    ? "Finding the best route and preparing transfer"
+                    : "Send the exact amount to the deposit address above."}
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <PaymentStatusTracker
+                status={status || "PENDING_DEPOSIT"}
+                statusData={statusData}
+                depositReceivedAt={statusData?.updatedAt as string | undefined}
+                startedAt={deadline}
+                fromChain={payWithToken?.chain}
+                toChain={payment.preferred_network}
+                depositAddress={depositAddress}
+                timeEstimate={timeEstimate}
+                paymentType="near-intent"
+              />
+            </div>
+
+            {deadline ? (
+              <div className="mt-3 text-sm text-gray-700">
+                Deadline:{" "}
+                <span className="font-medium">{formatUTCTimestamp(deadline)}</span>
+              </div>
+            ) : null}
+
+            {!depositReceived && (
+              <div className="mt-4 flex justify-center">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    usePayrollPayStore.getState().clearDeposit(paymentId);
+                    setDepositFromPrepare(null);
+                    setStatus(null);
+                    setStatusData(null);
+                  }}
+                >
+                  Cancel and choose another token
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

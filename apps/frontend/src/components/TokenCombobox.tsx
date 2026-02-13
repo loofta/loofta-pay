@@ -241,7 +241,12 @@ export function TokenCombobox({
 													key={id}
 													value={`${it.symbol} ${it.name || ""} ${it.chain}`}
 													onSelect={() => {
-														onChange({ symbol: it.symbol, chain: it.chain });
+														onChange({
+															symbol: it.symbol,
+															chain: it.chain,
+															...(it.tokenId && { tokenId: it.tokenId }),
+															...(typeof it.decimals === 'number' && { decimals: it.decimals }),
+														});
 														setOpen(false);
 													}}
 												>
@@ -279,7 +284,12 @@ export function TokenCombobox({
 													value={`${g.symbol} ${g.name} ${effectiveChain}`}
 													onSelect={() => {
 														if (!effectiveChain || !tok) return;
-														onChange({ symbol: g.symbol, chain: effectiveChain });
+														onChange({
+															symbol: g.symbol,
+															chain: effectiveChain,
+															...(tok.tokenId && { tokenId: tok.tokenId }),
+															...(typeof tok.decimals === 'number' && { decimals: tok.decimals }),
+														});
 														setOpen(false);
 													}}
 												>

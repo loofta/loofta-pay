@@ -1,3 +1,8 @@
+/**
+ * NEAR Intents integration. We use the 1-Click API (a distribution channel) for quotes and deposit addresses.
+ * To use the relayer/protocol directly instead, see: https://docs.near-intents.org/near-intents/
+ * (Distribution Channels, Market Makers, Verifier).
+ */
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OneClickService, QuoteRequest, OpenAPI } from '@defuse-protocol/one-click-sdk-typescript';
@@ -149,34 +154,65 @@ export class NearIntentsService implements OnModuleInit {
   }
 
   /**
+   * Chain variants for matching (same as mapSdkToken output + common aliases).
+   * Used by findToken and getDefuseAssetId so token lookup is consistent everywhere.
+   */
+  private static chainVariants(chainName: string): string[] {
+    const normalized = (chainName || '').trim().toLowerCase();
+    const variants: string[] = [normalized];
+    if (normalized === 'solana' || normalized === 'sol') {
+      variants.push('sol', 'solana');
+    } else if (normalized === 'ethereum' || normalized === 'eth') {
+      variants.push('eth', 'ethereum');
+    } else if (normalized === 'arbitrum' || normalized === 'arb') {
+      variants.push('arb', 'arbitrum');
+    } else if (normalized === 'optimism' || normalized === 'op') {
+      variants.push('op', 'optimism');
+    } else if (normalized === 'polygon' || normalized === 'pol') {
+      variants.push('pol', 'polygon');
+    } else if (normalized === 'base') {
+      variants.push('base');
+    } else if (normalized === 'near') {
+      variants.push('near');
+    }
+    return [...new Set(variants)];
+  }
+
+  /**
+   * Find a token by symbol + chain. Same query logic as getDefuseAssetId / c/[id] token resolution.
+   */
+  async findToken(symbol: string, chain: string): Promise<NearToken | null> {
+    const tokens = await this.getTokens();
+    const sym = (symbol || '').trim().toUpperCase();
+    const ch = (chain || '').trim().toLowerCase();
+    const chainVariants = NearIntentsService.chainVariants(ch);
+    const token = tokens.find(
+      (t) =>
+        (t.symbol || '').toUpperCase() === sym &&
+        chainVariants.some((c) => (t.chain || '').toLowerCase() === c),
+    );
+    if (token?.tokenId && typeof token.decimals === 'number') {
+      return token;
+    }
+    const sample = tokens.slice(0, 8).map((t) => `${t.symbol}/${t.chain}`).join(', ');
+    this.logger.warn(
+      `[findToken] Not found: ${symbol} on ${chain} (looking for sym=${sym}, chainVariants=[${chainVariants.join(',')}]). Sample tokens: ${sample}`,
+    );
+    return null;
+  }
+
+  /**
    * Get Defuse asset ID for a token
    */
   async getDefuseAssetId(symbol: string, chain: string): Promise<string> {
     const tokens = await this.getTokens();
     const sym = symbol.toUpperCase();
     const ch = chain.toLowerCase();
-    
-    // Normalize chain names for matching (solana -> sol, ethereum -> eth, etc.)
-    const normalizeChain = (chainName: string): string[] => {
-      const normalized = chainName.toLowerCase();
-      const variants: string[] = [normalized];
-      if (normalized === 'solana' || normalized === 'sol') {
-        variants.push('sol', 'solana');
-      } else if (normalized === 'ethereum' || normalized === 'eth') {
-        variants.push('eth', 'ethereum');
-      } else if (normalized === 'arbitrum' || normalized === 'arb') {
-        variants.push('arb', 'arbitrum');
-      } else if (normalized === 'optimism' || normalized === 'op') {
-        variants.push('op', 'optimism');
-      }
-      return [...new Set(variants)]; // Remove duplicates
-    };
-
-    const chainVariants = normalizeChain(ch);
+    const chainVariants = NearIntentsService.chainVariants(ch);
     const token = tokens.find(
       (t) =>
         t.symbol.toUpperCase() === sym &&
-        chainVariants.includes(t.chain.toLowerCase()),
+        chainVariants.some((c) => (t.chain || '').toLowerCase() === c),
     );
 
     if (token?.tokenId) {
@@ -347,8 +383,7 @@ export class NearIntentsService implements OnModuleInit {
     const amount = useExactOutput ? atomicOut : atomicIn;
     const refundTo = refundAddress || this.getRefundAddress(fromToken.chain);
 
-    // Use SIMPLE deposit mode with ORIGIN_CHAIN deposit type (matches working example)
-    const sameChain = fromToken.chain.toLowerCase() === toToken.chain.toLowerCase();
+    // Same as c/[id] frontend /api/claims/deposit: depositType ORIGIN_CHAIN, recipientType DESTINATION_CHAIN.
     let req: any;
     
     try {
@@ -364,9 +399,7 @@ export class NearIntentsService implements OnModuleInit {
         refundTo,
         refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
         recipient,
-        recipientType: sameChain 
-          ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN 
-          : QuoteRequest.recipientType.DESTINATION_CHAIN,
+        recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
         deadline: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
         quoteWaitingTimeMs: 3000,
         referral: referral || this.referralCode,
@@ -423,11 +456,13 @@ export class NearIntentsService implements OnModuleInit {
       ? t.blockchain.toLowerCase()
       : (t?.chain || '');
     
-    // Normalize chain names for consistency (sol -> solana, etc.)
+    // Normalize chain names for consistency (sol -> solana, etc.) — same as chainVariants()
     if (blockchain === 'sol') blockchain = 'solana';
     if (blockchain === 'eth') blockchain = 'ethereum';
     if (blockchain === 'arb') blockchain = 'arbitrum';
     if (blockchain === 'op') blockchain = 'optimism';
+    if (blockchain === 'pol') blockchain = 'polygon';
+    // near, base left as-is (lowercase)
 
     return {
       symbol,

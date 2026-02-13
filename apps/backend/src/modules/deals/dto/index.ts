@@ -137,6 +137,7 @@ export interface DealPaymentResponse {
   amount: string;
   amount_currency: string;
   recipient_wallet: string;
+  recipient_email?: string | null;
   preferred_network: string;
   preferred_token_symbol: string;
   status: string;
@@ -145,6 +146,12 @@ export interface DealPaymentResponse {
   tx_hash: string | null;
   created_at: string;
   updated_at: string;
+  /** From preparePay quote (same $→token as c/[id]) */
+  minAmountInFormatted?: string;
+  timeEstimate?: number;
+  memo?: string | null;
+  /** Linked invoice id (for list view link) */
+  invoice_id?: string;
 }
 
 export interface DealInvoiceResponse {
@@ -166,6 +173,14 @@ export interface InvoiceFromFreelancer {
   last_name?: string | null;
   billing_address?: string | null;
   tva_number?: string | null;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  business_name?: string | null;
+  business_registration_number?: string | null;
 }
 
 export interface InvoiceToOrg {

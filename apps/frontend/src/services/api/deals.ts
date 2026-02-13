@@ -44,6 +44,7 @@ export interface DealPaymentResponse {
   amount: string;
   amount_currency: string;
   recipient_wallet: string;
+  recipient_email?: string | null;
   preferred_network: string;
   preferred_token_symbol: string;
   status: string;
@@ -52,6 +53,12 @@ export interface DealPaymentResponse {
   tx_hash: string | null;
   created_at: string;
   updated_at: string;
+  /** From preparePay (same $→token as c/[id]) */
+  minAmountInFormatted?: string;
+  timeEstimate?: number;
+  memo?: string | null;
+  /** Linked invoice id (for list view link) */
+  invoice_id?: string;
 }
 
 export interface DealCommentResponse {
@@ -69,6 +76,14 @@ export interface InvoiceFromFreelancer {
   last_name?: string | null;
   billing_address?: string | null;
   tva_number?: string | null;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  business_name?: string | null;
+  business_registration_number?: string | null;
 }
 
 export interface InvoiceToOrg {
@@ -232,10 +247,15 @@ export const dealsApi = {
     listOutstanding(orgId: string, userId?: string): Promise<DealPaymentResponse[]> {
       return fetchApi<DealPaymentResponse[]>(`/payroll/organizations/${orgId}/deal-payments/outstanding`, { userId });
     },
-    preparePay(orgId: string, paymentIds: string[], userId?: string): Promise<DealPaymentResponse[]> {
+    preparePay(
+      orgId: string,
+      paymentIds: string[],
+      userId?: string,
+      payWithToken?: { symbol: string; chain: string; tokenId?: string; decimals?: number },
+    ): Promise<DealPaymentResponse[]> {
       return fetchApi<DealPaymentResponse[]>(`/payroll/organizations/${orgId}/deal-payments/prepare-pay`, {
         method: 'POST',
-        body: JSON.stringify({ paymentIds }),
+        body: JSON.stringify({ paymentIds, ...(payWithToken && { payWithToken }) }),
         userId,
       });
     },
@@ -249,6 +269,15 @@ export const dealsApi = {
       return fetchApi<DealPaymentResponse>(`/payroll/organizations/${orgId}/deal-payments/${paymentId}/mark-completed`, {
         method: 'POST',
         body: JSON.stringify({ txHash }),
+        userId,
+      });
+    },
+    checkComplete(orgId: string, paymentId: string, userId?: string): Promise<{ completed: boolean; payment?: DealPaymentResponse; status?: string; normalizedStatus?: string }> {
+      return fetchApi(`/payroll/organizations/${orgId}/deal-payments/${paymentId}/check-complete`, { userId });
+    },
+    resetToPending(orgId: string, paymentId: string, userId?: string): Promise<DealPaymentResponse> {
+      return fetchApi<DealPaymentResponse>(`/payroll/organizations/${orgId}/deal-payments/${paymentId}/reset-to-pending`, {
+        method: 'PUT',
         userId,
       });
     },

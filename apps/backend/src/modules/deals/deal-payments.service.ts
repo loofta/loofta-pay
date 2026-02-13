@@ -1,9 +1,17 @@
 import * as crypto from 'crypto';
 import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
-import { NearIntentsService } from '../intents/near-intents.service';
+import { NearIntentsService, NearToken } from '../intents/near-intents.service';
+import { StatusService } from '../intents/status.service';
 import { PayrollReceiptLoggerService } from '../payroll/payroll-receipt-logger.service';
 import { DealPaymentResponse } from './dto';
+
+export interface CheckAndCompleteResult {
+  completed: boolean;
+  payment?: DealPaymentResponse;
+  status?: string;
+  normalizedStatus?: string;
+}
 
 @Injectable()
 export class DealPaymentsService {
@@ -12,6 +20,7 @@ export class DealPaymentsService {
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly nearIntentsService: NearIntentsService,
+    private readonly statusService: StatusService,
     private readonly receiptLogger: PayrollReceiptLoggerService,
   ) {}
 
@@ -49,7 +58,7 @@ export class DealPaymentsService {
     const client = this.supabaseService.getClient();
     const { data, error } = await client
       .from('deal_payments')
-      .select('*')
+      .select('*, deal_invites(invitee_email)')
       .eq('organization_id', organizationId)
       .eq('status', 'pending')
       .order('created_at', { ascending: false });
@@ -57,68 +66,133 @@ export class DealPaymentsService {
     return (data || []).map((row) => this.toResponse(row));
   }
 
-  /** List payments that are pending or processing (so org can see prepared ones and mark completed when paid). */
+  /** List payments that are pending or processing. Does not create deposit addresses; org clicks Pay to select network and proceed with NEAR Intent. */
   async listOutstanding(organizationId: string, userId: string): Promise<DealPaymentResponse[]> {
     await this.checkOrgAccess(organizationId, userId);
     const client = this.supabaseService.getClient();
     const { data, error } = await client
       .from('deal_payments')
-      .select('*')
+      .select('*, deal_invites(invitee_email)')
       .eq('organization_id', organizationId)
       .in('status', ['pending', 'processing'])
       .order('created_at', { ascending: false });
     if (error) throw new Error(`Database error: ${error.message}`);
-    return (data || []).map((row) => this.toResponse(row));
+    const rows = data || [];
+    const paymentIds = rows.map((r: any) => r.id);
+    const invoiceByPayment: Record<string, string> = {};
+    if (paymentIds.length > 0) {
+      const { data: invoices } = await client
+        .from('deal_invoices')
+        .select('id, deal_payment_id')
+        .in('deal_payment_id', paymentIds);
+      (invoices || []).forEach((inv: any) => {
+        if (inv.deal_payment_id) invoiceByPayment[inv.deal_payment_id] = inv.id;
+      });
+    }
+    return rows.map((row: any) => this.toResponse({ ...row, invoice_id: invoiceByPayment[row.id] }));
   }
 
   /**
    * Create intents (deposit addresses) for selected pending payments. Returns payments with deposit_address and intent_deadline set.
+   * Uses same token resolution as c/[id] (NearIntentsService.findToken). When payWithToken is provided, use that token.
    */
-  async preparePay(organizationId: string, paymentIds: string[], userId: string): Promise<DealPaymentResponse[]> {
+  async preparePay(
+    organizationId: string,
+    paymentIds: string[],
+    userId: string,
+    payWithToken?: { symbol: string; chain: string; tokenId?: string; decimals?: number },
+  ): Promise<DealPaymentResponse[]> {
     await this.checkOrgAccess(organizationId, userId);
     const client = this.supabaseService.getClient();
+    // Allow both pending and processing so "Cancel and choose another token" can get a new deposit address
     const { data: payments, error: fetchErr } = await client
       .from('deal_payments')
       .select('*')
       .eq('organization_id', organizationId)
-      .eq('status', 'pending')
+      .in('status', ['pending', 'processing'])
       .in('id', paymentIds);
-    if (fetchErr || !payments?.length) throw new BadRequestException('No pending payments found');
-    const tokens = await this.nearIntentsService.getTokens();
+    if (fetchErr || !payments?.length) throw new BadRequestException('No eligible payments found');
     const results: DealPaymentResponse[] = [];
+    let fromTokenOverride: NearToken | null = null;
+    if (payWithToken?.symbol && payWithToken?.chain) {
+      if (payWithToken.tokenId) {
+        const tokens = await this.nearIntentsService.getTokens();
+        const byId = tokens.find((t) => t.tokenId === payWithToken!.tokenId);
+        if (byId?.tokenId && typeof byId.decimals === 'number') {
+          fromTokenOverride = byId;
+        }
+      }
+      if (!fromTokenOverride) {
+        fromTokenOverride = await this.nearIntentsService.findToken(payWithToken.symbol, payWithToken.chain);
+        if (!fromTokenOverride) {
+          this.logger.warn(`payWithToken not found in intents list: ${payWithToken.symbol} on ${payWithToken.chain}`);
+        }
+      }
+    }
     for (const p of payments) {
-      const fromToken = tokens.find(
-        (t) =>
-          t.symbol.toUpperCase() === (p.preferred_token_symbol || 'USDC').toUpperCase() &&
-          (t.chain.toLowerCase() === (p.preferred_network || 'base').toLowerCase() || (p.preferred_network === 'solana' && t.chain === 'sol')),
-      );
+      // fromToken = what the org pays with (payWithToken override or payment default)
+      const fromToken =
+        fromTokenOverride ||
+        (await this.nearIntentsService.findToken(p.preferred_token_symbol || 'USDC', p.preferred_network || 'base'));
       if (!fromToken?.tokenId) {
-        this.logger.warn(`Token not found for payment ${p.id}, skipping`);
+        this.logger.warn(
+          `Token not found for payment ${p.id} (${p.preferred_token_symbol}/${p.preferred_network}). ` +
+            `Use payWithToken to choose a supported token (e.g. USDC on base).`,
+        );
+        continue;
+      }
+      // toToken = what the recipient receives (DESTINATION_CHAIN must match recipient's chain)
+      // Infer destination chain from recipient address when clearly Solana (so we don't send Base USDC to a Solana address).
+      const isSolanaAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test((p.recipient_wallet || '').trim()) && !(p.recipient_wallet || '').startsWith('0x');
+      const destChain = isSolanaAddress ? 'solana' : (p.preferred_network || 'base');
+      const destSymbol = p.preferred_token_symbol || 'USDC';
+      const toToken = await this.nearIntentsService.findToken(destSymbol, destChain);
+      if (!toToken?.tokenId) {
+        this.logger.warn(
+          `Destination token not found for payment ${p.id} (${destSymbol} on ${destChain}). Recipient chain must match destination asset.`,
+        );
         continue;
       }
       try {
+        // Same request shape as c/[id]: EXACT_OUTPUT, originAsset=fromToken, destinationAsset=toToken, recipientType=DESTINATION_CHAIN
         const quote = await this.nearIntentsService.getDepositQuote({
-          fromToken: { tokenId: fromToken.tokenId, chain: fromToken.chain, symbol: fromToken.symbol, decimals: fromToken.decimals },
-          toToken: { tokenId: fromToken.tokenId, chain: fromToken.chain, symbol: fromToken.symbol, decimals: fromToken.decimals },
-          amountIn: p.amount,
+          fromToken: {
+            tokenId: fromToken.tokenId,
+            chain: fromToken.chain,
+            symbol: fromToken.symbol,
+            decimals: fromToken.decimals,
+          },
+          toToken: {
+            tokenId: toToken.tokenId,
+            chain: toToken.chain,
+            symbol: toToken.symbol,
+            decimals: toToken.decimals,
+          },
+          amountOut: p.amount,
           recipient: p.recipient_wallet,
-          useExactOutput: false,
+          useExactOutput: true,
         });
         if (quote.error || !quote.depositAddress) {
           this.logger.warn(`Quote failed for payment ${p.id}:`, quote.error);
           continue;
         }
-        await client
-          .from('deal_payments')
-          .update({
-            deposit_address: quote.depositAddress,
-            intent_deadline: quote.deadline ?? null,
-            status: 'processing',
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', p.id);
+        // Do not overwrite preferred_network / preferred_token_symbol: they are the recipient's destination chain/token.
+        // Overwriting with fromToken (pay-with token) would make destination = origin and break DESTINATION_CHAIN (e.g. Solana recipient).
+        const updatePayload: Record<string, unknown> = {
+          deposit_address: quote.depositAddress,
+          intent_deadline: quote.deadline ?? null,
+          status: 'processing',
+          updated_at: new Date().toISOString(),
+        };
+        await client.from('deal_payments').update(updatePayload).eq('id', p.id);
         const { data: updated } = await client.from('deal_payments').select('*').eq('id', p.id).single();
-        if (updated) results.push(this.toResponse(updated));
+        if (updated) {
+          const resp = this.toResponse(updated) as Record<string, unknown>;
+          resp.minAmountInFormatted = quote.minAmountInFormatted ?? undefined;
+          resp.timeEstimate = quote.timeEstimate ?? undefined;
+          resp.memo = quote.memo ?? undefined;
+          results.push(resp as DealPaymentResponse);
+        }
       } catch (e) {
         this.logger.warn(`Intent creation failed for payment ${p.id}:`, (e as Error).message);
       }
@@ -146,6 +220,74 @@ export class DealPaymentsService {
     await client.from('deals').update({ status: 'delivered', updated_at: new Date().toISOString() }).eq('id', payment.deal_id);
     const { error } = await client.from('deal_payments').delete().eq('id', paymentId);
     if (error) throw new Error(`Database error: ${error.message}`);
+  }
+
+  /**
+   * Check intent status by deposit address; if completed with txHash, mark payment and invoice paid and post on-chain receipt.
+   */
+  async checkAndComplete(organizationId: string, paymentId: string, userId: string): Promise<CheckAndCompleteResult> {
+    await this.checkOrgAccess(organizationId, userId);
+    const client = this.supabaseService.getClient();
+    const { data: payment } = await client
+      .from('deal_payments')
+      .select('*')
+      .eq('id', paymentId)
+      .eq('organization_id', organizationId)
+      .single();
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.status === 'completed') {
+      return { completed: true, payment: this.toResponse(payment) };
+    }
+    if (payment.status !== 'processing' || !payment.deposit_address) {
+      return { completed: false, status: payment.status, normalizedStatus: payment.status };
+    }
+    try {
+      const intentStatus = await this.statusService.getStatus({ depositAddress: payment.deposit_address });
+      if (intentStatus.normalizedStatus === 'completed' && intentStatus.txHash) {
+        const updated = await this.markCompleted(organizationId, paymentId, intentStatus.txHash, userId);
+        return { completed: true, payment: updated };
+      }
+      return {
+        completed: false,
+        status: intentStatus.status,
+        normalizedStatus: intentStatus.normalizedStatus,
+      };
+    } catch (e) {
+      this.logger.warn(`checkAndComplete for payment ${paymentId}:`, (e as Error).message);
+      return { completed: false, status: 'unknown', normalizedStatus: 'unknown' };
+    }
+  }
+
+  /**
+   * Reset a processing (or expired) payment back to pending so org can "Prepare pay" again.
+   */
+  async resetToPending(organizationId: string, paymentId: string, userId: string): Promise<DealPaymentResponse> {
+    await this.checkOrgAccess(organizationId, userId);
+    const client = this.supabaseService.getClient();
+    const { data: payment } = await client
+      .from('deal_payments')
+      .select('id, status')
+      .eq('id', paymentId)
+      .eq('organization_id', organizationId)
+      .single();
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.status !== 'processing') {
+      throw new BadRequestException('Only processing payments can be reset (e.g. after intent expired)');
+    }
+    const { data: updated, error } = await client
+      .from('deal_payments')
+      .update({
+        status: 'pending',
+        deposit_address: null,
+        intent_deadline: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', paymentId)
+      .eq('organization_id', organizationId)
+      .select()
+      .single();
+    if (error) throw new Error(`Database error: ${error.message}`);
+    return this.toResponse(updated);
   }
 
   /**
@@ -201,6 +343,8 @@ export class DealPaymentsService {
   }
 
   private toResponse(row: any): DealPaymentResponse {
+    const invite = Array.isArray(row.deal_invites) ? row.deal_invites[0] : row.deal_invites;
+    const recipientEmail = invite?.invitee_email ?? null;
     return {
       id: row.id,
       deal_id: row.deal_id,
@@ -209,6 +353,7 @@ export class DealPaymentsService {
       amount: row.amount,
       amount_currency: row.amount_currency,
       recipient_wallet: row.recipient_wallet,
+      recipient_email: recipientEmail,
       preferred_network: row.preferred_network,
       preferred_token_symbol: row.preferred_token_symbol,
       status: row.status,
@@ -217,6 +362,7 @@ export class DealPaymentsService {
       tx_hash: row.tx_hash,
       created_at: row.created_at,
       updated_at: row.updated_at,
+      invoice_id: row.invoice_id ?? undefined,
     };
   }
 }

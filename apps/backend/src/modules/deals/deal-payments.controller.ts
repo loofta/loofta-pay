@@ -1,7 +1,7 @@
-import { Controller, Get, Post, Delete, Body, Param, UseGuards, Headers } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Headers } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiSecurity, ApiParam } from '@nestjs/swagger';
 import { AuthGuard } from '@/common/guards';
-import { DealPaymentsService } from './deal-payments.service';
+import { DealPaymentsService, CheckAndCompleteResult } from './deal-payments.service';
 import { DealPaymentResponse } from './dto';
 
 @ApiTags('deal-payments')
@@ -32,14 +32,14 @@ export class DealPaymentsController {
   }
 
   @Post('prepare-pay')
-  @ApiOperation({ summary: 'Prepare pay: create intents for selected payment IDs; returns deposit addresses' })
+  @ApiOperation({ summary: 'Prepare pay: create intents for selected payment IDs; optional payWithToken to choose token (from NEAR intents list)' })
   @ApiParam({ name: 'orgId' })
   preparePay(
     @Param('orgId') orgId: string,
-    @Body() body: { paymentIds: string[] },
+    @Body() body: { paymentIds: string[]; payWithToken?: { symbol: string; chain: string; tokenId?: string; decimals?: number } },
     @Headers('x-privy-user-id') userId: string,
   ): Promise<DealPaymentResponse[]> {
-    return this.service.preparePay(orgId, body.paymentIds || [], userId);
+    return this.service.preparePay(orgId, body.paymentIds || [], userId, body.payWithToken);
   }
 
   @Delete(':paymentId')
@@ -66,5 +66,31 @@ export class DealPaymentsController {
     @Headers('x-privy-user-id') userId: string,
   ): Promise<DealPaymentResponse> {
     return this.service.markCompleted(orgId, paymentId, body.txHash || '', userId);
+  }
+
+  @Get(':paymentId/check-complete')
+  @ApiOperation({ summary: 'Check intent status; if completed, auto-mark payment and invoice paid + on-chain attestation' })
+  @ApiParam({ name: 'orgId' })
+  @ApiParam({ name: 'paymentId' })
+  @ApiResponse({ status: 200, description: 'Check result; completed true if payment was marked paid' })
+  checkAndComplete(
+    @Param('orgId') orgId: string,
+    @Param('paymentId') paymentId: string,
+    @Headers('x-privy-user-id') userId: string,
+  ): Promise<CheckAndCompleteResult> {
+    return this.service.checkAndComplete(orgId, paymentId, userId);
+  }
+
+  @Put(':paymentId/reset-to-pending')
+  @ApiOperation({ summary: 'Reset a processing payment to pending (e.g. after intent expired); allows Prepare pay again' })
+  @ApiParam({ name: 'orgId' })
+  @ApiParam({ name: 'paymentId' })
+  @ApiResponse({ status: 200, description: 'Payment reset to pending' })
+  resetToPending(
+    @Param('orgId') orgId: string,
+    @Param('paymentId') paymentId: string,
+    @Headers('x-privy-user-id') userId: string,
+  ): Promise<DealPaymentResponse> {
+    return this.service.resetToPending(orgId, paymentId, userId);
   }
 }

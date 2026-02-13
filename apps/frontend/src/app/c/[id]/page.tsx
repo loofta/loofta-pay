@@ -2785,8 +2785,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     const isWaiting = s === "PENDING_DEPOSIT" || !status;
 
                                     if (s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX") {
-                                      statusTitle = "Route & swapping";
-                                      statusSubtitle = "We're routing your funds and executing the swap. This usually takes 1-2 minutes.";
+                                      statusTitle = "Processing Your Payment";
+                                      statusSubtitle = "Finding the best route and preparing transfer";
                                     } else if (s === "PRIVATE_TRANSFER_PENDING") {
                                       statusTitle = "Performing private deposit";
                                       statusSubtitle = "Funds are in your wallet. Complete the private transfer to the recipient using the button below.";
@@ -2877,16 +2877,16 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                     // Calculate steps and progress based on status
                                     const s = String(status || "PENDING_DEPOSIT").toUpperCase();
                                     let completedSteps = 0;
-                                    const totalSteps = 5; // deposit, routing, processing, private deposit, success
+                                    const totalSteps = 4; // deposit, processing, sending, success
 
                                     if (s === 'SUCCESS') {
-                                      completedSteps = 5;
+                                      completedSteps = 4;
                                     } else if (s === 'PRIVATE_TRANSFER_PENDING') {
-                                      completedSteps = 3; // Route done, performing private deposit step
+                                      completedSteps = 3;
                                     } else if (s === 'PROCESSING' || s === 'KNOWN_DEPOSIT_TX') {
-                                      completedSteps = 1; // Deposit completed, routing active
+                                      completedSteps = 1; // Deposit completed, processing active
                                     } else if (s === 'INCOMPLETE_DEPOSIT') {
-                                      completedSteps = 0; // Deposit active but incomplete
+                                      completedSteps = 0;
                                     } else {
                                       completedSteps = 0; // PENDING_DEPOSIT
                                     }

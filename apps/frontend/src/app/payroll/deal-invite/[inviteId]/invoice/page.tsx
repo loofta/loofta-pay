@@ -60,6 +60,24 @@ export default function DealInviteInvoicePage() {
 
   const formatAddress = (parts: (string | null | undefined)[]) =>
     parts.filter((p): p is string => Boolean(p?.trim())).join(", ") || null;
+  const hasStructuredAddress =
+    from &&
+    [from.address_line1, from.address_line2, from.city, from.state, from.postal_code, from.country].some(
+      (p) => p != null && String(p).trim() !== ""
+    );
+  const fromAddressBlock = hasStructuredAddress ? (
+    <>
+      {formatAddress([from?.address_line1, from?.address_line2]) && (
+        <p className="text-gray-600">{formatAddress([from?.address_line1, from?.address_line2])}</p>
+      )}
+      {formatAddress([from?.city, from?.state, from?.postal_code, from?.country]) && (
+        <p className="text-gray-600">{formatAddress([from?.city, from?.state, from?.postal_code, from?.country])}</p>
+      )}
+    </>
+  ) : from?.billing_address ? (
+    <p className="text-gray-600 whitespace-pre-line">{from.billing_address}</p>
+  ) : null;
+  const hasFromDetails = fromName || fromEmail || fromAddressBlock || from?.business_name || from?.business_registration_number || from?.tva_number;
 
   return (
     <div className="space-y-6 print:space-y-4 p-4 md:p-6">
@@ -85,11 +103,17 @@ export default function DealInviteInvoicePage() {
         <CardContent className="space-y-6 px-6 pb-6 md:px-8 md:pb-8">
           <div className="grid grid-cols-2 gap-6 text-sm">
             <div className="space-y-1">
-              <p className="font-medium text-gray-500 uppercase tracking-wide">From (Freelancer)</p>
-              {fromName && <p className="font-medium">{fromName}</p>}
-              <p>{fromEmail || "—"}</p>
-              {from?.billing_address && <p className="text-gray-600 whitespace-pre-line">{from.billing_address}</p>}
-              {from?.tva_number && <p className="text-gray-600">VAT / Tax: {from.tva_number}</p>}
+              <p className="font-medium text-gray-500 uppercase tracking-wide">From</p>
+              {fromName ? <p className="font-medium text-gray-900">{fromName}</p> : null}
+              {fromEmail && <p className="text-gray-700">{fromEmail}</p>}
+              {fromAddressBlock}
+              {from?.business_name && <p className="text-gray-600">{from.business_name}</p>}
+              {(from?.business_registration_number || from?.tva_number) && (
+                <p className="text-gray-600">
+                  VAT / Reg: {from?.business_registration_number || from?.tva_number}
+                </p>
+              )}
+              {!hasFromDetails && <p className="text-gray-500">—</p>}
             </div>
             <div className="space-y-1">
               <p className="font-medium text-gray-500 uppercase tracking-wide">To (Organisation)</p>

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { Loader2, CheckCircle2, Clock, ArrowRight, Zap, Send, Wallet } from 'lucide-react';
+import { Loader2, CheckCircle2, Clock, Send, Wallet } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getNetworkConfirmationTime, getSameChainProcessingTime } from '@/lib/networkTimes';
 
@@ -49,19 +49,12 @@ const STEP_CONFIG: Record<string, Omit<PaymentStep, 'status'>> = {
     icon: <Wallet className="w-5 h-5" />,
     estimatedTime: 30, // 30 seconds for blockchain confirmation
   },
-  routing: {
-    id: 'routing',
-    label: 'Routing & Swapping',
-    description: 'Finding the best route and executing the swap',
-    icon: <Zap className="w-5 h-5" />,
-    estimatedTime: 45, // 45 seconds for swap execution
-  },
   processing: {
     id: 'processing',
     label: 'Processing Payment',
-    description: 'Finalizing transaction details and preparing transfer',
+    description: 'Finding the best route and preparing transfer',
     icon: <Loader2 className="w-5 h-5" />,
-    estimatedTime: 20, // 20 seconds for processing
+    estimatedTime: 60, // ~1–2 minutes for route + transfer
   },
   sending: {
     id: 'sending',
@@ -98,35 +91,27 @@ function getStepsForStatus(
 
   // For same-chain: use network-specific confirmation times
   let depositTime: number;
-  let routingTime: number;
   let processingTime: number;
   let sendingTime: number;
 
   if (isSameChain && fromChain) {
-    // Same-chain: deposit confirmation + swap (~10-15s) + transfer confirmation
     const confirmationTime = getNetworkConfirmationTime(fromChain);
-    depositTime = confirmationTime; // Network-specific confirmation
-    routingTime = 10; // Swap execution on same chain is fast
-    processingTime = 5; // Minimal processing for same-chain
-    sendingTime = confirmationTime; // Network-specific confirmation for transfer
+    depositTime = confirmationTime;
+    processingTime = 15; // Route + transfer prep on same chain
+    sendingTime = confirmationTime;
   } else if (averagePaymentTime) {
-    // Cross-chain: use average time distribution
-    // Distribution: deposit 20%, routing 40%, processing 15%, sending 25%
+    // Distribution: deposit 20%, processing 40%, sending 40%
     depositTime = Math.round(averagePaymentTime * 0.2);
-    routingTime = Math.round(averagePaymentTime * 0.4);
-    processingTime = Math.round(averagePaymentTime * 0.15);
-    sendingTime = Math.round(averagePaymentTime * 0.25);
+    processingTime = Math.round(averagePaymentTime * 0.4);
+    sendingTime = Math.round(averagePaymentTime * 0.4);
   } else {
-    // Default fallback
     depositTime = 30;
-    routingTime = 45;
-    processingTime = 20;
+    processingTime = 60;
     sendingTime = 30;
   }
 
   const configWithTimes = {
     deposit: { ...STEP_CONFIG.deposit, estimatedTime: depositTime },
-    routing: { ...STEP_CONFIG.routing, estimatedTime: routingTime },
     processing: { ...STEP_CONFIG.processing, estimatedTime: processingTime },
     sending: { ...STEP_CONFIG.sending, estimatedTime: sendingTime },
     privacyCash: { ...STEP_CONFIG.privacyCash, estimatedTime: 45 },
@@ -134,9 +119,9 @@ function getStepsForStatus(
   };
   const upperStatus = String(status || '').toUpperCase();
 
-  // For direct deposits, skip the routing step
-  const includeRouting = paymentType !== 'direct';
-  
+  // No separate routing step: single "Processing Payment" step covers route + transfer prep
+  const includeRouting = false;
+
   // For private cross-chain payments, include Privacy Cash step
   const isPrivateCrossChain = isPrivate && fromChain && toChain && 
                                fromChain.toLowerCase() !== toChain.toLowerCase() &&
@@ -164,9 +149,6 @@ function getStepsForStatus(
         } : {}),
       });
 
-      if (includeRouting) {
-        steps.push({ ...configWithTimes.routing, status: routingStatus });
-      }
     }
 
     steps.push({ ...configWithTimes.processing, status: processingStatus });
@@ -211,7 +193,7 @@ function getStepsForStatus(
   }
 
   if (upperStatus === 'PROCESSING' || upperStatus === 'KNOWN_DEPOSIT_TX') {
-    return buildSteps('completed', includeRouting ? 'active' : 'completed', 'pending', 'pending', 'pending', 'pending');
+    return buildSteps('completed', 'completed', 'active', 'pending', 'pending', 'pending');
   }
 
   if (upperStatus === 'INCOMPLETE_DEPOSIT') {
@@ -225,7 +207,6 @@ function getStepsForStatus(
 function getStatusMessage(status: PaymentStatus | null): { title: string; subtitle: string } {
   const upperStatus = String(status || '').toUpperCase();
 
-  console.log('status here then', status);
   switch (upperStatus) {
     case 'SUCCESS':
       return {
@@ -236,7 +217,7 @@ function getStatusMessage(status: PaymentStatus | null): { title: string; subtit
     case 'KNOWN_DEPOSIT_TX':
       return {
         title: 'Processing Your Payment',
-        subtitle: 'We\'re routing your funds and executing the swap. This usually takes 1-2 minutes.',
+        subtitle: 'Finding the best route and preparing transfer',
       };
     case 'PRIVATE_TRANSFER_PENDING':
       return {
@@ -692,12 +673,11 @@ export function PaymentStatusTracker({
           className="mt-6 p-4 rounded-xl bg-blue-50 border border-blue-200"
         >
           <div className="flex items-start gap-3">
-            <Zap className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+            <Loader2 className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
             <div className="flex-1">
               <h4 className="font-semibold text-blue-900 mb-1">What's happening now?</h4>
               <p className="text-sm text-blue-700">
-                Your deposit has been confirmed. We're now finding the best route to swap your tokens
-                and will transfer them to the recipient once the swap is complete.
+                Your deposit has been confirmed. We're finding the best route and preparing the transfer to the recipient.
               </p>
             </div>
           </div>

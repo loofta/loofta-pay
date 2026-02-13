@@ -109,47 +109,45 @@ export default function MyInvoicesPage() {
               No invoices yet. Accept a deal and confirm delivery to generate an invoice.
             </p>
           ) : (
-            <ul className="space-y-3">
+            <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 list-none p-0 m-0">
               {list.map((inv) => (
                 <li key={inv.id}>
-                  <Card className="border-gray-200 bg-gray-50/50">
-                    <CardContent className="flex flex-wrap items-center justify-between gap-4 px-6 py-4 md:px-8 md:py-5">
+                  <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-md flex flex-col gap-4 h-full transition-all duration-200 hover:shadow-lg">
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900">
+                        {inv.amount} <span className="text-gray-500 font-normal">{inv.amount_currency}</span>
+                      </h3>
+                      {inv.deal_title && (
+                        <p className="mt-1.5 text-sm font-medium text-gray-600">{inv.deal_title}</p>
+                      )}
+                      {inv.org_name && (
+                        <p className="mt-0.5 text-sm text-gray-500 truncate">{inv.org_name}</p>
+                      )}
+                      <p className="mt-2 text-xs font-medium text-gray-400 uppercase tracking-wide">Created {new Date(inv.created_at).toLocaleDateString()}</p>
+                    </div>
+                    <div className="mt-auto pt-2 flex items-center justify-between w-full flex-wrap gap-2">
+                      <span
+                        className={`rounded-lg px-2.5 py-1 text-xs font-semibold capitalize ${
+                          inv.status === "paid"
+                            ? "bg-emerald-50 text-emerald-800"
+                            : inv.status === "sent"
+                              ? "bg-blue-50 text-blue-800"
+                              : "bg-gray-100 text-gray-700"
+                        }`}
+                      >
+                        {inv.status}
+                      </span>
                       <div>
-                        <span className="font-medium text-gray-900">
-                          {inv.amount} {inv.amount_currency}
-                        </span>
-                        {inv.deal_title && (
-                          <span className="block text-sm text-gray-500">{inv.deal_title}</span>
-                        )}
-                        {inv.org_name && (
-                          <span className="block text-xs text-gray-400">{inv.org_name}</span>
-                        )}
-                        <span className="block text-xs text-gray-400">
-                          {new Date(inv.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`rounded px-2 py-1 text-xs capitalize ${
-                            inv.status === "paid"
-                              ? "bg-green-100 text-green-800"
-                              : inv.status === "sent"
-                                ? "bg-blue-100 text-blue-800"
-                                : "bg-gray-100 text-gray-700"
-                          }`}
-                        >
-                          {inv.status}
-                        </span>
                         {inv.invite_id && (
-                          <Button variant="ghost" size="sm" asChild>
+                          <Button asChild size="sm" className="rounded-lg bg-orange-500 font-semibold text-white shadow-sm hover:shadow-md">
                             <Link href={`/payroll/deal-invite/${inv.invite_id}/invoice`}>
                               View
                             </Link>
                           </Button>
                         )}
                       </div>
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>

@@ -5,26 +5,14 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
 import { payrollApi, type PayrollOrganization } from "@/services/api/payroll";
 import { dealsApi, type DealResponse } from "@/services/api/deals";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { NewDealModal } from "@/components/NewDealModal";
-import { ContributorEmailInput } from "@/components/ContributorEmailInput";
-import { InviteLinkShare } from "@/components/InviteLinkShare";
-import { Handshake, Plus, Loader2, ArrowLeft, ChevronRight, ChevronDown, Clock, User, ExternalLink, Send } from "lucide-react";
+import { Handshake, Plus, Loader2, ArrowLeft, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 const STATUS_COLOR: Record<string, string> = {
   draft: "bg-gray-100 text-gray-700",
@@ -47,21 +35,6 @@ export default function DealsListPage() {
   const [deals, setDeals] = useState<DealResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [newDealModalOpen, setNewDealModalOpen] = useState(false);
-  const [expandedDealId, setExpandedDealId] = useState<string | null>(null);
-  const [editSubmitting, setEditSubmitting] = useState(false);
-  const [inviteDealId, setInviteDealId] = useState<string | null>(null);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteSubmitting, setInviteSubmitting] = useState(false);
-  const [inviteLink, setInviteLink] = useState<string | null>(null);
-  const [editingForm, setEditingForm] = useState<{
-    dealId: string;
-    title: string;
-    description: string;
-    instructions: string;
-    amount: string;
-    amount_currency: string;
-    deadline: string;
-  } | null>(null);
 
   const loadData = useCallback(async () => {
     if (!userId || !orgId) return;
@@ -89,45 +62,6 @@ export default function DealsListPage() {
     loadData();
   }, [ready, authenticated, loadData, router]);
 
-  const handleUpdateDeal = async (
-    dealId: string,
-    data: { title: string; description: string; instructions: string; amount: string; amount_currency: string; deadline: string }
-  ) => {
-    if (!userId || !orgId) return;
-    setEditSubmitting(true);
-    try {
-      await dealsApi.deals.update(orgId, dealId, data, userId);
-      toast({ title: "Deal updated" });
-      loadData();
-    } catch (err: unknown) {
-      toast({ variant: "destructive", title: "Update failed", description: err instanceof Error ? err.message : "Error" });
-    } finally {
-      setEditSubmitting(false);
-    }
-  };
-
-  const handleInvite = async () => {
-    if (!userId || !orgId || !inviteDealId || !inviteEmail.trim()) return;
-    setInviteSubmitting(true);
-    try {
-      const inv = await dealsApi.deals.invite(orgId, inviteDealId, { invitee_email: inviteEmail.trim() }, userId);
-      const base = typeof window !== "undefined" ? window.location.origin : "";
-      setInviteLink(`${base}/payroll/deal-invite/${inv.id}`);
-      toast({ title: "Invite sent", description: `Link created for ${inviteEmail}. Copy and share it.` });
-      loadData();
-    } catch (err: unknown) {
-      toast({ variant: "destructive", title: "Invite failed", description: err instanceof Error ? err.message : "Error" });
-    } finally {
-      setInviteSubmitting(false);
-    }
-  };
-
-  const closeInviteDialog = () => {
-    setInviteDealId(null);
-    setInviteEmail("");
-    setInviteLink(null);
-  };
-
   if (loading || !organization) {
     return (
       <div className="flex items-center justify-center min-h-[200px]">
@@ -138,218 +72,77 @@ export default function DealsListPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <Link href={`/payroll/${orgId}`} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-2">
-            <ArrowLeft className="h-4 w-4" /> Back to {organization.name}
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" size="icon" asChild>
+          <Link href={`/payroll/${orgId}`}>
+            <ArrowLeft className="h-4 w-4" />
           </Link>
+        </Button>
+        <div>
           <h1 className="text-2xl font-semibold text-gray-900">Deals</h1>
           <p className="text-sm text-gray-500 mt-1">Create deals, invite freelancers, and release payment after delivery.</p>
         </div>
-        <GradientActionButton
-          className="gap-2"
-          onClick={() => setNewDealModalOpen(true)}
-        >
-          <Plus className="h-4 w-4" /> New deal
-        </GradientActionButton>
       </div>
 
-      {deals.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Handshake className="h-12 w-12 text-gray-300 mb-4" />
-            <p className="text-gray-500 text-center mb-4">No deals yet. Create a deal to invite a freelancer.</p>
-            <Button onClick={() => setNewDealModalOpen(true)}>Create your first deal</Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-4">
-          {deals.map((deal) => {
-            const acceptedInvite = deal.invites?.find((i) => i.status === "accepted");
-            const isExpanded = expandedDealId === deal.id;
-            const canEdit = deal.status === "draft" || deal.status === "invited";
-            const form = isExpanded && editingForm?.dealId === deal.id ? editingForm : null;
-
-            const toggleExpand = () => {
-              if (isExpanded) {
-                setExpandedDealId(null);
-                setEditingForm(null);
-              } else {
-                setExpandedDealId(deal.id);
-                setEditingForm({
-                  dealId: deal.id,
-                  title: deal.title,
-                  description: deal.description ?? "",
-                  instructions: deal.instructions ?? "",
-                  amount: deal.amount,
-                  amount_currency: deal.amount_currency,
-                  deadline: deal.deadline ? deal.deadline.slice(0, 10) : "",
-                });
-              }
-            };
-
-            const setForm = (updates: Partial<NonNullable<typeof editingForm>>) => {
-              if (editingForm?.dealId === deal.id) setEditingForm({ ...editingForm, ...updates });
-            };
-
-            const handleSave = () => {
-              if (!form) return;
-              handleUpdateDeal(deal.id, {
-                title: form.title,
-                description: form.description,
-                instructions: form.instructions,
-                amount: form.amount,
-                amount_currency: form.amount_currency,
-                deadline: form.deadline.trim(),
-              });
-            };
-
-            return (
-              <Card key={deal.id} className="overflow-hidden">
-                <CardContent className="p-0">
-                  <button
-                    type="button"
-                    onClick={toggleExpand}
-                    className="w-full flex flex-wrap items-center justify-between gap-3 p-6 text-left hover:bg-gray-50/50 transition-colors"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium text-gray-900 truncate">{deal.title}</span>
-                        <Badge className={STATUS_COLOR[deal.status] || "bg-gray-100"}>{deal.status}</Badge>
-                      </div>
-                      <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
-                        <span>{deal.amount} {deal.amount_currency}</span>
-                        {deal.deadline && (
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3.5 w-3.5" /> {new Date(deal.deadline).toLocaleDateString()}
-                          </span>
-                        )}
-                        {acceptedInvite && (
-                          <span className="flex items-center gap-1">
-                            <User className="h-3.5 w-3.5" /> {acceptedInvite.invitee_email}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    {isExpanded ? (
-                      <ChevronDown className="h-5 w-5 text-gray-400 shrink-0" />
-                    ) : (
-                      <ChevronRight className="h-5 w-5 text-gray-400 shrink-0" />
-                    )}
-                  </button>
-
-                  {isExpanded && (
-                    <div className="border-t bg-gray-50/50 px-6 pb-6 pt-4 space-y-4">
-                      {canEdit && form ? (
-                        <>
-                          <div className="grid gap-4 sm:grid-cols-2">
-                            <div className="sm:col-span-2">
-                              <Label>Title *</Label>
-                              <Input value={form.title} onChange={(e) => setForm({ title: e.target.value })} className="mt-1" />
-                            </div>
-                            <div className="sm:col-span-2">
-                              <Label>Description</Label>
-                              <textarea value={form.description} onChange={(e) => setForm({ description: e.target.value })} className="flex min-h-[72px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm mt-1" />
-                            </div>
-                            <div className="sm:col-span-2">
-                              <Label>Instructions for freelancer</Label>
-                              <textarea value={form.instructions} onChange={(e) => setForm({ instructions: e.target.value })} className="flex min-h-[72px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm mt-1" />
-                            </div>
-                            <div>
-                              <Label>Amount *</Label>
-                              <Input value={form.amount} onChange={(e) => setForm({ amount: e.target.value })} className="mt-1" />
-                            </div>
-                            <div>
-                              <Label>Currency</Label>
-                              <Input value={form.amount_currency} onChange={(e) => setForm({ amount_currency: e.target.value })} className="mt-1" />
-                            </div>
-                            <div className="sm:col-span-2">
-                              <Label>Deadline</Label>
-                              <Input type="date" value={form.deadline} onChange={(e) => setForm({ deadline: e.target.value })} className="mt-1" />
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <GradientActionButton onClick={handleSave} disabled={editSubmitting}>
-                              {editSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                              Save changes
-                            </GradientActionButton>
-                            <Button variant="outline" size="sm" onClick={() => setInviteDealId(deal.id)}>
-                              <User className="h-4 w-4 mr-2" /> Invite freelancer
-                            </Button>
-                            <Link href={`/payroll/${orgId}/deals/${deal.id}`}>
-                              <Button variant="outline" size="sm">
-                                <ExternalLink className="h-4 w-4 mr-2" /> Open full page
-                              </Button>
-                            </Link>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          {deal.description && (
-                            <div>
-                              <p className="text-sm font-medium text-gray-700">Description</p>
-                              <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{deal.description}</p>
-                            </div>
-                          )}
-                          {deal.instructions && (
-                            <div>
-                              <p className="text-sm font-medium text-gray-700">Instructions</p>
-                              <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{deal.instructions}</p>
-                            </div>
-                          )}
-                          <Link href={`/payroll/${orgId}/deals/${deal.id}`}>
-                            <Button variant="outline" size="sm">
-                              <ExternalLink className="h-4 w-4 mr-2" /> Open full page
-                            </Button>
-                          </Link>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      )}
-
-      <Dialog open={!!inviteDealId} onOpenChange={(open) => !open && closeInviteDialog()}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Invite freelancer</DialogTitle>
-            <DialogDescription>They will get a link to view the deal and accept, decline, or request changes.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label>Email</Label>
-            <ContributorEmailInput
-              orgId={orgId}
-              userId={userId}
-              value={inviteEmail}
-              onChange={setInviteEmail}
-              placeholder="freelancer@example.com"
-              disabled={!!inviteLink}
-            />
-            <p className="text-xs text-muted-foreground">Start typing to pick a current contributor, or enter any email.</p>
+      <Card className="border-gray-200 bg-white">
+        <CardHeader className="px-6 pt-6 pb-2 md:px-8">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Handshake className="h-5 w-5" />
+                Deals
+              </CardTitle>
+              <CardDescription className="mt-1.5">
+                Invite freelancers and release payment after delivery.
+              </CardDescription>
+            </div>
+            <GradientActionButton className="gap-2 shrink-0" onClick={() => setNewDealModalOpen(true)}>
+              <Plus className="h-4 w-4" /> New deal
+            </GradientActionButton>
           </div>
-          {inviteLink && (
-            <InviteLinkShare
-              inviteLink={inviteLink}
-              onCopy={() => toast({ title: "Copied to clipboard" })}
-            />
+        </CardHeader>
+        <CardContent className="px-6 pb-6 pt-4 md:px-8">
+          {deals.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-8 py-10 text-center">
+              <Handshake className="mx-auto h-10 w-10 text-gray-300" />
+              <p className="mt-3 text-sm font-medium text-gray-600">No deals yet</p>
+              <p className="mt-1.5 text-xs text-gray-500">Create a deal to invite a freelancer.</p>
+              <Button onClick={() => setNewDealModalOpen(true)} className="mt-4">Create your first deal</Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {deals.map((deal) => {
+                const acceptedInvite = deal.invites?.find((i) => i.status === "accepted");
+                const dateLabel = deal.deadline
+                  ? `Deadline ${new Date(deal.deadline).toLocaleDateString()}`
+                  : `Created ${new Date(deal.created_at).toLocaleDateString()}`;
+                return (
+                  <Link key={deal.id} href={`/payroll/${orgId}/deals/${deal.id}`} className="block h-full group">
+                    <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-md flex flex-col gap-4 h-full transition-all duration-200 group-hover:shadow-lg">
+                      <div className="flex items-start justify-between gap-2">
+                        <h3 className="text-lg font-bold text-gray-900 truncate pr-2">{deal.title}</h3>
+                        <Badge className={`${STATUS_COLOR[deal.status] || "bg-gray-100"} shrink-0 text-xs font-medium`}>{deal.status}</Badge>
+                      </div>
+                      <p className="text-base font-medium text-gray-700">
+                        {deal.amount} <span className="text-gray-500 font-normal">{deal.amount_currency}</span>
+                      </p>
+                      {acceptedInvite && (
+                        <p className="text-sm text-gray-500 truncate">{acceptedInvite.invitee_email}</p>
+                      )}
+                      <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">{dateLabel}</p>
+                      <div className="mt-auto pt-2 flex items-center justify-end">
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-shadow group-hover:shadow-md">
+                          Open <ChevronRight className="h-4 w-4" />
+                        </span>
+                      </div>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
           )}
-          <DialogFooter>
-            <Button variant="outline" onClick={closeInviteDialog}>Cancel</Button>
-            {!inviteLink ? (
-              <Button onClick={handleInvite} disabled={inviteSubmitting || !inviteEmail.trim()}>
-                {inviteSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}
-                Send invite
-              </Button>
-            ) : (
-              <Button onClick={closeInviteDialog}>Done</Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </CardContent>
+      </Card>
 
       <NewDealModal
         open={newDealModalOpen}
