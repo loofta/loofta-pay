@@ -28,6 +28,8 @@ const bs58 = bs58Module?.default ?? bs58Module;
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const DECIMALS = 6;
+/** SOL for burner to cover claim/reclaim gas (sent to burner, not fee payer). */
+const BURNER_SOL_LAMPORTS = 500_000;
 
 @Injectable()
 export class SendPaymentService {
@@ -102,6 +104,8 @@ export class SendPaymentService {
     deposit_address: string;
     amount: string;
     token: string;
+    burner_address: string;
+    required_sol_lamports: number;
   }> {
     if (!this.encryption.isAvailable()) {
       throw new BadRequestException('Send payment is not configured (missing SEND_PAYMENT_ENC_KEY)');
@@ -149,6 +153,8 @@ export class SendPaymentService {
       deposit_address: depositAddress.toBase58(),
       amount: amountStr,
       token: 'USDC',
+      burner_address: burnerKeypair.publicKey.toBase58(),
+      required_sol_lamports: BURNER_SOL_LAMPORTS,
     };
   }
 
@@ -188,6 +194,8 @@ export class SendPaymentService {
       status: data.status,
       message: data.message,
       deposit_address: deposit_address ?? undefined,
+      burner_address: data.burner_address ?? undefined,
+      required_sol_lamports: BURNER_SOL_LAMPORTS,
       ...(is_sender ? { is_sender: true } : {}),
     };
   }
@@ -209,6 +217,12 @@ export class SendPaymentService {
     passphrase: string;
     /** When true, frontend must send signed tx to submit-private (backend adds sponsor sig and relays). User needs no SOL. */
     useSponsorUsed: boolean;
+    /** Privacy Cash fees (sender pays so recipient gets full amount). */
+    feeUsdc: number;
+    /** Total USDC to deposit (recipient amount + fees). */
+    totalDepositUsdc: number;
+    /** Optional unsigned SOL tx: sender → burner for claim gas (0.0005 SOL). */
+    unsignedSolTx?: string;
   }> {
     const link = await this.getOne(id);
     if (link.sender_user_id !== senderUserId) {
@@ -243,13 +257,16 @@ export class SendPaymentService {
 
     try {
       const result = await tryPrepare(false);
-      this.logger.log(`[SendPayment] preparePrivate DONE id=${id} amount=${amount} USDC activityId=${result.activityId}`);
+      this.logger.log(`[SendPayment] preparePrivate DONE id=${id} amount=${amount} USDC feeUsdc=${result.feeUsdc} totalDepositUsdc=${result.totalDepositUsdc} activityId=${result.activityId}`);
       return {
         unsignedDepositTx: result.unsignedDepositTx,
         lastValidBlockHeight: result.lastValidBlockHeight,
         activityId: result.activityId,
         passphrase: result.passphrase,
         useSponsorUsed: !!sponsorPublicKey,
+        feeUsdc: result.feeUsdc,
+        totalDepositUsdc: result.totalDepositUsdc,
+        unsignedSolTx: result.unsignedSolTx,
       };
     } catch (err: any) {
       const message = err?.message ?? String(err);
@@ -264,6 +281,9 @@ export class SendPaymentService {
               activityId: result.activityId,
               passphrase: result.passphrase,
               useSponsorUsed: !!sponsorPublicKey,
+              feeUsdc: result.feeUsdc,
+              totalDepositUsdc: result.totalDepositUsdc,
+              unsignedSolTx: result.unsignedSolTx,
             };
           } catch (fallbackErr: any) {
             this.logger.warn(`preparePrivate (linked-wallet fallback) failed for link ${id}: ${fallbackErr?.message}`);
@@ -288,6 +308,7 @@ export class SendPaymentService {
       senderPublicKey: string;
       lastValidBlockHeight?: number;
       passphrase: string;
+      signedSolTx?: string;
     },
     sessionSignatureBase64: string,
   ): Promise<SendPaymentLinkPublic> {
@@ -328,7 +349,7 @@ export class SendPaymentService {
         body.lastValidBlockHeight,
         state,
         linkAmount,
-        { skipSignatureVerification },
+        { skipSignatureVerification, signedSolTx: body.signedSolTx },
       );
 
     try {

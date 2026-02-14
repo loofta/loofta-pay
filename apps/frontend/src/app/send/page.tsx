@@ -274,28 +274,54 @@ export default function SendPaymentPage() {
       signedTx = VersionedTransaction.deserialize(signedBytes);
     }
 
+    let signedSolTxB64: string | undefined;
+    if (prep.unsigned_sol_tx) {
+      const solTxBytes = Uint8Array.from(atob(prep.unsigned_sol_tx), (c) => c.charCodeAt(0));
+      let signedSolTx: VersionedTransaction;
+      if (usePhantom && phantom) {
+        const unsignedSol = VersionedTransaction.deserialize(solTxBytes);
+        signedSolTx = await phantom.signTransaction(unsignedSol);
+      } else {
+        const wallet =
+          solanaWallets?.find(
+            (w) => w.walletClientType !== 'phantom' && w.walletClientType !== 'detected',
+          ) ?? solanaWallets?.[0];
+        if (!wallet) throw new Error('No wallet to sign the SOL transaction.');
+        const signedResult = await wallet.signTransaction({ transaction: solTxBytes });
+        const signedBytes = (signedResult as { signedTransaction: Uint8Array }).signedTransaction;
+        signedSolTx = VersionedTransaction.deserialize(signedBytes);
+      }
+      signedSolTxB64 = btoa(String.fromCharCode(...signedSolTx.serialize()));
+    }
+
+    const submitBody = {
+      signed_deposit_tx: btoa(String.fromCharCode(...signedTx.serialize())),
+      activity_id: prep.activity_id,
+      sender_public_key: senderPublicKey,
+      last_valid_block_height: prep.last_valid_block_height,
+      passphrase: prep.passphrase,
+      ...(signedSolTxB64 ? { signed_sol_tx: signedSolTxB64 } : {}),
+    };
+
     if (prep.use_sponsor_used) {
-      // Backend pays gas: send user-signed tx to backend; it adds sponsor sig and relays. User needs no SOL.
-      await submitSendPaymentPrivate(
-        result.id,
-        {
-          signed_deposit_tx: btoa(String.fromCharCode(...signedTx.serialize())),
-          activity_id: prep.activity_id,
-          sender_public_key: senderPublicKey,
-          last_valid_block_height: prep.last_valid_block_height,
-          passphrase: prep.passphrase,
-        },
-        sessionSigBase64,
-        user.id
-      );
+      await submitSendPaymentPrivate(result.id, submitBody, sessionSigBase64, user.id);
     } else {
-      // User pays gas: broadcast from frontend, then tell backend the tx signature.
       const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
       const depositSig = await connection.sendRawTransaction(signedTx.serialize(), {
         skipPreflight: true,
         maxRetries: 3,
         preflightCommitment: 'processed',
       });
+      if (signedSolTxB64) {
+        try {
+          const solTx = VersionedTransaction.deserialize(
+            Uint8Array.from(atob(signedSolTxB64), (c) => c.charCodeAt(0))
+          );
+          await connection.sendRawTransaction(solTx.serialize(), { skipPreflight: true, maxRetries: 3 });
+        } catch (e) {
+          console.warn('SOL tx for burner gas failed:', e);
+        }
+      }
       await completeSendPaymentPrivateWithSignature(
         result.id,
         {
@@ -573,10 +599,10 @@ export default function SendPaymentPage() {
                           <span className="text-sm text-gray-500">Deposit stays private</span>
                         </label>
                         {payPrivately && (
-                          <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/80 text-sm text-amber-900">
-                            <p className="font-medium">When you confirm in your wallet:</p>
-                            <p className="mt-1 text-amber-800">
-                              It may show &quot;Failed to simulate&quot; or limited transaction details. This is normal for private payments — you can safely tap <strong>Confirm</strong>. The payment will still go through.
+                          <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/80 text-sm text-amber-900 space-y-2">
+                            <p className="font-medium">Fees on you — recipient gets full ${result.amount}</p>
+                            <p className="text-amber-800">
+                              Privacy Cash fees (~$0.60 + 0.35%) are added to your total. Min $2. You’ll need a little SOL for gas. When you confirm, the wallet may show &quot;Failed to simulate&quot; — tap <strong>Confirm</strong>; payment still goes through.
                             </p>
                           </div>
                         )}
@@ -652,12 +678,22 @@ export default function SendPaymentPage() {
                           </div>
                         )}
 
-                        <p className="text-xs text-gray-500 mt-1">Or copy the deposit address and send USDC manually:</p>
-                        <div className="flex gap-2">
-                          <Input readOnly value={result.deposit_address} className="font-mono text-xs" />
-                          <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.deposit_address, 'address')}>
-                            {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
-                          </Button>
+                        <p className="text-xs text-gray-500 mt-1">Or send manually: USDC to deposit address, 0.0005 SOL to burner for claim gas.</p>
+                        <div className="flex flex-col gap-2">
+                          <div className="flex gap-2">
+                            <Input readOnly value={result.deposit_address} className="font-mono text-xs" placeholder="USDC deposit" />
+                            <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.deposit_address, 'address')}>
+                              {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                            </Button>
+                          </div>
+                          {result.burner_address != null && (
+                            <div className="flex gap-2">
+                              <Input readOnly value={result.burner_address} className="font-mono text-xs" placeholder="SOL (0.0005) for gas" />
+                              <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.burner_address!, 'address')}>
+                                {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}

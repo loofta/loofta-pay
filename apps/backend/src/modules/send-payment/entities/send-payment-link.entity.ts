@@ -84,4 +84,10 @@ export class SendPaymentLinkPublic {
 
   @ApiPropertyOptional()
   deposit_address?: string | null;
+
+  @ApiPropertyOptional({ description: 'Burner wallet address (for SOL gas funding)' })
+  burner_address?: string | null;
+
+  @ApiPropertyOptional({ description: 'SOL lamports sender should send to burner for claim gas (e.g. 500000)' })
+  required_sol_lamports?: number;
 }
