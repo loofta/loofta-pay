@@ -17,6 +17,9 @@ export interface SendPaymentLinkPublic {
   status: SendPaymentStatus;
   message?: string | null;
   deposit_address?: string | null;
+  burner_address?: string | null;
+  /** SOL lamports to send to burner for claim gas (e.g. 500000 = 0.0005 SOL). */
+  required_sol_lamports?: number;
   is_sender?: boolean;
 }
 
@@ -31,8 +34,9 @@ export interface CreateSendPaymentResult {
   id: string;
   link: string;
   deposit_address: string;
-  /** Burner wallet public key (optional until backend is updated); use for Pay with Phantom. */
-  burner_address?: string;
+  burner_address: string;
+  /** SOL lamports sender should send to burner for claim gas (0.0005 SOL). */
+  required_sol_lamports: number;
   amount: string;
   token: string;
 }
@@ -110,6 +114,12 @@ export interface PreparePrivateResult {
   passphrase: string;
   /** When true, backend pays gas; send signed tx to submit-private instead of broadcasting. */
   use_sponsor_used?: boolean;
+  /** Privacy Cash fees (sender pays so recipient gets full amount). */
+  fee_usdc: number;
+  /** Total USDC to deposit (recipient amount + fees). */
+  total_deposit_usdc: number;
+  /** Optional: unsigned SOL tx (sender → burner) for claim gas; sign and send in submit. */
+  unsigned_sol_tx?: string;
 }
 
 export async function prepareSendPaymentPrivate(
@@ -125,6 +135,9 @@ export async function prepareSendPaymentPrivate(
     activityId: string;
     passphrase: string;
     useSponsorUsed?: boolean;
+    feeUsdc: number;
+    totalDepositUsdc: number;
+    unsignedSolTx?: string;
   }>(`/send-payment/${id}/prepare-private`, {
     method: 'POST',
     headers: {
@@ -142,6 +155,9 @@ export async function prepareSendPaymentPrivate(
     activity_id: data.activityId,
     passphrase: data.passphrase,
     use_sponsor_used: data.useSponsorUsed,
+    fee_usdc: data.feeUsdc,
+    total_deposit_usdc: data.totalDepositUsdc,
+    unsigned_sol_tx: data.unsignedSolTx,
   };
 }
 
@@ -153,6 +169,8 @@ export async function submitSendPaymentPrivate(
     sender_public_key: string;
     last_valid_block_height?: number;
     passphrase: string;
+    /** Optional: signed SOL tx (sender → burner) for claim gas; base64. */
+    signed_sol_tx?: string;
   },
   sessionSignatureBase64: string,
   userId: string
@@ -168,6 +186,7 @@ export async function submitSendPaymentPrivate(
       sender_public_key: body.sender_public_key,
       last_valid_block_height: body.last_valid_block_height,
       passphrase: body.passphrase,
+      signed_sol_tx: body.signed_sol_tx,
     }),
     userId,
   });

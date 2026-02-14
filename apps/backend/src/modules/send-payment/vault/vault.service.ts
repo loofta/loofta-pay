@@ -113,7 +113,15 @@ export class VaultService {
       /** Use link's existing burner (single burner = same as deposit address). */
       existingBurnerSecretKey?: Uint8Array;
     },
-  ): Promise<{ unsignedDepositTx: string; lastValidBlockHeight: number; activityId: string; passphrase: string }> {
+  ): Promise<{
+    unsignedDepositTx: string;
+    lastValidBlockHeight: number;
+    activityId: string;
+    passphrase: string;
+    feeUsdc: number;
+    totalDepositUsdc: number;
+    unsignedSolTx?: string;
+  }> {
     this.logger.log(`[Vault] preparePrivate START linkId=${linkId} amount=${amount} USDC sender=${senderPublicKey.slice(0, 8)}...`);
     const sessionSig = this.decodeSessionSignature(sessionSignatureBase64);
     if (!options?.skipSignatureVerification && !this.verifySessionSignature(senderPublicKey, sessionSignatureBase64)) {
@@ -143,6 +151,9 @@ export class VaultService {
         lastValidBlockHeight: result.lastValidBlockHeight,
         activityId: result.activityId,
         passphrase: result.passphrase,
+        feeUsdc: result.feeUsdc,
+        totalDepositUsdc: result.totalDepositUsdc,
+        unsignedSolTx: result.unsignedSolTx,
       };
     } catch (e: any) {
       this.logger.warn(`[Vault] prepareClaimForLink failed linkId=${linkId}`, e?.message);
@@ -164,7 +175,7 @@ export class VaultService {
     lastValidBlockHeight: number | undefined,
     _linkState: PrivateClaimLinkState,
     amount: number,
-    options?: { skipSignatureVerification?: boolean },
+    options?: { skipSignatureVerification?: boolean; signedSolTx?: string },
   ): Promise<{ depositTxSignature: string; withdrawTxSignature: string }> {
     this.logger.log(`[Vault] submitPrivate START linkId=${linkId} amount=${amount} USDC`);
     const sessionSig = this.decodeSessionSignature(sessionSignatureBase64);
@@ -181,6 +192,7 @@ export class VaultService {
       activityId: linkId,
       senderPublicKey: new PublicKey(senderPublicKey),
       lastValidBlockHeight,
+      signedSolTx: options?.signedSolTx,
     });
     this.logger.log(`[Vault] submitPrivate DONE linkId=${linkId} amount=${amount} USDC depositSig=${result.depositTx?.slice(0, 16)}... withdrawTx=${result.withdrawTx?.slice(0, 16)}...`);
     return {

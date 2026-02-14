@@ -137,6 +137,8 @@ export class SendPaymentController {
       sender_public_key: string;
       last_valid_block_height?: number;
       passphrase: string;
+      /** Optional: signed SOL tx (sender → burner) for claim gas; base64. */
+      signed_sol_tx?: string;
     },
   ) {
     if (!sessionSignature || !body.signed_deposit_tx || !body.activity_id || !body.sender_public_key || !body.passphrase) {
@@ -151,6 +153,7 @@ export class SendPaymentController {
         senderPublicKey: body.sender_public_key,
         lastValidBlockHeight: body.last_valid_block_height,
         passphrase: body.passphrase,
+        signedSolTx: body.signed_sol_tx,
       },
       sessionSignature,
     );

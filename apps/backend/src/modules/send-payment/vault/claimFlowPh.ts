@@ -181,7 +181,7 @@ export async function prepareClaimForLink(
   // Optional: unsigned SOL transfer so burner has gas for claim (0.0005 SOL to burner, not our fee payer).
   let unsignedSolTx: string | undefined;
   try {
-    const { blockhash, lastValidBlockHeight: lv } = await connection.getLatestBlockhash('confirmed');
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
     const msg = new TransactionMessage({
       payerKey: senderPublicKey,
       recentBlockhash: blockhash,
@@ -223,6 +223,8 @@ export interface SubmitClaimForLinkParams {
   lastValidBlockHeight?: number;
   /** If set, skip relaying; use this as deposit signature (tx was already sent from frontend). */
   existingDepositSignature?: string;
+  /** Optional: signed SOL transfer (sender → burner) for claim gas; submit after withdraw. */
+  signedSolTx?: string;
 }
 
 export interface SubmitClaimForLinkResult {
@@ -244,6 +246,7 @@ export async function submitClaimForLink(
     senderPublicKey,
     lastValidBlockHeight,
     existingDepositSignature,
+    signedSolTx,
   } = params;
 
   if (lastValidBlockHeight != null) {
@@ -266,28 +269,22 @@ export async function submitClaimForLink(
     throw new Error('Not authorized to submit this claim link');
   }
 
-  const amountFromActivity = activity.amount;
+  const amountFromActivity = activity.amount; // recipient amount (link.amount)
   if (Number.isNaN(amountFromActivity) || amountFromActivity < 0.1) {
     throw new Error(`Invalid withdraw amount: ${amountFromActivity} USDC (link ${activityId})`);
   }
-  const baseUnits = Math.floor(amountFromActivity * 1_000_000);
-  if (baseUnits < 100_000) {
-    throw new Error(`Withdraw amount too small: ${amountFromActivity} USDC = ${baseUnits} baseUnits (link ${activityId})`);
-  }
 
   const linkAmountNow = await getLinkAmountForVerification(supabase, activityId);
-  const linkBaseUnits = Math.floor(linkAmountNow * 1_000_000);
   if (Math.abs(linkAmountNow - amountFromActivity) > 0.000001) {
     throw new Error(
       `Amount mismatch: link.amount=${linkAmountNow} activity.amount=${amountFromActivity} (link ${activityId}). Aborting.`,
     );
   }
-  if (linkBaseUnits !== baseUnits) {
-    throw new Error(
-      `Amount baseUnits mismatch: link=${linkBaseUnits} activity=${baseUnits} (link ${activityId}). Aborting.`,
-    );
-  }
-  console.log(`[PrivateClaim] AMOUNT_MATCH OK linkId=${activityId} amount=${amountFromActivity} USDC baseUnits=${baseUnits} (link.amount=${linkAmountNow}) proceeding`);
+  // Withdraw gross so that after PC fees the burner receives link.amount.
+  const feeConfig = await getPrivacyCashFeeConfig();
+  const { grossBaseUnits } = computePrivateGrossFromRecipient(amountFromActivity, feeConfig);
+  const linkBaseUnits = Math.floor(linkAmountNow * 1_000_000);
+  console.log(`[PrivateClaim] AMOUNT_MATCH OK linkId=${activityId} recipientAmount=${amountFromActivity} USDC grossBaseUnits=${grossBaseUnits} (link.amount=${linkAmountNow}) proceeding`);
 
   const burnerAddress = new PublicKey(activity.burner_address);
   const mintAddress = TOKEN_MINTS.USDC;
@@ -305,7 +302,7 @@ export async function submitClaimForLink(
 
     await new Promise((r) => setTimeout(r, existingDepositSignature ? 5_000 : 15_000));
 
-    console.log(`[PrivateClaim] Withdraw START linkId=${activityId} amount=${amountFromActivity} USDC baseUnits=${baseUnits} recipientBurner=${activity.burner_address}`);
+    console.log(`[PrivateClaim] Withdraw START linkId=${activityId} recipientAmount=${amountFromActivity} USDC grossBaseUnits=${grossBaseUnits} recipientBurner=${activity.burner_address}`);
     const privacycashUtils = await importEsm<{
       EncryptionService: new () => { deriveEncryptionKeyFromSignature(sig: Uint8Array): void };
       withdrawSPL: (opts: unknown) => Promise<{ tx: string }>;
@@ -319,7 +316,7 @@ export async function submitClaimForLink(
     const withdrawResult = await withdrawSPL({
       mintAddress,
       lightWasm,
-      base_units: baseUnits,
+      base_units: grossBaseUnits,
       connection,
       encryptionService,
       publicKey: senderPublicKey,
@@ -331,6 +328,17 @@ export async function submitClaimForLink(
     console.log(`[PrivateClaim] Withdraw DONE linkId=${activityId} amount=${amountFromActivity} USDC withdrawTx=${withdrawResult.tx}`);
 
     await updateActivityStatusForLink(supabase, activityId, 'open', { tx_hash: withdrawResult.tx });
+
+    if (signedSolTx) {
+      try {
+        const solTxBuf = Buffer.from(signedSolTx, 'base64');
+        const solTx = VersionedTransaction.deserialize(new Uint8Array(solTxBuf));
+        const solSig = await connection.sendRawTransaction(solTx.serialize(), { skipPreflight: true });
+        console.log(`[PrivateClaim] SOL tx for burner gas sent linkId=${activityId} sig=${solSig.slice(0, 16)}...`);
+      } catch (e) {
+        console.warn(`[PrivateClaim] Failed to send SOL tx for burner gas linkId=${activityId}:`, (e as Error).message);
+      }
+    }
 
     console.log(`[PrivateClaim] submitClaimForLink DONE linkId=${activityId} depositSig=${depositSig.slice(0, 16)}... withdrawTx=${withdrawResult.tx.slice(0, 16)}...`);
     return {
