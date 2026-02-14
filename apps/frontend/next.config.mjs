@@ -1,8 +1,10 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -14,7 +16,9 @@ const nextConfig = {
     '@walletconnect/core',
     '@walletconnect/ethereum-provider',
     '@supabase/supabase-js',
+    '@lightprotocol/hasher.rs',
   ],
+  // Use `npm run dev` (webpack) for Privacy Cash WASM support; `npm run dev:turbo` for Turbopack only
   turbopack: {
     resolveAlias: {
       fs: { browser: './empty-module.js' },
@@ -38,6 +42,58 @@ const nextConfig = {
       { protocol: 'https', hostname: 'i.giphy.com' },
       { protocol: 'https', hostname: 'm.media-amazon.com' },
     ],
+  },
+  webpack: (config, { isServer }) => {
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      fs: false,
+      net: false,
+      tls: false,
+    };
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+      layers: true,
+    };
+    config.module.rules.push({
+      test: /\.wasm$/,
+      type: 'asset/resource',
+    });
+    config.ignoreWarnings = [
+      ...(config.ignoreWarnings || []),
+      { module: /hasher_wasm_simd_bg\.wasm/ },
+      { module: /light_wasm_hasher_bg\.wasm/ },
+      { module: /@splinetool/ },
+    ];
+    if (!isServer) {
+      try {
+        const hasherPath = path.dirname(require.resolve('@lightprotocol/hasher.rs/package.json'));
+        const wasmSimdPath = path.resolve(hasherPath, 'dist/hasher_wasm_simd_bg.wasm');
+        const wasmLightPath = path.resolve(hasherPath, 'dist/light_wasm_hasher_bg.wasm');
+        const browserFatPath = path.resolve(hasherPath, 'dist/browser-fat/es');
+        const fs = require('fs');
+        const wasmSimdBrowserFat = path.resolve(browserFatPath, 'hasher_wasm_simd_bg.wasm');
+        const wasmLightBrowserFat = path.resolve(browserFatPath, 'light_wasm_hasher_bg.wasm');
+        let finalWasmSimd = null;
+        let finalWasmLight = null;
+        if (fs.existsSync(wasmSimdBrowserFat)) finalWasmSimd = wasmSimdBrowserFat;
+        else if (fs.existsSync(wasmSimdPath)) finalWasmSimd = wasmSimdPath;
+        if (fs.existsSync(wasmLightBrowserFat)) finalWasmLight = wasmLightBrowserFat;
+        else if (fs.existsSync(wasmLightPath)) finalWasmLight = wasmLightPath;
+        if (finalWasmSimd && finalWasmLight) {
+          config.resolve.alias = {
+            ...config.resolve.alias,
+            'hasher_wasm_simd_bg.wasm': finalWasmSimd,
+            'light_wasm_hasher_bg.wasm': finalWasmLight,
+          };
+        } else {
+          console.warn('[Next.js] WASM files not found in @lightprotocol/hasher.rs (run npm install; postinstall copies them).');
+        }
+      } catch (e) {
+        console.warn('[Next.js] @lightprotocol/hasher.rs not resolved:', e.message);
+      }
+    }
+    return config;
   },
   // Suppress React hydration warnings from Privy (third-party library issue)
   onDemandEntries: {

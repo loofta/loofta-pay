@@ -133,7 +133,7 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
     }
 
     // Validate minimum amount for private payments (when available)
-    if (isPrivate && Number(amountUSD) < 2) {
+    if (isPrivate && Number(amountUSD) < 3) {
       toast({
         variant: "destructive",
         title: "Minimum amount required",
@@ -168,6 +168,7 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
       router.push(`/c/${claimResult.id}`);
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error", description: error?.message || "Failed to create payment link" });
+    } finally {
       setPreparing(false);
     }
   };
@@ -295,7 +296,8 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
                           disabled={
                             preparing ||
                             !amountUSD ||
-                            Number(amountUSD) < 3
+                            Number(amountUSD) <= 0 ||
+                            (requiresPrivatePayments && Number(amountUSD) < 3)
                           }
                           loading={preparing}
                           loadingText="Creating payment link…"

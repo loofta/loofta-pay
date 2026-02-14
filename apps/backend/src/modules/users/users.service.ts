@@ -162,6 +162,103 @@ export class UsersService {
   }
 
   /**
+   * Get Privy user ID for an app user (by internal user id).
+   * Used to verify sender ownership via Privy linked accounts when wallet signature fails.
+   */
+  async getPrivyUserIdByAppUserId(appUserId: string): Promise<string | null> {
+    const { data: user, error } = await this.supabaseService.appUsers
+      .select('privy_user_id')
+      .eq('id', appUserId)
+      .maybeSingle();
+    if (error || !user?.privy_user_id) return null;
+    return user.privy_user_id;
+  }
+
+  /**
+   * Return true if the given Solana address is one of the Privy user's linked Solana wallets.
+   * Used as fallback when wallet message signature verification fails (e.g. Privy embedded wallet).
+   */
+  async isSolanaAddressInLinkedAccounts(privyUserId: string, solanaAddress: string): Promise<boolean> {
+    const user = await this.getPrivyUser(privyUserId);
+    if (!user?.linked_accounts?.length) return false;
+    const normalized = solanaAddress.trim();
+    for (const account of user.linked_accounts) {
+      const type = (account.type || '').toLowerCase();
+      const chainType = (account.chain_type || '').toLowerCase();
+      const chainId = (account.chain_id || '').toString().toLowerCase();
+      const isSolana =
+        type === 'wallet' ||
+        type === 'solana' ||
+        type === 'solana_embedded_wallet' ||
+        chainType === 'solana' ||
+        chainId.startsWith('solana:');
+      if (!isSolana) continue;
+      const addr = (account.address || '').toString().trim();
+      if (addr && addr === normalized) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Fetch full Privy user (linked_accounts etc.) for server-side verification
+   */
+  async getPrivyUser(privyUserId: string): Promise<{ linked_accounts: any[] } | null> {
+    const privyAppId = this.configService.get<string>('PRIVY_APP_ID');
+    const privyAppSecret = this.configService.get<string>('PRIVY_APP_SECRET');
+    if (!privyAppId || !privyAppSecret) return null;
+
+    const res = await fetch(`https://api.privy.io/v1/users/${privyUserId}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'privy-app-id': privyAppId,
+        Authorization: `Basic ${Buffer.from(`${privyAppId}:${privyAppSecret}`).toString('base64')}`,
+      },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const linkedAccounts = data?.linked_accounts || data?.linkedAccounts || [];
+    return { linked_accounts: linkedAccounts };
+  }
+
+  /**
+   * Verify that the Privy user's linked accounts match the send-payment recipient identifier.
+   * Used to authorize claim: only the designated email/twitter can claim.
+   */
+  async verifyRecipientIdentityForSendPayment(
+    privyUserId: string,
+    recipientType: 'email' | 'twitter',
+    recipientIdentifier: string,
+  ): Promise<boolean> {
+    const normalized = this.normalizeRecipientIdentifier(recipientType, recipientIdentifier);
+    const user = await this.getPrivyUser(privyUserId);
+    if (!user) return false;
+
+    for (const account of user.linked_accounts) {
+      const type = (account.type || '').toLowerCase();
+      if (recipientType === 'email' && (type === 'email' || type === 'google' || type === 'apple')) {
+        const email = (account.address || account.email || '').toString().toLowerCase().trim();
+        if (email && normalized === email) return true;
+      }
+      if (recipientType === 'twitter' && (type === 'twitter' || type === 'x')) {
+        const handle = (account.username || account.name || account.address || '')
+          .toString()
+          .replace(/^@/, '')
+          .toLowerCase()
+          .trim();
+        if (handle && normalized === handle) return true;
+      }
+    }
+    return false;
+  }
+
+  private normalizeRecipientIdentifier(type: 'email' | 'twitter', value: string): string {
+    const v = value.trim();
+    if (type === 'email') return v.toLowerCase();
+    return v.replace(/^@/, '').toLowerCase();
+  }
+
+  /**
    * Debug method to list all usernames (for debugging)
    */
   async listAllUsernames(): Promise<{ usernames: string[] }> {
