@@ -26,7 +26,7 @@ export function Header() {
   const pathname = usePathname();
   const showHistory = pathname?.startsWith('/swap') === true;
   // Check if we're on a dark background page
-  const isDarkPage = pathname?.startsWith('/claim') === true || pathname?.startsWith('/c/') === true;
+  const isDarkPage = pathname?.startsWith('/claim') === true || pathname?.startsWith('/c/') === true || pathname?.startsWith('/send') === true || pathname?.startsWith('/s/') === true;
 
   // Get username from store (ensure it's string | null, not undefined)
   const username = useAuthStore((s) => s.username ?? null);
@@ -252,6 +252,16 @@ export function Header() {
     }
   }, [solanaAddress]);
 
+  // Allow other pages (e.g. send-payment claim success) to open the Balance/Withdraw modal and refresh
+  useEffect(() => {
+    const handler = () => {
+      setShowBalanceModal(true);
+      refreshBalance();
+    };
+    window.addEventListener("openBalanceModal", handler);
+    return () => window.removeEventListener("openBalanceModal", handler);
+  }, [refreshBalance]);
+
   // Show success message when user authenticates after requesting access
   useEffect(() => {
     if (authenticated && pendingAccessRequest) {
@@ -368,7 +378,20 @@ export function Header() {
             </div>
             {/* Separator */}
             <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
-            {/* Make a payment link */}
+            {/* Send payment link */}
+            <Link
+              href="/send"
+              prefetch
+              className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isActive('/send')
+                ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm'
+                : isDarkPage
+                  ? 'text-white/90 hover:text-white hover:bg-white/10'
+                  : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+            >
+              Send payment
+            </Link>
+            {/* Request a payment link */}
             <Link
               href="/claim"
               prefetch
@@ -557,6 +580,17 @@ export function Header() {
                 </Link>
 
                 <span className="mt-4 px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Payments</span>
+                <Link
+                  href="/send"
+                  prefetch
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${isActive('/send')
+                    ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
+                    : 'text-gray-900 hover:bg-gray-100'
+                    }`}
+                >
+                  Send payment
+                </Link>
                 <Link
                   href="/claim"
                   prefetch

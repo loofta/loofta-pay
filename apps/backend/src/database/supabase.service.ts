@@ -66,4 +66,8 @@ export class SupabaseService implements OnModuleInit {
   get payrollRecipients() {
     return this.client.from('payroll_recipients');
   }
+
+  get sendPaymentLinks() {
+    return this.client.from('send_payment_links');
+  }
 }

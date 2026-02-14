@@ -1,0 +1,22 @@
+diff --git a/node_modules/privacycash/package.json b/node_modules/privacycash/package.json
+--- a/node_modules/privacycash/package.json
++++ b/node_modules/privacycash/package.json
+@@ -6,7 +6,17 @@
+   "repository": "https://github.com/Privacy-Cash/privacy-cash-sdk",
+   "exports": {
+     ".": "./dist/index.js",
+-    "./utils": "./dist/exportUtils.js"
++    "./utils": "./dist/exportUtils.js",
++    "./dist/models/utxo.js": "./dist/models/utxo.js",
++    "./dist/models/keypair.js": "./dist/models/keypair.js",
++    "./dist/utils/utils.js": "./dist/utils/utils.js",
++    "./dist/utils/prover.js": "./dist/utils/prover.js",
++    "./dist/utils/merkle_tree.js": "./dist/utils/merkle_tree.js",
++    "./dist/utils/encryption.js": "./dist/utils/encryption.js",
++    "./dist/utils/address_lookup_table.js": "./dist/utils/address_lookup_table.js",
++    "./dist/utils/logger.js": "./dist/utils/logger.js",
++    "./dist/utils/constants.js": "./dist/utils/constants.js",
++    "./dist/getUtxosSPL.js": "./dist/getUtxosSPL.js"
+   },
+   "types": "dist/index.d.ts",
+   "type": "module",

@@ -1,6 +1,8 @@
 /**
- * Private payments (Privacy Cash) – Coming soon.
- * SDK integration removed; UI shows "Coming soon" for private payment flows.
+ * Private payments (Privacy Cash).
+ * Frontend uses npm "privacycash": "^1.1.3" (same as loofta-pay-public). Dev/build use webpack (not Turbopack)
+ * for WASM support; postinstall copies hasher.rs WASM files into dist/browser-fat/es. See next.config.mjs
+ * webpack config and apps/frontend/package.json scripts/postinstall.
  */
 
 import type { VersionedTransaction } from "@solana/web3.js";
