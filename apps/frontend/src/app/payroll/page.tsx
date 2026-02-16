@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
@@ -90,11 +90,13 @@ export default function PayrollPage() {
     }
   }, [userId, toast]);
 
+  const loginRef = useRef(login);
+  loginRef.current = login;
   useEffect(() => {
     if (ready && !authenticated) {
-      login();
+      loginRef.current();
     }
-  }, [ready, authenticated, login]);
+  }, [ready, authenticated]);
 
   useEffect(() => {
     if (ready && authenticated && userId) {
