@@ -201,7 +201,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       const fetchPreferences = async () => {
         setLoadingPreferences(true);
         try {
-          const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+          const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "https://loofta-pay-preview.up.railway.app";
           const token = await getAccessToken();
           const response = await fetch(`${backendUrl}/users/me/preferences`, {
             headers: {
@@ -232,7 +232,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
 
     setUpdatingPreferences(true);
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "https://loofta-pay-preview.up.railway.app";
       const token = await getAccessToken();
       const response = await fetch(`${backendUrl}/users/me/preferences`, {
         method: 'PUT',

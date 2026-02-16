@@ -149,7 +149,7 @@ export const dealsApi = {
       form.append('file', file);
       const headers: Record<string, string> = {};
       if (userId) headers['x-privy-user-id'] = userId;
-      return fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/payroll/organizations/${orgId}/deals/${dealId}/contract`, {
+      return fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'https://loofta-pay-preview.up.railway.app'}/payroll/organizations/${orgId}/deals/${dealId}/contract`, {
         method: 'POST',
         body: form,
         headers,

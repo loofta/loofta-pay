@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     
     if (isPrivateCrossChain) {
       // Forward to backend API to create Privy wallet
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "https://loofta-pay-preview.up.railway.app";
       try {
         const backendResponse = await fetch(`${backendUrl}/claims/deposit`, {
           method: "POST",

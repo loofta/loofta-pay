@@ -220,10 +220,10 @@ export default function PayrollInvoicesPage() {
                       <td className="py-4 pr-4">
                         <span
                           className={`inline-flex rounded-lg px-2.5 py-1 text-xs font-semibold capitalize ${inv.status === "paid"
-                              ? "bg-emerald-50 text-emerald-800"
-                              : inv.status === "sent"
-                                ? "bg-blue-50 text-blue-800"
-                                : "bg-gray-100 text-gray-700"
+                            ? "bg-emerald-50 text-emerald-800"
+                            : inv.status === "sent"
+                              ? "bg-blue-50 text-blue-800"
+                              : "bg-gray-100 text-gray-700"
                             }`}
                         >
                           {inv.status === "sent" && !isContributor ? "To be paid" : inv.status}

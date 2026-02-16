@@ -6,6 +6,12 @@ const __dirname = path.dirname(__filename);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Expose build-time env to client (NEXT_PUBLIC_* are inlined at build).
+  // For Vercel Preview: set these in Project → Settings → Environment Variables for "Preview".
+  env: {
+    NEXT_PUBLIC_BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL,
+    NEXT_PUBLIC_PRIVY_APP_ID: process.env.NEXT_PUBLIC_PRIVY_APP_ID,
+  },
   // Externalize problematic packages to avoid bundling issues
   serverExternalPackages: [
     'pino',

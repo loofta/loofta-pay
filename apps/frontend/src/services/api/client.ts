@@ -8,8 +8,8 @@
 const getBackendUrl = (): string => {
   const url = process.env.NEXT_PUBLIC_BACKEND_URL;
   if (!url) {
-    console.warn('[API] NEXT_PUBLIC_BACKEND_URL not set, using localhost:3001');
-    return 'http://localhost:3001';
+    console.warn('[API] NEXT_PUBLIC_BACKEND_URL not set, using loofta-pay-preview.up.railway.app');
+    return 'https://loofta-pay-preview.up.railway.app';
   }
   return url.replace(/\/$/, '');
 };

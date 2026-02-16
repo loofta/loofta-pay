@@ -12,7 +12,7 @@ import bs58 from "bs58";
 import { buildUSDCTransferTransaction } from "@/services/solanaTransfer";
 
 const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  process.env.NEXT_PUBLIC_BACKEND_URL || "https://loofta-pay-preview.up.railway.app";
 const SOLANA_RPC_URL =
   process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
   (process.env.NEXT_PUBLIC_HELIUS_API_KEY
