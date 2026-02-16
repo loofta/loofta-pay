@@ -269,10 +269,12 @@ export default function PayrollPage() {
           open={showNewDealModal}
           onOpenChange={setShowNewDealModal}
           clientOrgs={Array.from(
-            new Map([
-              ...organizations.map((o) => [o.id, { id: o.id, name: o.name }]),
-              ...contributorOrgs.map((o) => [o.id, { id: o.id, name: o.name }]),
-            ]).values()
+            new Map(
+              [
+                ...organizations.map((o) => [o.id, { id: o.id, name: o.name }] as const),
+                ...contributorOrgs.map((o) => [o.id, { id: o.id, name: o.name }] as const),
+              ]
+            ).values()
           )}
           userId={userId}
           onSuccess={() => loadOrganizations()}

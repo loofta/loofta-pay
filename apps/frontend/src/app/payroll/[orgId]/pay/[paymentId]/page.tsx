@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { usePayrollPayStore } from "@/store/payrollPay";
 import { Loader2, ArrowLeft, Send, FileText, QrCode, ExternalLink, CheckCircle2, ShieldCheck } from "lucide-react";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
+import type { NearToken } from "@/services/nearIntents";
 
 /** Flow: Pay → select token (see conversion) → Get deposit address → NEAR Intent deposit + PaymentStatusTracker. Cancel to choose another token. State persists in Zustand on refresh. */
 export default function PayrollPayPaymentPage() {
@@ -68,6 +69,8 @@ export default function PayrollPayPaymentPage() {
 
   const depositAddress =
     depositFromPrepare?.depositAddress ?? payment?.deposit_address ?? undefined;
+  /** Receipt hash from API or persisted store (so retry receipt stays visible without refetch). */
+  const displayReceiptHash = payment?.receipt_on_chain_tx_hash ?? stored?.receipt_on_chain_tx_hash ?? undefined;
   /** Only show deposit/status UI after user clicked "Get deposit address" on this page (so they always pick token first). */
   const showDepositUI = !!depositFromPrepare?.depositAddress;
   const amountToSend =
@@ -81,7 +84,7 @@ export default function PayrollPayPaymentPage() {
         (t.symbol || "").toLowerCase() === (payWithToken?.symbol || "").toLowerCase() &&
         (t.chain || "").toLowerCase() === (payWithToken?.chain || "").toLowerCase()
     );
-    const price = token?.price ?? (payWithToken as { price?: number })?.price;
+    const price = token?.price;
     if (price && Number(price) > 0 && Number.isFinite(amountUsd)) {
       return String((amountUsd / Number(price)).toFixed(6));
     }
@@ -109,7 +112,14 @@ export default function PayrollPayPaymentPage() {
         } else {
           setTokens(tokenList);
           dealsApi.payments.get(orgId, paymentId, userId).then((single) => {
-            if (!cancelled) setPayment(single ?? null);
+            if (!cancelled && single) {
+              const storedReceipt = usePayrollPayStore.getState().byPaymentId[paymentId]?.receipt_on_chain_tx_hash;
+              setPayment((prev) => ({
+                ...single,
+                recipient_email: single.recipient_email ?? prev?.recipient_email ?? undefined,
+                receipt_on_chain_tx_hash: single.receipt_on_chain_tx_hash ?? prev?.receipt_on_chain_tx_hash ?? storedReceipt ?? undefined,
+              }));
+            } else if (!cancelled) setPayment(null);
           }).catch(() => {
             if (!cancelled) setPayment(null);
           });
@@ -150,7 +160,18 @@ export default function PayrollPayPaymentPage() {
   }, [payment, tokens]);
 
   useEffect(() => {
-    if (!payment || !payWithToken?.tokenId || !destToken?.tokenId) {
+    if (!payment || !payWithToken || !destToken) {
+      setQuote(null);
+      setQuoteLoading(false);
+      return;
+    }
+    const payWithTokenResolved = tokens.find(
+      (t) =>
+        (t.symbol || "").toLowerCase() === (payWithToken?.symbol || "").toLowerCase() &&
+        (t.chain || "").toLowerCase() === (payWithToken?.chain || "").toLowerCase()
+    );
+    const fromTokenId = payWithToken.tokenId ?? payWithTokenResolved?.tokenId ?? payWithTokenResolved?.address;
+    if (!fromTokenId || !destToken.tokenId) {
       setQuote(null);
       setQuoteLoading(false);
       return;
@@ -164,10 +185,10 @@ export default function PayrollPayPaymentPage() {
       body: JSON.stringify({
         amount: amountUsd,
         fromToken: {
-          tokenId: payWithToken.tokenId || payWithToken.address,
-          decimals: payWithToken.decimals,
+          tokenId: fromTokenId,
+          decimals: payWithToken.decimals ?? payWithTokenResolved?.decimals,
           chain: payWithToken.chain,
-          price: payWithToken.price,
+          price: payWithTokenResolved?.price,
         },
         destToken: {
           tokenId: destToken.tokenId || destToken.address,
@@ -175,7 +196,7 @@ export default function PayrollPayPaymentPage() {
           chain: destToken.chain,
           price: destToken.price,
         },
-        fromTokenPriceUSD: payWithToken.price,
+        fromTokenPriceUSD: payWithTokenResolved?.price,
         destTokenPriceUSD: destToken.price,
         refundAddress: refundAddress.trim() && isValidAddressForChain(refundAddress.trim(), payWithToken.chain)
           ? refundAddress.trim()
@@ -193,7 +214,7 @@ export default function PayrollPayPaymentPage() {
       })
       .catch(() => setQuote(null))
       .finally(() => setQuoteLoading(false));
-  }, [payment?.id, payment?.amount, payWithToken?.tokenId, payWithToken?.decimals, payWithToken?.chain, payWithToken?.price, destToken?.tokenId, destToken?.decimals, destToken?.price, refundAddress]);
+  }, [payment?.id, payment?.amount, payWithToken?.tokenId, payWithToken?.decimals, payWithToken?.chain, payWithToken?.symbol, destToken?.tokenId, destToken?.decimals, destToken?.price, tokens, refundAddress]);
 
   const statusQuery = useQuery({
     queryKey: ["status", depositAddress],
@@ -245,11 +266,15 @@ export default function PayrollPayPaymentPage() {
         .checkComplete(orgId, payment.id, userId)
         .then((res) => {
           if (res.completed && res.payment) {
-            setPayment(res.payment);
-            dealsApi.payments.retryReceipt(orgId, payment.id, userId).catch(() => {});
+            setPayment((prev) => ({
+              ...res.payment!,
+              recipient_email: res.payment!.recipient_email ?? prev?.recipient_email ?? undefined,
+              receipt_on_chain_tx_hash: res.payment!.receipt_on_chain_tx_hash ?? prev?.receipt_on_chain_tx_hash ?? undefined,
+            }));
+            dealsApi.payments.retryReceipt(orgId, payment.id, userId).catch(() => { });
           }
         })
-        .catch(() => {});
+        .catch(() => { });
     }
   }, [status, payment?.id, userId, orgId]);
 
@@ -260,18 +285,26 @@ export default function PayrollPayPaymentPage() {
     dealsApi.payments
       .checkComplete(orgId, payment.id, userId)
       .then((res) => {
-        if (res.payment) setPayment(res.payment);
+        if (res.payment) {
+          setPayment((prev) => ({
+            ...res.payment!,
+            recipient_email: res.payment!.recipient_email ?? prev?.recipient_email ?? undefined,
+            receipt_on_chain_tx_hash: res.payment!.receipt_on_chain_tx_hash ?? prev?.receipt_on_chain_tx_hash ?? undefined,
+          }));
+        }
       })
-      .catch(() => {});
+      .catch(() => { });
     dealsApi.payments
       .retryReceipt(orgId, payment.id, userId)
       .then((r) => {
         if (r.receiptPosted && r.receiptOnChainTxHash) {
-          setPayment((prev) => (prev ? { ...prev, receipt_on_chain_tx_hash: r.receiptOnChainTxHash ?? undefined } : null));
+          const hash = r.receiptOnChainTxHash ?? undefined;
+          if (paymentId) usePayrollPayStore.getState().setReceiptOnChainTxHash(paymentId, hash ?? null);
+          setPayment((prev) => (prev ? { ...prev, receipt_on_chain_tx_hash: hash } : null));
         }
       })
-      .catch(() => {});
-  }, [payment?.id, payment?.status, userId, orgId]);
+      .catch(() => { });
+  }, [payment?.id, payment?.status, userId, orgId, paymentId]);
 
   const handlePrepare = async () => {
     if (!userId || !orgId || !payment || !payWithToken?.symbol || !payWithToken?.chain) {
@@ -318,7 +351,7 @@ export default function PayrollPayPaymentPage() {
         memo: first.memo ?? undefined,
         deadline: first.intent_deadline ?? undefined,
       });
-      setPayment(first);
+      setPayment((prev) => ({ ...first, recipient_email: first.recipient_email ?? prev?.recipient_email ?? undefined }));
       toast({
         title: "Deposit address ready",
         description: "Send the exact amount to the address below.",
@@ -405,25 +438,15 @@ export default function PayrollPayPaymentPage() {
                   View on NEAR Intents explorer <ExternalLink className="h-4 w-4" />
                 </a>
               )}
-              {payment.tx_hash && (
-                <a
-                  href={getExplorerTxUrl(payment.preferred_network ?? "near", payment.tx_hash)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-orange-600 hover:text-orange-700"
-                >
-                  View transaction <ExternalLink className="h-4 w-4" />
-                </a>
-              )}
             </div>
             <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
               <div className="flex items-center gap-2 text-sm font-medium text-gray-800">
                 <ShieldCheck className="h-4 w-4 shrink-0" />
                 On-chain attestation (receipt)
               </div>
-              {payment.receipt_on_chain_tx_hash ? (
+              {displayReceiptHash ? (
                 <p className="mt-2 text-sm text-gray-600">
-                  A hash commitment for this payment was recorded on NEAR. The receipt contract stores only a commitment (no amounts or recipient on-chain). This uses the same network as your payment (mainnet/testnet via backend config).
+                  A hash commitment for this payment was recorded on NEAR. The receipt contract stores only a commitment (no amounts or recipient on-chain).
                 </p>
               ) : (
                 <>
@@ -443,7 +466,9 @@ export default function PayrollPayPaymentPage() {
                         try {
                           const r = await dealsApi.payments.retryReceipt(orgId, payment.id, userId);
                           if (r.receiptPosted && r.receiptOnChainTxHash) {
-                            setPayment((prev) => (prev ? { ...prev, receipt_on_chain_tx_hash: r.receiptOnChainTxHash ?? undefined } : null));
+                            const hash = r.receiptOnChainTxHash ?? undefined;
+                            usePayrollPayStore.getState().setReceiptOnChainTxHash(paymentId, hash ?? null);
+                            setPayment((prev) => (prev ? { ...prev, receipt_on_chain_tx_hash: hash } : null));
                             toast({ title: "Receipt recorded", description: "On-chain receipt was posted." });
                           } else {
                             const updated = await dealsApi.payments.get(orgId, payment.id, userId);
@@ -471,9 +496,9 @@ export default function PayrollPayPaymentPage() {
                   )}
                 </>
               )}
-              {payment.receipt_on_chain_tx_hash && !payment.receipt_on_chain_tx_hash.startsWith("on-chain:") && payment.receipt_on_chain_tx_hash.length > 20 && (
+              {displayReceiptHash && !displayReceiptHash.startsWith("on-chain:") && displayReceiptHash.length > 20 && (
                 <a
-                  href={getExplorerTxUrl("near", payment.receipt_on_chain_tx_hash)}
+                  href={getExplorerTxUrl("near", displayReceiptHash)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-orange-600 hover:text-orange-700"
@@ -488,15 +513,7 @@ export default function PayrollPayPaymentPage() {
             <div className="mt-6">
               <div className="mb-2 text-sm font-medium text-gray-700">Pay with</div>
               <TokenCombobox
-                tokens={
-                  payWithTokens as {
-                    symbol: string;
-                    chain: string;
-                    tokenId?: string;
-                    decimals: number;
-                    name?: string;
-                  }
-                }
+                tokens={payWithTokens as NearToken[]}
                 value={payWithToken}
                 onChange={setPayWithToken}
                 placeholder="Select token (USDC, USDT, DAI)"
@@ -506,7 +523,7 @@ export default function PayrollPayPaymentPage() {
                     (t) =>
                       (t.symbol || "").toLowerCase().includes(qq) ||
                       (t.name || "").toLowerCase().includes(qq)
-                  );
+                  ) as NearToken[];
                 }}
                 defaultShowAllChains={true}
                 className="h-12 w-full rounded-lg border border-gray-200 bg-white text-base hover:bg-gray-50 focus:border-orange-400 focus:ring-2 focus:ring-orange-400"
@@ -524,9 +541,8 @@ export default function PayrollPayPaymentPage() {
                     setRefundAddress(e.target.value);
                     if (refundAddressError) setRefundAddressError(null);
                   }}
-                  className={`h-11 rounded-lg border bg-white font-mono text-sm placeholder:text-gray-400 ${
-                    refundAddressError ? "border-red-400 focus:border-red-500 focus:ring-red-500" : "border-gray-200 focus:border-orange-400 focus:ring-orange-400"
-                  }`}
+                  className={`h-11 rounded-lg border bg-white font-mono text-sm placeholder:text-gray-400 ${refundAddressError ? "border-red-400 focus:border-red-500 focus:ring-red-500" : "border-gray-200 focus:border-orange-400 focus:ring-orange-400"
+                    }`}
                 />
                 {refundAddressError && (
                   <p className="mt-1 text-xs text-red-600">{refundAddressError}</p>
@@ -571,11 +587,10 @@ export default function PayrollPayPaymentPage() {
               <button
                 type="button"
                 onClick={() => setDepositView("details")}
-                className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2.5 text-sm font-medium transition-colors ${
-                  depositView === "details"
+                className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2.5 text-sm font-medium transition-colors ${depositView === "details"
                     ? "bg-white text-gray-900 shadow-sm"
                     : "text-gray-600 hover:text-gray-900"
-                }`}
+                  }`}
               >
                 <FileText className="h-4 w-4" />
                 Details
@@ -583,11 +598,10 @@ export default function PayrollPayPaymentPage() {
               <button
                 type="button"
                 onClick={() => setDepositView("qr")}
-                className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2.5 text-sm font-medium transition-colors ${
-                  depositView === "qr"
+                className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2.5 text-sm font-medium transition-colors ${depositView === "qr"
                     ? "bg-white text-gray-900 shadow-sm"
                     : "text-gray-600 hover:text-gray-900"
-                }`}
+                  }`}
               >
                 <QrCode className="h-4 w-4" />
                 Scan QR code
@@ -597,7 +611,7 @@ export default function PayrollPayPaymentPage() {
             {depositView === "details" && (
               <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
                 <div className="space-y-2 text-base text-gray-700">
-                    <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between">
                     <span className="text-gray-600">Amount to pay</span>
                     <span className="inline-flex items-center gap-2 text-lg font-medium text-gray-900">
                       <TokenIcon

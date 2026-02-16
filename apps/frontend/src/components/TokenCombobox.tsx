@@ -244,8 +244,8 @@ export function TokenCombobox({
 														onChange({
 															symbol: it.symbol,
 															chain: it.chain,
-															...(it.tokenId && { tokenId: it.tokenId }),
-															...(typeof it.decimals === 'number' && { decimals: it.decimals }),
+															...(it.token?.tokenId && { tokenId: it.token.tokenId }),
+															...(typeof it.token?.decimals === 'number' && { decimals: it.token.decimals }),
 														});
 														setOpen(false);
 													}}

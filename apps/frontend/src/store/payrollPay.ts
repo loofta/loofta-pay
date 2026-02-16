@@ -17,12 +17,15 @@ type PayrollPayState = {
       payWithToken?: TokenSelection | null;
       deposit?: StoredPayrollDeposit | null;
       status?: string | null;
+      /** Persisted so receipt stays visible after retry without refetch */
+      receipt_on_chain_tx_hash?: string | null;
       updatedAt?: number;
     }
   >;
   setPayWithToken: (paymentId: string, token: TokenSelection | null) => void;
   setDeposit: (paymentId: string, deposit: StoredPayrollDeposit | null) => void;
   setStatus: (paymentId: string, status: string | null) => void;
+  setReceiptOnChainTxHash: (paymentId: string, txHash: string | null) => void;
   clearDeposit: (paymentId: string) => void;
   clear: (paymentId: string) => void;
 };
@@ -50,6 +53,13 @@ export const usePayrollPayStore = create<PayrollPayState>()(
           byPaymentId: {
             ...s.byPaymentId,
             [paymentId]: { ...(s.byPaymentId[paymentId] || {}), status: status ?? undefined, updatedAt: Date.now() },
+          },
+        })),
+      setReceiptOnChainTxHash: (paymentId, txHash) =>
+        set((s) => ({
+          byPaymentId: {
+            ...s.byPaymentId,
+            [paymentId]: { ...(s.byPaymentId[paymentId] || {}), receipt_on_chain_tx_hash: txHash ?? undefined, updatedAt: Date.now() },
           },
         })),
       clearDeposit: (paymentId) =>

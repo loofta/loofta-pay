@@ -188,7 +188,7 @@ export class DealPaymentsService {
           updated_at: new Date().toISOString(),
         };
         await client.from('deal_payments').update(updatePayload).eq('id', p.id);
-        const { data: updated } = await client.from('deal_payments').select('*').eq('id', p.id).single();
+        const { data: updated } = await client.from('deal_payments').select('*, deal_invites(invitee_email)').eq('id', p.id).single();
         if (updated) {
           const resp: DealPaymentResponse = this.toResponse(updated);
           resp.minAmountInFormatted = quote.minAmountInFormatted ?? undefined;
@@ -383,15 +383,17 @@ export class DealPaymentsService {
       this.logger.warn(`retry-receipt: payment ${paymentId} not completed or missing tx_hash (status=${payment.status})`);
       return { receiptPosted: false, error: 'Payment must be completed with a tx hash before posting receipt' };
     }
-    let invoice: { id: string; deal_id: string; amount: number; amount_currency: string; organization_id: string; receipt_on_chain_tx_hash?: string | null } | null = (
+    // Select without receipt_on_chain_tx_hash so this works even if that column migration hasn't run
+    const invoiceCols = 'id, deal_id, amount, amount_currency, organization_id';
+    let invoice: { id: string; deal_id: string; amount: number; amount_currency: string; organization_id: string } | null = (
       await client
         .from('deal_invoices')
-        .select('id, deal_id, amount, amount_currency, organization_id, receipt_on_chain_tx_hash')
+        .select(invoiceCols)
         .eq('deal_payment_id', paymentId)
         .single()
     ).data;
     if (!invoice) {
-      // Legacy or missing link: find invoice by deal or create one so we can post receipt
+      // Invoice may exist linked by deal_id (UI shows payment on invoice page via deal). Find by deal or create.
       const { data: paymentRow } = await client
         .from('deal_payments')
         .select('deal_id, amount, amount_currency, organization_id, deal_invite_id')
@@ -401,9 +403,10 @@ export class DealPaymentsService {
         this.logger.warn(`retry-receipt: no invoice for payment ${paymentId} and payment has no deal_id`);
         return { receiptPosted: false, error: 'No invoice linked to this payment' };
       }
+      // Unlinked invoice for this deal (we'll link it); linked one would have been found by first query
       const { data: existingRows } = await client
         .from('deal_invoices')
-        .select('id, deal_id, amount, amount_currency, organization_id, receipt_on_chain_tx_hash, deal_payment_id')
+        .select(`${invoiceCols}, deal_payment_id`)
         .eq('deal_id', paymentRow.deal_id)
         .is('deal_payment_id', null)
         .limit(1);
@@ -411,7 +414,7 @@ export class DealPaymentsService {
       if (existing) {
         const { data: invite } = await client.from('deal_invites').select('invitee_email').eq('id', paymentRow.deal_invite_id).single();
         const inv = Array.isArray(invite) ? invite[0] : invite;
-        await client
+          await client
           .from('deal_invoices')
           .update({ deal_payment_id: paymentId, recipient_email: (inv as any)?.invitee_email ?? null })
           .eq('id', existing.id);
@@ -421,7 +424,6 @@ export class DealPaymentsService {
           amount: existing.amount,
           amount_currency: existing.amount_currency,
           organization_id: existing.organization_id,
-          receipt_on_chain_tx_hash: existing.receipt_on_chain_tx_hash ?? null,
         };
       } else {
         const { data: invite } = await client.from('deal_invites').select('invitee_email').eq('id', paymentRow.deal_invite_id).single();
@@ -437,7 +439,7 @@ export class DealPaymentsService {
             recipient_email: (inv as any)?.invitee_email ?? null,
             status: 'paid',
           })
-          .select('id, deal_id, amount, amount_currency, organization_id, receipt_on_chain_tx_hash')
+          .select(invoiceCols)
           .single();
         if (insertErr || !inserted) {
           this.logger.warn(`retry-receipt: could not create invoice for payment ${paymentId}: ${insertErr?.message ?? 'unknown'}`);
@@ -446,9 +448,7 @@ export class DealPaymentsService {
         invoice = inserted;
       }
     }
-    if (invoice.receipt_on_chain_tx_hash) {
-      return { receiptPosted: true, receiptOnChainTxHash: invoice.receipt_on_chain_tx_hash };
-    }
+    // Skip "already posted" check when receipt_on_chain_tx_hash column may not exist; contract nonce keeps idempotency
     const batchHash = crypto
       .createHash('sha256')
       .update([invoice.id, invoice.deal_id, invoice.amount, invoice.amount_currency, 'paid'].join('|'))

@@ -45,9 +45,7 @@ export class PayrollReceiptLoggerService {
       const nearApi = await import('near-api-js');
       const connect = nearApi.connect;
       const keyStores = nearApi.keyStores;
-      const Contract = nearApi.Contract;
       const KeyPair = nearApi.KeyPair;
-      const utils = nearApi.utils;
 
       const keyPair = KeyPair.fromString(privateKey.startsWith('ed25519:') ? privateKey : `ed25519:${privateKey}`);
       const keyStore = new keyStores.InMemoryKeyStore();
@@ -63,26 +61,37 @@ export class PayrollReceiptLoggerService {
       });
       const account = await near.account(accountId);
 
-      const contract = new Contract(account, contractId, {
-        viewMethods: ['get_receipt', 'is_nonce_used'],
-        changeMethods: ['record_receipt'],
+      const args = {
+        payroll_id: params.payrollId,
+        batch_hash: params.batchHash,
+        authorizer_id: params.authorizerId,
+        nonce: params.nonce,
+        executor_id: params.executorId,
+        status: params.status,
+        tx_refs_hash: txRefsHash,
+      };
+
+      // Gas in gas units (1 TGas = 1e12). Max 300 TGas per action; 100 TGas is plenty for record_receipt.
+      const gasLimit = 100_000_000_000_000n; // 100 TGas
+      const outcome = await account.functionCall({
+        contractId,
+        methodName: 'record_receipt',
+        args,
+        gas: gasLimit,
+        attachedDeposit: BigInt(0),
       });
 
-      await (contract as any).record_receipt(
-        {
-          payroll_id: params.payrollId,
-          batch_hash: params.batchHash,
-          authorizer_id: params.authorizerId,
-          nonce: params.nonce,
-          executor_id: params.executorId,
-          status: params.status,
-          tx_refs_hash: txRefsHash,
-        },
-        utils.format.parseNearAmount('0.01') ?? '10000000000000000000000',
-        '0',
-      );
+      const txHash =
+        (outcome as any).transaction_outcome?.id ??
+        (outcome as any).transaction?.hash ??
+        (typeof (outcome as any).transaction_hash === 'string' ? (outcome as any).transaction_hash : null);
+      const resolvedHash = txHash && String(txHash).length > 20 ? String(txHash) : null;
 
-      this.logger.log(`Receipt posted on-chain for run ${params.payrollId}`);
+      if (resolvedHash) {
+        this.logger.log(`Receipt posted on-chain for run ${params.payrollId}, tx=${resolvedHash}`);
+        return { ok: true, txHash: resolvedHash };
+      }
+      this.logger.warn(`Receipt recorded but could not read tx hash from outcome; using placeholder`);
       return { ok: true, txHash: `on-chain:${params.payrollId}` };
     } catch (e) {
       const msg = (e as Error).message;

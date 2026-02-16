@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { dealsApi, type DealPaymentResponse } from "@/services/api/deals";
 import { tokensApi, type Token } from "@/services/api/tokens";
 import type { TokenSelection } from "@/app/utils/types";
+import type { NearToken } from "@/services/nearIntents";
 import { Loader2, ArrowLeft, Send } from "lucide-react";
 
 /** Batch pay: select token once and get deposit addresses for multiple payments. */
@@ -163,7 +164,7 @@ export default function PayrollPayBatchPage() {
           <TokenCombobox
             tokens={tokens.filter((t) =>
               ["USDC", "USDT", "DAI"].includes((t.symbol || "").toUpperCase())
-            ) as { symbol: string; chain: string; tokenId?: string; decimals: number; name?: string }[]}
+            ) as NearToken[]}
             value={payWithToken}
             onChange={setPayWithToken}
             placeholder="Select token (USDC, USDT, DAI)"
@@ -173,7 +174,7 @@ export default function PayrollPayBatchPage() {
                 (t) =>
                   ["USDC", "USDT", "DAI"].includes((t.symbol || "").toUpperCase()) &&
                   ((t.symbol || "").toLowerCase().includes(qq) || (t.name || "").toLowerCase().includes(qq))
-              );
+              ) as NearToken[];
             }}
             defaultShowAllChains={true}
             className="bg-white border border-gray-200 w-full h-12 text-base rounded-lg hover:bg-gray-50 focus:ring-2 focus:ring-orange-400 focus:border-orange-400"
