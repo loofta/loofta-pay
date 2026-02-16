@@ -257,7 +257,7 @@ export const dealsApi = {
     get(orgId: string, paymentId: string, userId?: string): Promise<DealPaymentResponse | null> {
       return fetchApi<DealPaymentResponse | null>(`/payroll/organizations/${orgId}/deal-payments/${paymentId}`, { userId });
     },
-    retryReceipt(orgId: string, paymentId: string, userId?: string): Promise<{ receiptPosted: boolean; receiptOnChainTxHash?: string | null }> {
+    retryReceipt(orgId: string, paymentId: string, userId?: string): Promise<{ receiptPosted: boolean; receiptOnChainTxHash?: string | null; error?: string }> {
       return fetchApi(`/payroll/organizations/${orgId}/deal-payments/${paymentId}/retry-receipt`, {
         method: 'POST',
         userId,

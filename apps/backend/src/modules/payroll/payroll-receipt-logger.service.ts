@@ -27,10 +27,8 @@ export class PayrollReceiptLoggerService {
     private readonly supabaseService: SupabaseService,
   ) {}
 
-  /**
-   * Post receipt to the NEAR contract. Returns a receipt identifier (or NEAR tx hash when available).
-   */
-  async postReceipt(params: PostReceiptParams): Promise<string | null> {
+  /** Result of posting a receipt (txHash on success, error message on failure). */
+  async postReceipt(params: PostReceiptParams): Promise<{ ok: true; txHash: string } | { ok: false; error: string }> {
     const contractId = this.config.get<string>('PAYROLL_RECEIPT_LOGGER_CONTRACT_ID');
     const accountId = this.config.get<string>('PAYROLL_RECEIPT_LOGGER_NEAR_ACCOUNT_ID');
     const privateKey = this.config.get<string>('PAYROLL_RECEIPT_LOGGER_NEAR_PRIVATE_KEY');
@@ -38,7 +36,7 @@ export class PayrollReceiptLoggerService {
 
     if (!contractId || !accountId || !privateKey) {
       this.logger.debug('Payroll Receipt Logger not configured; skipping on-chain post');
-      return null;
+      return { ok: false, error: 'Payroll Receipt Logger not configured (PAYROLL_RECEIPT_LOGGER_* env)' };
     }
 
     const txRefsHash = computeTxRefsHash(params.txHashes);
@@ -55,10 +53,13 @@ export class PayrollReceiptLoggerService {
       const keyStore = new keyStores.InMemoryKeyStore();
       await keyStore.setKey(networkId, accountId, keyPair);
 
+      const nodeUrl =
+        this.config.get<string>('NEAR_RPC_URL') ??
+        (networkId === 'mainnet' ? 'https://free.rpc.fastnear.com' : 'https://rpc.testnet.fastnear.com');
       const near = await connect({
         networkId,
         keyStore,
-        nodeUrl: networkId === 'mainnet' ? 'https://rpc.mainnet.near.org' : 'https://rpc.testnet.near.org',
+        nodeUrl,
       });
       const account = await near.account(accountId);
 
@@ -82,10 +83,11 @@ export class PayrollReceiptLoggerService {
       );
 
       this.logger.log(`Receipt posted on-chain for run ${params.payrollId}`);
-      return `on-chain:${params.payrollId}`;
+      return { ok: true, txHash: `on-chain:${params.payrollId}` };
     } catch (e) {
-      this.logger.warn('Failed to post receipt on-chain:', (e as Error).message);
-      return null;
+      const msg = (e as Error).message;
+      this.logger.warn('Failed to post receipt on-chain:', msg);
+      return { ok: false, error: msg };
     }
   }
 
@@ -122,7 +124,7 @@ export class PayrollReceiptLoggerService {
 
     const executorId = this.config.get<string>('PAYROLL_RECEIPT_LOGGER_NEAR_ACCOUNT_ID') || 'payroll-backend';
 
-    const txHash = await this.postReceipt({
+    const result = await this.postReceipt({
       payrollId: runId,
       batchHash: run.batch_hash,
       authorizerId: run.authorizer_id,
@@ -132,12 +134,13 @@ export class PayrollReceiptLoggerService {
       txHashes,
     });
 
-    if (txHash) {
+    if (result.ok && result.txHash) {
       await client
         .from('payroll_runs')
-        .update({ receipt_on_chain_tx_hash: txHash, updated_at: new Date().toISOString() })
+        .update({ receipt_on_chain_tx_hash: result.txHash, updated_at: new Date().toISOString() })
         .eq('id', runId);
+      return result.txHash;
     }
-    return txHash;
+    return null;
   }
 }

@@ -24,13 +24,31 @@ pub struct PaymentAttestation {
     pub timestamp_nanos: u64,
 }
 
+/// Receipt record for deal payments / payroll runs (hash-only, no amounts). Used by PayrollReceiptLoggerService.
+#[derive(BorshDeserialize, BorshSerialize, BorshSchema, Serialize, Clone, JsonSchema)]
+#[serde(crate = "near_sdk::serde")]
+pub struct ReceiptRecord {
+    pub payroll_id: String,
+    pub batch_hash: String,
+    pub authorizer_id: String,
+    pub nonce: u64,
+    pub executor_id: String,
+    pub status: String,
+    pub tx_refs_hash: String,
+    pub timestamp_nanos: u64,
+}
+
 #[near(contract_state)]
 #[derive(Default)]
 pub struct PayrollAttestation {
     owner_id: String,
-    /// Only this account (or empty = any) can call record_payment.
+    /// Only this account (or empty = any) can call record_payment and record_receipt.
     allowed_caller: Option<String>,
     payments: std::collections::HashMap<String, PaymentAttestation>,
+    /// Deal payment / payroll run receipts (key = payroll_id). Idempotent: same payroll_id is a no-op.
+    receipts: std::collections::HashMap<String, ReceiptRecord>,
+    /// Used (authorizer_id, nonce) to prevent duplicate receipt posts. Key format "authorizer_id::nonce".
+    used_receipt_nonces: std::collections::HashSet<String>,
 }
 
 #[near]
@@ -48,6 +66,8 @@ impl PayrollAttestation {
             owner_id,
             allowed_caller,
             payments: std::collections::HashMap::new(),
+            receipts: std::collections::HashMap::new(),
+            used_receipt_nonces: std::collections::HashSet::new(),
         }
     }
 
@@ -99,5 +119,56 @@ impl PayrollAttestation {
             "Only owner can set allowed caller"
         );
         self.allowed_caller = account_id;
+    }
+
+    // ----- Receipt logger (deal payments / payroll runs). Same allowed_caller as record_payment. -----
+
+    /// Record a receipt. Idempotent by payroll_id (duplicate payroll_id is a no-op). Caller must be allowed_caller.
+    #[payable]
+    pub fn record_receipt(
+        &mut self,
+        payroll_id: String,
+        batch_hash: String,
+        authorizer_id: String,
+        nonce: u64,
+        executor_id: String,
+        status: String,
+        tx_refs_hash: String,
+    ) {
+        if let Some(ref allowed) = self.allowed_caller {
+            let caller = env::predecessor_account_id().to_string();
+            assert_eq!(caller, *allowed, "Only the allowed caller can record receipts");
+        }
+        if self.receipts.contains_key(&payroll_id) {
+            return;
+        }
+        let nonce_key = format!("{}::{}", authorizer_id, nonce);
+        if self.used_receipt_nonces.contains(&nonce_key) {
+            near_sdk::env::panic_str("Nonce already used for this authorizer");
+        }
+        let timestamp_nanos = env::block_timestamp();
+        self.receipts.insert(
+            payroll_id.clone(),
+            ReceiptRecord {
+                payroll_id,
+                batch_hash,
+                authorizer_id: authorizer_id.clone(),
+                nonce,
+                executor_id,
+                status,
+                tx_refs_hash,
+                timestamp_nanos,
+            },
+        );
+        self.used_receipt_nonces.insert(nonce_key);
+    }
+
+    pub fn get_receipt(&self, payroll_id: String) -> Option<ReceiptRecord> {
+        self.receipts.get(&payroll_id).cloned()
+    }
+
+    pub fn is_nonce_used(&self, authorizer_id: String, nonce: u64) -> bool {
+        self.used_receipt_nonces
+            .contains(&format!("{}::{}", authorizer_id, nonce))
     }
 }

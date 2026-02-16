@@ -107,12 +107,12 @@ export class DealPaymentsController {
   @ApiOperation({ summary: 'Retry posting on-chain receipt for a completed payment' })
   @ApiParam({ name: 'orgId' })
   @ApiParam({ name: 'paymentId' })
-  @ApiResponse({ status: 200, description: 'Receipt posted or already present' })
+  @ApiResponse({ status: 200, description: 'Receipt posted or already present; when receiptPosted is false, error contains the reason' })
   retryReceipt(
     @Param('orgId') orgId: string,
     @Param('paymentId') paymentId: string,
     @Headers('x-privy-user-id') userId: string,
-  ): Promise<{ receiptPosted: boolean; receiptOnChainTxHash?: string | null }> {
+  ): Promise<{ receiptPosted: boolean; receiptOnChainTxHash?: string | null; error?: string }> {
     return this.service.retryReceiptForPayment(orgId, paymentId, userId);
   }
 

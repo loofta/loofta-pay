@@ -364,8 +364,9 @@ export class DealPaymentsService {
 
   /**
    * Retry posting on-chain receipt for a completed payment (idempotent; no-op if receipt already set).
+   * Always returns error message when receiptPosted is false so the client can show it.
    */
-  async retryReceiptForPayment(organizationId: string, paymentId: string, userId: string): Promise<{ receiptPosted: boolean; receiptOnChainTxHash?: string | null }> {
+  async retryReceiptForPayment(organizationId: string, paymentId: string, userId: string): Promise<{ receiptPosted: boolean; receiptOnChainTxHash?: string | null; error?: string }> {
     await this.checkOrgAccess(organizationId, userId);
     const client = this.supabaseService.getClient();
     const { data: payment } = await client
@@ -374,15 +375,77 @@ export class DealPaymentsService {
       .eq('id', paymentId)
       .eq('organization_id', organizationId)
       .single();
-    if (!payment || payment.status !== 'completed' || !payment.tx_hash) {
-      return { receiptPosted: false };
+    if (!payment) {
+      this.logger.warn(`retry-receipt: payment not found ${paymentId}`);
+      return { receiptPosted: false, error: 'Payment not found' };
     }
-    const { data: invoice } = await client
-      .from('deal_invoices')
-      .select('id, deal_id, amount, amount_currency, organization_id, receipt_on_chain_tx_hash')
-      .eq('deal_payment_id', paymentId)
-      .single();
-    if (!invoice) return { receiptPosted: false };
+    if (payment.status !== 'completed' || !payment.tx_hash) {
+      this.logger.warn(`retry-receipt: payment ${paymentId} not completed or missing tx_hash (status=${payment.status})`);
+      return { receiptPosted: false, error: 'Payment must be completed with a tx hash before posting receipt' };
+    }
+    let invoice: { id: string; deal_id: string; amount: number; amount_currency: string; organization_id: string; receipt_on_chain_tx_hash?: string | null } | null = (
+      await client
+        .from('deal_invoices')
+        .select('id, deal_id, amount, amount_currency, organization_id, receipt_on_chain_tx_hash')
+        .eq('deal_payment_id', paymentId)
+        .single()
+    ).data;
+    if (!invoice) {
+      // Legacy or missing link: find invoice by deal or create one so we can post receipt
+      const { data: paymentRow } = await client
+        .from('deal_payments')
+        .select('deal_id, amount, amount_currency, organization_id, deal_invite_id')
+        .eq('id', paymentId)
+        .single();
+      if (!paymentRow?.deal_id) {
+        this.logger.warn(`retry-receipt: no invoice for payment ${paymentId} and payment has no deal_id`);
+        return { receiptPosted: false, error: 'No invoice linked to this payment' };
+      }
+      const { data: existingRows } = await client
+        .from('deal_invoices')
+        .select('id, deal_id, amount, amount_currency, organization_id, receipt_on_chain_tx_hash, deal_payment_id')
+        .eq('deal_id', paymentRow.deal_id)
+        .is('deal_payment_id', null)
+        .limit(1);
+      const existing = (existingRows && (Array.isArray(existingRows) ? existingRows[0] : existingRows)) ?? null;
+      if (existing) {
+        const { data: invite } = await client.from('deal_invites').select('invitee_email').eq('id', paymentRow.deal_invite_id).single();
+        const inv = Array.isArray(invite) ? invite[0] : invite;
+        await client
+          .from('deal_invoices')
+          .update({ deal_payment_id: paymentId, recipient_email: (inv as any)?.invitee_email ?? null })
+          .eq('id', existing.id);
+        invoice = {
+          id: existing.id,
+          deal_id: existing.deal_id,
+          amount: existing.amount,
+          amount_currency: existing.amount_currency,
+          organization_id: existing.organization_id,
+          receipt_on_chain_tx_hash: existing.receipt_on_chain_tx_hash ?? null,
+        };
+      } else {
+        const { data: invite } = await client.from('deal_invites').select('invitee_email').eq('id', paymentRow.deal_invite_id).single();
+        const inv = Array.isArray(invite) ? invite[0] : invite;
+        const { data: inserted, error: insertErr } = await client
+          .from('deal_invoices')
+          .insert({
+            deal_id: paymentRow.deal_id,
+            deal_payment_id: paymentId,
+            organization_id: paymentRow.organization_id,
+            amount: paymentRow.amount,
+            amount_currency: paymentRow.amount_currency ?? 'USD',
+            recipient_email: (inv as any)?.invitee_email ?? null,
+            status: 'paid',
+          })
+          .select('id, deal_id, amount, amount_currency, organization_id, receipt_on_chain_tx_hash')
+          .single();
+        if (insertErr || !inserted) {
+          this.logger.warn(`retry-receipt: could not create invoice for payment ${paymentId}: ${insertErr?.message ?? 'unknown'}`);
+          return { receiptPosted: false, error: 'No invoice linked to this payment and could not create one' };
+        }
+        invoice = inserted;
+      }
+    }
     if (invoice.receipt_on_chain_tx_hash) {
       return { receiptPosted: true, receiptOnChainTxHash: invoice.receipt_on_chain_tx_hash };
     }
@@ -393,7 +456,7 @@ export class DealPaymentsService {
     const nonce = Number(
       BigInt('0x' + crypto.createHash('sha256').update(invoice.id).digest('hex').slice(0, 12)) % BigInt(Number.MAX_SAFE_INTEGER),
     );
-    const receiptTx = await this.receiptLogger.postReceipt({
+    const result = await this.receiptLogger.postReceipt({
       payrollId: invoice.id,
       batchHash,
       authorizerId: organizationId,
@@ -402,12 +465,13 @@ export class DealPaymentsService {
       status: 'success',
       txHashes: [payment.tx_hash],
     });
-    if (receiptTx) {
-      const { error: updateErr } = await client.from('deal_invoices').update({ receipt_on_chain_tx_hash: receiptTx }).eq('id', invoice.id);
+    if (result.ok && result.txHash) {
+      const { error: updateErr } = await client.from('deal_invoices').update({ receipt_on_chain_tx_hash: result.txHash }).eq('id', invoice.id);
       if (updateErr) this.logger.warn(`Could not set receipt_on_chain_tx_hash: ${updateErr.message}`);
-      return { receiptPosted: true, receiptOnChainTxHash: receiptTx };
+      return { receiptPosted: true, receiptOnChainTxHash: result.txHash };
     }
-    return { receiptPosted: false };
+    this.logger.warn(`retry-receipt: on-chain post failed for payment ${paymentId}: ${result.ok === false ? result.error : 'unknown'}`);
+    return { receiptPosted: false, error: result.ok === false ? result.error : 'Failed to post receipt on-chain' };
   }
 
   /**
@@ -445,7 +509,7 @@ export class DealPaymentsService {
     const nonce = Number(
       BigInt('0x' + crypto.createHash('sha256').update(invoice.id).digest('hex').slice(0, 12)) % BigInt(Number.MAX_SAFE_INTEGER),
     );
-    const receiptTx = await this.receiptLogger.postReceipt({
+    const receiptResult = await this.receiptLogger.postReceipt({
       payrollId: invoice.id,
       batchHash,
       authorizerId: organizationId,
@@ -454,8 +518,8 @@ export class DealPaymentsService {
       status: 'success',
       txHashes: [txHash],
     });
-    if (receiptTx) {
-      const { error: updateErr } = await client.from('deal_invoices').update({ receipt_on_chain_tx_hash: receiptTx }).eq('id', invoice.id);
+    if (receiptResult.ok && receiptResult.txHash) {
+      const { error: updateErr } = await client.from('deal_invoices').update({ receipt_on_chain_tx_hash: receiptResult.txHash }).eq('id', invoice.id);
       if (updateErr) this.logger.warn(`Could not set receipt_on_chain_tx_hash (column may not exist): ${updateErr.message}`);
     }
 

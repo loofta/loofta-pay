@@ -50,6 +50,7 @@ export default function PayrollPayPaymentPage() {
   const [depositView, setDepositView] = useState<"details" | "qr">("details");
   const [refundAddress, setRefundAddress] = useState("");
   const [refundAddressError, setRefundAddressError] = useState<string | null>(null);
+  const [retryReceiptLoading, setRetryReceiptLoading] = useState(false);
   const retryReceiptDone = useRef(false);
 
   const setPayWithToken = (v: TokenSelection | undefined) => {
@@ -425,9 +426,50 @@ export default function PayrollPayPaymentPage() {
                   A hash commitment for this payment was recorded on NEAR. The receipt contract stores only a commitment (no amounts or recipient on-chain). This uses the same network as your payment (mainnet/testnet via backend config).
                 </p>
               ) : (
-                <p className="mt-2 text-sm text-gray-600">
-                  Receipt not yet recorded on-chain. You can retry from the invoice page or contact support if it does not appear after a short time.
-                </p>
+                <>
+                  <p className="mt-2 text-sm text-gray-600">
+                    Receipt not yet recorded on-chain. Deal payments need the backend receipt logger configured (PAYROLL_RECEIPT_LOGGER_*). You can retry below; if it still fails, check that the receipt logger contract and keys are set for the same network as your payment.
+                  </p>
+                  {userId && orgId && payment.id && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-3"
+                      disabled={retryReceiptLoading}
+                      onClick={async () => {
+                        if (!userId || !orgId || !payment.id) return;
+                        setRetryReceiptLoading(true);
+                        try {
+                          const r = await dealsApi.payments.retryReceipt(orgId, payment.id, userId);
+                          if (r.receiptPosted && r.receiptOnChainTxHash) {
+                            setPayment((prev) => (prev ? { ...prev, receipt_on_chain_tx_hash: r.receiptOnChainTxHash ?? undefined } : null));
+                            toast({ title: "Receipt recorded", description: "On-chain receipt was posted." });
+                          } else {
+                            const updated = await dealsApi.payments.get(orgId, payment.id, userId);
+                            if (updated) setPayment(updated);
+                            const errMsg = r.error;
+                            const hint = errMsg?.toLowerCase().includes("allowed caller")
+                              ? " Set the contract allowed_caller to your backend account (e.g. loofta-backend.lisabey.near) via set_allowed_caller."
+                              : "";
+                            toast({
+                              variant: "destructive",
+                              title: "Receipt not posted",
+                              description: errMsg ? `${errMsg}${hint}` : "Receipt may require PAYROLL_RECEIPT_LOGGER_* in backend.",
+                            });
+                          }
+                        } catch {
+                          toast({ variant: "destructive", title: "Retry failed", description: "Could not post receipt." });
+                        } finally {
+                          setRetryReceiptLoading(false);
+                        }
+                      }}
+                    >
+                      {retryReceiptLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                      Retry receipt
+                    </Button>
+                  )}
+                </>
               )}
               {payment.receipt_on_chain_tx_hash && !payment.receipt_on_chain_tx_hash.startsWith("on-chain:") && payment.receipt_on_chain_tx_hash.length > 20 && (
                 <a
