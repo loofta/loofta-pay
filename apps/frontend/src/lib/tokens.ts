@@ -75,4 +75,23 @@ export function formatChainLabel(chain: string | undefined): string {
 	return label.length < 4 ? label.toUpperCase() : label;
 }
 
+/** Stablecoins-only filter for hackathon "stablecoins + intents" narrative. */
+const STABLECOIN_SYMBOLS = new Set(["USDC", "USDT"]);
+
+export function filterStablecoins(tokens: NearToken[]): NearToken[] {
+	return tokens.filter((t) => t.symbol && STABLECOIN_SYMBOLS.has(t.symbol.toUpperCase()));
+}
+
+export function getUsdcUsdtChains(tokens: NearToken[]): { usdc: string[]; usdt: string[] } {
+	const usdc: string[] = [];
+	const usdt: string[] = [];
+	for (const t of tokens) {
+		if (!t.chain) continue;
+		const sym = (t.symbol || "").toUpperCase();
+		if (sym === "USDC" && !usdc.includes(t.chain)) usdc.push(t.chain);
+		if (sym === "USDT" && !usdt.includes(t.chain)) usdt.push(t.chain);
+	}
+	return { usdc: usdc.sort(), usdt: usdt.sort() };
+}
+
 

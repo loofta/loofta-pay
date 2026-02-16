@@ -52,6 +52,9 @@ export class Claim {
   @ApiPropertyOptional({ description: 'Timestamp when payment was completed' })
   paid_at: string | null;
 
+  @ApiPropertyOptional({ description: 'NEAR tx hash from attestation contract when payment was recorded on-chain' })
+  attestation_tx_hash: string | null;
+
   @ApiProperty({ description: 'Creation timestamp' })
   created_at: string;
 

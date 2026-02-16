@@ -163,6 +163,7 @@ export type Database = {
       claims: {
         Row: {
           amount: string
+          attestation_tx_hash: string | null
           created_at: string
           created_by: string | null
           creator_email: string | null
@@ -177,6 +178,7 @@ export type Database = {
         }
         Insert: {
           amount: string
+          attestation_tx_hash?: string | null
           created_at?: string
           created_by?: string | null
           creator_email?: string | null
@@ -191,6 +193,7 @@ export type Database = {
         }
         Update: {
           amount?: string
+          attestation_tx_hash?: string | null
           created_at?: string
           created_by?: string | null
           creator_email?: string | null

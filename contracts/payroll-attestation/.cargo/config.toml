@@ -1,0 +1,6 @@
+# NEAR VM (nearvm) does not support some Wasm opcodes; disable them so the module loads.
+# - bulk-memory: memory.copy/memory.fill
+# - sign-ext: i32.extend8_s etc. (causes PrepareError::Deserialization)
+# See: https://blog.rust-lang.org/2024/09/24/webassembly-targets-change-in-default-target-features/
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=-bulk-memory,-sign-ext"]

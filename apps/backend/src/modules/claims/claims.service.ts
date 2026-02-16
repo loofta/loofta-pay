@@ -4,6 +4,8 @@ import { SupabaseService } from '@/database/supabase.service';
 import { CreateClaimDto, CreateClaimFromUsernameDto } from './dto';
 import { Claim, ClaimIntent, ClaimStatus } from './entities/claim.entity';
 import { UsersService } from '../users/users.service';
+import { ClaimAttestationService } from './claim-attestation.service';
+import { PaymentEventsService } from './payment-events.service';
 
 @Injectable()
 export class ClaimsService {
@@ -14,6 +16,8 @@ export class ClaimsService {
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
+    private readonly claimAttestationService: ClaimAttestationService,
+    private readonly paymentEventsService: PaymentEventsService,
   ) {
     this.baseUrl = this.configService.get<string>(
       'NEXT_PUBLIC_BASE_URL',
@@ -53,6 +57,7 @@ export class ClaimsService {
     const link = `${this.baseUrl}/c/${id}`;
 
     this.logger.log(`Created claim: ${id}`);
+    this.paymentEventsService.log({ claimId: id, eventType: 'claim_created', success: true }).catch(() => {});
     return { id, link };
   }
 
@@ -115,6 +120,7 @@ export class ClaimsService {
     console.log('requiresPrivate', requiresPrivate);
 
     this.logger.log(`Created claim from username: ${id} for user ${username} (private: ${finalIsPrivate}, required: ${requiresPrivate})`);
+    this.paymentEventsService.log({ claimId: id, eventType: 'claim_created', success: true }).catch(() => {});
     return { id, link };
   }
 
@@ -200,6 +206,17 @@ export class ClaimsService {
     }
 
     this.logger.log(`Updated claim ${id} status to ${status}${extra?.isPrivate ? ' (private)' : ''}`);
+
+    if (status === 'SUCCESS') {
+      this.paymentEventsService.log({ claimId: id, eventType: 'payment_detected', success: true }).catch(() => {});
+      this.claimAttestationService.recordAttestationIfNeeded(id).catch((err) => {
+        this.logger.warn(`Attestation recording failed for claim ${id}, will retry:`, err?.message);
+      });
+    }
+    if (status === 'REFUNDED') {
+      this.paymentEventsService.log({ claimId: id, eventType: 'execution_failed', success: false, errorMessage: 'refunded' }).catch(() => {});
+    }
+
     return data;
   }
 

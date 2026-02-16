@@ -1,6 +1,7 @@
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ClaimsService } from './claims.service';
+import { PaymentEventsService } from './payment-events.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { RequestDepositDto } from './dto';
 
@@ -41,6 +42,7 @@ export class DepositService {
 
   constructor(
     private readonly claimsService: ClaimsService,
+    private readonly paymentEventsService: PaymentEventsService,
     private readonly nearIntentsService: NearIntentsService,
     private readonly configService: ConfigService,
   ) {}
@@ -272,6 +274,13 @@ export class DepositService {
         toChain: claim.to_chain,
       });
 
+      this.paymentEventsService.log({
+        claimId: claim.id,
+        eventType: 'deposit_issued',
+        success: true,
+        refOrHash: quoteResult.quoteId ?? quoteResult.depositAddress ?? undefined,
+      }).catch(() => {});
+
       // Save payment info to claim (what token/chain is being used to pay)
       await this.claimsService.updateStatus(claim.id, 'PENDING_DEPOSIT', {
         paidWithToken: fromToken.symbol,
@@ -297,6 +306,12 @@ export class DepositService {
       };
     } catch (error: any) {
       this.logger.error('[Deposit] Quote error:', error?.message);
+      this.paymentEventsService.log({
+        claimId: claim?.id ?? null,
+        eventType: 'quote_failed',
+        success: false,
+        errorMessage: error?.message ?? 'Unknown',
+      }).catch(() => {});
 
       // Check if it's a validation error we should pass through
       if (error?.response?.code) {

@@ -18,7 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
 import { trimDecimals, roundUpDecimals, formatUTCTimestamp } from "@/lib/format";
-import { findTokenBySelection } from "@/lib/tokens";
+import { findTokenBySelection, filterStablecoins } from "@/lib/tokens";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { useClaimPayStore } from "@/store/claimPay";
 import { TokenIcon } from "@/components/TokenIcon";
@@ -136,7 +136,7 @@ async function fetchClaim(id: string) {
     if (r.ok) {
       const data = await r.json();
       return {
-        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; attestation_tx_hash?: string | null },
         latestIntent: data.intent ? {
           depositAddress: data.intent.deposit_address || null,
           memo: data.intent.memo ?? null,
@@ -161,7 +161,7 @@ async function fetchClaim(id: string) {
   const data = await r.json();
 
   return {
-    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; attestation_tx_hash?: string | null },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -434,17 +434,21 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     return getSupportedTokensForChain(destToken.chain);
   }, [destToken?.chain]);
 
+  // Stablecoins-only for pay-with selector (hackathon: stablecoins + intents)
+  const stablecoinTokens = useMemo(() => filterStablecoins(tokens), [tokens]);
+
   // Filter tokens to show: 
-  // - For same-chain EVM: only show supported tokens (ETH, WETH, USDC, USDT)
+  // - Pay-with list is USDC/USDT only (all chains)
+  // - For same-chain EVM: only show supported tokens (USDC, USDT)
   // - For non-EVM same-chain: only show the destination token (same token required)
-  // - For cross-chain: show all tokens
+  // - For cross-chain: show stablecoins on all chains
   const filteredTokens = useMemo(() => {
-    if (!destToken?.chain || !destToken?.symbol) return tokens;
+    if (!destToken?.chain || !destToken?.symbol) return stablecoinTokens;
 
     const destChainLower = String(destToken.chain).toLowerCase();
     const isNonEvmDest = ['sol', 'solana', 'btc', 'bitcoin', 'zec', 'zcash', 'xrp', 'xlm', 'ton', 'sui'].includes(destChainLower);
 
-    return tokens.map(t => {
+    return stablecoinTokens.map(t => {
       const tokenChainLower = String(t.chain || "").toLowerCase();
       const isSameChain = tokenChainLower === destChainLower;
 
@@ -468,7 +472,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
 
       return t;
     });
-  }, [tokens, destToken, destChainSupportsSwap, supportedSwapTokens]);
+  }, [stablecoinTokens, destToken, destChainSupportsSwap, supportedSwapTokens]);
 
   // Find USDC token on Solana for private mode
   const usdcSolanaToken = useMemo(() => {
@@ -1877,6 +1881,23 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                 </span>
                               </div>
                             )}
+                            {(claim as { attestation_tx_hash?: string | null }).attestation_tx_hash && (
+                              <div className="flex items-center justify-between pt-2 border-t border-gray-200 mt-2">
+                                <span className="text-gray-600">Attested on NEAR</span>
+                                {(claim as { attestation_tx_hash?: string | null }).attestation_tx_hash?.startsWith?.("on-chain:") ? (
+                                  <span className="text-sm text-gray-700">Recorded</span>
+                                ) : (
+                                  <a
+                                    href={getExplorerTxUrl("near", (claim as { attestation_tx_hash?: string | null }).attestation_tx_hash!)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-sm text-blue-600 hover:underline"
+                                  >
+                                    View on {getExplorerName("near")}
+                                  </a>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="mt-6">
@@ -2115,7 +2136,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   }}
                                   placeholder="Select token to pay with"
                                   onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                                  hideChains={['solana', 'sol']}
                                   className={`bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain)
                                     ? 'border-emerald-400 hover:bg-emerald-50'
                                     : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'
@@ -2310,7 +2330,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   }}
                                   placeholder="Select token to pay with"
                                   onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                                  hideChains={['solana', 'sol']}
                                   className={`bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain)
                                     ? 'border-emerald-400 hover:bg-emerald-50'
                                     : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'

@@ -123,6 +123,7 @@ See `apps/backend/supabase/REMOTE_DEV.md` for using a remote Supabase project in
 | `npm run start` | Start frontend (production) |
 | `npm run lint` | Lint all workspaces |
 | `npm run test` | Run backend tests |
+| `contracts/payroll-attestation/deploy.sh` | Build NEAR attestation WASM; use `deploy` arg to deploy to mainnet (see [NEAR attestation](#near-attestation-on-chain-payment-proof)) |
 
 **Database (backend):**
 
@@ -139,6 +140,21 @@ Deploys run from the **`main`** branch via GitHub Actions.
 | Backend  | Railway  | **Action** `.github/workflows/deploy-backend.yml` runs on push to `main` when `apps/backend/**` or root package files change. Add repo secret **`RAILWAY_TOKEN`** (Railway → Project → Settings → Tokens). Optional **`RAILWAY_SERVICE_ID`** if the project has multiple services. |
 | Frontend | Vercel   | Auto-deploys on push to `main`. |
 | DB       | GitHub Actions | Migrations when `apps/backend/supabase/migrations/**` change on `main` (`.github/workflows/deploy-migrations.yml`). |
+
+## NEAR attestation (on-chain payment proof)
+
+Completed claim payments can be recorded on NEAR for hackathon/audit: one on-chain record per claim (claim id, amount, token, execution ref). Optional; if not configured, the app works without it.
+
+- **Contract**: `contracts/payroll-attestation` (payroll attestation, Rust, `record_payment` / `get_payment`).
+- **Cost**: Very low (a few NEAR one-time; storage ~0.0001 NEAR/byte).
+- **Deploy**: See [contracts/payroll-attestation/README.md](contracts/payroll-attestation/README.md). Quick path:
+  ```bash
+  cd contracts/payroll-attestation
+  chmod +x deploy.sh
+  ./deploy.sh                    # build only
+  CONTRACT_ACCOUNT=attestation.yourname.near INIT_CALLER=your-backend.near ./deploy.sh deploy
+  ```
+- **Backend env**: `NEAR_ATTESTATION_CONTRACT_ID`, `NEAR_ATTESTATION_NEAR_ACCOUNT_ID`, `NEAR_ATTESTATION_NEAR_PRIVATE_KEY`, `NEAR_NETWORK_ID=mainnet` (see `apps/backend/env.template`). When set, the backend calls the contract after each successful claim payment and stores the NEAR tx hash on the claim; the claim page shows “Attested on NEAR” with a link when present.
 
 ## Privacy Cash & withdraw flow
 

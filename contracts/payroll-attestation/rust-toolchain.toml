@@ -1,0 +1,5 @@
+# NEAR VM does not support WASM from Rust 1.87+; use 1.86 so cargo near build works.
+# See: cargo near build warning "wasm, compiled with 1.87.0 or newer rust toolchain is currently not compatible with nearcore VM"
+[toolchain]
+channel = "1.86.0"
+targets = ["wasm32-unknown-unknown"]

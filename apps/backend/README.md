@@ -6,6 +6,7 @@ NestJS backend API for Loofta Swap - Cross-chain payment infrastructure.
 
 - **Organizations**: CRUD operations for managing payment organizations
 - **Claims**: Payment claim creation and deposit handling
+- **Payment audit**: `payment_events` table and optional NEAR on-chain attestation — see [PAYMENT_AUDIT.md](PAYMENT_AUDIT.md)
 - **Intents**: Cross-chain swap orchestration (Near Intents, Rhinestone)
 - **Tokens**: Token listing and price information
 - **Lottery**: Ticket purchase encoding for lottery contracts

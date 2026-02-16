@@ -1,0 +1,19 @@
+[package]
+name = "payroll_attestation"
+version = "0.1.0"
+edition = "2021"
+description = "NEAR contract: payroll/claim payment attestation on-chain (claim_id, amount, token, execution_ref)."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+borsh = { version = "1", features = ["unstable__schema", "derive"] }
+near-sdk = "5"
+schemars = { version = "0.8", features = ["derive"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "z"
+strip = "symbols"

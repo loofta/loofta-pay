@@ -6,6 +6,7 @@ import { LotteryProcessorService } from './lottery-processor.service';
 import { ClaimCompanionProcessorService } from './claim-companion-processor.service';
 import { SwapProcessorService } from './swap-processor.service';
 import { PayrollProcessorService } from './payroll-processor.service';
+import { AttestationRetryService } from './attestation-retry.service';
 import { ClaimsModule } from '../claims/claims.module';
 import { IntentsModule } from '../intents/intents.module';
 import { PayrollModule } from '../payroll/payroll.module';
@@ -26,6 +27,7 @@ import { DatabaseModule } from '@/database/database.module';
     ClaimCompanionProcessorService,
     SwapProcessorService,
     PayrollProcessorService,
+    AttestationRetryService,
   ],
   exports: [
     ClaimProcessorService,
@@ -33,6 +35,7 @@ import { DatabaseModule } from '@/database/database.module';
     ClaimCompanionProcessorService,
     SwapProcessorService,
     PayrollProcessorService,
+    AttestationRetryService,
   ],
 })
 export class CronModule {}
