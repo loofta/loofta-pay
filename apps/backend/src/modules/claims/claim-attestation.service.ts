@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
@@ -12,9 +13,27 @@ export interface RecordPaymentAttestationParams {
   recipientId?: string | null;
 }
 
+/** Canonical preimage for attestation commitment (must match contract docs). Delimiter: newline. */
+export function attestationPreimage(
+  claimId: string,
+  executionRef: string,
+  amount: string,
+  tokenSymbol: string,
+  tokenChain: string,
+  recipientId: string,
+  nonceHex: string,
+): string {
+  return [claimId, executionRef, amount, tokenSymbol, tokenChain, recipientId, nonceHex].join('\n');
+}
+
+/** SHA256 of preimage; 32-byte buffer. */
+export function attestationCommitment(preimage: string): Buffer {
+  return createHash('sha256').update(preimage, 'utf8').digest();
+}
+
 /**
- * Calls the NEAR Loofta Attestation contract to record a payment (idempotent per claim_id).
- * Returns the NEAR transaction hash when successful.
+ * Calls the NEAR Payroll Attestation contract to record a payment (idempotent per claim_id).
+ * Stores only a commitment on-chain (no plaintext amount/token/recipient). Returns tx hash + nonce for persistence.
  * Requires NEAR_ATTESTATION_CONTRACT_ID, NEAR_ATTESTATION_NEAR_ACCOUNT_ID, NEAR_ATTESTATION_NEAR_PRIVATE_KEY.
  */
 @Injectable()
@@ -29,9 +48,12 @@ export class ClaimAttestationService {
 
   /**
    * Record payment attestation on-chain. Idempotent: contract rejects if claim_id already exists.
-   * Returns NEAR tx hash or null if not configured or on failure (caller can retry).
+   * Stores only commitment (hash); no plaintext amount/token/recipient. Generates nonce and returns it for persistence.
+   * Returns { txHash, nonceHex } or null if not configured or on failure (caller can retry).
    */
-  async recordPayment(params: RecordPaymentAttestationParams): Promise<string | null> {
+  async recordPayment(
+    params: RecordPaymentAttestationParams,
+  ): Promise<{ txHash: string; nonceHex: string } | null> {
     const contractId = this.config.get<string>('NEAR_ATTESTATION_CONTRACT_ID');
     const accountId = this.config.get<string>('NEAR_ATTESTATION_NEAR_ACCOUNT_ID');
     const privateKey = this.config.get<string>('NEAR_ATTESTATION_NEAR_PRIVATE_KEY');
@@ -41,6 +63,21 @@ export class ClaimAttestationService {
       this.logger.debug('Claim attestation not configured; skipping on-chain record');
       return null;
     }
+
+    const nonce = randomBytes(32);
+    const nonceHex = nonce.toString('hex');
+    const recipientId = params.recipientId ?? '';
+    const preimage = attestationPreimage(
+      params.claimId,
+      params.executionRef,
+      String(params.amount),
+      params.tokenSymbol,
+      params.tokenChain,
+      recipientId,
+      nonceHex,
+    );
+    const commitment = attestationCommitment(preimage);
+    const commitmentArray = Array.from(new Uint8Array(commitment));
 
     try {
       const nearApi = await import('near-api-js');
@@ -66,11 +103,8 @@ export class ClaimAttestationService {
 
       const args = {
         claim_id: params.claimId,
-        amount: String(params.amount),
-        token_symbol: params.tokenSymbol,
-        token_chain: params.tokenChain,
         execution_ref: params.executionRef,
-        recipient_id: params.recipientId ?? null,
+        commitment: commitmentArray,
       };
 
       const outcome = await account.functionCall({
@@ -85,7 +119,6 @@ export class ClaimAttestationService {
         (outcome as any).transaction_outcome?.id ??
         (outcome as any).transaction?.hash ??
         null;
-      const ref = txHash ?? `on-chain:${params.claimId}`;
       if (txHash) {
         this.logger.log(`Attestation recorded on-chain for claim ${params.claimId}, tx=${txHash}`);
         this.paymentEventsService.log({
@@ -94,16 +127,16 @@ export class ClaimAttestationService {
           success: true,
           refOrHash: txHash,
         }).catch(() => {});
-        return txHash;
+        return { txHash, nonceHex };
       }
       this.logger.warn('Attestation recorded but could not read tx hash from outcome');
       this.paymentEventsService.log({
         claimId: params.claimId,
         eventType: 'attestation_submitted',
         success: true,
-        refOrHash: ref,
+        refOrHash: `on-chain:${params.claimId}`,
       }).catch(() => {});
-      return ref;
+      return { txHash: `on-chain:${params.claimId}`, nonceHex };
     } catch (e) {
       this.logger.warn(
         'Failed to record attestation on-chain:',
@@ -120,7 +153,7 @@ export class ClaimAttestationService {
   }
 
   /**
-   * Record attestation for a claim and persist attestation_tx_hash. Idempotent: skips if already set.
+   * Record attestation for a claim and persist attestation_tx_hash and attestation_nonce. Idempotent: skips if already set.
    * Returns the tx hash if recorded, null otherwise.
    */
   async recordAttestationIfNeeded(claimId: string): Promise<string | null> {
@@ -128,7 +161,7 @@ export class ClaimAttestationService {
 
     const { data: claim, error: claimErr } = await client
       .from('claims')
-      .select('id, amount, to_symbol, to_chain, recipient_address, paid_with_token, paid_with_chain, attestation_tx_hash, status')
+      .select('id, amount, to_symbol, to_chain, recipient_address, paid_with_token, paid_with_chain, attestation_tx_hash, attestation_nonce, status')
       .eq('id', claimId)
       .single();
 
@@ -159,7 +192,7 @@ export class ClaimAttestationService {
     const tokenSymbol = (claim as any).paid_with_token || claim.to_symbol;
     const tokenChain = (claim as any).paid_with_chain || claim.to_chain;
 
-    const txHash = await this.recordPayment({
+    const result = await this.recordPayment({
       claimId: claim.id,
       amount: claim.amount,
       tokenSymbol,
@@ -168,10 +201,13 @@ export class ClaimAttestationService {
       recipientId: claim.recipient_address,
     });
 
-    if (txHash) {
+    if (result) {
       await client
         .from('claims')
-        .update({ attestation_tx_hash: txHash })
+        .update({
+          attestation_tx_hash: result.txHash,
+          attestation_nonce: result.nonceHex,
+        })
         .eq('id', claimId);
     } else {
       this.paymentEventsService.log({
@@ -181,7 +217,7 @@ export class ClaimAttestationService {
         errorMessage: 'recordPayment returned null (not configured or NEAR error)',
       }).catch(() => {});
     }
-    return txHash;
+    return result?.txHash ?? null;
   }
 
   /**

@@ -50,6 +50,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/EmptyState";
 import {
   Select,
   SelectContent,
@@ -503,16 +504,17 @@ export default function PayrollOrgPage() {
           </CardHeader>
           <CardContent>
             {contributors.length === 0 ? (
-              <div className="text-center py-12">
-                <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-                <p className="text-gray-500 mb-4">No contributors yet</p>
-                <div className="flex justify-end">
-                  <GradientActionButton onClick={() => setShowAddDialog(true)} className="w-full sm:w-auto px-5">
+              <EmptyState
+                icon={Users}
+                message="You have no contributors"
+                description="Add a team member to start sending payments."
+                action={
+                  <GradientActionButton onClick={() => setShowAddDialog(true)} className="px-5">
                     <Plus className="w-4 h-4 mr-2" />
-                    Add your first contributor
+                    Add contributor
                   </GradientActionButton>
-                </div>
-              </div>
+                }
+              />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">

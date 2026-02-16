@@ -100,12 +100,133 @@ export class PayrollContributorsService {
   }
 
   /**
-   * Get all contributors for an organization
+   * Ensure a contributor exists for this org + email (e.g. when adding a deal invite by email).
+   * If none exists, creates one with status 'invited'; other fields can be filled later.
+   */
+  async ensureContributorForEmail(organizationId: string, email: string, userId: string): Promise<PayrollContributor> {
+    if (!(await this.payrollOrgsService.checkAccess(organizationId, userId))) {
+      throw new ForbiddenException('You do not have access to this organization');
+    }
+    const client = this.supabaseService.getClient();
+    const normalizedEmail = email.trim().toLowerCase();
+    const { data: existing } = await client
+      .from('payroll_contributors')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .eq('email', normalizedEmail)
+      .limit(1)
+      .maybeSingle();
+    if (existing) return existing;
+    const inviteToken = randomBytes(24).toString('base64url');
+    const { data: created, error } = await client
+      .from('payroll_contributors')
+      .insert({
+        organization_id: organizationId,
+        email: normalizedEmail,
+        first_name: null,
+        last_name: null,
+        wallet_address: null,
+        network: null,
+        token_symbol: null,
+        status: 'invited',
+        invited_at: new Date().toISOString(),
+        invite_token: inviteToken,
+      })
+      .select()
+      .single();
+    if (error) {
+      if (error.code === '23505') {
+        const { data: again } = await client
+          .from('payroll_contributors')
+          .select('*')
+          .eq('organization_id', organizationId)
+          .eq('email', normalizedEmail)
+          .limit(1)
+          .maybeSingle();
+        if (again) return again;
+      }
+      this.logger.error('Failed to create contributor for email:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+    this.logger.log(`Created contributor for email ${normalizedEmail} in org ${organizationId}`);
+    return created;
+  }
+
+  /**
+   * When a deal invite is accepted: mark the payroll contributor (org + invitee email) as joined
+   * and set payout wallet/network/token from the freelancer's profile (with invite as fallback for network/token).
+   */
+  async setJoinedWithPayoutFromProfile(
+    organizationId: string,
+    inviteeEmail: string,
+    freelancerProfileId: string,
+    opts?: { invitePreferredNetwork?: string | null; invitePreferredTokenSymbol?: string | null },
+  ): Promise<void> {
+    const client = this.supabaseService.getClient();
+    const email = inviteeEmail.trim().toLowerCase();
+    const { data: profile } = await client
+      .from('freelancer_profiles')
+      .select('wallet_address, preferred_network, preferred_token_symbol')
+      .eq('id', freelancerProfileId)
+      .single();
+    const walletAddress = profile?.wallet_address?.trim() || null;
+    const network =
+      profile?.preferred_network?.trim() ||
+      opts?.invitePreferredNetwork?.trim() ||
+      null;
+    const tokenSymbol =
+      profile?.preferred_token_symbol?.trim() ||
+      opts?.invitePreferredTokenSymbol?.trim() ||
+      null;
+    const { data: contributor, error: findErr } = await client
+      .from('payroll_contributors')
+      .select('id')
+      .eq('organization_id', organizationId)
+      .eq('email', email)
+      .limit(1)
+      .maybeSingle();
+    if (findErr || !contributor) {
+      this.logger.warn(`No payroll contributor found for org ${organizationId} email ${email}; skipping join update`);
+      return;
+    }
+    const updatePayload: Record<string, unknown> = {
+      status: 'joined',
+      joined_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    if (walletAddress !== null) updatePayload.wallet_address = walletAddress;
+    if (network !== null) updatePayload.network = network;
+    if (tokenSymbol !== null) updatePayload.token_symbol = tokenSymbol;
+    const { error: updateErr } = await client
+      .from('payroll_contributors')
+      .update(updatePayload)
+      .eq('id', contributor.id);
+    if (updateErr) {
+      this.logger.error('Failed to set contributor joined with payout:', updateErr);
+      throw new Error(`Database error: ${updateErr.message}`);
+    }
+    this.logger.log(`Contributor ${contributor.id} marked joined with profile payout for org ${organizationId}`);
+  }
+
+  /**
+   * Get all contributors for an organization.
+   * Contributors (role === 'contributor') only receive their own row; they cannot see other collaborators.
    */
   async findAll(organizationId: string, userId: string, status?: ContributorStatus): Promise<PayrollContributor[]> {
     // Verify access
     if (!(await this.payrollOrgsService.checkAccess(organizationId, userId))) {
       throw new ForbiddenException('You do not have access to this organization');
+    }
+
+    const { role } = await this.payrollOrgsService.getMyRole(organizationId, userId);
+    if (role === 'contributor') {
+      // Contributors only see their own record
+      try {
+        const me = await this.findMe(organizationId, userId);
+        return status ? (me.status === status ? [me] : []) : (me.status !== 'removed' ? [me] : []);
+      } catch {
+        return [];
+      }
     }
 
     let query = this.supabaseService.getClient()

@@ -55,6 +55,9 @@ export class Claim {
   @ApiPropertyOptional({ description: 'NEAR tx hash from attestation contract when payment was recorded on-chain' })
   attestation_tx_hash: string | null;
 
+  @ApiPropertyOptional({ description: 'Hex nonce used in attestation commitment; needed to verify on-chain commitment' })
+  attestation_nonce: string | null;
+
   @ApiProperty({ description: 'Creation timestamp' })
   created_at: string;
 

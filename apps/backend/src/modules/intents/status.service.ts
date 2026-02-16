@@ -49,12 +49,23 @@ export class StatusService {
       try {
         const status = await this.nearIntentsService.getExecutionStatus(depositAddress);
         const rawStatus = String(status?.status || status?.state || 'UNKNOWN').toUpperCase();
+        const sd = status?.swapDetails || status;
+        const txHash =
+          status?.txHash ||
+          status?.transactionHash ||
+          status?.withdrawTxHash ||
+          sd?.txHash ||
+          sd?.transactionHash ||
+          sd?.withdrawTxHash ||
+          (Array.isArray(sd?.destinationChainTxHashes) && sd.destinationChainTxHashes[0]) ||
+          (Array.isArray(sd?.withdrawTxHashes) && sd.withdrawTxHashes[0]) ||
+          (Array.isArray(sd?.withdrawTransactionHashes) && sd.withdrawTransactionHashes[0]);
 
         return {
           provider: 'near-intents',
           status: rawStatus,
           normalizedStatus: NEAR_STATUS_MAP[rawStatus] || 'unknown',
-          txHash: status?.txHash || status?.transactionHash,
+          txHash: typeof txHash === 'string' ? txHash : undefined,
           raw: status,
         };
       } catch (error: any) {

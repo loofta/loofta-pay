@@ -152,6 +152,8 @@ export interface DealPaymentResponse {
   memo?: string | null;
   /** Linked invoice id (for list view link) */
   invoice_id?: string;
+  /** When payment is completed, invoice receipt on-chain (from linked invoice) */
+  receipt_on_chain_tx_hash?: string | null;
 }
 
 export interface DealInvoiceResponse {
@@ -165,6 +167,8 @@ export interface DealInvoiceResponse {
   status: string;
   created_at: string;
   invoice_number?: string | null;
+  /** NEAR tx hash when receipt was recorded on-chain (paid invoices) */
+  receipt_on_chain_tx_hash?: string | null;
 }
 
 export interface InvoiceFromFreelancer {

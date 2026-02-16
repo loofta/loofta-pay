@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { payrollApi } from "@/services/api/payroll";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,7 @@ export default function PayrollLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { authenticated, userId, email, login, logout, ready } = useAuth();
 
   const displayLabel = email
@@ -55,6 +56,13 @@ export default function PayrollLayout({
       .then((r) => setOrgRole(r.role))
       .catch(() => setOrgRole(null));
   }, [orgId, userId]);
+
+  // Contributors cannot access the Team page (org root); redirect to Deals
+  useEffect(() => {
+    if (orgId && orgRole === "contributor" && pathname === `/payroll/${orgId}`) {
+      router.replace(`/payroll/${orgId}/deals`);
+    }
+  }, [orgId, orgRole, pathname, router]);
 
   const isContributor = orgRole === "contributor";
   const navItems = isOrgPage
@@ -124,7 +132,7 @@ export default function PayrollLayout({
               href="/"
               className="text-sm text-gray-500 hover:text-gray-700"
             >
-              Back to Loofta
+              Home
             </Link>
             {ready && !authenticated && (
               <GradientActionButton onClick={() => login()} className="w-auto shrink-0 px-4 h-9 text-sm">
@@ -149,9 +157,6 @@ export default function PayrollLayout({
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link href="/payroll/my-invoices">My invoices</Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link href="/payments">Payment history</Link>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => logout()} className="text-gray-600">

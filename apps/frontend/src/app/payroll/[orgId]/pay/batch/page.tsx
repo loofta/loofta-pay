@@ -161,13 +161,20 @@ export default function PayrollPayBatchPage() {
         <div>
           <div className="text-sm font-medium text-gray-700 mb-2">Pay with</div>
           <TokenCombobox
-            tokens={tokens as { symbol: string; chain: string; tokenId?: string; decimals: number; name?: string }[]}
+            tokens={tokens.filter((t) =>
+              ["USDC", "USDT", "DAI"].includes((t.symbol || "").toUpperCase())
+            ) as { symbol: string; chain: string; tokenId?: string; decimals: number; name?: string }[]}
             value={payWithToken}
             onChange={setPayWithToken}
-            placeholder="Select token to pay with"
-            onQuery={async (q) =>
-              tokens.filter((t) => (t.symbol || "").toLowerCase().includes((q || "").toLowerCase()))
-            }
+            placeholder="Select token (USDC, USDT, DAI)"
+            onQuery={async (q) => {
+              const qq = (q || "").toLowerCase();
+              return tokens.filter(
+                (t) =>
+                  ["USDC", "USDT", "DAI"].includes((t.symbol || "").toUpperCase()) &&
+                  ((t.symbol || "").toLowerCase().includes(qq) || (t.name || "").toLowerCase().includes(qq))
+              );
+            }}
             defaultShowAllChains={true}
             className="bg-white border border-gray-200 w-full h-12 text-base rounded-lg hover:bg-gray-50 focus:ring-2 focus:ring-orange-400 focus:border-orange-400"
           />

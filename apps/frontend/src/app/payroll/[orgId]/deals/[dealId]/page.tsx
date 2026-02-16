@@ -84,7 +84,7 @@ export default function DealDetailPage() {
       ]);
       setOrganization(org);
       setDeal(d);
-      setLinkedInvoice(inv ?? null);
+      setLinkedInvoice(inv?.id ? inv : null);
     } catch (err: unknown) {
       toast({ variant: "destructive", title: "Error", description: err instanceof Error ? err.message : "Failed to load deal" });
     } finally {
@@ -146,7 +146,7 @@ export default function DealDetailPage() {
           deal: data.deal,
           contributor_payout: data.contributor_payout ?? undefined,
         });
-      }).catch(() => {});
+      }).catch(() => { });
     });
   }, [loadData, userId, contributorInviteData?.invite.id]);
 
@@ -409,7 +409,7 @@ export default function DealDetailPage() {
             </CardContent>
           </Card>
 
-          {linkedInvoice && !contributorInviteData && (
+          {linkedInvoice?.id && !contributorInviteData && (
             <Card className="border-gray-200/80 shadow-sm p-6">
               <CardHeader className="px-0 pb-2 pt-0">
                 <CardTitle className="text-sm font-medium text-gray-500">Linked invoice</CardTitle>

@@ -431,33 +431,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               </div>
             )}
 
-            {/* Payment history */}
-            <div className="mb-2">
-              <Link
-                href="/payments"
-                onClick={() => setIsOpen(false)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${isDarkPage
-                  ? "text-gray-300 hover:bg-gray-800"
-                  : "text-gray-700 hover:bg-gray-100"
-                  }`}
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="12" y1="1" x2="12" y2="23"></line>
-                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-                </svg>
-                Payment history
-              </Link>
-            </div>
-
             {/* Settings - opens modal with wallet address & export private keys */}
             <div className="mb-2">
               <button

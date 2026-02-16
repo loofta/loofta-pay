@@ -101,6 +101,7 @@ export class DealPaymentsService {
     paymentIds: string[],
     userId: string,
     payWithToken?: { symbol: string; chain: string; tokenId?: string; decimals?: number },
+    refundAddress?: string,
   ): Promise<DealPaymentResponse[]> {
     await this.checkOrgAccess(organizationId, userId);
     const client = this.supabaseService.getClient();
@@ -170,7 +171,9 @@ export class DealPaymentsService {
           },
           amountOut: p.amount,
           recipient: p.recipient_wallet,
+          refundAddress: refundAddress?.trim() || undefined,
           useExactOutput: true,
+          referral: 'loofta',
         });
         if (quote.error || !quote.depositAddress) {
           this.logger.warn(`Quote failed for payment ${p.id}:`, quote.error);
@@ -187,11 +190,11 @@ export class DealPaymentsService {
         await client.from('deal_payments').update(updatePayload).eq('id', p.id);
         const { data: updated } = await client.from('deal_payments').select('*').eq('id', p.id).single();
         if (updated) {
-          const resp = this.toResponse(updated) as Record<string, unknown>;
+          const resp: DealPaymentResponse = this.toResponse(updated);
           resp.minAmountInFormatted = quote.minAmountInFormatted ?? undefined;
           resp.timeEstimate = quote.timeEstimate ?? undefined;
           resp.memo = quote.memo ?? undefined;
-          results.push(resp as DealPaymentResponse);
+          results.push(resp);
         }
       } catch (e) {
         this.logger.warn(`Intent creation failed for payment ${p.id}:`, (e as Error).message);
@@ -243,8 +246,14 @@ export class DealPaymentsService {
     }
     try {
       const intentStatus = await this.statusService.getStatus({ depositAddress: payment.deposit_address });
-      if (intentStatus.normalizedStatus === 'completed' && intentStatus.txHash) {
-        const updated = await this.markCompleted(organizationId, paymentId, intentStatus.txHash, userId);
+      if (intentStatus.normalizedStatus === 'completed') {
+        const txHash =
+          intentStatus.txHash ||
+          (intentStatus.raw?.swapDetails?.destinationChainTxHashes?.[0]) ||
+          (intentStatus.raw?.swapDetails?.withdrawTxHashes?.[0]) ||
+          (Array.isArray((intentStatus.raw as any)?.destinationChainTxHashes) && (intentStatus.raw as any).destinationChainTxHashes[0]) ||
+          `intent:${payment.deposit_address}`;
+        const updated = await this.markCompleted(organizationId, paymentId, txHash, userId);
         return { completed: true, payment: updated };
       }
       return {
@@ -288,6 +297,117 @@ export class DealPaymentsService {
       .single();
     if (error) throw new Error(`Database error: ${error.message}`);
     return this.toResponse(updated);
+  }
+
+  /**
+   * List completed payments (for Pay list "Completed" section). Most recent first, limited.
+   */
+  async listCompleted(organizationId: string, userId: string, limit = 50): Promise<DealPaymentResponse[]> {
+    await this.checkOrgAccess(organizationId, userId);
+    const client = this.supabaseService.getClient();
+    const { data, error } = await client
+      .from('deal_payments')
+      .select('*, deal_invites(invitee_email)')
+      .eq('organization_id', organizationId)
+      .eq('status', 'completed')
+      .order('updated_at', { ascending: false })
+      .limit(limit);
+    if (error) return [];
+    const paymentIds = (data || []).map((r: any) => r.id);
+    const invoiceByPayment: Record<string, string> = {};
+    const receiptByPayment: Record<string, string | null> = {};
+    if (paymentIds.length > 0) {
+      const { data: invoices } = await client
+        .from('deal_invoices')
+        .select('id, deal_payment_id, receipt_on_chain_tx_hash')
+        .in('deal_payment_id', paymentIds);
+      (invoices || []).forEach((inv: any) => {
+        if (inv.deal_payment_id) {
+          invoiceByPayment[inv.deal_payment_id] = inv.id;
+          receiptByPayment[inv.deal_payment_id] = inv.receipt_on_chain_tx_hash ?? null;
+        }
+      });
+    }
+    return (data || []).map((row: any) =>
+      this.toResponse({
+        ...row,
+        invoice_id: invoiceByPayment[row.id],
+        receipt_on_chain_tx_hash: receiptByPayment[row.id],
+      }),
+    );
+  }
+
+  /**
+   * Get a single payment by id (any status). Used for payment detail view including completed.
+   */
+  async getById(organizationId: string, paymentId: string, userId: string): Promise<DealPaymentResponse | null> {
+    await this.checkOrgAccess(organizationId, userId);
+    const client = this.supabaseService.getClient();
+    const { data, error } = await client
+      .from('deal_payments')
+      .select('*, deal_invites(invitee_email)')
+      .eq('id', paymentId)
+      .eq('organization_id', organizationId)
+      .single();
+    if (error || !data) return null;
+    const { data: invoice } = await client
+      .from('deal_invoices')
+      .select('id, receipt_on_chain_tx_hash')
+      .eq('deal_payment_id', paymentId)
+      .single();
+    return this.toResponse({
+      ...data,
+      invoice_id: invoice?.id,
+      receipt_on_chain_tx_hash: invoice?.receipt_on_chain_tx_hash ?? null,
+    });
+  }
+
+  /**
+   * Retry posting on-chain receipt for a completed payment (idempotent; no-op if receipt already set).
+   */
+  async retryReceiptForPayment(organizationId: string, paymentId: string, userId: string): Promise<{ receiptPosted: boolean; receiptOnChainTxHash?: string | null }> {
+    await this.checkOrgAccess(organizationId, userId);
+    const client = this.supabaseService.getClient();
+    const { data: payment } = await client
+      .from('deal_payments')
+      .select('id, status, tx_hash')
+      .eq('id', paymentId)
+      .eq('organization_id', organizationId)
+      .single();
+    if (!payment || payment.status !== 'completed' || !payment.tx_hash) {
+      return { receiptPosted: false };
+    }
+    const { data: invoice } = await client
+      .from('deal_invoices')
+      .select('id, deal_id, amount, amount_currency, organization_id, receipt_on_chain_tx_hash')
+      .eq('deal_payment_id', paymentId)
+      .single();
+    if (!invoice) return { receiptPosted: false };
+    if (invoice.receipt_on_chain_tx_hash) {
+      return { receiptPosted: true, receiptOnChainTxHash: invoice.receipt_on_chain_tx_hash };
+    }
+    const batchHash = crypto
+      .createHash('sha256')
+      .update([invoice.id, invoice.deal_id, invoice.amount, invoice.amount_currency, 'paid'].join('|'))
+      .digest('hex');
+    const nonce = Number(
+      BigInt('0x' + crypto.createHash('sha256').update(invoice.id).digest('hex').slice(0, 12)) % BigInt(Number.MAX_SAFE_INTEGER),
+    );
+    const receiptTx = await this.receiptLogger.postReceipt({
+      payrollId: invoice.id,
+      batchHash,
+      authorizerId: organizationId,
+      nonce,
+      executorId: 'deal-payment',
+      status: 'success',
+      txHashes: [payment.tx_hash],
+    });
+    if (receiptTx) {
+      const { error: updateErr } = await client.from('deal_invoices').update({ receipt_on_chain_tx_hash: receiptTx }).eq('id', invoice.id);
+      if (updateErr) this.logger.warn(`Could not set receipt_on_chain_tx_hash: ${updateErr.message}`);
+      return { receiptPosted: true, receiptOnChainTxHash: receiptTx };
+    }
+    return { receiptPosted: false };
   }
 
   /**
@@ -335,7 +455,8 @@ export class DealPaymentsService {
       txHashes: [txHash],
     });
     if (receiptTx) {
-      await client.from('deal_invoices').update({ receipt_on_chain_tx_hash: receiptTx }).eq('id', invoice.id);
+      const { error: updateErr } = await client.from('deal_invoices').update({ receipt_on_chain_tx_hash: receiptTx }).eq('id', invoice.id);
+      if (updateErr) this.logger.warn(`Could not set receipt_on_chain_tx_hash (column may not exist): ${updateErr.message}`);
     }
 
     const { data: updated } = await client.from('deal_payments').select('*').eq('id', paymentId).single();
@@ -363,6 +484,7 @@ export class DealPaymentsService {
       created_at: row.created_at,
       updated_at: row.updated_at,
       invoice_id: row.invoice_id ?? undefined,
+      receipt_on_chain_tx_hash: row.receipt_on_chain_tx_hash ?? undefined,
     };
   }
 }

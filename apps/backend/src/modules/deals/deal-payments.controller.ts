@@ -31,15 +31,37 @@ export class DealPaymentsController {
     return this.service.listOutstanding(orgId, userId);
   }
 
+  @Get('completed')
+  @ApiOperation({ summary: 'List completed payments (for Pay list)' })
+  @ApiParam({ name: 'orgId' })
+  listCompleted(
+    @Param('orgId') orgId: string,
+    @Headers('x-privy-user-id') userId: string,
+  ): Promise<DealPaymentResponse[]> {
+    return this.service.listCompleted(orgId, userId);
+  }
+
+  @Get(':paymentId')
+  @ApiOperation({ summary: 'Get a single payment by id (any status, for detail view)' })
+  @ApiParam({ name: 'orgId' })
+  @ApiParam({ name: 'paymentId' })
+  getById(
+    @Param('orgId') orgId: string,
+    @Param('paymentId') paymentId: string,
+    @Headers('x-privy-user-id') userId: string,
+  ): Promise<DealPaymentResponse | null> {
+    return this.service.getById(orgId, paymentId, userId);
+  }
+
   @Post('prepare-pay')
-  @ApiOperation({ summary: 'Prepare pay: create intents for selected payment IDs; optional payWithToken to choose token (from NEAR intents list)' })
+  @ApiOperation({ summary: 'Prepare pay: create intents for selected payment IDs; optional payWithToken and refundAddress' })
   @ApiParam({ name: 'orgId' })
   preparePay(
     @Param('orgId') orgId: string,
-    @Body() body: { paymentIds: string[]; payWithToken?: { symbol: string; chain: string; tokenId?: string; decimals?: number } },
+    @Body() body: { paymentIds: string[]; payWithToken?: { symbol: string; chain: string; tokenId?: string; decimals?: number }; refundAddress?: string },
     @Headers('x-privy-user-id') userId: string,
   ): Promise<DealPaymentResponse[]> {
-    return this.service.preparePay(orgId, body.paymentIds || [], userId, body.payWithToken);
+    return this.service.preparePay(orgId, body.paymentIds || [], userId, body.payWithToken, body.refundAddress);
   }
 
   @Delete(':paymentId')
@@ -79,6 +101,19 @@ export class DealPaymentsController {
     @Headers('x-privy-user-id') userId: string,
   ): Promise<CheckAndCompleteResult> {
     return this.service.checkAndComplete(orgId, paymentId, userId);
+  }
+
+  @Post(':paymentId/retry-receipt')
+  @ApiOperation({ summary: 'Retry posting on-chain receipt for a completed payment' })
+  @ApiParam({ name: 'orgId' })
+  @ApiParam({ name: 'paymentId' })
+  @ApiResponse({ status: 200, description: 'Receipt posted or already present' })
+  retryReceipt(
+    @Param('orgId') orgId: string,
+    @Param('paymentId') paymentId: string,
+    @Headers('x-privy-user-id') userId: string,
+  ): Promise<{ receiptPosted: boolean; receiptOnChainTxHash?: string | null }> {
+    return this.service.retryReceiptForPayment(orgId, paymentId, userId);
   }
 
   @Put(':paymentId/reset-to-pending')

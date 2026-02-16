@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
@@ -15,9 +15,11 @@ import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { TokenIcon } from "@/components/TokenIcon";
 import { QRCodeSVG } from "qrcode.react";
 import { useQuery } from "@tanstack/react-query";
-import { getRefundToForChain } from "@/lib/refundAddresses";
+import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
+import { Input } from "@/components/ui/input";
 import { usePayrollPayStore } from "@/store/payrollPay";
-import { Loader2, ArrowLeft, Send, FileText, QrCode } from "lucide-react";
+import { Loader2, ArrowLeft, Send, FileText, QrCode, ExternalLink, CheckCircle2, ShieldCheck } from "lucide-react";
+import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 
 /** Flow: Pay → select token (see conversion) → Get deposit address → NEAR Intent deposit + PaymentStatusTracker. Cancel to choose another token. State persists in Zustand on refresh. */
 export default function PayrollPayPaymentPage() {
@@ -46,6 +48,9 @@ export default function PayrollPayPaymentPage() {
     deadline?: string | null;
   } | null>(stored?.deposit ?? null);
   const [depositView, setDepositView] = useState<"details" | "qr">("details");
+  const [refundAddress, setRefundAddress] = useState("");
+  const [refundAddressError, setRefundAddressError] = useState<string | null>(null);
+  const retryReceiptDone = useRef(false);
 
   const setPayWithToken = (v: TokenSelection | undefined) => {
     setPayWithTokenState(v);
@@ -97,8 +102,17 @@ export default function PayrollPayPaymentPage() {
       .then(([payments, tokenList]) => {
         if (cancelled) return;
         const p = (payments || []).find((x) => x.id === paymentId);
-        setPayment(p || null);
-        setTokens(tokenList);
+        if (p) {
+          setPayment(p);
+          setTokens(tokenList);
+        } else {
+          setTokens(tokenList);
+          dealsApi.payments.get(orgId, paymentId, userId).then((single) => {
+            if (!cancelled) setPayment(single ?? null);
+          }).catch(() => {
+            if (!cancelled) setPayment(null);
+          });
+        }
       })
       .catch(() => {
         if (!cancelled) setPayment(null);
@@ -110,6 +124,16 @@ export default function PayrollPayPaymentPage() {
       cancelled = true;
     };
   }, [userId, orgId, paymentId]);
+
+  /** Only stablecoins for payroll pay-with selection */
+  const STABLECOIN_SYMBOLS = ["USDC", "USDT", "DAI"];
+  const payWithTokens = useMemo(
+    () =>
+      tokens.filter((t) =>
+        STABLECOIN_SYMBOLS.includes((t.symbol || "").toUpperCase())
+      ),
+    [tokens]
+  );
 
   const destToken = useMemo(() => {
     if (!payment || !tokens.length) return null;
@@ -152,7 +176,9 @@ export default function PayrollPayPaymentPage() {
         },
         fromTokenPriceUSD: payWithToken.price,
         destTokenPriceUSD: destToken.price,
-        refundAddress: getRefundToForChain(payWithToken.chain),
+        refundAddress: refundAddress.trim() && isValidAddressForChain(refundAddress.trim(), payWithToken.chain)
+          ? refundAddress.trim()
+          : getRefundToForChain(payWithToken.chain),
       }),
     })
       .then((r) => r.json())
@@ -166,7 +192,7 @@ export default function PayrollPayPaymentPage() {
       })
       .catch(() => setQuote(null))
       .finally(() => setQuoteLoading(false));
-  }, [payment?.id, payment?.amount, payWithToken?.tokenId, payWithToken?.decimals, payWithToken?.chain, payWithToken?.price, destToken?.tokenId, destToken?.decimals, destToken?.price]);
+  }, [payment?.id, payment?.amount, payWithToken?.tokenId, payWithToken?.decimals, payWithToken?.chain, payWithToken?.price, destToken?.tokenId, destToken?.decimals, destToken?.price, refundAddress]);
 
   const statusQuery = useQuery({
     queryKey: ["status", depositAddress],
@@ -217,11 +243,34 @@ export default function PayrollPayPaymentPage() {
       dealsApi.payments
         .checkComplete(orgId, payment.id, userId)
         .then((res) => {
-          if (res.completed && res.payment) setPayment(res.payment);
+          if (res.completed && res.payment) {
+            setPayment(res.payment);
+            dealsApi.payments.retryReceipt(orgId, payment.id, userId).catch(() => {});
+          }
         })
         .catch(() => {});
     }
   }, [status, payment?.id, userId, orgId]);
+
+  // When viewing a completed payment, retry attestation/receipt once so it gets posted if it failed before
+  useEffect(() => {
+    if (!payment?.id || payment.status !== "completed" || !userId || !orgId || retryReceiptDone.current) return;
+    retryReceiptDone.current = true;
+    dealsApi.payments
+      .checkComplete(orgId, payment.id, userId)
+      .then((res) => {
+        if (res.payment) setPayment(res.payment);
+      })
+      .catch(() => {});
+    dealsApi.payments
+      .retryReceipt(orgId, payment.id, userId)
+      .then((r) => {
+        if (r.receiptPosted && r.receiptOnChainTxHash) {
+          setPayment((prev) => (prev ? { ...prev, receipt_on_chain_tx_hash: r.receiptOnChainTxHash ?? undefined } : null));
+        }
+      })
+      .catch(() => {});
+  }, [payment?.id, payment?.status, userId, orgId]);
 
   const handlePrepare = async () => {
     if (!userId || !orgId || !payment || !payWithToken?.symbol || !payWithToken?.chain) {
@@ -232,13 +281,25 @@ export default function PayrollPayPaymentPage() {
       });
       return;
     }
+    const refundTrimmed = refundAddress.trim();
+    if (refundTrimmed && !isValidAddressForChain(refundTrimmed, payWithToken.chain)) {
+      setRefundAddressError(`Address format doesn't match ${payWithToken.chain}. Use a valid ${payWithToken.chain} address.`);
+      toast({
+        variant: "destructive",
+        title: "Invalid refund address",
+        description: `Must be a valid address for ${payWithToken.chain}.`,
+      });
+      return;
+    }
+    setRefundAddressError(null);
     setPreparing(true);
     try {
       const result = await dealsApi.payments.preparePay(
         orgId,
         [payment.id],
         userId,
-        payWithToken
+        payWithToken,
+        refundTrimmed || undefined
       );
       const first = result?.[0];
       if (!first?.deposit_address) {
@@ -301,19 +362,6 @@ export default function PayrollPayPaymentPage() {
     );
   }
 
-  if (payment.status === "completed") {
-    return (
-      <div className="mx-auto max-w-2xl p-6 text-center">
-        <p className="text-lg font-medium text-gray-900">Payment completed.</p>
-        <Link href={`/payroll/${orgId}/pay`}>
-          <Button variant="outline" className="mt-4">
-            <ArrowLeft className="mr-2 h-4 w-4" /> Back to Pay
-          </Button>
-        </Link>
-      </div>
-    );
-  }
-
   const upperStatus = String(status || "PENDING_DEPOSIT").toUpperCase();
   const isProcessing = upperStatus === "PROCESSING" || upperStatus === "KNOWN_DEPOSIT_TX";
   const isSuccess = upperStatus === "SUCCESS";
@@ -336,16 +384,70 @@ export default function PayrollPayPaymentPage() {
           <span className="text-lg text-gray-500">{payment.amount_currency}</span>
         </div>
         <p className="mt-2 text-sm text-gray-600">
-          {payment.recipient_email || payment.recipient_wallet || "—"}
+          Recipient email: {payment.recipient_email || "—"}
         </p>
 
-        {!showDepositUI ? (
+        {payment.status === "completed" ? (
+          <div className="mt-6 space-y-6">
+            <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-green-800">
+              <CheckCircle2 className="h-5 w-5 shrink-0" />
+              <span className="font-medium">Payment completed</span>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {(depositFromPrepare?.depositAddress ?? payment.deposit_address) && (payment.preferred_network?.toLowerCase() === "near") && (
+                <a
+                  href={`https://explorer.near-intents.org/transactions/${depositFromPrepare?.depositAddress ?? payment.deposit_address}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-orange-600 hover:text-orange-700"
+                >
+                  View on NEAR Intents explorer <ExternalLink className="h-4 w-4" />
+                </a>
+              )}
+              {payment.tx_hash && (
+                <a
+                  href={getExplorerTxUrl(payment.preferred_network ?? "near", payment.tx_hash)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-orange-600 hover:text-orange-700"
+                >
+                  View transaction <ExternalLink className="h-4 w-4" />
+                </a>
+              )}
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                <ShieldCheck className="h-4 w-4 shrink-0" />
+                On-chain attestation (receipt)
+              </div>
+              {payment.receipt_on_chain_tx_hash ? (
+                <p className="mt-2 text-sm text-gray-600">
+                  A hash commitment for this payment was recorded on NEAR. The receipt contract stores only a commitment (no amounts or recipient on-chain). This uses the same network as your payment (mainnet/testnet via backend config).
+                </p>
+              ) : (
+                <p className="mt-2 text-sm text-gray-600">
+                  Receipt not yet recorded on-chain. You can retry from the invoice page or contact support if it does not appear after a short time.
+                </p>
+              )}
+              {payment.receipt_on_chain_tx_hash && !payment.receipt_on_chain_tx_hash.startsWith("on-chain:") && payment.receipt_on_chain_tx_hash.length > 20 && (
+                <a
+                  href={getExplorerTxUrl("near", payment.receipt_on_chain_tx_hash)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-orange-600 hover:text-orange-700"
+                >
+                  View receipt on NEAR <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+          </div>
+        ) : !showDepositUI ? (
           <>
             <div className="mt-6">
               <div className="mb-2 text-sm font-medium text-gray-700">Pay with</div>
               <TokenCombobox
                 tokens={
-                  tokens as {
+                  payWithTokens as {
                     symbol: string;
                     chain: string;
                     tokenId?: string;
@@ -355,16 +457,43 @@ export default function PayrollPayPaymentPage() {
                 }
                 value={payWithToken}
                 onChange={setPayWithToken}
-                placeholder="Select token to pay with"
-                onQuery={async (q) =>
-                  tokens.filter((t) =>
-                    (t.symbol || "").toLowerCase().includes((q || "").toLowerCase())
-                  )
-                }
+                placeholder="Select token (USDC, USDT, DAI)"
+                onQuery={async (q) => {
+                  const qq = (q || "").toLowerCase();
+                  return payWithTokens.filter(
+                    (t) =>
+                      (t.symbol || "").toLowerCase().includes(qq) ||
+                      (t.name || "").toLowerCase().includes(qq)
+                  );
+                }}
                 defaultShowAllChains={true}
                 className="h-12 w-full rounded-lg border border-gray-200 bg-white text-base hover:bg-gray-50 focus:border-orange-400 focus:ring-2 focus:ring-orange-400"
               />
             </div>
+            {payWithToken && (
+              <div className="mt-4">
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                  Refund address (optional)
+                </label>
+                <Input
+                  placeholder={`Where to refund if payment fails (${payWithToken.chain} address)`}
+                  value={refundAddress}
+                  onChange={(e) => {
+                    setRefundAddress(e.target.value);
+                    if (refundAddressError) setRefundAddressError(null);
+                  }}
+                  className={`h-11 rounded-lg border bg-white font-mono text-sm placeholder:text-gray-400 ${
+                    refundAddressError ? "border-red-400 focus:border-red-500 focus:ring-red-500" : "border-gray-200 focus:border-orange-400 focus:ring-orange-400"
+                  }`}
+                />
+                {refundAddressError && (
+                  <p className="mt-1 text-xs text-red-600">{refundAddressError}</p>
+                )}
+                <p className="mt-1 text-xs text-gray-500">
+                  If the payment cannot be completed, funds will be sent back to this address on {payWithToken.chain}.
+                </p>
+              </div>
+            )}
             {payWithToken && (quoteLoading || quote?.amountInFormatted) && (
               <p className="mt-2 text-sm text-gray-600">
                 Send approx:{" "}
@@ -510,6 +639,19 @@ export default function PayrollPayPaymentPage() {
                       </button>
                     </span>
                   </div>
+                  {(depositAddress && (payment?.preferred_network?.toLowerCase() === "near" || payWithToken?.chain?.toLowerCase() === "near")) && (
+                    <div className="mt-3 flex items-center justify-between border-t border-gray-200 pt-3">
+                      <span className="text-gray-600">Transaction</span>
+                      <a
+                        href={`https://explorer.near-intents.org/transactions/${depositAddress}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-sm font-medium text-orange-600 hover:text-orange-700"
+                      >
+                        View in explorer <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -596,6 +738,19 @@ export default function PayrollPayPaymentPage() {
                 >
                   Cancel and choose another token
                 </Button>
+              </div>
+            )}
+
+            {depositAddress && (
+              <div className="mt-6 border-t border-gray-200 pt-4">
+                <a
+                  href={`https://explorer.near-intents.org/transactions/${depositAddress}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-orange-600 hover:text-orange-700"
+                >
+                  View on NEAR Intents explorer <ExternalLink className="h-4 w-4" />
+                </a>
               </div>
             )}
           </>

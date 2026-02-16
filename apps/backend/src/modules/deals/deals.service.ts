@@ -6,6 +6,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
+import { PayrollContributorsService } from '@/modules/payroll/payroll-contributors.service';
 import {
   CreateDealDto,
   UpdateDealDto,
@@ -28,7 +29,10 @@ const DEAL_CONTRACTS_BUCKET = 'deal-contracts';
 export class DealsService {
   private readonly logger = new Logger(DealsService.name);
 
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    private readonly payrollContributorsService: PayrollContributorsService,
+  ) {}
 
   private async checkOrgAccess(organizationId: string, userId: string, adminOnly = false): Promise<void> {
     const client = this.supabaseService.getClient();
@@ -218,6 +222,7 @@ export class DealsService {
       this.logger.error('Failed to create invite:', error);
       throw new Error(`Database error: ${error.message}`);
     }
+    await this.payrollContributorsService.ensureContributorForEmail(organizationId, email, userId);
     return this.toInviteResponse(invite);
   }
 
@@ -265,6 +270,18 @@ export class DealsService {
     const { data: updated, error } = await client.from('deal_invites').update(updatePayload).eq('id', inviteId).select().single();
     if (error) throw new Error(`Database error: ${error.message}`);
     await client.from('deals').update({ status: 'accepted', updated_at: new Date().toISOString() }).eq('id', invite.deal_id);
+    const { data: deal } = await client.from('deals').select('organization_id').eq('id', invite.deal_id).single();
+    if (deal?.organization_id && invite.invitee_email) {
+      await this.payrollContributorsService.setJoinedWithPayoutFromProfile(
+        deal.organization_id,
+        invite.invitee_email,
+        freelancerProfileId,
+        {
+          invitePreferredNetwork: updated?.preferred_network ?? undefined,
+          invitePreferredTokenSymbol: updated?.preferred_token_symbol ?? undefined,
+        },
+      );
+    }
     return this.toInviteResponse(updated);
   }
 
@@ -570,7 +587,7 @@ export class DealsService {
     const client = this.supabaseService.getClient();
     const { data: row } = await client
       .from('deal_invoices')
-      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at, invoice_number')
+      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at')
       .eq('deal_id', dealId)
       .eq('organization_id', organizationId)
       .limit(1)
@@ -588,7 +605,8 @@ export class DealsService {
       recipient_email: row.recipient_email ?? null,
       status: row.status,
       created_at: row.created_at,
-      invoice_number: row.invoice_number ?? null,
+      invoice_number: (row as any).invoice_number ?? null,
+      receipt_on_chain_tx_hash: (row as any).receipt_on_chain_tx_hash ?? null,
       deal_title: deal?.title,
       org_name: to_org.name,
       from_freelancer,
@@ -601,13 +619,27 @@ export class DealsService {
     const client = this.supabaseService.getClient();
     const { data: row, error } = await client
       .from('deal_invoices')
-      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at, invoice_number')
+      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at')
       .eq('id', invoiceId)
-      .eq('organization_id', organizationId)
-      .single();
-    if (error || !row) throw new NotFoundException('Invoice not found');
+      .maybeSingle();
+    if (error) {
+      this.logger.warn(`getInvoice failed for ${invoiceId}: ${error.message} (code: ${error.code})`);
+      throw new NotFoundException('Invoice not found');
+    }
+    if (!row) {
+      this.logger.warn(`getInvoice: no row for invoiceId=${invoiceId}, orgId=${organizationId}. Ensure backend uses SUPABASE_SERVICE_ROLE_KEY so RLS is bypassed.`);
+      throw new NotFoundException('Invoice not found');
+    }
+    // Ensure invoice belongs to this org (row.organization_id or deal.organization_id)
+    const invoiceOrgId = row.organization_id ?? null;
+    let effectiveOrgId = invoiceOrgId ?? null;
+    if (effectiveOrgId !== organizationId) {
+      const { data: deal } = await client.from('deals').select('organization_id').eq('id', row.deal_id).maybeSingle();
+      if (!deal || deal.organization_id !== organizationId) throw new NotFoundException('Invoice not found');
+      effectiveOrgId = deal.organization_id;
+    }
     const { data: deal } = await client.from('deals').select('title').eq('id', row.deal_id).single();
-    const { from_freelancer, to_org } = await this.getInvoicePartyDetails(client, row.deal_id, row.organization_id, row.recipient_email ?? null);
+    const { from_freelancer, to_org } = await this.getInvoicePartyDetails(client, row.deal_id, effectiveOrgId ?? organizationId, row.recipient_email ?? null);
     return {
       id: row.id,
       deal_id: row.deal_id,
@@ -618,7 +650,8 @@ export class DealsService {
       recipient_email: row.recipient_email ?? null,
       status: row.status,
       created_at: row.created_at,
-      invoice_number: row.invoice_number ?? null,
+      invoice_number: (row as any).invoice_number ?? null,
+      receipt_on_chain_tx_hash: (row as any).receipt_on_chain_tx_hash ?? null,
       deal_title: deal?.title,
       org_name: to_org.name,
       from_freelancer,
@@ -631,7 +664,7 @@ export class DealsService {
     const client = this.supabaseService.getClient();
     const { data, error } = await client
       .from('deal_invoices')
-      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at, invoice_number')
+      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at')
       .eq('organization_id', organizationId)
       .order('created_at', { ascending: false });
     if (error) {
@@ -648,7 +681,7 @@ export class DealsService {
       recipient_email: row.recipient_email ?? null,
       status: row.status,
       created_at: row.created_at,
-      invoice_number: row.invoice_number ?? null,
+      invoice_number: (row as any).invoice_number ?? null,
     }));
   }
 
@@ -676,7 +709,7 @@ export class DealsService {
 
     const { data: rows, error } = await client
       .from('deal_invoices')
-      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at, invoice_number')
+      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at')
       .in('deal_id', uniqueDealIds)
       .order('created_at', { ascending: false });
     if (error) {
@@ -705,7 +738,7 @@ export class DealsService {
         recipient_email: row.recipient_email ?? null,
         status: row.status,
         created_at: row.created_at,
-        invoice_number: row.invoice_number ?? null,
+        invoice_number: (row as any).invoice_number ?? null,
         deal_title: deal?.title,
         org_name: orgName,
         invite_id: dealIdToInviteId.get(row.deal_id),
@@ -746,7 +779,7 @@ export class DealsService {
 
     const { data: rows, error } = await client
       .from('deal_invoices')
-      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at, invoice_number')
+      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at')
       .in('deal_id', uniqueDealIds)
       .order('created_at', { ascending: false });
     if (error) {
@@ -764,7 +797,7 @@ export class DealsService {
       recipient_email: row.recipient_email ?? null,
       status: row.status,
       created_at: row.created_at,
-      invoice_number: row.invoice_number ?? null,
+      invoice_number: (row as any).invoice_number ?? null,
       deal_title: dealMap.get(row.deal_id) ?? undefined,
       org_name: org.name,
       invite_id: dealIdToInviteId.get(row.deal_id) ?? undefined,
@@ -785,7 +818,7 @@ export class DealsService {
     }
     const { data: row } = await client
       .from('deal_invoices')
-      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at, invoice_number')
+      .select('id, deal_id, deal_payment_id, organization_id, amount, amount_currency, recipient_email, status, created_at')
       .eq('deal_id', invite.deal_id)
       .limit(1)
       .maybeSingle();
@@ -802,7 +835,8 @@ export class DealsService {
       recipient_email: row.recipient_email ?? null,
       status: row.status,
       created_at: row.created_at,
-      invoice_number: row.invoice_number ?? null,
+      receipt_on_chain_tx_hash: (row as any).receipt_on_chain_tx_hash ?? null,
+      invoice_number: (row as any).invoice_number ?? null,
       deal_title: deal?.title,
       org_name: to_org.name,
       from_freelancer,

@@ -8,6 +8,7 @@ import { ArrowLeft, Loader2, FileDown, Send } from "lucide-react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { dealsApi, type DealInvoiceResponse } from "@/services/api/deals";
+import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 
 /** Invoice view: template from freelancer to organisation; view or download as PDF (print). */
 export default function InvoiceViewPage() {
@@ -145,6 +146,23 @@ export default function InvoiceViewPage() {
             <span>Status</span>
             <span className="capitalize font-medium">{statusDisplay}</span>
           </div>
+          {inv.receipt_on_chain_tx_hash && (
+            <div className="flex justify-between items-center text-sm pt-2 border-t border-gray-100">
+              <span className="text-gray-500">Receipt on NEAR</span>
+              {inv.receipt_on_chain_tx_hash.startsWith("on-chain:") ? (
+                <span className="text-gray-700 font-medium">Recorded</span>
+              ) : (
+                <a
+                  href={getExplorerTxUrl("near", inv.receipt_on_chain_tx_hash)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:underline font-medium"
+                >
+                  View on {getExplorerName("near")}
+                </a>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 

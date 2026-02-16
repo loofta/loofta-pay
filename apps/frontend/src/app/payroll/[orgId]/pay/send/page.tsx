@@ -58,6 +58,12 @@ export default function PayrollPaySendPage() {
     return null;
   };
 
+  /** NEAR Intents explorer to view transaction by deposit address (like /swap page). */
+  const nearExplorerTxUrl = (p: DealPaymentResponse) => {
+    if (!p.deposit_address || (p.preferred_network || "").toLowerCase() !== "near") return null;
+    return `https://explorer.near-intents.org/transactions/${p.deposit_address}`;
+  };
+
   const loadPayments = () => {
     if (!userId || !orgId) return;
     setLoading(true);
@@ -175,6 +181,7 @@ export default function PayrollPaySendPage() {
               {dealProcessing.map((p) => {
                 const expired = isPaymentExpired(p);
                 const explorerUrl = walletExplorerUrl(p);
+                const viewInExplorerUrl = nearExplorerTxUrl(p);
                 const tokenForIcon = { symbol: p.preferred_token_symbol, chain: p.preferred_network };
                 return (
                   <div key={p.id} className="rounded-xl border-2 border-gray-200 bg-white p-5 shadow-sm">
@@ -188,6 +195,7 @@ export default function PayrollPaySendPage() {
                           <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">Expired</span>
                         )}
                       </div>
+                      <p className="mt-2 text-sm text-gray-600">Recipient: {p.recipient_email || "—"}</p>
                     </div>
                     {p.deposit_address && (
                       <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-2">
@@ -204,6 +212,14 @@ export default function PayrollPaySendPage() {
                               <Button variant="outline" size="sm" type="button">
                                 <ExternalLink className="h-4 w-4 mr-1" />
                                 {p.preferred_network?.toLowerCase() === "near" ? "Open NEAR Wallet" : "View on explorer"}
+                              </Button>
+                            </a>
+                          )}
+                          {viewInExplorerUrl && (
+                            <a href={viewInExplorerUrl} target="_blank" rel="noopener noreferrer">
+                              <Button variant="outline" size="sm" type="button">
+                                <ExternalLink className="h-4 w-4 mr-1" />
+                                View in explorer
                               </Button>
                             </a>
                           )}

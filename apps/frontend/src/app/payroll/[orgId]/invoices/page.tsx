@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileText, Loader2, ArrowLeft, ExternalLink, DollarSign, Receipt, Clock } from "lucide-react";
 import Link from "next/link";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { useQuery } from "@tanstack/react-query";
 import { payrollApi } from "@/services/api/payroll";
 import { dealsApi, type DealInvoiceResponse } from "@/services/api/deals";
@@ -59,20 +60,30 @@ export default function PayrollInvoicesPage() {
 
   return (
     <div className="space-y-6 p-4 md:p-0">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" asChild>
-          <Link href={`/payroll/${orgId}`}>
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-        </Button>
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Invoices</h1>
-          <p className="text-sm text-gray-500">
-            {isContributor
-              ? "Your invoices for deals with this organization."
-              : "One invoice per deal: prepared when the deal is created, sent when the freelancer confirms delivery, paid when you complete payment (attested on-chain)."}
-          </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" asChild>
+            <Link href={`/payroll/${orgId}`}>
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+          </Button>
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-900">Invoices</h1>
+            <p className="text-sm text-gray-500">
+              {isContributor
+                ? "Your invoices for deals with this organization."
+                : "One invoice per deal: prepared when the deal is created, sent when the freelancer confirms delivery, paid when you complete payment (attested on-chain)."}
+            </p>
+          </div>
         </div>
+        {!isContributor && (
+          <Button asChild className="shrink-0 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 font-semibold text-white hover:opacity-90">
+            <Link href={`/payroll/${orgId}/deals/new`}>
+              <FileText className="h-4 w-4 mr-2" />
+              New deal
+            </Link>
+          </Button>
+        )}
       </div>
 
       {/* Stats */}
@@ -160,39 +171,66 @@ export default function PayrollInvoicesPage() {
               <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
             </div>
           ) : !list.length ? (
-            <p className="py-6 text-sm text-gray-500">
-              {isContributor ? "No invoices yet. Complete a deal and confirm delivery to generate one." : "No invoices yet. Accept delivery on a deal to generate one."}
-            </p>
+            <EmptyState
+              icon={FileText}
+              message="You have no invoices"
+              description={
+                isContributor
+                  ? "Complete a deal and confirm delivery to generate an invoice."
+                  : "Accept delivery on a deal to generate an invoice."
+              }
+              action={
+                !isContributor ? (
+                  <Button asChild>
+                    <Link href={`/payroll/${orgId}/deals`}>View deals</Link>
+                  </Button>
+                ) : undefined
+              }
+            />
           ) : (
-            <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 list-none p-0 m-0">
-              {list.map((inv) => (
-                <li key={inv.id}>
-                  <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-md flex flex-col gap-4 h-full transition-all duration-200 hover:shadow-lg">
-                    <div>
-                      <h3 className="text-xl font-bold text-gray-900">
-                        {inv.amount} <span className="text-gray-500 font-normal">{inv.amount_currency}</span>
-                      </h3>
-                      {(inv as InvoiceWithMeta).deal_title && (
-                        <p className="mt-1.5 text-sm font-medium text-gray-600">{(inv as InvoiceWithMeta).deal_title}</p>
-                      )}
-                      {!isContributor && inv.recipient_email && (
-                        <p className="mt-0.5 text-sm text-gray-500 truncate">{inv.recipient_email}</p>
-                      )}
-                      <p className="mt-2 text-xs font-medium text-gray-400 uppercase tracking-wide">Created {new Date(inv.created_at).toLocaleDateString()}</p>
-                    </div>
-                    <div className="mt-auto pt-2 flex items-center justify-between w-full flex-wrap gap-2">
-                      <span
-                        className={`rounded-lg px-2.5 py-1 text-xs font-semibold capitalize ${inv.status === "paid"
-                            ? "bg-emerald-50 text-emerald-800"
-                            : inv.status === "sent"
-                              ? "bg-blue-50 text-blue-800"
-                              : "bg-gray-100 text-gray-700"
-                          }`}
-                      >
-                        {inv.status === "sent" && !isContributor ? "To be paid" : inv.status}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <Button asChild size="sm" className="rounded-lg bg-orange-500 font-semibold text-white shadow-sm hover:shadow-md">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b text-left">
+                    <th className="pb-3 pr-4 font-medium text-gray-700">Amount</th>
+                    <th className="pb-3 pr-4 font-medium text-gray-700">{isContributor ? "Deal" : "Recipient / Deal"}</th>
+                    <th className="pb-3 pr-4 font-medium text-gray-700">Created</th>
+                    <th className="pb-3 pr-4 font-medium text-gray-700">Status</th>
+                    <th className="pb-3 pl-4 font-medium text-gray-700 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {list.map((inv) => (
+                    <tr key={inv.id} className="border-b last:border-0 hover:bg-gray-50/80">
+                      <td className="py-4 pr-4">
+                        <span className="font-semibold text-gray-900">{inv.amount}</span>
+                        <span className="text-gray-500 ml-1">{inv.amount_currency}</span>
+                      </td>
+                      <td className="py-4 pr-4">
+                        {(inv as InvoiceWithMeta).deal_title && (
+                          <p className="font-medium text-gray-700">{(inv as InvoiceWithMeta).deal_title}</p>
+                        )}
+                        {!isContributor && inv.recipient_email && (
+                          <p className="text-sm text-gray-500 truncate max-w-[200px]">{inv.recipient_email}</p>
+                        )}
+                      </td>
+                      <td className="py-4 pr-4 text-sm text-gray-500">
+                        {new Date(inv.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="py-4 pr-4">
+                        <span
+                          className={`inline-flex rounded-lg px-2.5 py-1 text-xs font-semibold capitalize ${inv.status === "paid"
+                              ? "bg-emerald-50 text-emerald-800"
+                              : inv.status === "sent"
+                                ? "bg-blue-50 text-blue-800"
+                                : "bg-gray-100 text-gray-700"
+                            }`}
+                        >
+                          {inv.status === "sent" && !isContributor ? "To be paid" : inv.status}
+                        </span>
+                      </td>
+                      <td className="py-4 pl-4 text-right">
+                        <Button asChild size="sm" className="rounded-lg bg-orange-500 font-semibold text-white">
                           <Link
                             href={
                               isContributor && (inv as InvoiceWithMeta).invite_id
@@ -203,13 +241,12 @@ export default function PayrollInvoicesPage() {
                             View
                           </Link>
                         </Button>
-
-                      </div>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </CardContent>
       </Card>

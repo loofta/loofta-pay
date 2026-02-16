@@ -16,12 +16,11 @@ export function Footer() {
             />
           </div>
 
-          {/* Products */}
+          {/* Product */}
           <div>
-            <h4 className="text-white font-semibold mb-4">Products</h4>
+            <h4 className="text-white font-semibold mb-4">Product</h4>
             <ul className="space-y-2">
-              <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Cross-chain swap</a></li>
-              <li><a href="/claim" className="text-slate-400 hover:text-white transition-colors">Payment request</a></li>
+              <li><a href="/payroll" className="text-slate-400 hover:text-white transition-colors">Payroll</a></li>
             </ul>
           </div>
 
@@ -43,15 +42,6 @@ export function Footer() {
             </ul>
           </div>
 
-          {/* Routes */}
-          <div>
-            <h4 className="text-white font-semibold mb-4">Routes</h4>
-            <ul className="space-y-2">
-              <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Bridge to Solana</a></li>
-              <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Bridge to Bitcoin</a></li>
-              <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Bridge to Ethereum</a></li>
-            </ul>
-          </div>
         </div>
 
         {/* Copyright */}

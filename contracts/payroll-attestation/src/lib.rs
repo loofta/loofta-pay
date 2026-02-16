@@ -1,12 +1,11 @@
 //! Payroll Attestation — small NEAR contract for on-chain payment attestation.
-//! One record per claim_id: claim_id, amount, token, execution_ref (idempotent).
+//! One record per claim_id; stores only a commitment hash (no plaintext amount/token/recipient).
 //! Build with: cargo near build (deploy the WASM from target/near/..., not target/wasm32-unknown-unknown/release).
 //!
-//! Design notes:
-//! - Key by claim_id: backend and DB are claim-centric (one claim → one payment → one attestation).
-//!   Invoice is a separate concept (deal_invoices); if needed later, add optional invoice_id field.
-//! - Privacy: all fields are public on-chain. For payroll, amounts and recipient are sensitive.
-//!   See PRIVACY.md in this crate for future options (hash-only, ZK, off-chain signed + on-chain anchor).
+//! Privacy: on-chain we store claim_id, execution_ref, commitment (SHA256 preimage), timestamp.
+//! Preimage for commitment (canonical, built off-chain): claim_id + "\n" + execution_ref + "\n"
+//! + amount + "\n" + token_symbol + "\n" + token_chain + "\n" + (recipient_id or "") + "\n" + nonce_hex.
+//! Verification: recompute hash from off-chain data + stored nonce; must equal on-chain commitment.
 
 use borsh::{BorshDeserialize, BorshSchema, BorshSerialize};
 use near_sdk::env;
@@ -14,15 +13,14 @@ use near_sdk::near;
 use near_sdk::serde::Serialize;
 use schemars::JsonSchema;
 
+/// 32-byte commitment (e.g. SHA256 of canonical preimage). No plaintext amount/token/recipient on-chain.
 #[derive(BorshDeserialize, BorshSerialize, BorshSchema, Serialize, Clone, JsonSchema)]
 #[serde(crate = "near_sdk::serde")]
 pub struct PaymentAttestation {
     pub claim_id: String,
-    pub amount: String,
-    pub token_symbol: String,
-    pub token_chain: String,
     pub execution_ref: String,
-    pub recipient_id: Option<String>,
+    /// SHA256(claim_id || "\n" || execution_ref || "\n" || amount || "\n" || token_symbol || "\n" || token_chain || "\n" || recipient_or_empty || "\n" || nonce_hex)
+    pub commitment: [u8; 32],
     pub timestamp_nanos: u64,
 }
 
@@ -53,35 +51,38 @@ impl PayrollAttestation {
         }
     }
 
-    /// Record a payment attestation. Idempotent by claim_id: one record per claim.
+    /// Record a payment attestation. Idempotent by claim_id. Only commitment is stored (no plaintext amount/token/recipient).
+    /// Commitment must be SHA256 of canonical preimage (see PRIVACY.md / module docs).
     #[payable]
     pub fn record_payment(
         &mut self,
         claim_id: String,
-        amount: String,
-        token_symbol: String,
-        token_chain: String,
         execution_ref: String,
-        recipient_id: Option<String>,
+        commitment: Vec<u8>,
     ) {
         if let Some(ref allowed) = self.allowed_caller {
             let caller = env::predecessor_account_id().to_string();
             assert_eq!(caller, *allowed, "Only the allowed caller can record payments");
         }
+        assert_eq!(
+            commitment.len(),
+            32,
+            "commitment must be 32 bytes (e.g. SHA256)"
+        );
         assert!(
             !self.payments.contains_key(&claim_id),
             "Attestation for this claim_id already exists"
         );
+        let commitment_arr: [u8; 32] = commitment
+            .try_into()
+            .expect("commitment len already checked");
         let timestamp_nanos = env::block_timestamp();
         self.payments.insert(
             claim_id.clone(),
             PaymentAttestation {
                 claim_id,
-                amount,
-                token_symbol,
-                token_chain,
                 execution_ref,
-                recipient_id,
+                commitment: commitment_arr,
                 timestamp_nanos,
             },
         );

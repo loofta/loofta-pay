@@ -59,6 +59,8 @@ export interface DealPaymentResponse {
   memo?: string | null;
   /** Linked invoice id (for list view link) */
   invoice_id?: string;
+  /** When completed: invoice receipt on-chain (from linked invoice) */
+  receipt_on_chain_tx_hash?: string | null;
 }
 
 export interface DealCommentResponse {
@@ -109,6 +111,8 @@ export interface DealInvoiceResponse {
   status: string;
   created_at: string;
   invoice_number?: string | null;
+  /** NEAR tx hash when receipt was recorded on-chain (paid invoices) */
+  receipt_on_chain_tx_hash?: string | null;
   deal_title?: string;
   org_name?: string;
   from_freelancer?: InvoiceFromFreelancer;
@@ -247,15 +251,32 @@ export const dealsApi = {
     listOutstanding(orgId: string, userId?: string): Promise<DealPaymentResponse[]> {
       return fetchApi<DealPaymentResponse[]>(`/payroll/organizations/${orgId}/deal-payments/outstanding`, { userId });
     },
+    listCompleted(orgId: string, userId?: string): Promise<DealPaymentResponse[]> {
+      return fetchApi<DealPaymentResponse[]>(`/payroll/organizations/${orgId}/deal-payments/completed`, { userId });
+    },
+    get(orgId: string, paymentId: string, userId?: string): Promise<DealPaymentResponse | null> {
+      return fetchApi<DealPaymentResponse | null>(`/payroll/organizations/${orgId}/deal-payments/${paymentId}`, { userId });
+    },
+    retryReceipt(orgId: string, paymentId: string, userId?: string): Promise<{ receiptPosted: boolean; receiptOnChainTxHash?: string | null }> {
+      return fetchApi(`/payroll/organizations/${orgId}/deal-payments/${paymentId}/retry-receipt`, {
+        method: 'POST',
+        userId,
+      });
+    },
     preparePay(
       orgId: string,
       paymentIds: string[],
       userId?: string,
       payWithToken?: { symbol: string; chain: string; tokenId?: string; decimals?: number },
+      refundAddress?: string,
     ): Promise<DealPaymentResponse[]> {
       return fetchApi<DealPaymentResponse[]>(`/payroll/organizations/${orgId}/deal-payments/prepare-pay`, {
         method: 'POST',
-        body: JSON.stringify({ paymentIds, ...(payWithToken && { payWithToken }) }),
+        body: JSON.stringify({
+          paymentIds,
+          ...(payWithToken && { payWithToken }),
+          ...(refundAddress?.trim() && { refundAddress: refundAddress.trim() }),
+        }),
         userId,
       });
     },

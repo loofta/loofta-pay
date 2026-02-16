@@ -130,13 +130,10 @@ export default function PayrollInvitePage() {
           You can now receive payments from <strong>{invite.organizationName}</strong> on Loofta.
         </p>
         <div className="mt-6 flex flex-col gap-3">
-          <GradientActionButton className="w-full" onClick={() => router.push("/payments")}>
-            Payment history
+          <GradientActionButton className="w-full" onClick={() => router.push("/payroll")}>
+            Go to Payroll
             <ArrowRight className="ml-2 h-4 w-4" />
           </GradientActionButton>
-          <Button variant="outline" asChild>
-            <Link href="/claim">Receive money (anyone can pay you)</Link>
-          </Button>
         </div>
       </div>
     );

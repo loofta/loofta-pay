@@ -27,6 +27,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 /** Pay: deal payments only (from accepted deliveries). Prepare pay or mark as paid. */
 export default function PayrollPayPage() {
@@ -42,6 +43,7 @@ export default function PayrollPayPage() {
   const [loading, setLoading] = useState(true);
 
   const [dealPayments, setDealPayments] = useState<DealPaymentResponse[]>([]);
+  const [completedPayments, setCompletedPayments] = useState<DealPaymentResponse[]>([]);
   const [dealSelectedIds, setDealSelectedIds] = useState<Set<string>>(new Set());
   const [dealDeleteTarget, setDealDeleteTarget] = useState<DealPaymentResponse | null>(null);
   const [dealDeleting, setDealDeleting] = useState(false);
@@ -53,11 +55,13 @@ export default function PayrollPayPage() {
     Promise.all([
       payrollApi.organizations.get(orgId, userId),
       dealsApi.payments.listOutstanding(orgId, userId),
+      dealsApi.payments.listCompleted(orgId, userId),
     ])
-      .then(([org, outstanding]) => {
+      .then(([org, outstanding, completed]) => {
         if (!cancelled) {
           setOrganization(org);
           setDealPayments(outstanding || []);
+          setCompletedPayments(completed || []);
         }
       })
       .catch((err: unknown) => {
@@ -107,6 +111,22 @@ export default function PayrollPayPage() {
 
   const dealProcessing = dealPayments.filter((p) => p.status === "processing");
   const processingIdsKey = dealProcessing.map((p) => p.id).sort().join(",");
+
+  // On load and when we have processing payments, run checkComplete once immediately so we sync if intent finished
+  useEffect(() => {
+    if (dealProcessing.length === 0 || !userId || !orgId) return;
+    Promise.all(
+      dealProcessing.map((p) =>
+        dealsApi.payments.checkComplete(orgId, p.id, userId).then((r) => ({ id: p.id, ...r }))
+      )
+    ).then((results) => {
+      if (results.some((r) => r.completed)) {
+        loadDealPayments();
+        toast({ title: "Payment completed", description: "Invoice marked paid." });
+      }
+    }).catch(() => {});
+  }, [processingIdsKey, userId, orgId]);
+
   useEffect(() => {
     if (dealProcessing.length === 0 || !userId || !orgId) return;
     const toPoll = [...dealProcessing];
@@ -116,7 +136,7 @@ export default function PayrollPayPage() {
           const result = await dealsApi.payments.checkComplete(orgId, p.id, userId);
           if (result.completed) {
             loadDealPayments();
-            toast({ title: "Payment completed", description: "Invoice marked paid and attested on-chain." });
+            toast({ title: "Payment completed", description: "Invoice marked paid." });
             return;
           }
         } catch {
@@ -129,7 +149,16 @@ export default function PayrollPayPage() {
 
   const loadDealPayments = () => {
     if (!userId || !orgId) return;
-    dealsApi.payments.listOutstanding(orgId, userId).then(setDealPayments).catch(() => setDealPayments([]));
+    Promise.all([
+      dealsApi.payments.listOutstanding(orgId, userId),
+      dealsApi.payments.listCompleted(orgId, userId),
+    ]).then(([outstanding, completed]) => {
+      setDealPayments(outstanding || []);
+      setCompletedPayments(completed || []);
+    }).catch(() => {
+      setDealPayments([]);
+      setCompletedPayments([]);
+    });
   };
   const handleDealDelete = async () => {
     if (!dealDeleteTarget || !userId || !orgId) return;
@@ -172,7 +201,7 @@ export default function PayrollPayPage() {
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Pay</h1>
           <p className="text-sm text-gray-500">
-            Deal payments from accepted deliveries. Prepare pay or mark as paid.
+            Deal payments from accepted deliveries. Select one or more for bulk payment, or pay individually.
           </p>
         </div>
       </div>
@@ -184,19 +213,21 @@ export default function PayrollPayPage() {
             Deal payments
           </CardTitle>
           <CardDescription className="mt-1.5">
-            Amount and recipient only. Click Pay to choose network and complete payment via NEAR Intents.
+            Amount and recipient. Select multiple rows and use &quot;Pay selected&quot; for bulk payment, or click Pay per row. Payments complete via NEAR Intents.
           </CardDescription>
         </CardHeader>
         <CardContent className="px-6 pb-6 pt-4 md:px-8">
           {dealPayments.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-8 py-10 text-center">
-              <Wallet className="mx-auto h-10 w-10 text-gray-300" />
-              <p className="mt-3 text-sm font-medium text-gray-600">No deal payments yet</p>
-              <p className="mt-1.5 text-xs text-gray-500">Accept delivery on a deal to create a payment, then return here to pay.</p>
-              <Link href={`/payroll/${orgId}/deals`}>
-                <Button variant="outline" className="mt-4">View Deals</Button>
-              </Link>
-            </div>
+            <EmptyState
+              icon={Wallet}
+              message="You have no deal payments"
+              description="Accept delivery on a deal to create a payment, then return here to pay."
+              action={
+                <Button asChild variant="outline">
+                  <Link href={`/payroll/${orgId}/deals`}>View deals</Link>
+                </Button>
+              }
+            />
           ) : (
             <div className="space-y-4">
               {dealPending.length > 0 && (
@@ -217,59 +248,138 @@ export default function PayrollPayPage() {
                   </div>
                 </div>
               )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {dealPayments.map((p) => (
-                  <div
-                    key={p.id}
-                    id={paymentIdFromQuery === p.id ? "highlight" : undefined}
-                    className="rounded-2xl border border-gray-200 bg-white p-6 shadow-md flex flex-col gap-4 h-full transition-all duration-200 hover:shadow-lg"
-                  >
-                    <div className="flex items-start gap-3 min-w-0">
-                      {p.status === "pending" && (
-                        <Checkbox
-                          checked={dealSelectedIds.has(p.id)}
-                          onCheckedChange={() => dealToggle(p.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="shrink-0 mt-0.5"
-                        />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <h3 className="text-xl font-bold text-gray-900">
-                          {p.amount} <span className="text-gray-500 font-normal">{p.amount_currency}</span>
-                        </h3>
-                        <p className="mt-1 text-sm text-gray-600 truncate" title={p.recipient_email || p.recipient_wallet || "—"}>{p.recipient_email || p.recipient_wallet || "—"}</p>
-                        {p.invoice_id && (
-                          <Link
-                            href={`/payroll/${orgId}/invoices/${p.invoice_id}`}
-                            className="mt-1.5 inline-flex items-center gap-1 text-sm font-medium text-orange-600 hover:text-orange-700"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <ExternalLink className="h-3.5 w-3.5 shrink-0" /> Invoice
-                          </Link>
-                        )}
-                        <p className="mt-2 text-xs font-medium text-gray-400 uppercase tracking-wide">
-                          {p.created_at ? `Created ${new Date(p.created_at).toLocaleDateString()}` : ""}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="mt-auto pt-2 flex items-center justify-between w-full flex-wrap gap-2">
-                      <span className={`rounded-lg px-2.5 py-1 text-xs font-semibold capitalize ${p.status === "processing" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-800"}`}>
-                        {p.status}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        {p.status === "pending" && (
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50" onClick={(e) => { e.stopPropagation(); setDealDeleteTarget(p); }} title="Delete payment">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                        <Button asChild size="sm" className="rounded-lg bg-orange-500 font-semibold text-white shadow-sm hover:shadow-md">
-                          <Link href={`/payroll/${orgId}/pay/${p.id}`}>Pay</Link>
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b text-left">
+                      <th className="pb-3 pr-2 w-10 font-medium text-gray-700"></th>
+                      <th className="pb-3 pr-4 font-medium text-gray-700">Amount</th>
+                      <th className="pb-3 pr-4 font-medium text-gray-700">Recipient</th>
+                      <th className="pb-3 pr-4 font-medium text-gray-700">Created</th>
+                      <th className="pb-3 pr-4 font-medium text-gray-700">Status</th>
+                      <th className="pb-3 pl-4 font-medium text-gray-700 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dealPayments.map((p) => (
+                      <tr
+                        key={p.id}
+                        id={paymentIdFromQuery === p.id ? "highlight" : undefined}
+                        className="border-b last:border-0 hover:bg-gray-50/80"
+                      >
+                        <td className="py-4 pr-2 w-10 align-top pt-5">
+                          {p.status === "pending" && (
+                            <Checkbox
+                              checked={dealSelectedIds.has(p.id)}
+                              onCheckedChange={() => dealToggle(p.id)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="shrink-0"
+                            />
+                          )}
+                        </td>
+                        <td className="py-4 pr-4">
+                          <span className="font-semibold text-gray-900">{p.amount}</span>
+                          <span className="text-gray-500 ml-1">{p.amount_currency}</span>
+                        </td>
+                        <td className="py-4 pr-4">
+                          <p className="text-sm text-gray-700 truncate max-w-[200px]" title={p.recipient_email || p.recipient_wallet || "—"}>
+                            {p.recipient_email || p.recipient_wallet || "—"}
+                          </p>
+                          {p.invoice_id && (
+                            <Link
+                              href={`/payroll/${orgId}/invoices/${p.invoice_id}`}
+                              className="inline-flex items-center gap-1 text-xs font-medium text-orange-600 hover:text-orange-700 mt-0.5"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink className="h-3 w-3 shrink-0" /> Invoice
+                            </Link>
+                          )}
+                        </td>
+                        <td className="py-4 pr-4 text-sm text-gray-500">
+                          {p.created_at ? new Date(p.created_at).toLocaleDateString() : "—"}
+                        </td>
+                        <td className="py-4 pr-4">
+                          <span className={`inline-flex rounded-lg px-2.5 py-1 text-xs font-semibold capitalize ${p.status === "processing" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-800"}`}>
+                            {p.status}
+                          </span>
+                        </td>
+                        <td className="py-4 pl-4 text-right">
+                          <div className="flex items-center justify-end gap-1 flex-wrap">
+                            {p.deposit_address && (p.preferred_network?.toLowerCase() === "near") && (
+                              <a
+                                href={`https://explorer.near-intents.org/transactions/${p.deposit_address}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs font-medium text-orange-600 hover:text-orange-700"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                View in explorer <ExternalLink className="h-3 w-3" />
+                              </a>
+                            )}
+                            {p.status === "pending" && (
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50" onClick={(e) => { e.stopPropagation(); setDealDeleteTarget(p); }} title="Delete payment">
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                            <Button asChild size="sm" className="rounded-lg bg-orange-500 font-semibold text-white">
+                              <Link href={`/payroll/${orgId}/pay/${p.id}`}>Pay</Link>
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
+              {completedPayments.length > 0 && (
+                <div className="mt-8 pt-6 border-t border-gray-200">
+                  <p className="text-sm font-medium text-gray-700 mb-4">Paid ({completedPayments.length})</p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b text-left">
+                          <th className="pb-3 pr-4 font-medium text-gray-700">Amount</th>
+                          <th className="pb-3 pr-4 font-medium text-gray-700">Recipient</th>
+                          <th className="pb-3 pr-4 font-medium text-gray-700">Paid</th>
+                          <th className="pb-3 pl-4 font-medium text-gray-700 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {completedPayments.map((p) => (
+                          <tr key={p.id} className="border-b last:border-0 hover:bg-gray-50/80">
+                            <td className="py-4 pr-4">
+                              <span className="font-semibold text-gray-900">{p.amount}</span>
+                              <span className="text-gray-500 ml-1">{p.amount_currency}</span>
+                            </td>
+                            <td className="py-4 pr-4">
+                              <p className="text-sm text-gray-700 truncate max-w-[200px]" title={p.recipient_email || "—"}>
+                                {p.recipient_email || "—"}
+                              </p>
+                              {p.invoice_id && (
+                                <Link
+                                  href={`/payroll/${orgId}/invoices/${p.invoice_id}`}
+                                  className="inline-flex items-center gap-1 text-xs font-medium text-orange-600 hover:text-orange-700 mt-0.5"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <ExternalLink className="h-3 w-3 shrink-0" /> Invoice
+                                </Link>
+                              )}
+                            </td>
+                            <td className="py-4 pr-4 text-sm text-gray-500">
+                              {p.updated_at ? new Date(p.updated_at).toLocaleDateString() : "—"}
+                            </td>
+                            <td className="py-4 pl-4 text-right">
+                              <Button asChild size="sm" variant="outline" className="rounded-lg">
+                                <Link href={`/payroll/${orgId}/pay/${p.id}`}>View</Link>
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
