@@ -12,7 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
 import { usePrivy } from "@privy-io/react-auth";
 import { isDemoMode } from "@/config/demoMode";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 // Check demo mode at module level for consistent behavior
 const DEMO_MODE = isDemoMode();
 
@@ -29,68 +29,16 @@ async function fetchUserByUsername(username: string) {
   return await r.json();
 }
 
-async function createClaimFromUsername(input: {
-  username: string;
-  amount: string;
-  userId?: string;
-  userEmail?: string;
-  isPrivate?: boolean;
-  description?: string;
-}) {
-  // This endpoint fetches wallet address server-side (never exposed to frontend)
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-  const r = await fetch(`${backendUrl}/claims/create-from-username`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      username: input.username,
-      amount: Number(input.amount), // Backend expects number
-      userId: input.userId,
-      userEmail: input.userEmail,
-      isPrivate: input.isPrivate || false,
-      description: input.description || undefined,
-    }),
-  });
-  if (!r.ok) {
-    const errText = await r.text().catch(() => "");
-    let errData: any = {};
-    try {
-      errData = JSON.parse(errText);
-    } catch {
-      errData = { message: errText || "Failed to create claim" };
-    }
-    throw new Error(errData?.message || errData?.error || "Failed to create claim");
-  }
-
-  const responseText = await r.text();
-  console.log('[createClaimFromUsername] Response text:', responseText);
-
-  let data: any;
-  try {
-    data = JSON.parse(responseText);
-  } catch (e) {
-    console.error('[createClaimFromUsername] Failed to parse JSON:', e, responseText);
-    throw new Error("Invalid JSON response from server");
-  }
-
-  console.log('[createClaimFromUsername] Parsed data:', data);
-
-  if (!data?.id) {
-    console.error('[createClaimFromUsername] Missing id in response:', data);
-    throw new Error("Server response missing claim ID");
-  }
-
-  return data;
-}
-
-
+import { createClaimFromUsername } from "@/lib/createClaimFromUsername";
 
 export default function LinkPayPage({ params }: { params: Promise<{ username: string[] }> }) {
   const { username: usernameArray } = React.use(params);
+  const searchParams = useSearchParams();
   // Join array and decode URL-encoded characters (like %40 for @)
   const username = decodeURIComponent(usernameArray.join("/"));
   const router = useRouter();
   const { toast } = useToast();
+  const amountFromQuery = searchParams.get("amount");
 
   // No longer checking URL params - privacy is controlled by user's requirePrivatePayments setting
 
@@ -109,8 +57,16 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
   const loadingUser = userQuery.isLoading;
   const requiresPrivatePayments = userData?.user?.requirePrivatePayments || false;
 
-  // State for editable amount
-  const [amountUSD, setAmountUSD] = useState<string>("100");
+  // State for editable amount (prefill from home ?amount=)
+  const [amountUSD, setAmountUSD] = useState<string>(() => {
+    const q = amountFromQuery;
+    if (q != null && q !== "" && !isNaN(Number(q)) && Number(q) >= 0) return String(Number(q));
+    return "100";
+  });
+  React.useEffect(() => {
+    const q = amountFromQuery;
+    if (q != null && q !== "" && !isNaN(Number(q)) && Number(q) >= 0) setAmountUSD(String(Number(q)));
+  }, [amountFromQuery]);
   const [description, setDescription] = useState<string>("");
   const [gifUrl, setGifUrl] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
@@ -156,15 +112,7 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
         isPrivate: isPrivate,
         description: fullDescription || undefined,
       });
-
-      if (!claimResult?.id) {
-        throw new Error("Failed to create claim: No ID returned from server");
-      }
-
-      // Small delay to ensure claim is fully persisted, then redirect
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Redirect to claim page
+      await new Promise((r) => setTimeout(r, 500));
       router.push(`/c/${claimResult.id}`);
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error", description: error?.message || "Failed to create payment link" });

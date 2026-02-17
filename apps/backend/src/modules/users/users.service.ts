@@ -2,9 +2,12 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
 import { ConfigService } from '@nestjs/config';
 
+const SEARCH_CACHE_TTL_MS = 60 * 1000; // 1 min
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
+  private readonly searchCache = new Map<string, { usernames: string[]; ts: number }>();
 
   constructor(
     private readonly supabaseService: SupabaseService,
@@ -27,6 +30,80 @@ export class UsersService {
       return null;
     }
     return { username: user.username ?? null };
+  }
+
+  /**
+   * Get current user's email by Privy user ID (for recipient-check: compare to PENDING_EMAIL claim)
+   */
+  async getEmailByPrivyId(privyUserId: string): Promise<string | null> {
+    if (!privyUserId || !privyUserId.includes('did:privy:')) {
+      return null;
+    }
+    const { data: user, error } = await this.supabaseService.appUsers
+      .select('email')
+      .eq('privy_user_id', privyUserId)
+      .maybeSingle();
+    if (error || !user?.email) return null;
+    return (user.email as string).trim().toLowerCase();
+  }
+
+  /**
+   * Get user by email (for Send flow: resolve email to username)
+   * Returns same shape as findByUsername; used to redirect to /link/username
+   */
+  async findByEmail(email: string): Promise<{
+    id: string;
+    privyUserId: string;
+    email: string | null;
+    username: string | null;
+    requirePrivatePayments: boolean;
+  }> {
+    const clean = (email || '').trim().toLowerCase();
+    if (!clean) throw new NotFoundException('Email is required');
+    const { data: user, error } = await this.supabaseService.appUsers
+      .select('id, privy_user_id, email, username, require_private_payments')
+      .eq('email', clean)
+      .maybeSingle();
+    if (error) {
+      this.logger.error('Error querying user by email:', error);
+      throw new NotFoundException('User not found');
+    }
+    if (!user?.username) throw new NotFoundException('User not found');
+    return {
+      id: user.id,
+      privyUserId: user.privy_user_id,
+      email: user.email,
+      username: user.username,
+      requirePrivatePayments: user.require_private_payments || false,
+    };
+  }
+
+  /**
+   * Search usernames by prefix (for autocomplete). Cached 1 min; only selects username.
+   */
+  async searchUsernames(query: string, limit = 10): Promise<{ usernames: string[] }> {
+    const clean = (query || '').replace(/^@/, '').trim().toLowerCase();
+    if (clean.length < 2) {
+      return { usernames: [] };
+    }
+    const cacheKey = `${clean}:${limit}`;
+    const hit = this.searchCache.get(cacheKey);
+    if (hit && Date.now() - hit.ts < SEARCH_CACHE_TTL_MS) {
+      return { usernames: hit.usernames };
+    }
+    const { data: users, error } = await this.supabaseService.appUsers
+      .select('username')
+      .not('username', 'is', null)
+      .ilike('username', `${clean}%`)
+      .limit(limit);
+
+    if (error) {
+      this.logger.error('Error searching usernames:', error);
+      return { usernames: [] };
+    }
+    const usernames = (users || []).map((u: any) => u.username).filter(Boolean);
+    this.searchCache.set(cacheKey, { usernames, ts: Date.now() });
+    return { usernames };
   }
 
   /**

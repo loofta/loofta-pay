@@ -27,6 +27,8 @@ export function Header() {
   const showHistory = pathname?.startsWith('/swap') === true;
   // Check if we're on a dark background page
   const isDarkPage = pathname?.startsWith('/claim') === true || pathname?.startsWith('/c/') === true || pathname?.startsWith('/send') === true || pathname?.startsWith('/s/') === true;
+  // About page: transparent blur header with blend so text stays visible on light and dark sections
+  const isAboutPage = pathname === '/about';
 
   // Get username from store (ensure it's string | null, not undefined)
   const username = useAuthStore((s) => s.username ?? null);
@@ -310,7 +312,16 @@ export function Header() {
   }, [productMenuOpen]);
 
   return (
-    <div ref={headerRef} className="fixed inset-x-0 top-0 z-50" style={{ backdropFilter: 'blur(10px)' }}>
+    <div
+      ref={headerRef}
+      className={`fixed inset-x-0 top-0 z-50 isolate ${isAboutPage
+        ? 'bg-transparent border-b border-transparent backdrop-blur-md supports-[backdrop-filter]:bg-white/10'
+        : isDarkPage
+          ? 'bg-[#0f0f12]/95 border-b border-white/10'
+          : 'bg-white/95 border-b border-gray-200'
+        }`}
+      style={isAboutPage ? { backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' } : { backdropFilter: 'blur(10px)' }}
+    >
       <div className="max-w-7xl mx-auto px-4 py-6 md:py-8">
         <div className="flex justify-between items-center animate-fade-in">
           <Link href="/" prefetch className="relative inline-block hover:opacity-90 transition-opacity">

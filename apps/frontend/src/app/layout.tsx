@@ -123,7 +123,7 @@ export default function RootLayout({
         <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
         <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
       </head>
-      <body className="min-h-[calc(100vh-var(--header-h,0px))] pt-[var(--header-h,0px)] antialiased">
+      <body className="min-h-[calc(100vh-var(--header-h,0px))] pt-[var(--header-h,0px)] antialiased bg-[#0f0f12]">
         {/* Organization JSON-LD */}
         <script
           type="application/ld+json"

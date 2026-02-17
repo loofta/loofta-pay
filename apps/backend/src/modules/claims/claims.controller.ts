@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Param,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -21,7 +22,7 @@ import { AuthGuard } from '@/common/guards';
 import { ClaimsService } from './claims.service';
 import { DepositService, DepositResult } from './deposit.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
-import { CreateClaimDto, CreateClaimFromUsernameDto, RequestDepositDto } from './dto';
+import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto, RequestDepositDto } from './dto';
 import { Claim, ClaimIntent } from './entities/claim.entity';
 
 @ApiTags('claims')
@@ -79,6 +80,28 @@ export class ClaimsController {
   }
 
   /**
+   * Create a claim from email. If user exists, use their wallet; otherwise they claim by signing in with this email later.
+   */
+  @Post('create-from-email')
+  @ApiOperation({ summary: 'Create claim from email (recipient may not have an account yet)' })
+  @ApiResponse({
+    status: 201,
+    description: 'Claim created',
+    schema: {
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        link: { type: 'string', format: 'uri' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input' })
+  async createFromEmail(
+    @Body() createDto: CreateClaimFromEmailDto,
+  ): Promise<{ id: string; link: string }> {
+    return this.claimsService.createFromEmail(createDto);
+  }
+
+  /**
    * Get fee payer address for Solana sponsored transactions (Pay with Loofta).
    * Declared before :id so "solana-sponsor/fee-payer" is not captured as claim id.
    */
@@ -91,6 +114,24 @@ export class ClaimsController {
   })
   getSolanaFeePayer(): { feePayerAddress: string | null } {
     return { feePayerAddress: this.solanaSponsor.getFeePayerAddress() };
+  }
+
+  /**
+   * Check if the authenticated user is the recipient of this claim (for "Received" / "Claim" view on claim page)
+   */
+  @Get(':id/recipient-check')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Check if current user is the recipient of the claim' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Whether the current user is the recipient', schema: { properties: { isRecipient: { type: 'boolean' } } } })
+  async recipientCheck(
+    @Param('id') id: string,
+    @Req() req: { user?: { id: string } },
+  ): Promise<{ isRecipient: boolean }> {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) return { isRecipient: false };
+    return this.claimsService.checkIsRecipient(id, privyUserId);
   }
 
   /**
