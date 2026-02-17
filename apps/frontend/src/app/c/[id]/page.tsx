@@ -1,6 +1,8 @@
 'use client'
 
 import React, { useEffect, useMemo, useState, type SVGProps } from "react";
+import Link from "next/link";
+import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import type { TokenSelection } from "@/app/utils/types";
@@ -136,7 +138,7 @@ async function fetchClaim(id: string) {
     if (r.ok) {
       const data = await r.json();
       return {
-        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_pending_email?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
         latestIntent: data.intent ? {
           depositAddress: data.intent.deposit_address || null,
           memo: data.intent.memo ?? null,
@@ -161,9 +163,9 @@ async function fetchClaim(id: string) {
   const data = await r.json();
 
   return {
-    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
-    latestIntent: data.latestIntent || null,
-  };
+  claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_pending_email?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+  latestIntent: data.latestIntent || null,
+};
 }
 
 async function prepareDeposit(input: {
@@ -298,10 +300,28 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const claimData = claimQuery.data as any;
   const claim = claimData?.claim;
   const loadingClaim = claimQuery.isLoading;
+  const { user } = usePrivy();
   // Extract latest intent from claim query (merged into main GET endpoint)
   const latestIntentData = useMemo(() => {
     return claimData?.latestIntent || null;
   }, [claimData]);
+
+  const recipientCheckQuery = useQuery({
+    queryKey: ["claim", id, "recipient-check", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return { isRecipient: false };
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const r = await fetch(`${backendUrl}/claims/${id}/recipient-check`, {
+        headers: { "x-privy-user-id": user.id },
+      });
+      if (!r.ok) return { isRecipient: false };
+      const data = await r.json();
+      return { isRecipient: data?.isRecipient === true };
+    },
+    enabled: !!claim && !!user?.id,
+    staleTime: 60_000,
+  });
+  const isRecipient = recipientCheckQuery.data?.isRecipient === true;
 
   // Log claim + intent when data loads or updates
   useEffect(() => {
@@ -336,7 +356,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const userCancelled = React.useRef<boolean>(false); // Track if user manually cancelled to prevent re-hydration
   const privateTransferTriggeredRef = React.useRef<Set<string>>(new Set()); // Auto-run Privacy Cash once per claim when PRIVATE_TRANSFER_PENDING
   const onPayPrivatelyRef = React.useRef<(() => Promise<void>) | null>(null);
-  const { logout, login, authenticated, user, getAccessToken } = usePrivy();
+  const { logout, login, authenticated, getAccessToken } = usePrivy();
   const { wallets } = useEvmWallets();
   const { wallets: standardWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
@@ -1683,13 +1703,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         </div>
       )}
 
-      <div className="fixed inset-0 -z-10 bg-[#18181F]" />
-      <div className="min-h-screen text-white">
-        <div className="max-w-7xl mx-auto px-4 pb-12">
-          <div className="flex items-center justify-center min-h-[calc(100vh-7rem)]">
-            {/* Centered card - full width */}
-            <div className="w-full max-w-2xl">
-              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm text-gray-900">
+      <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
+        <div className="max-w-lg mx-auto px-4 py-6 pb-24">
+          <SendReceiveTabs activeTab="send" visualOnly />
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+            <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm text-gray-900">
                 {/* Demo Mode Banner */}
                 {DEMO_MODE && (
                   <div className="mb-4 -mx-6 -mt-6 px-4 py-3 bg-amber-50 border-b border-amber-200 rounded-t-2xl">
@@ -1708,9 +1726,52 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                   </div>
                 ) : claim ? (
                   <>
-                    {String(status || "").toUpperCase() === "SUCCESS" ? (
+                    {isRecipient && String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
+                      <div className="mt-6 text-center py-12">
+                        <div className="mb-4 text-6xl">✅</div>
+                        <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                          Paid – Received to your Loofta account
+                        </h3>
+                        <p className="text-gray-600 text-base mb-4">
+                          ${parseFloat(claim?.amount || "0").toFixed(2)} was sent to you. It’s in your Loofta account.
+                        </p>
+                        <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900">
+                          ← Back to Send
+                        </Link>
+                      </div>
+                    ) : isRecipient && claim?.recipient_pending_email ? (
+                      <div className="mt-6 text-center py-12">
+                        <div className="mb-4 text-6xl">🎁</div>
+                        <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                          Claim this payment
+                        </h3>
+                        <p className="text-gray-600 text-base mb-4">
+                          Sign in with the email this link was sent to to claim ${parseFloat(claim?.amount || "0").toFixed(2)}.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => login({ loginMethods: ["email"], disableSignup: false })}
+                          className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90"
+                        >
+                          Sign in to claim
+                        </button>
+                      </div>
+                    ) : isRecipient ? (
+                      <div className="mt-6 text-center py-12">
+                        <div className="mb-4 text-6xl">📩</div>
+                        <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                          This payment is for you
+                        </h3>
+                        <p className="text-gray-600 text-base mb-4">
+                          ${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay. When they do, it’ll show up here and in your Loofta account.
+                        </p>
+                        <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900">
+                          ← Back to Send
+                        </Link>
+                      </div>
+                    ) : String(status || "").toUpperCase() === "SUCCESS" ? (
                       <>
-                        {/* Payment Complete Message */}
+                        {/* Payment Complete Message (payer view) */}
                         <div className="mt-6 text-center py-12">
                           <div className="mb-4 text-6xl">✅</div>
                           <h3 className="text-2xl font-semibold text-gray-900 mb-2">
@@ -3006,7 +3067,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                 )}
               </div>
             </div>
-          </div>
         </div>
       </div>
 

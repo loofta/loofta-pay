@@ -25,8 +25,11 @@ export class Claim {
   @ApiProperty({ description: 'Destination chain' })
   to_chain: string;
 
-  @ApiProperty({ description: 'Recipient wallet address' })
-  recipient_address: string;
+  @ApiPropertyOptional({ description: 'Recipient wallet address (omitted when recipient_pending_email is true)' })
+  recipient_address?: string;
+
+  @ApiPropertyOptional({ description: 'True when claim was created by email and recipient has not signed in to claim yet' })
+  recipient_pending_email?: boolean;
 
   @ApiPropertyOptional({ description: 'Privy user ID who created the claim' })
   created_by: string | null;

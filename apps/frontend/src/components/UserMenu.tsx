@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useLinkAccount } from "@privy-io/react-auth";
 import { useExportWallet } from "@privy-io/react-auth/solana";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -80,9 +80,20 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [withdrawing, setWithdrawing] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
+  const { linkTwitter, linkEmail } = useLinkAccount({
+    onSuccess: () => {
+      toast({ title: "Account linked", description: "Sign-in method added successfully." });
+    },
+    onError: (err) => {
+      toast({ variant: "destructive", title: "Could not link", description: err?.message || "Try again." });
+    },
+  });
   const { exportWallet } = useExportWallet();
   const { wallets } = useWallets();
   const { toast } = useToast();
+
+  const hasTwitter = (privyUser?.linkedAccounts || []).some((a: any) => a.type === "twitter" || a.type === "x");
+  const hasEmail = (privyUser?.linkedAccounts || []).some((a: any) => a.type === "email");
 
   // Get Solana wallet address from Privy
   // Use linkedAccounts - these are wallets tied to user (what shows in Privy dashboard)
@@ -811,10 +822,32 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               Settings
             </DialogTitle>
             <DialogDescription>
-              Wallet address and security options.
+              Wallet address, sign-in methods, and security options.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            {/* Sign-in methods - encourage two methods for recovery */}
+            <div>
+              <Label className="text-sm font-medium mb-2 block">Sign-in methods</Label>
+              <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">
+                Add a second method so you can recover your account (e.g. if Twitter is unavailable).
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {!hasTwitter && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => linkTwitter()}>
+                    Add Twitter
+                  </Button>
+                )}
+                {!hasEmail && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => linkEmail()}>
+                    Add email
+                  </Button>
+                )}
+                {hasTwitter && hasEmail && (
+                  <span className="text-xs text-gray-500 dark:text-slate-400">Email and Twitter linked.</span>
+                )}
+              </div>
+            </div>
             {walletAddress ? (
               <>
                 {/* Wallet Address */}

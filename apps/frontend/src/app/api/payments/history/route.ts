@@ -29,10 +29,25 @@ export async function GET(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
-    const walletAddressesParam = searchParams.get("walletAddresses");
-    const walletAddresses: string[] = walletAddressesParam
-      ? walletAddressesParam.split(",").map((a) => a.trim()).filter(Boolean)
-      : [];
+    let walletAddresses: string[] = (searchParams.get("walletAddresses") || "")
+      .split(",")
+      .map((a) => a.trim())
+      .filter(Boolean);
+
+    if (walletAddresses.length === 0) {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      try {
+        const res = await fetch(`${backendUrl}/users/me/wallet/balance`, {
+          headers: { "x-privy-user-id": userId },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.walletAddress) walletAddresses = [data.walletAddress];
+        }
+      } catch (e) {
+        console.warn("[payments/history] Failed to get wallet from backend:", e);
+      }
+    }
 
     const supabase = getSupabaseAdmin();
 

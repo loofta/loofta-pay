@@ -59,6 +59,13 @@ export class DepositService {
     // Get claim details
     const claim = await this.claimsService.findOne(claimId);
 
+    // Reject deposit if recipient has not claimed yet (created by email, no account)
+    if (claim.recipient_address?.startsWith(ClaimsService.PENDING_EMAIL_PREFIX)) {
+      throw new BadRequestException(
+        'Recipient has not claimed this payment yet. They need to open the link and sign in with their email first.'
+      );
+    }
+
     // Enforce private payment if claim requires it
     // If claim requires private payments, the request must have isPrivate: true
     if (claim.is_private === true && !isPrivate) {

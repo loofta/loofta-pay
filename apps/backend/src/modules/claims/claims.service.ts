@@ -1,7 +1,7 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
-import { CreateClaimDto, CreateClaimFromUsernameDto } from './dto';
+import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto } from './dto';
 import { Claim, ClaimIntent, ClaimStatus } from './entities/claim.entity';
 import { UsersService } from '../users/users.service';
 
@@ -118,6 +118,88 @@ export class ClaimsService {
     return { id, link };
   }
 
+  /** Sentinel prefix for claims created by email when recipient has no account yet; they claim by signing in with that email */
+  static readonly PENDING_EMAIL_PREFIX = 'PENDING_EMAIL:';
+
+  /**
+   * Create a claim from email. If user exists, use their wallet. If not, create with PENDING_EMAIL so they can claim by signing in later.
+   */
+  async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; link: string }> {
+    const { email, amount, userId, isPrivate = false, description } = dto;
+    const cleanEmail = email.trim().toLowerCase();
+
+    let recipientAddress: string;
+    let requiresPrivate = false;
+
+    try {
+      const user = await this.usersService.findByEmail(cleanEmail);
+      requiresPrivate = user.requirePrivatePayments || false;
+      const finalIsPrivate = requiresPrivate ? true : isPrivate;
+      if (requiresPrivate && !isPrivate) {
+        throw new BadRequestException(
+          'This user requires private payments only. Please enable privacy when creating the payment link.',
+        );
+      }
+      recipientAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
+
+      const { data: claim, error: claimError } = await this.supabaseService.claims
+        .insert({
+          amount: String(amount),
+          to_symbol: 'USDC',
+          to_chain: 'solana',
+          recipient_address: recipientAddress,
+          created_by: userId ? String(userId) : null,
+          creator_email: null,
+          status: 'OPEN' as ClaimStatus,
+          is_private: finalIsPrivate,
+          description: description || null,
+        })
+        .select('id')
+        .single();
+
+      if (claimError) {
+        this.logger.error('Error creating claim from email (existing user):', claimError);
+        throw new BadRequestException('Failed to create claim');
+      }
+
+      const id = claim.id;
+      const link = `${this.baseUrl}/c/${id}`;
+      this.logger.log(`Created claim from email (existing user): ${id} for ${cleanEmail}`);
+      return { id, link };
+    } catch (err: unknown) {
+      if (err instanceof BadRequestException) throw err;
+      if (!(err instanceof NotFoundException)) throw err;
+      // User not found: create claim with PENDING_EMAIL so they can claim by signing in later
+    }
+
+    recipientAddress = `${ClaimsService.PENDING_EMAIL_PREFIX}${cleanEmail}`;
+
+    const { data: claim, error: claimError } = await this.supabaseService.claims
+      .insert({
+        amount: String(amount),
+        to_symbol: 'USDC',
+        to_chain: 'solana',
+        recipient_address: recipientAddress,
+        created_by: userId ? String(userId) : null,
+        creator_email: null,
+        status: 'OPEN' as ClaimStatus,
+        is_private: isPrivate,
+        description: description || null,
+      })
+      .select('id')
+      .single();
+
+    if (claimError) {
+      this.logger.error('Error creating claim from email (pending):', claimError);
+      throw new BadRequestException('Failed to create claim');
+    }
+
+    const id = claim.id;
+    const link = `${this.baseUrl}/c/${id}`;
+    this.logger.log(`Created claim from email (pending): ${id} for ${cleanEmail} – they claim by signing in`);
+    return { id, link };
+  }
+
   /**
    * Get claim by ID
    */
@@ -136,7 +218,48 @@ export class ClaimsService {
       const creator = await this.usersService.findByPrivyId(claim.created_by);
       (claim as Claim & { creator_username?: string | null }).creator_username = creator?.username ?? null;
     }
+    // Mask pending-email claims: don't expose email to client, expose flag so UI can show "Sign in to claim"
+    if (claim.recipient_address?.startsWith(ClaimsService.PENDING_EMAIL_PREFIX)) {
+      (claim as Claim & { recipient_address?: string; recipient_pending_email?: boolean }).recipient_address = undefined;
+      (claim as Claim & { recipient_pending_email?: boolean }).recipient_pending_email = true;
+    }
     return claim;
+  }
+
+  /**
+   * Get claim by ID without masking (internal use e.g. recipient-check)
+   */
+  async findOneRaw(id: string): Promise<Claim & { recipient_address?: string }> {
+    const { data, error } = await this.supabaseService.claims
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (error || !data) {
+      throw new NotFoundException(`Claim with ID ${id} not found`);
+    }
+    return data as Claim & { recipient_address?: string };
+  }
+
+  /**
+   * Check if the authenticated user is the recipient of this claim (for recipient view on /c/[id])
+   */
+  async checkIsRecipient(claimId: string, privyUserId: string): Promise<{ isRecipient: boolean }> {
+    const claim = await this.findOneRaw(claimId);
+    const recipientAddress = claim.recipient_address;
+    if (!recipientAddress) {
+      return { isRecipient: false };
+    }
+    if (recipientAddress.startsWith(ClaimsService.PENDING_EMAIL_PREFIX)) {
+      const pendingEmail = recipientAddress.slice(ClaimsService.PENDING_EMAIL_PREFIX.length).trim().toLowerCase();
+      const userEmail = await this.usersService.getEmailByPrivyId(privyUserId);
+      return { isRecipient: !!userEmail && userEmail === pendingEmail };
+    }
+    try {
+      const userWallet = await this.usersService.getSolanaWalletAddress(privyUserId);
+      return { isRecipient: userWallet.trim().toLowerCase() === recipientAddress.trim().toLowerCase() };
+    } catch {
+      return { isRecipient: false };
+    }
   }
 
   /**

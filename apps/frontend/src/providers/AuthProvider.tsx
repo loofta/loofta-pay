@@ -24,8 +24,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		<PrivyProvider
 			appId={appId}
 			config={{
-				// Email only for login/create account
-				loginMethods: ["email"],
+				// Email and Twitter for login; encourage two methods for recovery
+				loginMethods: ["email", "twitter"],
 				embeddedWallets: {
 					// Don't create EVM wallets - only Solana
 					ethereum: {

@@ -18,38 +18,40 @@ export function Footer() {
 
           {/* Products */}
           <div>
-            <h4 className="text-white font-semibold mb-4">Products</h4>
+            <h4 className="text-white font-semibold mb-4">For you</h4>
             <ul className="space-y-2">
-              <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Cross-chain swap</a></li>
-              <li><a href="/claim" className="text-slate-400 hover:text-white transition-colors">Payment request</a></li>
+              <li><a href="/" className="text-slate-400 hover:text-white transition-colors">Send</a></li>
+              <li><a href="/?tab=receive" className="text-slate-400 hover:text-white transition-colors">Request payment</a></li>
+              <li><a href="/history" className="text-slate-400 hover:text-white transition-colors">History</a></li>
             </ul>
           </div>
 
-          {/* Socials */}
+          {/* For business */}
           <div>
-            <h4 className="text-white font-semibold mb-4">Socials</h4>
+            <h4 className="text-white font-semibold mb-4">For business</h4>
+            <ul className="space-y-2">
+              <li><a href="/checkout" className="text-slate-400 hover:text-white transition-colors">Checkout</a></li>
+              <li><a href="/checkout" className="text-slate-400 hover:text-white transition-colors">Partners</a></li>
+            </ul>
+          </div>
+
+          {/* Swap & Company */}
+          <div>
+            <h4 className="text-white font-semibold mb-4">Company</h4>
+            <ul className="space-y-2">
+              <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Cross-chain swap</a></li>
+              <li><a href="/about" className="text-slate-400 hover:text-white transition-colors">About</a></li>
+            </ul>
+          </div>
+
+          {/* Socials & Docs */}
+          <div>
+            <h4 className="text-white font-semibold mb-4">Socials & Docs</h4>
             <ul className="space-y-2">
               <li><a href="https://medium.com/@looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Medium</a></li>
               <li><a href="https://twitter.com/looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Twitter</a></li>
               <li><a href="https://t.me/looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Telegram</a></li>
-            </ul>
-          </div>
-
-          {/* Documentation */}
-          <div>
-            <h4 className="text-white font-semibold mb-4">Documentation</h4>
-            <ul className="space-y-2">
-              <li><a href="https://loofta.gitbook.io/docs" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Github</a></li>
-            </ul>
-          </div>
-
-          {/* Routes */}
-          <div>
-            <h4 className="text-white font-semibold mb-4">Routes</h4>
-            <ul className="space-y-2">
-              <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Bridge to Solana</a></li>
-              <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Bridge to Bitcoin</a></li>
-              <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Bridge to Ethereum</a></li>
+              <li><a href="https://loofta.gitbook.io/docs" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Docs</a></li>
             </ul>
           </div>
         </div>
@@ -64,4 +66,3 @@ export function Footer() {
     </footer>
   );
 }
-
