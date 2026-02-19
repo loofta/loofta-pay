@@ -25,7 +25,7 @@ export class ClaimsService {
    * Create a new payment claim
    */
   async create(dto: CreateClaimDto): Promise<{ id: string; link: string }> {
-    const { amount, toSel, recipient, userId } = dto;
+    const { amount, toSel, recipient, userId, isPrivate } = dto;
 
     if (!amount || !toSel?.symbol || !toSel?.chain || !recipient) {
       throw new BadRequestException('Missing required fields');
@@ -40,6 +40,7 @@ export class ClaimsService {
         created_by: userId ? String(userId) : null,
         creator_email: null,
         status: 'OPEN' as ClaimStatus,
+        is_private: isPrivate === true,
       })
       .select('id')
       .single();
