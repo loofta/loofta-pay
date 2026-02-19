@@ -1,6 +1,7 @@
 'use client'
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 type Tab = 'send' | 'receive';
 
@@ -13,6 +14,8 @@ export interface SendReceiveTabsProps {
 }
 
 export function SendReceiveTabs({ activeTab, onTabChange, visualOnly }: SendReceiveTabsProps) {
+  const pathname = usePathname();
+  const isHistoryPage = pathname === "/history";
   const tabClass = (tab: Tab) =>
     `flex-1 min-w-[100px] py-2.5 px-4 rounded-lg text-sm font-semibold transition-all text-center ${
       activeTab === tab ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'
@@ -51,7 +54,9 @@ export function SendReceiveTabs({ activeTab, onTabChange, visualOnly }: SendRece
       </div>
       <Link
         href="/history"
-        className="p-2.5 rounded-xl bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+        className={`p-2.5 rounded-xl transition-colors ${
+          isHistoryPage ? "bg-white/10 text-amber-400" : "bg-white/5 text-slate-400 hover:text-white hover:bg-white/10"
+        }`}
         title="History"
       >
         <span className="sr-only">History</span>
