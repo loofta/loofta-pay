@@ -18,19 +18,37 @@ const ClaimPayView = dynamic<{ claimId: string; embedInApp?: boolean }>(
   { ssr: false }
 );
 
+const ClaimPageContent = dynamic(
+  () => import("@/app/claim/page").then((mod) => ({ default: mod.default })),
+  { ssr: false }
+);
+
 const SEND_FEE_SOL = "0.0015";
+const HOME_TAB_KEY = "loofta.home.tab";
 
 export default function Home() {
   const searchParams = useSearchParams();
   const { authenticated } = useAuth();
   const username = useAuthStore((s) => s.username ?? null);
   const { login: privyLogin } = usePrivy();
-  const [activeTab, setActiveTab] = useState<"send" | "receive">(() =>
-    searchParams.get("tab") === "receive" ? "receive" : "send"
-  );
+  const [activeTab, setActiveTabState] = useState<"send" | "receive">(() => {
+    const fromUrl = searchParams.get("tab") === "receive" ? "receive" : null;
+    if (fromUrl) return fromUrl;
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem(HOME_TAB_KEY);
+      if (stored === "send" || stored === "receive") return stored;
+    }
+    return "send";
+  });
+
   useEffect(() => {
-    if (searchParams.get("tab") === "receive") setActiveTab("receive");
+    if (searchParams.get("tab") === "receive") setActiveTabState("receive");
   }, [searchParams]);
+
+  const setActiveTab = (tab: "send" | "receive") => {
+    setActiveTabState(tab);
+    if (typeof window !== "undefined") localStorage.setItem(HOME_TAB_KEY, tab);
+  };
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
   const [selectedRecipient, setSelectedRecipient] = useState<string | null>(null);
@@ -40,6 +58,7 @@ export default function Home() {
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [dropdownClosed, setDropdownClosed] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [showClaimOverlay, setShowClaimOverlay] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const searchCacheRef = useRef<Map<string, { usernames: string[]; ts: number }>>(new Map());
@@ -286,7 +305,7 @@ export default function Home() {
                     </button>
                   </div>
                   <Link href="/settings" className="block">
-                    <Button variant="outline" className="w-full h-11 rounded-xl border-white/10 text-slate-300 hover:bg-white/5 hover:text-white">
+                    <Button variant="receiveSignIn" className="w-full h-12 rounded-xl">
                       Share & settings
                     </Button>
                   </Link>
@@ -294,15 +313,16 @@ export default function Home() {
               ) : (
                 <>
                   <p className="text-slate-400 text-sm">
-                    Sign in to get a personal link you can share for payments.
+                    Sign in with Twitter to get your own payment link.
                   </p>
-                  <button
+                  <Button
                     type="button"
-                    onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}
-                    className="w-full h-11 rounded-xl font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 transition-opacity"
+                    variant="receiveSignIn"
+                    onClick={() => privyLogin({ loginMethods: ["twitter"], disableSignup: false })}
+                    className="w-full h-12 rounded-xl"
                   >
-                    Sign in to get your link
-                  </button>
+                    Sign in with Twitter to get your payment link
+                  </Button>
                 </>
               )}
             </div>
@@ -313,12 +333,33 @@ export default function Home() {
               <p className="text-slate-400 text-sm">
                 Create a one-off payment request. You choose amount, token, and chain. No account required to create.
               </p>
-              <Link href="/claim" className="block">
-                <Button variant="outline" className="w-full h-11 rounded-xl border-white/10 text-slate-300 hover:bg-white/5 hover:text-white">
-                  Create new payment link
-                </Button>
-              </Link>
+              <Button
+                type="button"
+                onClick={() => setShowClaimOverlay(true)}
+                className="w-full h-11 rounded-xl text-base font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 border-0"
+              >
+                Create new payment link
+              </Button>
             </div>
+          </div>
+        )}
+
+        {/* Full-screen overlay: claim (create payment link) flow */}
+        {showClaimOverlay && (
+          <div className="fixed inset-0 z-[100] bg-[#18181F] overflow-auto">
+            <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 bg-[#18181F]/95 backdrop-blur border-b border-white/10">
+              <button
+                type="button"
+                onClick={() => setShowClaimOverlay(false)}
+                className="flex items-center gap-2 text-slate-300 hover:text-white text-sm font-medium"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 12H5M12 19l-7-7 7-7" />
+                </svg>
+                Back to receive
+              </button>
+            </div>
+            <ClaimPageContent />
           </div>
         )}
       </div>

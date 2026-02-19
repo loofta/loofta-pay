@@ -17,8 +17,7 @@ export function SendReceiveTabs({ activeTab, onTabChange, visualOnly }: SendRece
   const pathname = usePathname();
   const isHistoryPage = pathname === "/history";
   const tabClass = (tab: Tab) =>
-    `flex-1 min-w-[100px] py-2.5 px-4 rounded-lg text-sm font-semibold transition-all text-center ${
-      activeTab === tab ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'
+    `flex-1 min-w-[100px] py-2.5 px-4 rounded-lg text-sm font-semibold transition-all text-center ${activeTab === tab ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'
     }`;
 
   return (
@@ -27,10 +26,10 @@ export function SendReceiveTabs({ activeTab, onTabChange, visualOnly }: SendRece
         {visualOnly ? (
           <>
             <Link href="/" className={tabClass('send')}>
-              📤 Send
+              Send
             </Link>
             <Link href="/?tab=receive" className={tabClass('receive')}>
-              📥 Receive
+              Receive
             </Link>
           </>
         ) : (
@@ -40,23 +39,22 @@ export function SendReceiveTabs({ activeTab, onTabChange, visualOnly }: SendRece
               onClick={() => onTabChange?.('send')}
               className={tabClass('send')}
             >
-              📤 Send
+              Send
             </button>
             <button
               type="button"
               onClick={() => onTabChange?.('receive')}
               className={tabClass('receive')}
             >
-              📥 Receive
+              Receive
             </button>
           </>
         )}
       </div>
       <Link
         href="/history"
-        className={`p-2.5 rounded-xl transition-colors ${
-          isHistoryPage ? "bg-white/10 text-amber-400" : "bg-white/5 text-slate-400 hover:text-white hover:bg-white/10"
-        }`}
+        className={`p-2.5 rounded-xl transition-colors ${isHistoryPage ? "bg-white/10 text-amber-400" : "bg-white/5 text-slate-400 hover:text-white hover:bg-white/10"
+          }`}
         title="History"
       >
         <span className="sr-only">History</span>

@@ -834,7 +834,13 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               </p>
               <div className="flex flex-wrap gap-2">
                 {!hasTwitter && (
-                  <Button type="button" variant="outline" size="sm" onClick={() => linkTwitter()}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => linkTwitter()}
+                    title="Requires Twitter enabled in Privy Dashboard (Login Methods → Socials)"
+                  >
                     Add Twitter
                   </Button>
                 )}

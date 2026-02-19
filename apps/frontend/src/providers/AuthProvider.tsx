@@ -24,7 +24,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		<PrivyProvider
 			appId={appId}
 			config={{
-				// Email and Twitter for login; encourage two methods for recovery
+				// Email and Twitter for login and linking; encourage two methods for recovery.
+				// If you see "Login with Twitter not allowed", enable Twitter in the Privy Dashboard:
+				// https://dashboard.privy.io → your app → Login Methods → Socials → enable Twitter/X.
 				loginMethods: ["email", "twitter"],
 				embeddedWallets: {
 					// Don't create EVM wallets - only Solana
