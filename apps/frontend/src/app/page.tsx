@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
@@ -18,7 +17,7 @@ const ClaimPayView = dynamic<{ claimId: string; embedInApp?: boolean }>(
   { ssr: false }
 );
 
-const ClaimPageContent = dynamic(
+const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
   () => import("@/app/claim/page").then((mod) => ({ default: mod.default })),
   { ssr: false }
 );
@@ -43,6 +42,14 @@ export default function Home() {
 
   useEffect(() => {
     if (searchParams.get("tab") === "receive") setActiveTabState("receive");
+  }, [searchParams]);
+
+  // Open create-payment-link card when ?create=1 (e.g. redirect from /claim)
+  useEffect(() => {
+    if (searchParams.get("create") === "1") {
+      setActiveTabState("receive");
+      setShowClaimOverlay(true);
+    }
   }, [searchParams]);
 
   const setActiveTab = (tab: "send" | "receive") => {
@@ -283,6 +290,22 @@ export default function Home() {
 
         {activeTab === "receive" && (
           <div className="space-y-4">
+            {showClaimOverlay ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowClaimOverlay(false)}
+                  className="flex items-center gap-2 text-slate-300 hover:text-white text-sm font-medium"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M19 12H5M12 19l-7-7 7-7" />
+                  </svg>
+                  Back to receive
+                </button>
+                <ClaimPageContent embedInApp />
+              </>
+            ) : (
+              <>
             {/* Share your personal link */}
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
               <p className="text-slate-300 text-sm font-medium">Share your personal link</p>
@@ -308,11 +331,13 @@ export default function Home() {
                       {linkCopied ? "Copied" : "Copy"}
                     </button>
                   </div>
-                  <Link href="/settings" className="block">
-                    <Button variant="receiveSignIn" className="w-full h-12 rounded-xl">
-                      Share & settings
-                    </Button>
-                  </Link>
+                  <Button
+                    variant="receiveSignIn"
+                    className="w-full h-12 rounded-xl"
+                    onClick={() => useAuthStore.getState().setOpenShareModal(true)}
+                  >
+                    Share & settings
+                  </Button>
                 </>
               ) : (
                 <>
@@ -345,25 +370,8 @@ export default function Home() {
                 Create new payment link
               </Button>
             </div>
-          </div>
-        )}
-
-        {/* Full-screen overlay: claim (create payment link) flow */}
-        {showClaimOverlay && (
-          <div className="fixed inset-0 z-[100] bg-[#18181F] overflow-auto">
-            <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 bg-[#18181F]/95 backdrop-blur border-b border-white/10">
-              <button
-                type="button"
-                onClick={() => setShowClaimOverlay(false)}
-                className="flex items-center gap-2 text-slate-300 hover:text-white text-sm font-medium"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M19 12H5M12 19l-7-7 7-7" />
-                </svg>
-                Back to receive
-              </button>
-            </div>
-            <ClaimPageContent />
+              </>
+            )}
           </div>
         )}
       </div>

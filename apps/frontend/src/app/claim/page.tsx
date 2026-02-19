@@ -9,14 +9,15 @@ import type { TokenSelection } from "@/app/utils/types";
 import { Button } from "@/components/ui/button";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
 import { findTokenBySelection } from "@/lib/tokens";
 import { maskLink } from "@/lib/format";
-import { isValidZcashShielded } from "@/lib/zcash";
 import { useClaimStore } from "@/store/claim";
 import { ArrowRight, Wallet } from "lucide-react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
+import { useRouter, usePathname } from "next/navigation";
 
 /** Inline Loofta logo SVG (matches pay modal). */
 function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
@@ -47,6 +48,7 @@ async function createClaim(formData: {
   toSel: TokenSelection;
   recipient: string;
   userId?: string;
+  isPrivate?: boolean;
 }): Promise<{ id: string; link: string }> {
   const r = await fetch("/api/claims/create", {
     method: "POST",
@@ -71,11 +73,20 @@ function CheckIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-export default function ClaimPage() {
+export default function ClaimPage({ embedInApp }: { embedInApp?: boolean } = {}) {
+  const router = useRouter();
+  const pathname = usePathname();
   const { authenticated, email: userEmail, userId, login, ready } = useAuth();
   const { login: privyLogin } = usePrivy();
   const { wallets: solanaWallets } = useSolanaWallets();
   const { toast } = useToast();
+
+  // Standalone /claim route: redirect to home receive tab with create form open (no standalone page)
+  const isStandaloneClaim = !embedInApp && pathname === "/claim";
+  useEffect(() => {
+    if (isStandaloneClaim) router.replace("/?tab=receive&create=1");
+  }, [isStandaloneClaim, router]);
+
   const { data: tokens = [] } = useTokensQuery();
   const [toSel, setToSel] = useState<TokenSelection | undefined>(undefined);
   const [amount, setAmount] = useState<string>("");
@@ -83,12 +94,9 @@ export default function ClaimPage() {
   const [recipientPrefilled, setRecipientPrefilled] = useState(false);
   const [receiveDestination, setReceiveDestination] = useState<"loofta" | "other">("loofta");
   const [creating, setCreating] = useState(false);
-  const [notifyChecked, setNotifyChecked] = useState<boolean>(Boolean(userEmail));
-  const [notifyEmail, setNotifyEmail] = useState<string>(userEmail || "");
   const [amountMode, setAmountMode] = useState<"USD" | "TOKEN">("USD");
   const [showConfetti, setShowConfetti] = useState<boolean>(false);
   const { isPrivateMode, setIsPrivateMode, createdLink, setCreatedLink, clearLink, hydrated: claimHydrated } = useClaimStore();
-  const [zcashAddress, setZcashAddress] = useState<string>("");
   const [showPrivacyInfo, setShowPrivacyInfo] = useState<boolean>(false);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
   const [hasSeenPrivateTutorial, setHasSeenPrivateTutorial] = useState<boolean>(false);
@@ -188,12 +196,12 @@ export default function ClaimPage() {
     }
   }, [showPrivacyInfo]);
 
-  // Auto-select ZEC token when entering private mode
+  // Auto-select USDC on Solana when entering private mode (Privacy Cash)
   useEffect(() => {
     if (isPrivateMode && tokens.length > 0) {
-      const zcashToken = tokens.find(t => t.symbol.toLowerCase() === 'zec');
-      if (zcashToken) {
-        setToSel({ symbol: zcashToken.symbol, chain: zcashToken.chain });
+      const usdcSolana = tokens.find(t => t.symbol === 'USDC' && String(t.chain).toLowerCase().includes('sol'));
+      if (usdcSolana) {
+        setToSel({ symbol: usdcSolana.symbol, chain: usdcSolana.chain });
       }
     }
   }, [isPrivateMode, tokens]);
@@ -237,6 +245,14 @@ export default function ClaimPage() {
     setAmountMode(next);
   }
 
+  if (isStandaloneClaim) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#18181F]">
+        <p className="text-slate-400 text-sm">Taking you to receive…</p>
+      </div>
+    );
+  }
+
   async function onCreate(overrides?: { recipient?: string; toSel?: TokenSelection }) {
     const finalRecipient = overrides?.recipient || recipient;
     const finalToSel = overrides?.toSel ? findTokenBySelection(tokens, overrides.toSel) : selectedTo;
@@ -262,6 +278,7 @@ export default function ClaimPage() {
         toSel: { symbol: finalToSel.symbol, chain: finalToSel.chain },
         recipient: finalRecipient,
         userId: authenticated ? userId : undefined,
+        isPrivate: isPrivateMode,
       });
       setCreatedLink(res.link);
       setShowConfetti(true);
@@ -303,20 +320,11 @@ export default function ClaimPage() {
                 <p className="text-slate-500">Get paid without anyone seeing how much or who paid you</p>
               </div>
 
-              {/* Step 1: Get Wallet */}
+              {/* Step 1: Privacy Cash */}
               <div className={`absolute inset-0 p-6 flex flex-col items-center justify-center text-center transition-all duration-300 ${tutorialStep === 1 ? 'opacity-100 translate-x-0' : tutorialStep < 1 ? 'opacity-0 translate-x-full pointer-events-none' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
-                <Image src="/images/icons/wallet.png" alt="" width={128} height={128} className="mb-5" />
-                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-3">Get a Wallet</h3>
-                <p className="text-slate-500 mb-5">Download Zashi to get your shielded address</p>
-                <a
-                  href="https://zashi.app"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-white font-medium hover:opacity-90 transition-opacity"
-                  style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
-                >
-                  Get Zashi →
-                </a>
+                <Image src="/images/icons/shield-icon.png" alt="" width={80} height={80} className="mb-5" />
+                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-3">Privacy Cash</h3>
+                <p className="text-slate-500">Payment is processed privately. You receive in your chosen token (e.g. USDC on Solana). Both addresses stay hidden.</p>
               </div>
 
               {/* Step 2: How it works */}
@@ -333,14 +341,14 @@ export default function ClaimPage() {
                   </div>
                   <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
                     <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>3.</span>
-                    <span className="text-slate-700 pt-1">You receive ZEC privately</span>
+                    <span className="text-slate-700 pt-1">You receive privately (e.g. USDC)</span>
                   </div>
                 </div>
               </div>
 
-              {/* Step 3: Use your ZEC */}
+              {/* Step 3: Use your funds */}
               <div className={`absolute inset-0 p-6 flex flex-col transition-all duration-300 ${tutorialStep === 3 ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-full pointer-events-none'}`}>
-                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-6 text-center">Use your ZEC</h3>
+                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-6 text-center">Use your funds</h3>
                 <div className="flex-1 flex flex-col justify-center space-y-4">
                   <a href="https://z.cash/pay-with-zcash" target="_blank" rel="noopener noreferrer" className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8] hover:bg-gray-100 transition-colors">
                     <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>1.</span>
@@ -440,11 +448,12 @@ export default function ClaimPage() {
         </div>
       )}
 
-      <div className="fixed inset-0 -z-10 bg-[#18181F]" />
-      <div className="min-h-screen text-white">
-        <div className="max-w-7xl mx-auto px-4 pb-12">
-          <div className="flex flex-col md:flex-row items-center justify-center gap-16 min-h-[calc(100vh-7rem)]">
-            {/* Left column - changes based on mode */}
+      {!embedInApp && <div className="fixed inset-0 -z-10 bg-[#18181F]" />}
+      <div className={embedInApp ? "w-full text-white" : "min-h-screen text-white"}>
+        <div className={embedInApp ? "w-full max-w-lg mx-auto px-0" : "max-w-7xl mx-auto px-4 pb-12"}>
+          <div className={embedInApp ? "w-full" : "flex flex-col md:flex-row items-center justify-center gap-16 min-h-[calc(100vh-7rem)]"}>
+            {/* Left column - hidden when embedded */}
+            {!embedInApp && (
             <div className="w-full md:w-1/2">
               {createdLink ? (
                 /* Success state left content */
@@ -463,7 +472,6 @@ export default function ClaimPage() {
                       clearLink();
                       setAmount("");
                       setRecipient("");
-                      setZcashAddress("");
                     }}
                   >
                     Create New Payment
@@ -476,7 +484,7 @@ export default function ClaimPage() {
                     Receive <br /><span className="text-amber-400">Privately</span>
                   </h1>
                   <p className="text-gray-100 text-xl mb-8">
-                    Get paid with complete financial privacy using Zcash shielded transactions.
+                    Get paid with complete financial privacy using Privacy Cash.
                   </p>
                   <ul className="mt-6 space-y-4">
                     <li className="flex items-start gap-3">
@@ -532,42 +540,11 @@ export default function ClaimPage() {
                 </>
               )}
             </div>
+            )}
 
-            {/* Right column - toggle + card */}
-            <div className={`w-full ${createdLink ? 'md:w-[480px]' : 'md:w-[420px]'} transition-all`}>
-              {/* Mode Toggle - OUTSIDE card */}
-              {!createdLink && !creating && (
-                <div className="flex gap-2 mb-4">
-                  <button
-                    type="button"
-                    onClick={() => setIsPrivateMode(false)}
-                    className={`flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all ${!isPrivateMode
-                      ? 'bg-orange-500 text-white'
-                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                      }`}
-                  >
-                    Standard
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsPrivateMode(true);
-                      if (!hasSeenPrivateTutorial) {
-                        setShowPrivacyInfo(true);
-                        setHasSeenPrivateTutorial(true);
-                      }
-                    }}
-                    className={`flex-1 py-2.5 px-4 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 ${isPrivateMode
-                      ? 'bg-amber-500 text-gray-900'
-                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                      }`}
-                  >
-                    <ShieldIcon className="w-4 h-4" />
-                    Private
-                  </button>
-                </div>
-              )}
-              <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-6  px-12 shadow-sm">
+            {/* Right column - card */}
+            <div className={`w-full ${embedInApp ? '' : (createdLink ? 'md:w-[480px]' : 'md:w-[420px]')} transition-all`}>
+              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#0f0f12] p-6 px-12 text-white shadow-2xl [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30 [&_.border-gray-300]:!border-white/20">
                 {showConfetti ? <ConfettiCanvas /> : null}
                 {creating ? (
                   <div className="flex flex-col items-center justify-center py-16">
@@ -651,18 +628,20 @@ export default function ClaimPage() {
                         );
                       })()}
                     </div>
-                    <div className="mt-8 rounded-xl border border-gray-200 bg-gray-50 p-4 text-center space-y-3">
-                      <div className="text-lg font-semibold text-gray-900">Create your profile</div>
-                      <div className="text-base text-gray-600">
-                        Claim your username to get a personal payment link and earn points on every payment.
+                    {!authenticated && (
+                      <div className="mt-8 rounded-xl border border-gray-200 bg-gray-50 p-4 text-center space-y-3">
+                        <div className="text-lg font-semibold text-gray-900">Create your profile</div>
+                        <div className="text-base text-gray-600">
+                          Claim your username to get a personal payment link and earn points on every payment.
+                        </div>
+                        <GradientActionButton
+                          className="w-auto px-5 py-2 h-10"
+                          onClick={() => (typeof login === 'function' ? login() : undefined)}
+                        >
+                          Create profile & claim username
+                        </GradientActionButton>
                       </div>
-                      <GradientActionButton
-                        className="w-auto px-5 py-2 h-10"
-                        onClick={() => (typeof login === 'function' ? login() : undefined)}
-                      >
-                        Create profile & claim username
-                      </GradientActionButton>
-                    </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-5">
@@ -692,65 +671,24 @@ export default function ClaimPage() {
                       </div>
                     </div>
 
-                    {/* Token display / selection based on mode */}
-                    {isPrivateMode ? (
-                      <>
-                        {/* Fixed Zcash token display */}
-                        <div>
-                          <label className="text-gray-600 mb-1 block">You will receive</label>
-                          <div className="h-12 px-4 rounded-lg border border-amber-300 bg-amber-50 flex items-center gap-3">
-                            <img src="static/icons/network/zec.svg" alt="Zcash" className="w-5 h-5" />
-                            <span className="font-semibold text-gray-900">Zcash (ZEC)</span>
-                            <span className="ml-auto text-amber-600 text-sm">Private</span>
-                          </div>
-                        </div>
-                        {/* Shielded address input */}
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
-                            <LockIcon className="w-4 h-4 text-amber-500" />
-                            <label className="text-gray-600">Shielded Address</label>
-                          </div>
-                          <div className="relative">
-                            <Input
-                              type="text"
-                              value={zcashAddress}
-                              onChange={(e) => setZcashAddress(e.target.value)}
-                              placeholder="zs1..."
-                              className="h-12 font-mono text-gray-900 placeholder:text-gray-400 border-gray-200 focus:border-amber-500"
-                              autoCapitalize="none"
-                              autoCorrect="off"
-                              spellCheck={false}
-                              onPaste={(e) => {
-                                try {
-                                  const pasted = e.clipboardData?.getData('text/plain') || '';
-                                  if (pasted) {
-                                    e.preventDefault();
-                                    setZcashAddress(pasted.trim());
-                                  }
-                                } catch { }
-                              }}
-                            />
-                            {zcashAddress.startsWith('zs1') && (
-                              <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                                <CheckIcon className="w-5 h-5 text-green-500" />
-                              </div>
-                            )}
-                          </div>
-                          <div className="mt-1 text-gray-500 text-sm">
-                            Starts with <span className="text-amber-600 font-mono">zs1</span>
-                          </div>
-                        </div>
-                      </>
-                    ) : authenticated ? (
+                    {/* Private mode note - same form as standard, payment via Privacy Cash */}
+                    {isPrivateMode && (
+                      <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-sm text-slate-300">
+                        Payment will be processed via Privacy Cash. You receive in your chosen token below.
+                      </div>
+                    )}
+
+                    {/* Token display / selection - same for standard and private (Privacy Cash) */}
+                    {authenticated ? (
                       /* Logged in: Receive on Loofta (no token/wallet) or Use another wallet — like pay modal */
                       <>
                         <div className="flex flex-col gap-3">
                           <button
                             type="button"
                             onClick={() => setReceiveDestination("loofta")}
-                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "loofta" ? "border-orange-300 bg-orange-50/80" : "border-gray-200 bg-gray-50 hover:bg-orange-50 hover:border-orange-200"}`}
+                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "loofta" ? "border-orange-400/50 bg-orange-500/20" : "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20"}`}
                           >
-                            <div className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center shrink-0 p-1.5">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 p-1.5 ${receiveDestination === "loofta" ? "bg-orange-500/30 border border-orange-400/40" : "bg-white/10 border border-white/20"}`}>
                               <LooftaIcon className="w-full h-full object-contain" />
                             </div>
                             <div className="flex-1 min-w-0">
@@ -762,14 +700,14 @@ export default function ClaimPage() {
                               </span>
                             </div>
                             {receiveDestination === "loofta" && solanaWallet?.address && defaultLooftaToken && (
-                              <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full shrink-0">Ready</span>
+                              <span className="text-xs font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Ready</span>
                             )}
                           </button>
 
                           <div className="flex items-center gap-3">
-                            <div className="flex-1 h-px bg-gray-200" />
+                            <div className="flex-1 h-px bg-white/10" />
                             <span className="text-sm font-medium text-gray-400">or</span>
-                            <div className="flex-1 h-px bg-gray-200" />
+                            <div className="flex-1 h-px bg-white/10" />
                           </div>
 
                           <button
@@ -779,17 +717,17 @@ export default function ClaimPage() {
                               setRecipient("");
                               setToSel(undefined);
                             }}
-                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "other" ? "border-orange-300 bg-orange-50/80" : "border-gray-200 bg-gray-50 hover:bg-orange-50 hover:border-orange-200"}`}
+                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "other" ? "border-orange-400/50 bg-orange-500/20" : "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20"}`}
                           >
-                            <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
-                              <Wallet className="w-5 h-5 text-gray-700" />
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${receiveDestination === "other" ? "bg-orange-500/30 border border-orange-400/40" : "bg-white/10 border border-white/20"}`}>
+                              <Wallet className={`w-5 h-5 ${receiveDestination === "other" ? "text-orange-200" : "text-gray-700"}`} />
                             </div>
                             <div className="flex-1 min-w-0">
                               <span className="font-semibold text-gray-900 block">Use another wallet</span>
                               <span className="text-sm text-gray-500">Different token or network</span>
                             </div>
                             {receiveDestination === "other" ? (
-                              <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full shrink-0">Selected</span>
+                              <span className="text-xs font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Selected</span>
                             ) : (
                               <ArrowRight className="w-5 h-5 text-gray-400 shrink-0" />
                             )}
@@ -891,94 +829,71 @@ export default function ClaimPage() {
                       </>
                     )}
 
-                    {/* Email notification - compact */}
-                    <div className="flex items-center gap-2 py-1">
-                      <input
-                        id="notify"
-                        type="checkbox"
-                        className="h-4 w-4 rounded border-gray-300 accent-orange-500"
-                        checked={notifyChecked}
-                        onChange={(e) => setNotifyChecked(e.target.checked)}
-                      />
-                      <label htmlFor="notify" className="text-gray-600">
-                        Email notifications
-                      </label>
-                    </div>
-                    {notifyChecked && (
-                      <Input
-                        type="email"
-                        placeholder="your@email.com"
-                        value={notifyEmail}
-                        onChange={(e) => setNotifyEmail(e.target.value)}
-                        className="h-10 text-gray-900 placeholder:text-gray-400 border-gray-200"
-                      />
-                    )}
-
-                    {/* Create Button */}
-                    {isPrivateMode ? (
-                      authenticated && !showAccessRequested ? (
-                        <button
-                          onClick={() => {
-                            const zcashToken = tokens.find(t => t.symbol.toLowerCase() === 'zec');
-                            if (zcashToken) {
-                              onCreate({
-                                recipient: zcashAddress,
-                                toSel: { symbol: zcashToken.symbol, chain: zcashToken.chain }
-                              });
+                    {/* Private payment switch - positioned where email notifications was */}
+                    <div
+                      className={`p-4 rounded-xl border ${isPrivateMode
+                        ? 'bg-amber-500/10 border-amber-400/30'
+                        : 'bg-white/5 border-white/10'
+                        }`}
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-base font-semibold text-white">
+                              🔒 Private payment
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-400">
+                            When on, payment must use Privacy Cash. You receive in your chosen token (e.g. USDC on Solana); both addresses stay private.
+                          </p>
+                        </div>
+                        <Switch
+                          checked={isPrivateMode}
+                          onCheckedChange={(checked) => {
+                            setIsPrivateMode(checked);
+                            if (checked && !hasSeenPrivateTutorial) {
+                              setShowPrivacyInfo(true);
+                              setHasSeenPrivateTutorial(true);
                             }
                           }}
-                          disabled={creating || !(parsedAmount > 0) || !isValidZcashShielded(zcashAddress)}
-                          className="w-full py-3 rounded-lg font-semibold text-gray-900 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-500 hover:to-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-                        >
-                          {creating ? (
-                            <>
-                              <span className="w-4 h-4 border-2 border-gray-900/30 border-t-gray-900 rounded-full animate-spin" />
-                              Creating…
-                            </>
-                          ) : (
-                            <>
-                              <ShieldIcon className="w-5 h-5" />
-                              Create Private Link
-                            </>
-                          )}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={handleRequestAccess}
-                          className="w-full py-3.5 rounded-lg font-semibold text-gray-900 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-500 hover:to-yellow-500 transition-all flex items-center justify-center gap-2"
-                        >
-                          <LockIcon className="w-5 h-5" />
-                          Login to create your link
-                        </button>
-                      )
-                    ) : (
-                      authenticated && !showAccessRequested ? (
-                        <GradientActionButton
-                          onClick={() => onCreate()}
-                          disabled={
-                            creating ||
-                            !(parsedAmount > 0 &&
-                              (receiveDestination === "loofta"
-                                ? !!(solanaWallet?.address && defaultLooftaToken)
-                                : !!selectedTo && !!(recipient || "").trim()))
-                          }
-                          loading={creating}
-                          loadingText="Creating…"
-                        >
-                          Create Payment
-                        </GradientActionButton>
-                      ) : (
-                        <button
-                          onClick={handleRequestAccess}
-                          className="w-full py-3.5 rounded-xl font-semibold text-white transition-all hover:opacity-90"
-                          style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
-                        >
-                          <span className="flex items-center justify-center gap-2">
+                          className="shrink-0 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
+                        />
+                      </div>
+                    </div>
 
-                            Login to create new payment
-                          </span>
-                        </button>
-                      )
+                    {/* Create Button - same for standard and private (Privacy Cash) */}
+                    {authenticated && !showAccessRequested ? (
+                      <GradientActionButton
+                        onClick={() => onCreate()}
+                        disabled={
+                          creating ||
+                          !(parsedAmount > 0 &&
+                            (receiveDestination === "loofta"
+                              ? !!(solanaWallet?.address && defaultLooftaToken)
+                              : !!selectedTo && !!(recipient || "").trim()))
+                        }
+                        loading={creating}
+                        loadingText="Creating…"
+                      >
+                        {isPrivateMode ? (
+                          <>
+                            <ShieldIcon className="w-5 h-5" />
+                            Create private payment link
+                          </>
+                        ) : (
+                          "Create Payment"
+                        )}
+                      </GradientActionButton>
+                    ) : (
+                      <button
+                        onClick={handleRequestAccess}
+                        className="w-full py-3.5 rounded-xl font-semibold text-white transition-all hover:opacity-90"
+                        style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                      >
+                        <span className="flex items-center justify-center gap-2">
+                          Login to create new payment
+                        </span>
+                      </button>
                     )}
                   </div>
                 )}
