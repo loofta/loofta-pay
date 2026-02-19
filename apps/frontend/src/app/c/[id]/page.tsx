@@ -75,10 +75,8 @@ function ClaimPayLayout({
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
       <div className="max-w-lg mx-auto px-4 py-6 pb-24">
         <SendReceiveTabs activeTab="send" visualOnly />
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm text-gray-900">
-            {children}
-          </div>
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30">
+          {children}
         </div>
       </div>
     </div>
@@ -2158,13 +2156,19 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
                                     <TokenIcon token={usdcSolanaToken} chain="solana" size={32} />
                                     <div className="flex-1">
                                       <div className="flex items-center gap-2">
-                                        <span className="text-lg font-semibold text-gray-900">Pay USDC on Solana</span>
+                                        <span className={cn(
+                                          "text-lg font-semibold",
+                                          selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-900" : "text-gray-900"
+                                        )}>Pay USDC on Solana</span>
                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
                                           FREE
                                         </span>
 
                                       </div>
-                                      <div className="text-sm text-gray-600 mt-0.5">
+                                      <div className={cn(
+                                        "text-sm mt-0.5",
+                                        selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-800" : "text-slate-200"
+                                      )}>
                                         Pay now with Phantom or your Loofta balance
                                       </div>
                                     </div>
@@ -2177,14 +2181,11 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
                                 </div>
                               )}
 
-                              {/* Divider - span bg must match card when embedded so line doesn't strike through text */}
-                              <div className="relative mb-4">
-                                <div className="absolute inset-0 flex items-center">
-                                  <div className={`w-full border-t ${embedInApp ? 'border-white/20' : 'border-gray-300'}`}></div>
-                                </div>
-                                <div className="relative flex justify-center text-sm">
-                                  <span className={embedInApp ? "px-2 bg-white/5 text-slate-400" : "px-2 bg-white text-gray-500"}>or choose another token</span>
-                                </div>
+                              {/* Divider - two line segments so line never strikes through text */}
+                              <div className="flex items-center gap-3 mb-4">
+                                <div className="flex-1 h-px bg-white/20" />
+                                <span className="text-sm text-slate-400 shrink-0">or choose another token</span>
+                                <div className="flex-1 h-px bg-white/20" />
                               </div>
 
                               {/* Token selector - hide Solana for private flow */}
@@ -2354,12 +2355,18 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
                                     <TokenIcon token={usdcSolanaToken} chain="solana" size={32} />
                                     <div className="flex-1">
                                       <div className="flex items-center gap-2">
-                                        <span className="text-lg font-semibold text-gray-900">Pay USDC on Solana</span>
+                                        <span className={cn(
+                                        "text-lg font-semibold",
+                                        selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-900" : "text-gray-900"
+                                      )}>Pay USDC on Solana</span>
                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
                                           FREE
                                         </span>
                                       </div>
-                                      <div className="text-sm text-gray-600 mt-0.5">
+                                      <div className={cn(
+                                        "text-sm mt-0.5",
+                                        selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-800" : "text-slate-200"
+                                      )}>
                                         Pay now with Phantom or your Loofta balance
                                       </div>
                                     </div>
@@ -2372,14 +2379,11 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
                                 </div>
                               )}
 
-                              {/* Divider - span bg must match card when embedded so line doesn't strike through text */}
-                              <div className="relative mb-4">
-                                <div className="absolute inset-0 flex items-center">
-                                  <div className={`w-full border-t ${embedInApp ? 'border-white/20' : 'border-gray-300'}`}></div>
-                                </div>
-                                <div className="relative flex justify-center text-sm">
-                                  <span className={embedInApp ? "px-2 bg-white/5 text-slate-400" : "px-2 bg-white text-gray-500"}>or choose token</span>
-                                </div>
+                              {/* Divider - two line segments so line never strikes through text */}
+                              <div className="flex items-center gap-3 mb-4">
+                                <div className="flex-1 h-px bg-white/20" />
+                                <span className="text-sm text-slate-400 shrink-0">or choose token</span>
+                                <div className="flex-1 h-px bg-white/20" />
                               </div>
 
                               {/* Token selector - hide Solana for private flow */}

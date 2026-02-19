@@ -17,7 +17,7 @@ export function SendReceiveTabs({ activeTab, onTabChange, visualOnly }: SendRece
   const pathname = usePathname();
   const isHistoryPage = pathname === "/history";
   const tabClass = (tab: Tab) =>
-    `flex-1 min-w-[100px] py-2.5 px-4 rounded-lg text-sm font-semibold transition-all text-center ${activeTab === tab ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'
+    `flex-1 min-w-[100px] py-2.5 px-4 rounded-lg text-lg font-semibold transition-all text-center ${activeTab === tab ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'
     }`;
 
   return (

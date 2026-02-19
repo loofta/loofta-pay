@@ -47,9 +47,7 @@ export function UserSync() {
               username: usernameValue,
             });
           }
-          if (userData.needsUsername) {
-            setShowUsernameModal(true);
-          }
+          // Onboarding (add-email, add-Twitter, username step) shows after login; no separate username modal
         }
       } catch (error) {
         console.error("[UserSync] Error checking user:", error);
@@ -59,13 +57,16 @@ export function UserSync() {
     checkUser();
   }, [authenticated, userId, email, setUsername, setAuth]);
 
-  // Show welcome onboarding when username + Solana wallet ready
+  // Show onboarding right after login (add-email, add-Twitter, then username step). Don't wait for Solana wallet.
   useEffect(() => {
-    if (!authenticated || !username || !privyReady || !privyUser || !userId || showUsernameModal) {
+    if (!authenticated || !privyReady || !privyUser || !userId) {
       return;
     }
 
-    const checkOnboarding = async () => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const run = async () => {
       try {
         const userResponse = await fetch("/api/users/check", {
           method: "POST",
@@ -73,28 +74,22 @@ export function UserSync() {
           body: JSON.stringify({ privyUserId: userId, email }),
         });
         const userData = await userResponse.json();
-        if (userData.user?.skipOnboarding) return;
+        if (cancelled || userData.user?.skipOnboarding) return;
 
-        const linkedAccounts = privyUser?.linkedAccounts || [];
-        const linkedWallets = linkedAccounts.filter(
-          (account: any) => account.type === "wallet" || account.type === "smart_wallet"
-        );
-        const solanaWallet = linkedWallets.find((account: any) => {
-          const address = account?.address;
-          return address && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
-        });
-
-        if (username && solanaWallet?.address) {
-          const timer = setTimeout(() => setShowWelcomeOnboarding(true), 1500);
-          return () => clearTimeout(timer);
-        }
+        timer = setTimeout(() => {
+          if (!cancelled) setShowWelcomeOnboarding(true);
+        }, 600);
       } catch (error) {
         console.error("[UserSync] Error checking onboarding:", error);
       }
     };
 
-    checkOnboarding();
-  }, [authenticated, username, userId, email, privyUser, privyReady, showUsernameModal]);
+    run();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [authenticated, userId, email, privyUser, privyReady]);
 
   const refreshUser = async () => {
     if (!authenticated || !userId) return;
@@ -124,14 +119,14 @@ export function UserSync() {
           privyUserId={userId}
         />
       )}
-      {username && userId && (
+      {userId && (
         <WelcomeOnboarding
           open={showWelcomeOnboarding}
           onClose={(_dontShowAgain) => {
             setShowWelcomeOnboarding(false);
             refreshUser();
           }}
-          username={username}
+          username={username ?? null}
           privyUserId={userId}
           onEditUsername={refreshUser}
         />

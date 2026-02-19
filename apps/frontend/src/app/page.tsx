@@ -65,7 +65,7 @@ export default function Home() {
   const SEARCH_CACHE_TTL_MS = 2 * 60 * 1000; // 2 min
 
   const searchQuery = recipient.replace(/^@/, "").trim().toLowerCase();
-  const showDropdown = searchQuery.length >= 2 && !dropdownClosed;
+  const showDropdown = false; // Autocomplete/suggestions disabled for now
 
   // Exact email only: no partial match to avoid linking/leaking users
   const isExactEmail = (q: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q);
@@ -203,74 +203,78 @@ export default function Home() {
                 )}
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
                   <div ref={wrapperRef} className="relative">
-                <Label className="text-slate-400 text-sm">Send to</Label>
-                <p className="text-xs text-slate-500 mt-0.5 mb-1.5">
-                  Loofta @username or exact email – they claim by signing in with that account.
-                </p>
-                <Input
-                  type="text"
-                  placeholder="@username or exact email (e.g. name@example.com)"
-                  value={recipient}
-                  onChange={(e) => {
-                    setRecipient(e.target.value);
-                    setDropdownClosed(false);
-                  }}
-                  onFocus={() => setDropdownClosed(false)}
-                  autoComplete="off"
-                  className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500"
-                />
-                {showDropdown && (
-                  <ul className="absolute z-50 top-full left-0 right-0 mt-1 rounded-xl border border-white/10 bg-[#1a1a1f] py-1 shadow-lg max-h-48 overflow-auto">
-                    {loadingSuggestions ? (
-                      <li className="px-3 py-2 text-slate-400 text-sm">Searching…</li>
-                    ) : suggestions.length > 0 ? (
-                      suggestions.map((u) => (
-                        <li key={u}>
-                          <button
-                            type="button"
-                            className="w-full text-left px-3 py-2 text-white hover:bg-white/10 text-sm"
-                            onClick={() => {
-                              setRecipient(u);
-                              setDropdownClosed(true);
-                            }}
-                          >
-                            <span>@{u}</span>
-                            {suggestions.length === 1 && isExactEmail(searchQuery) && (
-                              <span className="text-slate-500 text-xs ml-1">(from email)</span>
-                            )}
-                          </button>
-                        </li>
-                      ))
-                    ) : (
-                      <li className="px-3 py-2 text-slate-500 text-sm">No users found</li>
+                    <Label className="text-slate-400 text-base">Send to</Label>
+                    <p className="text-sm text-slate-500 mt-0.5 mb-1.5">
+                      Loofta or Twitter username, or exact email – they claim by signing in with that account.
+                    </p>
+                    <p className="text-sm text-slate-500 mb-1.5">
+                      @ is optional (e.g. <span className="text-slate-400">alice</span> or <span className="text-slate-400">@alice</span> both work).
+                    </p>
+                    <Input
+                      type="text"
+                      name="send-to-recipient"
+                      placeholder="e.g. alice or name@example.com"
+                      value={recipient}
+                      onChange={(e) => {
+                        setRecipient(e.target.value);
+                        setDropdownClosed(false);
+                      }}
+                      onFocus={() => setDropdownClosed(false)}
+                      autoComplete="off"
+                      className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500"
+                    />
+                    {showDropdown && (
+                      <ul className="absolute z-50 top-full left-0 right-0 mt-1 rounded-xl border border-white/10 bg-[#1a1a1f] py-1 shadow-lg max-h-48 overflow-auto">
+                        {loadingSuggestions ? (
+                          <li className="px-3 py-2 text-slate-400 text-sm">Searching…</li>
+                        ) : suggestions.length > 0 ? (
+                          suggestions.map((u) => (
+                            <li key={u}>
+                              <button
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-white hover:bg-white/10 text-sm"
+                                onClick={() => {
+                                  setRecipient(u);
+                                  setDropdownClosed(true);
+                                }}
+                              >
+                                <span>@{u}</span>
+                                {suggestions.length === 1 && isExactEmail(searchQuery) && (
+                                  <span className="text-slate-500 text-sm ml-1">(from email)</span>
+                                )}
+                              </button>
+                            </li>
+                          ))
+                        ) : (
+                          <li className="px-3 py-2 text-slate-500 text-sm">No users found</li>
+                        )}
+                      </ul>
                     )}
-                  </ul>
-                )}
-              </div>
-              <div>
-                <Label className="text-slate-400 text-sm">Amount (USD)</Label>
-                <Input
-                  type="number"
-                  placeholder="0.00"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  min="0"
-                  step="0.01"
-                  className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500 text-lg"
-                />
-              </div>
-              <div className="rounded-xl bg-white/5 px-3 py-2">
-                <p className="text-xs text-slate-400">
-                  Network fee: <span className="text-slate-300 font-medium">{SEND_FEE_SOL} SOL</span> per send (covers claim processing).
-                </p>
-              </div>
-              <Button
-                onClick={handleSendContinue}
-                disabled={!recipient.trim()}
-                className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-              >
-                Continue
-              </Button>
+                  </div>
+                  <div>
+                    <Label className="text-slate-400 text-base">Amount (USD)</Label>
+                    <Input
+                      type="number"
+                      placeholder="0.00"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      min="0"
+                      step="0.01"
+                      className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500 text-lg"
+                    />
+                  </div>
+                  <div className="rounded-xl bg-white/5 px-3 py-2">
+                    <p className="text-sm text-slate-400">
+                      Network fee: <span className="text-slate-300 font-medium">{SEND_FEE_SOL} SOL</span> per send (covers claim processing).
+                    </p>
+                  </div>
+                  <Button
+                    onClick={handleSendContinue}
+                    disabled={!recipient.trim()}
+                    className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                  >
+                    Continue
+                  </Button>
                 </div>
               </>
             )}
@@ -313,15 +317,15 @@ export default function Home() {
               ) : (
                 <>
                   <p className="text-slate-400 text-sm">
-                    Sign in with Twitter to get your own payment link.
+                    Sign in to get your own payment link. Add Twitter later to get a unique @username.
                   </p>
                   <Button
                     type="button"
                     variant="receiveSignIn"
-                    onClick={() => privyLogin({ loginMethods: ["twitter"], disableSignup: false })}
+                    onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}
                     className="w-full h-12 rounded-xl"
                   >
-                    Sign in with Twitter to get your payment link
+                    Sign in to get your payment link
                   </Button>
                 </>
               )}

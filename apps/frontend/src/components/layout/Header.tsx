@@ -102,18 +102,7 @@ export function Header() {
             });
           }
 
-          // Show username modal if user needs to set username
-          if (userData.needsUsername) {
-            setShowUsernameModal(true);
-          } else if (userData.user.username) {
-            // User has username - check if we should show welcome onboarding
-            // Show onboarding if user just completed setup (check localStorage)
-            const hasSeenOnboarding = localStorage.getItem("loofta.hasSeenWelcomeOnboarding");
-            if (!hasSeenOnboarding) {
-              // Check if wallet exists - if yes, show onboarding
-              // We'll check this in a separate effect
-            }
-          }
+          // Onboarding (add-email, add-Twitter, username step) shows after login; no separate username modal
         }
       } catch (error) {
         console.error("[Header] Error checking user:", error);
@@ -123,14 +112,15 @@ export function Header() {
     checkUser();
   }, [authenticated, userId, email]);
 
-  // Check if we should show welcome onboarding (user + wallet ready)
-  // Always show until user opts out via "don't show again" checkbox
+  // Show onboarding right after login (add-email, add-Twitter, then username step). Don't wait for Solana wallet.
   useEffect(() => {
-    if (!authenticated || !username || !privyReady || !privyUser || !userId) {
+    if (!authenticated || !privyReady || !privyUser || !userId) {
       return;
     }
 
-    // Check user's onboarding preference from database
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
     const checkOnboardingPreference = async () => {
       try {
         const userResponse = await fetch("/api/users/check", {
@@ -144,41 +134,22 @@ export function Header() {
 
         const userData = await userResponse.json();
 
-        // If user has opted out, don't show onboarding
-        if (userData.user?.skipOnboarding) {
-          return;
-        }
+        if (cancelled || userData.user?.skipOnboarding) return;
 
-        // Check if Solana wallet exists in linked accounts (even if not connected)
-        const linkedAccounts = privyUser?.linkedAccounts || [];
-        const linkedWallets = linkedAccounts.filter(
-          (account: any) => account.type === 'wallet' || account.type === 'smart_wallet'
-        );
-
-        // Find Solana wallet by address format (base58, 32-44 chars)
-        const solanaLinkedWallet = linkedWallets.find((account: any) => {
-          // @ts-ignore
-          const address = account.address;
-          return address && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
-        });
-
-        // Show onboarding when both username and wallet are ready
-        // Wait a bit after username modal closes (if it was shown)
-        // @ts-ignore
-        if (username && solanaLinkedWallet?.address && !showUsernameModal) {
-          // Small delay to ensure everything is rendered
-          const timer = setTimeout(() => {
-            setShowWelcomeOnboarding(true);
-          }, 1500);
-          return () => clearTimeout(timer);
-        }
+        timer = setTimeout(() => {
+          if (!cancelled) setShowWelcomeOnboarding(true);
+        }, 600);
       } catch (error) {
         console.error("[Header] Error checking onboarding preference:", error);
       }
     };
 
     checkOnboardingPreference();
-  }, [authenticated, username, privyUser, privyReady, showUsernameModal, userId, email]);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [authenticated, privyUser, privyReady, userId, email]);
 
   // Fetch balance from Solana wallet (client-side, from Privy session)
   useEffect(() => {
@@ -757,8 +728,8 @@ export function Header() {
         />
       )}
 
-      {/* Welcome Onboarding Modal - rendered in portal to center on screen */}
-      {username && userId && (
+      {/* Welcome Onboarding Modal - shown after login (add-email, add-Twitter, username, etc.) */}
+      {userId && (
         <WelcomeOnboarding
           open={showWelcomeOnboarding}
           onClose={(dontShowAgain) => {
