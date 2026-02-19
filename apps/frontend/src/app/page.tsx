@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
@@ -11,6 +12,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SendFlowInApp } from "@/components/app/SendFlowInApp";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
+
+const ClaimPayView = dynamic<{ claimId: string; embedInApp?: boolean }>(
+  () => import("@/app/c/[id]/page").then((mod) => ({ default: mod.ClaimPayView })),
+  { ssr: false }
+);
 
 const SEND_FEE_SOL = "0.0015";
 
@@ -28,6 +34,8 @@ export default function Home() {
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
   const [selectedRecipient, setSelectedRecipient] = useState<string | null>(null);
+  const [sendStep, setSendStep] = useState<1 | 2 | 3>(1);
+  const [claimId, setClaimId] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [dropdownClosed, setDropdownClosed] = useState(false);
@@ -111,6 +119,7 @@ export default function Home() {
       }
     }
     setSelectedRecipient(resolvedUsername);
+    setSendStep(2);
   };
 
   return (
@@ -127,11 +136,35 @@ export default function Home() {
 
         {activeTab === "send" && (
           <>
-            {selectedRecipient ? (
+            {sendStep === 3 && claimId ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClaimId(null);
+                      setSelectedRecipient(null);
+                      setSendStep(1);
+                    }}
+                    className="text-slate-400 hover:text-white text-sm font-medium"
+                  >
+                    ← New payment
+                  </button>
+                </div>
+                <ClaimPayView claimId={claimId} embedInApp />
+              </div>
+            ) : selectedRecipient ? (
               <SendFlowInApp
                 recipientUsername={selectedRecipient}
                 initialAmount={amount}
-                onBack={() => setSelectedRecipient(null)}
+                onBack={() => {
+                  setSelectedRecipient(null);
+                  setSendStep(1);
+                }}
+                onClaimCreated={(id) => {
+                  setClaimId(id);
+                  setSendStep(3);
+                }}
               />
             ) : (
               <>

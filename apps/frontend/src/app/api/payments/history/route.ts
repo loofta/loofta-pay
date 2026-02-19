@@ -4,6 +4,8 @@ import { getSupabaseAdmin } from "@/lib/supabaseServer";
 const CLAIM_SELECT =
   "id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description";
 
+const OPEN_PAYMENT_EXPIRY_DAYS = 7;
+
 export type PaymentHistoryClaim = {
   id: string;
   amount: string;
@@ -20,6 +22,14 @@ export type PaymentHistoryClaim = {
   is_private: boolean | null;
   description: string | null;
 };
+
+function isExpiredOpenPayment(claim: PaymentHistoryClaim): boolean {
+  const status = String(claim.status || "").toUpperCase();
+  if (status === "SUCCESS") return false;
+  const created = new Date(claim.created_at).getTime();
+  const cutoff = Date.now() - OPEN_PAYMENT_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+  return created < cutoff;
+}
 
 export async function GET(request: Request) {
   try {
@@ -81,12 +91,14 @@ export async function GET(request: Request) {
       }
     }
 
-    const sent = (sentRows || []) as PaymentHistoryClaim[];
+    const sentRaw = (sentRows || []) as PaymentHistoryClaim[];
+    const receivedRaw = receivedRows;
+    const sent = sentRaw.filter((c) => !isExpiredOpenPayment(c));
+    const received = receivedRaw.filter((c) => !isExpiredOpenPayment(c));
 
-    return NextResponse.json({
-      sent,
-      received: receivedRows,
-    });
+    const res = NextResponse.json({ sent, received });
+    res.headers.set("Cache-Control", "private, max-age=60, stale-while-revalidate=120");
+    return res;
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Failed to fetch payment history";
     console.error("[payments/history]", message);

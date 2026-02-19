@@ -19,6 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
+import { cn } from "@/lib/utils";
 import { trimDecimals, roundUpDecimals, formatUTCTimestamp } from "@/lib/format";
 import { findTokenBySelection } from "@/lib/tokens";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
@@ -51,6 +52,38 @@ import { USDC_MINT } from "@/services/solanaBalance";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
 import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
+
+/** When embedInApp: only the pay content in a dark card (no tabs, no full page). When false: full page with SendReceiveTabs and white card. */
+function ClaimPayLayout({
+  embedInApp,
+  children,
+}: {
+  embedInApp?: boolean;
+  children: React.ReactNode;
+}) {
+  if (embedInApp) {
+    return (
+      <div
+        className="rounded-xl border border-white/10 bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30"
+        data-embed-pay
+      >
+        {children}
+      </div>
+    );
+  }
+  return (
+    <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
+      <div className="max-w-lg mx-auto px-4 py-6 pb-24">
+        <SendReceiveTabs activeTab="send" visualOnly />
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm text-gray-900">
+            {children}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** Inline Loofta logo SVG (no Image component). */
 function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
@@ -284,8 +317,8 @@ async function updateClaimStatus(claimId: string, status: string, extra?: { txHa
   }
 }
 
-export default function ClaimPayPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = React.use(params);
+export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
+  const id = claimId;
   const { toast } = useToast();
   const { data: tokens = [], isLoading } = useTokensQuery();
   const claimQuery = useQuery({
@@ -1703,11 +1736,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         </div>
       )}
 
-      <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
-        <div className="max-w-lg mx-auto px-4 py-6 pb-24">
-          <SendReceiveTabs activeTab="send" visualOnly />
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-            <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm text-gray-900">
+      <ClaimPayLayout embedInApp={embedInApp}>
                 {/* Demo Mode Banner */}
                 {DEMO_MODE && (
                   <div className="mb-4 -mx-6 -mt-6 px-4 py-3 bg-amber-50 border-b border-amber-200 rounded-t-2xl">
@@ -1781,8 +1810,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             Your payment has been successfully processed and sent to the recipient.
                           </p>
                         </div>
-                        {/* Display description/message if available */}
-                        {claim?.description && (
+                        {/* Display description/message if available — hidden when embedded in send flow */}
+                        {!embedInApp && claim?.description && (
                           <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                             <div className="text-sm text-gray-600 mb-1">Message</div>
                             <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
@@ -1966,17 +1995,19 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                       </>
                     ) : (
                       <>
-                        <div className="mb-3 flex items-start justify-between">
-                          <div className="text-base font-medium text-gray-700">Payment request</div>
-                          {claim?.created_by ? (
-                            <div className="text-sm text-gray-600">
-                              {claim.creator_username ? `@${claim.creator_username}` : 'User'}
-                            </div>
-                          ) : (
-                            <div className="text-sm text-gray-500">Anonymous</div>
-                          )}
-                        </div>
-                        {claim?.description && (
+                        {!embedInApp && (
+                          <div className="mb-3 flex items-start justify-between">
+                            <div className="text-base font-medium text-gray-700">Payment request</div>
+                            {claim?.created_by ? (
+                              <div className="text-sm text-gray-600">
+                                {claim.creator_username ? `@${claim.creator_username}` : 'User'}
+                              </div>
+                            ) : (
+                              <div className="text-sm text-gray-500">Anonymous</div>
+                            )}
+                          </div>
+                        )}
+                        {!embedInApp && claim?.description && (
                           <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                             <div className="text-sm text-gray-600 mb-1">Message</div>
                             <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
@@ -2042,8 +2073,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                             </div>
                           </div>
                         )}
-                        <div className="text-base text-gray-700">Amount requested</div>
-                        <div className="mt-1 flex items-baseline justify-between">
+                        {!embedInApp && <div className="text-base text-gray-700">Amount requested</div>}
+                        <div className={embedInApp ? "mt-2 flex items-baseline justify-between" : "mt-1 flex items-baseline justify-between"}>
                           <div className="text-3xl md:text-4xl font-semibold text-gray-900 leading-none">
                             {destUSD != null ? `$${destUSD.toFixed(2)}` : `—`}
                           </div>
@@ -2146,13 +2177,13 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                 </div>
                               )}
 
-                              {/* Divider */}
+                              {/* Divider - span bg must match card when embedded so line doesn't strike through text */}
                               <div className="relative mb-4">
                                 <div className="absolute inset-0 flex items-center">
-                                  <div className="w-full border-t border-gray-300"></div>
+                                  <div className={`w-full border-t ${embedInApp ? 'border-white/20' : 'border-gray-300'}`}></div>
                                 </div>
                                 <div className="relative flex justify-center text-sm">
-                                  <span className="px-2 bg-white text-gray-500">or choose another token</span>
+                                  <span className={embedInApp ? "px-2 bg-white/5 text-slate-400" : "px-2 bg-white text-gray-500"}>or choose another token</span>
                                 </div>
                               </div>
 
@@ -2177,10 +2208,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   placeholder="Select token to pay with"
                                   onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
                                   hideChains={['solana', 'sol']}
-                                  className={`bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain)
-                                    ? 'border-emerald-400 hover:bg-emerald-50'
-                                    : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'
-                                    }`}
+                                  className={embedInApp
+                                    ? `bg-white/10 text-white border border-white/20 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors hover:bg-white/15 placeholder:text-slate-400 ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400/50 ring-offset-2 ring-offset-[#0f0f12]' : ''}`
+                                    : `bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'border-emerald-400 hover:bg-emerald-50' : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'}`
+                                  }
                                 />
                               </div>
                               {/* Selected Token Display - Show when a token is selected */}
@@ -2341,13 +2372,13 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                 </div>
                               )}
 
-                              {/* Divider */}
+                              {/* Divider - span bg must match card when embedded so line doesn't strike through text */}
                               <div className="relative mb-4">
                                 <div className="absolute inset-0 flex items-center">
-                                  <div className="w-full border-t border-gray-300"></div>
+                                  <div className={`w-full border-t ${embedInApp ? 'border-white/20' : 'border-gray-300'}`}></div>
                                 </div>
                                 <div className="relative flex justify-center text-sm">
-                                  <span className="px-2 bg-white text-gray-500">or choose token</span>
+                                  <span className={embedInApp ? "px-2 bg-white/5 text-slate-400" : "px-2 bg-white text-gray-500"}>or choose token</span>
                                 </div>
                               </div>
 
@@ -2372,10 +2403,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   placeholder="Select token to pay with"
                                   onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
                                   hideChains={['solana', 'sol']}
-                                  className={`bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain)
-                                    ? 'border-emerald-400 hover:bg-emerald-50'
-                                    : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'
-                                    }`}
+                                  className={embedInApp
+                                    ? `bg-white/10 text-white border border-white/20 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors hover:bg-white/15 placeholder:text-slate-400 ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400/50 ring-offset-2 ring-offset-[#0f0f12]' : ''}`
+                                    : `bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'border-emerald-400 hover:bg-emerald-50' : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'}`
+                                  }
                                 />
                               </div>
                               {/* Selected Token Display - Show when a token is selected */}
@@ -2437,7 +2468,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                                   setRefundAddressError(null);
                                 }}
                                 placeholder={`Enter ${selectedFrom.chain.toUpperCase()} address for refunds`}
-                                className={refundAddressError ? "border-red-500 focus:border-red-500" : ""}
+                                className={cn(refundAddressError && "border-red-500 focus:border-red-500", embedInApp && "bg-white/10 border-white/20 text-white placeholder:text-slate-400")}
                               />
                               {refundAddressError && (
                                 <p className="text-sm text-red-600">{refundAddressError}</p>
@@ -3065,10 +3096,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                 ) : (
                   <div className="text-red-600">Claim not found.</div>
                 )}
-              </div>
-            </div>
-        </div>
-      </div>
+      </ClaimPayLayout>
 
       {/* Pay Now modal: same centered style as onboarding (emoji + amount + subtitle), then 2 options */}
       <Dialog
@@ -3276,6 +3304,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       )}
     </>
   );
+}
+
+export default function ClaimPayPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = React.use(params);
+  return <ClaimPayView claimId={id} />;
 }
 
 function CompanionDebugSection({ wallets }: { wallets: any[] }) {

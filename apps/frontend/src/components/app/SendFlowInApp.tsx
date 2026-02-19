@@ -28,9 +28,11 @@ export interface SendFlowInAppProps {
   recipientUsername: string;
   initialAmount?: string;
   onBack: () => void;
+  /** When set, claim ID is passed to parent instead of redirecting to /c/[id] (for in-app step 3 Pay) */
+  onClaimCreated?: (claimId: string) => void;
 }
 
-export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack }: SendFlowInAppProps) {
+export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, onClaimCreated }: SendFlowInAppProps) {
   const router = useRouter();
   const { user } = usePrivy();
   const { toast } = useToast();
@@ -87,7 +89,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack }:
           description: fullDescription,
         });
         await new Promise((r) => setTimeout(r, 300));
-        router.push(`/c/${result.id}`);
+        if (onClaimCreated) onClaimCreated(result.id); else router.push(`/c/${result.id}`);
       } else {
         const cleanUsername = recipientUsername.replace(/^@/, "").toLowerCase();
         const result = await createClaimFromUsername({
@@ -98,7 +100,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack }:
           description: fullDescription,
         });
         await new Promise((r) => setTimeout(r, 300));
-        router.push(`/c/${result.id}`);
+        if (onClaimCreated) onClaimCreated(result.id); else router.push(`/c/${result.id}`);
       }
     } catch (e: unknown) {
       toast({
@@ -186,7 +188,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack }:
         disabled={preparing || !amount || Number(amount) < (requirePrivate ? 3 : 0.01)}
         className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
       >
-        {preparing ? "Creating…" : "Create payment link"}
+        {preparing ? "Creating…" : onClaimCreated ? "Continue to pay" : "Create payment link"}
       </Button>
     </div>
   );

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
@@ -34,39 +34,26 @@ async function fetchPaymentHistory(userId: string): Promise<{ sent: PaymentHisto
   return r.json();
 }
 
+const PAYMENT_HISTORY_STALE_MS = 60 * 1000; // 1 min cache
+const PAYMENT_HISTORY_GC_MS = 5 * 60 * 1000; // 5 min keep in cache
+
 export default function HistoryPage() {
   const { authenticated, userId } = useAuth();
   const { login: privyLogin } = usePrivy();
-  const [sent, setSent] = useState<PaymentHistoryClaim[]>([]);
-  const [received, setReceived] = useState<PaymentHistoryClaim[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!authenticated || !userId) {
-      setSent([]);
-      setReceived([]);
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchPaymentHistory(userId)
-      .then(({ sent: s, received: r }) => {
-        if (!cancelled) {
-          setSent(s || []);
-          setReceived(r || []);
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e?.message || "Failed to load");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [authenticated, userId]);
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: ["payments", "history", userId ?? ""],
+    queryFn: () => fetchPaymentHistory(userId!),
+    enabled: Boolean(authenticated && userId),
+    staleTime: PAYMENT_HISTORY_STALE_MS,
+    gcTime: PAYMENT_HISTORY_GC_MS,
+  });
+  const sent = data?.sent ?? [];
+  const received = data?.received ?? [];
+  const error = queryError ? (queryError as Error).message ?? "Failed to load" : null;
 
   const totalSent = sent
     .filter((c) => String(c.status).toUpperCase() === "SUCCESS")
