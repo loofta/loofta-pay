@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { usePrivy, useWallets, useLinkAccount } from "@privy-io/react-auth";
@@ -22,6 +22,21 @@ import { Label } from "@/components/ui/label";
 import { Settings } from "lucide-react";
 import { PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
 
+/** Privy uses type "twitter_oauth" for Twitter (not "twitter" or "x"). */
+const TWITTER_TYPES = ["twitter_oauth", "twitter", "x"] as const;
+
+/** Twitter/X handle from Privy linked accounts (username || name || subject). */
+function getTwitterUsername(linkedAccounts: Array<{ type?: string; username?: string; name?: string; subject?: string }> | undefined): string | null {
+  const tw = (linkedAccounts || []).find((a) => a.type && TWITTER_TYPES.includes(a.type as any));
+  if (!tw) return null;
+  const raw = (tw as { username?: string; name?: string; subject?: string }).username
+    || (tw as { name?: string }).name
+    || (tw as { subject?: string }).subject
+    || "";
+  const s = String(raw).replace(/^@/, "").toLowerCase().trim();
+  return s.length >= 3 ? s : null;
+}
+
 interface UserMenuProps {
   username: string | null;
   email: string | undefined;
@@ -34,6 +49,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const storeEmail = useAuthStore((s) => s.email);
   const storeUsername = useAuthStore((s) => s.username ?? null);
   const setAuth = useAuthStore((s) => s.setAuth);
+  const setUsername = useAuthStore((s) => s.setUsername);
 
   // Use props if available, otherwise fallback to store
   const username = usernameProp ?? storeUsername;
@@ -78,22 +94,39 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
+  const [updatingToTwitter, setUpdatingToTwitter] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
   const { linkTwitter, linkEmail } = useLinkAccount({
     onSuccess: () => {
       toast({ title: "Account linked", description: "Sign-in method added successfully." });
     },
-    onError: (err) => {
-      toast({ variant: "destructive", title: "Could not link", description: err?.message || "Try again." });
+    onError: (err: unknown) => {
+      const msg = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : String(err);
+      if (/already been linked|already linked|linked to another user/i.test(msg)) {
+        toast({
+          variant: "destructive",
+          title: "Email already in use",
+          description: "This email is linked to another account. Sign in with that email to use it.",
+        });
+      } else {
+        toast({ variant: "destructive", title: "Could not link", description: msg || "Try again." });
+      }
     },
   });
   const { exportWallet } = useExportWallet();
   const { wallets } = useWallets();
   const { toast } = useToast();
 
-  const hasTwitter = (privyUser?.linkedAccounts || []).some((a: any) => a.type === "twitter" || a.type === "x");
-  const hasEmail = (privyUser?.linkedAccounts || []).some((a: any) => a.type === "email");
+  const linkedAccounts = (privyUser?.linkedAccounts || []) as Array<{ type?: string; username?: string; name?: string; address?: string; subject?: string }>;
+  const hasTwitter = linkedAccounts.some((a) => a.type && TWITTER_TYPES.includes(a.type as any));
+  const hasEmail = linkedAccounts.some((a) => a.type === "email");
+  const twitterHandle = useMemo(() => getTwitterUsername(linkedAccounts), [linkedAccounts]);
+  const linkedEmailAddress = useMemo(() => {
+    const acc = linkedAccounts.find((a) => a.type === "email");
+    return acc && "address" in acc ? (acc as { address: string }).address : null;
+  }, [linkedAccounts]);
+  const canUpdateToTwitter = hasTwitter && twitterHandle && username !== twitterHandle;
 
   // Get Solana wallet address from Privy
   // Use linkedAccounts - these are wallets tied to user (what shows in Privy dashboard)
@@ -813,55 +846,129 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         return null;
       })()}
 
-      {/* Settings Modal - wallet address, export private keys, etc. */}
+      {/* Settings Modal - dark, big title like Share modal */}
       <Dialog open={showSettingsModal} onOpenChange={setShowSettingsModal}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Settings className="w-5 h-5" />
-              Settings
-            </DialogTitle>
-            <DialogDescription>
-              Wallet address, sign-in methods, and security options.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            {/* Sign-in methods - encourage two methods for recovery */}
+        <DialogContent className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 text-white [&>button]:text-white/70 [&>button]:hover:text-white">
+          {/* Big title like Share modal */}
+          <div className="text-center mb-6">
+            <div className="mb-3 flex justify-center">
+              <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center">
+                <Settings className="w-6 h-6 text-white" />
+              </div>
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-1">Settings</h2>
+            <p className="text-sm text-gray-400">Wallet, sign-in methods, and security.</p>
+          </div>
+
+          <div className="space-y-4 py-0">
+            {/* Sign-in methods - show connected first, then Add buttons */}
             <div>
-              <Label className="text-sm font-medium mb-2 block">Sign-in methods</Label>
-              <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">
-                Add a second method so you can recover your account (e.g. if Twitter is unavailable).
+              <Label className="text-sm font-medium mb-2 block text-gray-300">Sign-in methods</Label>
+              {/* Always show what's already connected */}
+              {(hasEmail || hasTwitter) && (
+                <div className="mb-3 p-3 rounded-xl bg-white/5 border border-white/10 space-y-2">
+                  <p className="text-xs font-medium text-gray-400 mb-1.5">Connected</p>
+                  {hasEmail && linkedEmailAddress && (
+                    <div className="flex items-center gap-2 text-sm text-white/90">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-gray-400">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                        <polyline points="22,6 12,13 2,6"></polyline>
+                      </svg>
+                      <span className="truncate">{linkedEmailAddress}</span>
+                    </div>
+                  )}
+                  {hasTwitter && twitterHandle && (
+                    <div className="flex items-center gap-2 text-sm text-white/90">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="shrink-0 text-gray-400">
+                        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                      </svg>
+                      <span>@{twitterHandle}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              <p className="text-xs text-gray-400 mb-3">
+                Add a second method so you can recover your account.
               </p>
-              <div className="flex flex-wrap gap-2">
+              <div className="space-y-1">
                 {!hasTwitter && (
-                  <Button
+                  <button
                     type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => linkTwitter()}
-                    title="Requires Twitter enabled in Privy Dashboard (Login Methods → Socials)"
+                    onClick={() => {
+                      setShowSettingsModal(false);
+                      linkTwitter();
+                    }}
+                    title="You'll be redirected to Twitter to login"
+                    className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-3 text-orange-400 hover:bg-orange-400/10"
                   >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                    </svg>
                     Add Twitter
-                  </Button>
+                  </button>
                 )}
                 {!hasEmail && (
-                  <Button type="button" variant="outline" size="sm" onClick={() => linkEmail()}>
+                  <button
+                    type="button"
+                    onClick={() => linkEmail()}
+                    className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-3 text-gray-300 hover:bg-white/10 hover:text-white"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                      <polyline points="22,6 12,13 2,6"></polyline>
+                    </svg>
                     Add email
-                  </Button>
-                )}
-                {hasTwitter && hasEmail && (
-                  <span className="text-xs text-gray-500 dark:text-slate-400">Email and Twitter linked.</span>
+                  </button>
                 )}
               </div>
+              {canUpdateToTwitter && twitterHandle && (
+                <div className="mt-3 p-3 rounded-xl bg-white/5 border border-white/10">
+                  <p className="text-xs font-medium text-gray-300 mb-1">Payment link</p>
+                  <p className="text-xs text-gray-400 mb-2">
+                    Use your Twitter as your payment link: @{twitterHandle}
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="rounded-xl bg-white/10 text-white border-0 hover:bg-white/20"
+                    disabled={updatingToTwitter || !privyUser?.id}
+                    onClick={async () => {
+                      if (!privyUser?.id || !twitterHandle) return;
+                      setUpdatingToTwitter(true);
+                      try {
+                        const res = await fetch("/api/users/setup-username", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ privyUserId: privyUser.id, username: twitterHandle }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) {
+                          toast({ variant: "destructive", title: "Update failed", description: data.error || "Try again." });
+                          return;
+                        }
+                        const newUsername = data.user?.username ?? twitterHandle;
+                        setUsername(newUsername);
+                        setAuth({ authenticated: true, email: storeEmail, username: newUsername });
+                        toast({ title: "Payment link updated", description: `Your link is now @${newUsername}` });
+                      } catch (e) {
+                        toast({ variant: "destructive", title: "Update failed", description: "Try again." });
+                      } finally {
+                        setUpdatingToTwitter(false);
+                      }
+                    }}
+                  >
+                    {updatingToTwitter ? "Updating…" : `Use @${twitterHandle}`}
+                  </Button>
+                </div>
+              )}
             </div>
             {walletAddress ? (
               <>
-                {/* Wallet Address */}
                 <div>
-                  <Label className="text-sm font-medium mb-2 block">Wallet Address</Label>
-                  <div className="flex items-center gap-2 p-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
+                  <Label className="text-sm font-medium mb-2 block text-gray-300">Wallet Address</Label>
+                  <div className="flex items-center gap-2 p-3 rounded-xl bg-white/5 border border-white/10">
                     <p
-                      className="flex-1 text-sm font-mono break-all cursor-pointer hover:opacity-80"
+                      className="flex-1 text-sm font-mono break-all cursor-pointer text-white/90 hover:opacity-80"
                       onClick={() => {
                         setShowFullAddress(!showFullAddress);
                         if (!showFullAddress) copyToClipboard(walletAddress, false);
@@ -872,15 +979,15 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     </p>
                     <button
                       onClick={() => copyToClipboard(walletAddress, false)}
-                      className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0"
+                      className="p-2 rounded-lg hover:bg-white/10 shrink-0 text-gray-400 hover:text-white"
                       title={copied ? "Copied!" : "Copy"}
                     >
                       {copied ? (
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-500">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-400">
                           <polyline points="20 6 9 17 4 12"></polyline>
                         </svg>
                       ) : (
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                         </svg>
@@ -890,14 +997,13 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   <p className="text-xs text-gray-500 mt-1">{showFullAddress ? "Click to show shortened" : "Click address to copy full"}</p>
                 </div>
 
-                {/* Wallet actions */}
                 <div className="space-y-1">
                   <button
                     onClick={() => {
                       setShowSettingsModal(false);
                       window.open(`https://solscan.io/account/${walletAddress}`, '_blank');
                     }}
-                    className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                    className="w-full text-left px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
@@ -911,7 +1017,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       setShowSettingsModal(false);
                       setShowWithdrawModal(true);
                     }}
-                    className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                    className="w-full text-left px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -950,7 +1056,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         });
                       }
                     }}
-                    className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                    className="w-full text-left px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -964,9 +1070,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             ) : (
               <div className="py-4 text-center">
                 {!privyReady ? (
-                  <p className="text-sm text-gray-500">Loading wallet...</p>
+                  <p className="text-sm text-gray-400">Loading wallet...</p>
                 ) : (
-                  <p className="text-sm text-gray-500">Wallet will be created automatically when needed.</p>
+                  <p className="text-sm text-gray-400">Wallet will be created automatically when needed.</p>
                 )}
               </div>
             )}

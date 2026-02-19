@@ -16,12 +16,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate username format
-    const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+    // Validate username format: 3-20 alphanumeric + underscore, or loo- + 1-16 chars
+    const usernameRegex = /^(?:[a-zA-Z0-9_]{3,20}|loo-[a-zA-Z0-9_]{1,16})$/;
     if (!usernameRegex.test(username)) {
       return NextResponse.json(
-        { available: false, error: "Username must be 3-20 characters, alphanumeric and underscores only" },
-        { status: 200 } // Return 200 but with error message
+        { available: false, error: "Username must be 3-20 characters (or loo- plus 1-16 letters/numbers/underscores)" },
+        { status: 200 }
       );
     }
 

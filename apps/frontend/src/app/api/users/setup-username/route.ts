@@ -16,21 +16,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate username format
-    const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+    // Validate username format: 3-20 alphanumeric + underscore, or loo- + 1-16 chars (for email-only users)
+    const usernameRegex = /^(?:[a-zA-Z0-9_]{3,20}|loo-[a-zA-Z0-9_]{1,16})$/;
     if (!usernameRegex.test(username)) {
       return NextResponse.json(
-        { error: "Username must be 3-20 characters, alphanumeric and underscores only" },
+        { error: "Username must be 3-20 characters (or loo- plus 1-16 letters/numbers/underscores)" },
         { status: 400 }
       );
     }
 
     const supabase = getSupabaseAdmin();
 
-    // Check if username is already taken
+    // Check if username is already taken (or already set for this user)
     const { data: existingUser, error: checkError } = await supabase
       .from("app_users")
-      .select("id")
+      .select("id, privy_user_id")
       .eq("username", username.toLowerCase())
       .single();
 
@@ -43,6 +43,26 @@ export async function POST(request: NextRequest) {
     }
 
     if (existingUser) {
+      if (existingUser.privy_user_id === privyUserId) {
+        // Same user already has this username — idempotent success
+        const { data: user } = await supabase
+          .from("app_users")
+          .select("id, privy_user_id, email, username, created_at")
+          .eq("privy_user_id", privyUserId)
+          .single();
+        return NextResponse.json({
+          success: true,
+          user: user
+            ? {
+                id: user.id,
+                privyUserId: user.privy_user_id,
+                email: user.email,
+                username: user.username,
+                createdAt: user.created_at,
+              }
+            : { id: existingUser.id, privyUserId, email: null, username: username.toLowerCase(), createdAt: null },
+        });
+      }
       return NextResponse.json(
         { error: "Username is already taken" },
         { status: 409 }
