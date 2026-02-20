@@ -389,17 +389,16 @@ export async function POST(request: Request) {
     }
     
     // Build request based on deposit mode
-    // Note: Using EXACT_INPUT is more universally supported than EXACT_OUTPUT
-    // We'll calculate the input amount based on prices and add a buffer
+    // EXACT_OUTPUT everywhere so recipient gets the full claim amount (fees on top; sender pays more if needed).
     const req: QuoteRequest = useIntentsMode ? {
-      // INTENTS mode - use EXACT_INPUT like near-intents does
+      // INTENTS mode - EXACT_OUTPUT so recipient gets exact amount
       dry: false,
-      swapType: "EXACT_INPUT" as any,
+      swapType: "EXACT_OUTPUT" as any,
       slippageTolerance: 100,
       originAsset: fromToken.tokenId,
       depositType: "INTENTS" as any,
       destinationAsset,
-      amount: amountInAtomic,
+      amount: amountOutAtomic,
       refundTo: userAddress || finalRefundAddress,
       refundType: "INTENTS" as any,
       recipient: recipientAddress,
@@ -408,30 +407,23 @@ export async function POST(request: Request) {
       quoteWaitingTimeMs: 3000,
       ...(userAddress ? { authMethod: "evm", userAddress } : {}),
     } as any : {
-      // Regular mode - use EXACT_INPUT (more universally supported)
-      // amountInAtomic is calculated with a buffer to ensure enough output
+      // Regular mode - EXACT_OUTPUT so recipient gets full claim amount (fees on top)
       dry: false,
-      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      swapType: QuoteRequest.swapType.EXACT_OUTPUT,
       slippageTolerance: 100,
       originAsset: fromToken.tokenId,
-      // depositType: always ORIGIN_CHAIN when depositing from external chain
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
-      // Use input amount (with buffer) instead of output amount
-      amount: amountInAtomic,
-      // refundTo: treasury address on origin chain
+      amount: amountOutAtomic,
       refundTo: finalRefundAddress,
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
-      // recipient: destination address (or burner for pending Solana claims)
       recipient: recipientAddress,
-      // recipientType: DESTINATION_CHAIN for withdrawing to external chain
-      // Note: This works for both EVM and non-EVM destinations per NEAR Intents docs
       recipientType: sameChain 
         ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN 
         : QuoteRequest.recipientType.DESTINATION_CHAIN,
       deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
-      quoteWaitingTimeMs: 5000, // Increased to 5s for better quote response
-      referral: orgReferral || "loofta", // Use orgReferral if provided, otherwise default to "loofta"
+      quoteWaitingTimeMs: 5000,
+      referral: orgReferral || "loofta",
     } as any;
 
     // Debug log (visible in server logs)
