@@ -44,6 +44,8 @@ export interface BalanceModalProps {
   loadingBalance: boolean;
   solanaAddress: string | null;
   onRefresh: () => void;
+  /** When true, use dark theme (bg-[#0f0f12], border-white/10, etc.) like other app modals. */
+  dark?: boolean;
 }
 
 export function BalanceModal({
@@ -53,6 +55,7 @@ export function BalanceModal({
   loadingBalance,
   solanaAddress,
   onRefresh,
+  dark = false,
 }: BalanceModalProps) {
   const { toast } = useToast();
   const { data: tokens = [] } = useTokensQuery();
@@ -278,22 +281,26 @@ export function BalanceModal({
   const shortAddr = (addr: string, h = 6, t = 4) =>
     addr.length > h + t ? `${addr.slice(0, h)}…${addr.slice(-t)}` : addr;
 
+  const contentCls = dark
+    ? "sm:max-w-md border-white/10 bg-[#0f0f12] text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-gray-400]:!text-slate-500 [&_.bg-gray-100]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.border-gray-300]:!border-white/20 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&>button]:!text-slate-400 [&>button:hover]:!text-white"
+    : "sm:max-w-md";
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className={contentCls}>
         <DialogHeader>
-          <DialogTitle>Balance & Withdraw</DialogTitle>
-          <DialogDescription>
+          <DialogTitle className={dark ? "text-white" : undefined}>Balance & Withdraw</DialogTitle>
+          <DialogDescription className={dark ? "text-slate-400" : undefined}>
             View your balance and withdraw to any Solana wallet.
           </DialogDescription>
         </DialogHeader>
 
         {/* Tabs */}
-        <div className="flex gap-1 p-1 rounded-lg bg-gray-100">
+        <div className={`flex gap-1 p-1 rounded-lg ${dark ? "bg-white/10" : "bg-gray-100"}`}>
           <button
             type="button"
             onClick={() => setTab("withdraw")}
-            className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "withdraw" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:text-gray-900"}`}
+            className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "withdraw" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
           >
             Withdraw
           </button>
@@ -303,7 +310,7 @@ export function BalanceModal({
               setRecentWithdrawals(getWithdrawalHistory());
               setTab("history");
             }}
-            className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "history" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:text-gray-900"}`}
+            className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "history" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
           >
             Recent
           </button>
@@ -312,7 +319,7 @@ export function BalanceModal({
         {tab === "history" ? (
           <div className="py-2 max-h-[60vh] overflow-y-auto">
             {recentWithdrawals.length === 0 ? (
-              <p className="text-sm text-gray-500 text-center py-6">No recent withdrawals.</p>
+              <p className={`text-sm text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent withdrawals.</p>
             ) : (
               <ul className="space-y-2">
                 {recentWithdrawals.map((item) => (
@@ -321,16 +328,16 @@ export function BalanceModal({
                       href={getExplorerTxUrl("solana", item.txSignature)}
                       target="_blank"
                       rel="noreferrer"
-                      className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3 hover:border-gray-300 transition-colors"
+                      className={`flex items-center gap-3 rounded-lg border p-3 transition-colors ${dark ? "border-white/10 bg-white/5 hover:bg-white/10" : "border-gray-200 bg-white hover:border-gray-300"}`}
                     >
                       <div className="min-w-0 flex-1">
-                        <p className="font-semibold text-gray-900 text-sm">
+                        <p className={`font-semibold text-sm ${dark ? "text-white" : "text-gray-900"}`}>
                           ${item.amountUSDC.toFixed(2)} → {item.destinationToken} ({item.destinationChain})
                         </p>
-                        <p className="text-xs text-gray-500 font-mono mt-0.5">
+                        <p className={`text-xs font-mono mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
                           To {shortAddr(item.destinationAddress)}
                         </p>
-                        <p className="text-xs text-gray-400 mt-0.5">
+                        <p className={`text-xs mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
                           {new Date(item.createdAt).toLocaleString(undefined, {
                             month: "short",
                             day: "numeric",
@@ -339,7 +346,7 @@ export function BalanceModal({
                           })}
                         </p>
                       </div>
-                      <ExternalLink className="h-4 w-4 shrink-0 text-gray-400" />
+                      <ExternalLink className={`h-4 w-4 shrink-0 ${dark ? "text-slate-400" : "text-gray-400"}`} />
                     </a>
                   </li>
                 ))}
@@ -350,12 +357,12 @@ export function BalanceModal({
         <div className="space-y-4 py-4">
           {/* Balance – token/chain + dollar amount */}
           <div>
-            <Label className="text-sm font-medium text-gray-500 mb-2 block">
+            <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-400" : "text-gray-500"}`}>
               {isNearIntentsWithdraw ? "Paying from (USDC on Solana)" : "Available balance"}
             </Label>
-            <div className="p-4 rounded-xl border-2 border-gray-200 bg-gray-50 flex items-center justify-between">
+            <div className={`p-4 rounded-xl border-2 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${dark ? "bg-white/10 border border-white/10" : "bg-white border border-gray-200"}`}>
                   {(isNearIntentsWithdraw ? usdcSolanaToken : effectiveToken) && (
                     <TokenIcon
                       token={(isNearIntentsWithdraw ? usdcSolanaToken : effectiveToken)!}
@@ -365,20 +372,20 @@ export function BalanceModal({
                   )}
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-gray-600">
+                  <p className={`text-sm font-medium ${dark ? "text-slate-300" : "text-gray-600"}`}>
                     {isNearIntentsWithdraw ? "USDC / Solana" : `${effectiveToken?.symbol || "USDC"} / ${effectiveToken?.chain || "Solana"}`}
                   </p>
-                  <p className="text-xl font-semibold text-gray-900 mt-0.5">
+                  <p className={`text-xl font-semibold mt-0.5 ${dark ? "text-white" : "text-gray-900"}`}>
                     {isUSDCOnSolana && loadingBalance ? "…" : `$${isNearIntentsWithdraw ? balanceUSD : balanceDisplay}`}
                   </p>
                 </div>
               </div>
             </div>
             {!loadingBalance && balanceNum <= 0 && isUSDCOnSolana && (
-              <p className="text-sm text-amber-600 mt-2">No balance to withdraw.</p>
+              <p className={`text-sm mt-2 ${dark ? "text-amber-400" : "text-amber-600"}`}>No balance to withdraw.</p>
             )}
             {isNearIntentsWithdraw && payFromBalanceNum > 0 && (
-              <p className="text-xs text-gray-500 mt-2">
+              <p className={`text-xs mt-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>
                 You will pay from your USDC (Solana) balance. Fees are sponsored.
               </p>
             )}
@@ -386,7 +393,7 @@ export function BalanceModal({
 
           {/* Token/network selector for withdraw */}
           <div>
-            <Label className="text-sm font-medium text-gray-700 mb-2 block">
+            <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-300" : "text-gray-700"}`}>
               Withdraw with
             </Label>
             <TokenCombobox
@@ -394,10 +401,10 @@ export function BalanceModal({
               value={fromSel ?? (usdcSolanaToken ? { symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain } : undefined)}
               onChange={setFromSel}
               placeholder="Select token to receive"
-              className="w-full h-12 rounded-xl border-2 border-gray-200 bg-white text-center"
+              className={dark ? "w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white text-center placeholder:text-slate-400" : "w-full h-12 rounded-xl border-2 border-gray-200 bg-white text-center"}
               defaultShowAllChains
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className={`text-xs mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
               {isUSDCOnSolana
                 ? "Withdraw to any Solana wallet. Fees are sponsored."
                 : `Withdraw to ${effectiveToken?.symbol} on ${effectiveToken?.chain} via Near Intents. Enter destination address on ${effectiveToken?.chain}.`}
@@ -406,10 +413,10 @@ export function BalanceModal({
 
           {/* Amount */}
           <div>
-            <Label htmlFor="withdraw-amount">
+            <Label htmlFor="withdraw-amount" className={dark ? "text-slate-300" : undefined}>
               Amount (USDC to send)
               {isNearIntentsWithdraw && effectiveToken && (
-                <span className="text-gray-500 font-normal"> → receive ~{effectiveToken.symbol} on {effectiveToken.chain}</span>
+                <span className={dark ? "text-slate-400 font-normal" : "text-gray-500 font-normal"}> → receive ~{effectiveToken.symbol} on {effectiveToken.chain}</span>
               )}
             </Label>
             <Input
@@ -420,24 +427,22 @@ export function BalanceModal({
               placeholder="0.00"
               value={withdrawAmount}
               onChange={(e) => setWithdrawAmount(e.target.value)}
-              className="mt-1 font-mono"
+              className={`mt-1 font-mono ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
             />
             {payFromBalanceNum > 0 && (
               <button
                 type="button"
                 onClick={() => setWithdrawAmount(balanceUSD)}
-                className="text-xs text-orange-600 hover:underline mt-1"
+                className={`text-xs hover:underline mt-1 ${dark ? "text-orange-400" : "text-orange-600"}`}
               >
                 Max
               </button>
             )}
           </div>
 
-
-
           {/* Destination address */}
           <div>
-            <Label htmlFor="withdraw-address">
+            <Label htmlFor="withdraw-address" className={dark ? "text-slate-300" : undefined}>
               {isUSDCOnSolana ? "Destination Solana wallet" : `Destination address (${effectiveToken?.chain || "recipient"})`}
             </Label>
             <Input
@@ -445,33 +450,33 @@ export function BalanceModal({
               placeholder={isUSDCOnSolana ? "Enter Solana address" : `Enter ${effectiveToken?.chain || "destination"} address (e.g. 0x… for EVM)`}
               value={withdrawAddress}
               onChange={(e) => setWithdrawAddress(e.target.value)}
-              className="mt-1 font-mono text-sm"
+              className={`mt-1 font-mono text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
             />
             {isUSDCOnSolana && addressRiskStatus === "checking" && (
-              <p className="text-xs text-gray-600 mt-1.5 flex items-center gap-1.5">
+              <p className={`text-xs mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
                 <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
                 Checking address with Range…
               </p>
             )}
             {isUSDCOnSolana && addressRiskStatus === "safe" && (
-              <p className="text-xs text-emerald-600 mt-1.5 flex items-center gap-1.5 font-medium">
+              <p className="text-xs text-emerald-400 mt-1.5 flex items-center gap-1.5 font-medium">
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
                 Address compliant — safe to withdraw
               </p>
             )}
             {isUSDCOnSolana && addressRiskStatus === "unsafe" && (
-              <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1.5 font-medium">
+              <p className="text-xs text-red-400 mt-1.5 flex items-center gap-1.5 font-medium">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                 Address flagged — withdrawal blocked for your protection
               </p>
             )}
-            <p className="text-xs text-gray-500 mt-1.5">
+            <p className={`text-xs mt-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
               {isUSDCOnSolana ? "Withdrawals are free — transaction fees are sponsored." : "Your USDC is sent to Near Intents; they route to the selected token/chain."}
             </p>
           </div>
 
           <div className="flex gap-2 pt-2">
-            <Button variant="outline" onClick={onClose} className="flex-1">
+            <Button variant="outline" onClick={onClose} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
               Cancel
             </Button>
             <Button
@@ -491,7 +496,7 @@ export function BalanceModal({
             </Button>
           </div>
           {!loadingBalance && payFromBalanceNum <= 0 && (
-            <p className="text-xs text-gray-500 text-center">Add funds to your wallet to withdraw.</p>
+            <p className={`text-xs text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>Add funds to your wallet to withdraw.</p>
           )}
         </div>
         )}

@@ -50,6 +50,14 @@ export default function AboutPage() {
     setIsClient(true);
   }, []);
 
+  // Override root layout dark body so about page is white (layout.tsx body has bg-[#0f0f12])
+  useEffect(() => {
+    document.body.style.backgroundColor = "#ffffff";
+    return () => {
+      document.body.style.backgroundColor = "#0f0f12";
+    };
+  }, []);
+
   // Optimized: Load hero animation immediately but don't block page render (fetch from public so build doesn't resolve path)
   useEffect(() => {
     fetch("/jitter/paymentflow.json")
@@ -165,7 +173,7 @@ export default function AboutPage() {
   return (
     <>
       {/* Removed full page loader - it was blocking LCP. Content renders immediately. */}
-
+      <div className="min-h-screen bg-white">
       <div className="bg-white">
         {/* Hero Section */}
         <div className="h-auto md:h-screen relative overflow-hidden">
@@ -264,8 +272,8 @@ export default function AboutPage() {
           </div>
         </div>
 
-        {/* Section — Dark features block (Figma) */}
-        <section className="mt-0 md:mt-0 bg-[#18181F] relative">
+        {/* Section — Features block (light background for white body) */}
+        <section className="mt-0 md:mt-0 bg-slate-50 relative">
           {/* Background image with low opacity - parallax */}
           <div
             className="absolute inset-0 opacity-10 pointer-events-none"
@@ -278,7 +286,7 @@ export default function AboutPage() {
           />
           <div className="max-w-7xl mx-auto px-4 md:px-8 py-20 md:py-28 relative z-10">
             <div className="text-center">
-              <h2 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight">
+              <h2 className="text-5xl md:text-6xl font-medium font-sans text-slate-900 leading-tight">
                 The modern way <br className="hidden md:block" />
                 <span
                   style={{
@@ -292,7 +300,7 @@ export default function AboutPage() {
                   to get paid in crypto.
                 </span>
               </h2>
-              <p className="mt-3 text-lg text-white/70">
+              <p className="mt-3 text-lg text-slate-600">
                 Loofta removes all the friction of multi‑chain payments, for you and your users.
               </p>
             </div>
@@ -348,7 +356,7 @@ export default function AboutPage() {
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true, margin: "-50px" }}
                   transition={{ duration: 0.5, delay: index * 0.15 }}
-                  className="rounded-[20px] bg-[#1D1D25] border border-white/5 p-6 text-white flex items-start gap-4"
+                  className="rounded-[20px] bg-white border border-slate-200 p-6 text-slate-900 flex items-start gap-4 shadow-sm"
                 >
                   <div className="shrink-0">
                     <Image
@@ -361,7 +369,7 @@ export default function AboutPage() {
                   </div>
                   <div className="flex flex-col">
                     <div className="text-xl font-semibold leading-tight">{f.title}</div>
-                    <div className="mt-2 text-lg text-white/60 leading-relaxed">{f.desc}</div>
+                    <div className="mt-2 text-lg text-slate-600 leading-relaxed">{f.desc}</div>
                   </div>
                 </motion.div>
               ))}
@@ -553,6 +561,7 @@ export default function AboutPage() {
         <style jsx global>{`
         .spline-wrap a[href*="spline.design"] { display: none !important; }
       `}</style>
+      </div>
       </div>
     </>
   );

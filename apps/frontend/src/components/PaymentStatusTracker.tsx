@@ -4,6 +4,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { Loader2, CheckCircle2, Clock, ArrowRight, Zap, Send, Wallet } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getNetworkConfirmationTime, getSameChainProcessingTime } from '@/lib/networkTimes';
+import { PRIVATE_PAYMENT_COMING_SOON } from '@/services/privacyCash';
 
 export type PaymentStatus =
   | 'PENDING_DEPOSIT'
@@ -73,7 +74,7 @@ const STEP_CONFIG: Record<string, Omit<PaymentStep, 'status'>> = {
   privacyCash: {
     id: 'privacy-cash',
     label: 'Private Transfer',
-    description: 'Private payments coming soon',
+    description: PRIVATE_PAYMENT_COMING_SOON ? 'Private payments coming soon' : 'Processing private transfer',
     icon: <Loader2 className="w-5 h-5" />,
     estimatedTime: 45,
   },
@@ -241,7 +242,7 @@ function getStatusMessage(status: PaymentStatus | null): { title: string; subtit
     case 'PRIVATE_TRANSFER_PENDING':
       return {
         title: 'Private Transfer',
-        subtitle: 'Private payments coming soon.',
+        subtitle: PRIVATE_PAYMENT_COMING_SOON ? 'Private payments coming soon.' : 'Processing your private transfer…',
       };
     case 'INCOMPLETE_DEPOSIT':
       return {

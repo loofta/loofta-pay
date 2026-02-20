@@ -72,7 +72,6 @@ export class ClaimsController {
     },
   })
   @ApiResponse({ status: 400, description: 'Invalid input' })
-  @ApiResponse({ status: 404, description: 'User not found or no wallet' })
   async createFromUsername(
     @Body() createDto: CreateClaimFromUsernameDto,
   ): Promise<{ id: string; link: string }> {

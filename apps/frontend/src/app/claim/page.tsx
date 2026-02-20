@@ -18,6 +18,7 @@ import { ArrowRight, Wallet } from "lucide-react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { useRouter, usePathname } from "next/navigation";
+import { PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
 
 /** Inline Loofta logo SVG (matches pay modal). */
 function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
@@ -278,7 +279,7 @@ export default function ClaimPage({ embedInApp }: { embedInApp?: boolean } = {})
         toSel: { symbol: finalToSel.symbol, chain: finalToSel.chain },
         recipient: finalRecipient,
         userId: authenticated ? userId : undefined,
-        isPrivate: isPrivateMode,
+        isPrivate: PRIVATE_PAYMENT_COMING_SOON ? false : isPrivateMode,
       });
       setCreatedLink(res.link);
       setShowConfetti(true);
@@ -831,7 +832,7 @@ export default function ClaimPage({ embedInApp }: { embedInApp?: boolean } = {})
 
                     {/* Private payment switch - positioned where email notifications was */}
                     <div
-                      className={`p-4 rounded-xl border ${isPrivateMode
+                      className={`p-4 rounded-xl border ${!PRIVATE_PAYMENT_COMING_SOON && isPrivateMode
                         ? 'bg-amber-500/10 border-amber-400/30'
                         : 'bg-white/5 border-white/10'
                         }`}
@@ -842,20 +843,26 @@ export default function ClaimPage({ embedInApp }: { embedInApp?: boolean } = {})
                             <span className="text-base font-semibold text-white">
                               🔒 Private payment
                             </span>
+                            {PRIVATE_PAYMENT_COMING_SOON && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                                Coming soon
+                              </span>
+                            )}
                           </div>
                           <p className="text-sm text-slate-400">
                             When on, payment must use Privacy Cash. You receive in your chosen token (e.g. USDC on Solana); both addresses stay private.
                           </p>
                         </div>
                         <Switch
-                          checked={isPrivateMode}
-                          onCheckedChange={(checked) => {
+                          checked={PRIVATE_PAYMENT_COMING_SOON ? false : isPrivateMode}
+                          onCheckedChange={PRIVATE_PAYMENT_COMING_SOON ? () => { } : (checked) => {
                             setIsPrivateMode(checked);
                             if (checked && !hasSeenPrivateTutorial) {
                               setShowPrivacyInfo(true);
                               setHasSeenPrivateTutorial(true);
                             }
                           }}
+                          disabled={PRIVATE_PAYMENT_COMING_SOON}
                           className="shrink-0 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
                         />
                       </div>
@@ -875,7 +882,7 @@ export default function ClaimPage({ embedInApp }: { embedInApp?: boolean } = {})
                         loading={creating}
                         loadingText="Creating…"
                       >
-                        {isPrivateMode ? (
+                        {!PRIVATE_PAYMENT_COMING_SOON && isPrivateMode ? (
                           <>
                             <ShieldIcon className="w-5 h-5" />
                             Create private payment link

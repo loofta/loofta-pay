@@ -44,6 +44,20 @@ export default function Home() {
     if (searchParams.get("tab") === "receive") setActiveTabState("receive");
   }, [searchParams]);
 
+  // When ?to=username (e.g. redirect from /link/@username), show Send tab and pay-to-user form
+  const toParam = searchParams.get("to");
+  useEffect(() => {
+    if (!toParam) return;
+    const clean = toParam.replace(/^@/, "").trim().toLowerCase();
+    if (!clean) return;
+    setActiveTabState("send");
+    setRecipient(clean.startsWith("@") ? clean : `@${clean}`);
+    setSelectedRecipient(clean);
+    setSendStep(2);
+    const amt = searchParams.get("amount");
+    if (amt != null && amt !== "" && !isNaN(Number(amt)) && Number(amt) >= 0) setAmount(amt);
+  }, [toParam, searchParams]);
+
   // Open create-payment-link card when ?create=1 (e.g. redirect from /claim)
   useEffect(() => {
     if (searchParams.get("create") === "1") {
