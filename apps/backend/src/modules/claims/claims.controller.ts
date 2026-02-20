@@ -10,6 +10,7 @@ import {
   HttpStatus,
   BadRequestException,
   ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -131,6 +132,49 @@ export class ClaimsController {
     const privyUserId = req.user?.id;
     if (!privyUserId) return { isRecipient: false };
     return this.claimsService.checkIsRecipient(id, privyUserId);
+  }
+
+  /**
+   * Claim a pending payment (PENDING_EMAIL / PENDING_USERNAME) as the logged-in recipient.
+   * Updates the claim's recipient to your Solana wallet so the payer can complete the deposit.
+   */
+  @Post(':id/claim')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Claim a pending payment as the recipient' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Claimed', schema: { properties: { claimed: { type: 'boolean' } } } })
+  @ApiResponse({ status: 400, description: 'Not pending or already claimed' })
+  @ApiResponse({ status: 403, description: 'Not the intended recipient' })
+  async claimAsRecipient(
+    @Param('id') id: string,
+    @Req() req: { user?: { id: string } },
+  ): Promise<{ claimed: boolean }> {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) throw new UnauthorizedException('Login required to claim.');
+    return this.claimsService.claimAsRecipient(id, privyUserId);
+  }
+
+  /**
+   * Reclaim (cancel) a payment as the creator. Sets claim to CANCELLED.
+   * If the claim has a burner with USDC, sweeps it to the creator's Loofta wallet.
+   */
+  @Post(':id/reclaim')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Reclaim (cancel) payment as creator; funds go to your Loofta wallet' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Cancelled', schema: { properties: { cancelled: { type: 'boolean' } } } })
+  @ApiResponse({ status: 403, description: 'Not the creator' })
+  async reclaim(
+    @Param('id') id: string,
+    @Req() req: { user?: { id: string } },
+  ): Promise<{ cancelled: boolean }> {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) throw new UnauthorizedException('Login required to reclaim.');
+    return this.claimsService.reclaimByCreator(id, privyUserId);
   }
 
   /**

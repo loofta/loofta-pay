@@ -47,6 +47,14 @@ export class SolanaSponsorService {
     return this.feePayerKeypair !== null && this.feePayerAddress !== null;
   }
 
+  getConnection(): Connection {
+    return this.connection;
+  }
+
+  getFeePayerKeypair(): Keypair | null {
+    return this.feePayerKeypair;
+  }
+
   getFeePayerAddress(): string | null {
     return this.feePayerAddress;
   }

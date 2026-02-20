@@ -13,6 +13,9 @@ import {
   prepareSendPaymentPrivate,
   completeSendPaymentPrivateWithSignature,
   submitSendPaymentPrivate,
+  getMySendPaymentLinks,
+  getSendPaymentPublic,
+  reclaimSendPayment,
   PRIVACY_SESSION_MESSAGE,
   type CreateSendPaymentInput,
   type CreateSendPaymentResult,
@@ -22,7 +25,7 @@ import { buildUSDCTransferTransaction, sendSignedUSDCTransfer } from '@/services
 import { useSolanaPayment } from '@/hooks/useSolanaPayment';
 import { GradientActionButton } from '@/components/ui/GradientActionButton';
 import { MessageInput } from '@/components/MessageInput';
-import { Copy, Check, Send, Mail, AtSign, Share2, Wallet, Loader2, ArrowRight, Shield } from 'lucide-react';
+import { Copy, Check, Send, Mail, AtSign, Share2, Wallet, Loader2, ArrowRight, Shield, Link2, History, RotateCcw } from 'lucide-react';
 
 const SOLANA_RPC_URL =
   process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
@@ -76,7 +79,7 @@ export default function SendPaymentPage() {
   const { wallets: solanaWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
   const { toast } = useToast();
-  const { currentLink, step: storeStep, setCreated, setFunded, clearCurrentLink } = useSendPaymentStore();
+  const { currentLink, step: storeStep, hydrated, setCurrentLink, setStep, setCreated, setFunded, clearCurrentLink } = useSendPaymentStore();
   const result = currentLink;
   const step = storeStep;
 
@@ -96,6 +99,10 @@ export default function SendPaymentPage() {
   const [payWithWalletError, setPayWithWalletError] = useState<string | null>(null);
   const [payPrivately, setPayPrivately] = useState(false);
   const [payWithPrivateError, setPayWithPrivateError] = useState<string | null>(null);
+  const [recoverLinks, setRecoverLinks] = useState<{ id: string; amount: string; token: string; status: string; recipient_type: string; created_at: string }[] | null>(null);
+  const [recoverLoading, setRecoverLoading] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [reclaiming, setReclaiming] = useState(false);
 
   const solanaPayment = useSolanaPayment({ enabled: step === 'created' && !!result });
   const { signMessage: privySignMessage } = useSignMessage();
@@ -119,6 +126,21 @@ export default function SendPaymentPage() {
             >
               Log in to continue
             </Button>
+          </div>
+        </main>
+      </>
+    );
+  }
+
+  // Wait for persisted store to rehydrate so we don't lose the current link on reload
+  if (!hydrated) {
+    return (
+      <>
+        <div className="fixed inset-0 -z-10 bg-[#18181F]" />
+        <main className="min-h-[calc(100vh-5rem)] flex flex-col items-center justify-center px-4 py-12">
+          <div className="flex flex-col items-center gap-4 text-white/80">
+            <Loader2 className="h-8 w-8 animate-spin" />
+            <p className="text-sm">Loading your payment info…</p>
           </div>
         </main>
       </>
@@ -217,7 +239,9 @@ export default function SendPaymentPage() {
       const { publicKey } = phantom.publicKey ? { publicKey: phantom.publicKey } : await phantom.connect();
       if (!publicKey) throw new Error('Phantom: no public key');
       senderPublicKey = publicKey.toBase58();
-      const res = await phantom.signMessage(messageBytes, 'utf8');
+      const signMsg = phantom.signMessage;
+      if (!signMsg) throw new Error('Phantom: signMessage not available');
+      const res = await signMsg(messageBytes, 'utf8');
       const sig = res?.signature ?? res;
       // Phantom extension returns Uint8Array; some SDKs return base58 string — send as-is so backend can decode
       sessionSigBase64 =
@@ -228,7 +252,7 @@ export default function SendPaymentPage() {
       // Loofta path: use embedded Solana wallet (prefer non-Phantom so we use Loofta/Privy wallet)
       const wallet =
         solanaWallets?.find(
-          (w) => w.walletClientType !== 'phantom' && w.walletClientType !== 'detected',
+          (w) => (w as { walletClientType?: string }).walletClientType !== 'phantom' && (w as { walletClientType?: string }).walletClientType !== 'detected',
         ) ?? solanaWallets?.[0];
       if (!wallet?.address) {
         throw new Error('Connect your Loofta Solana wallet to pay privately from balance.');
@@ -266,7 +290,7 @@ export default function SendPaymentPage() {
     } else {
       const wallet =
         solanaWallets?.find(
-          (w) => w.walletClientType !== 'phantom' && w.walletClientType !== 'detected',
+          (w) => (w as { walletClientType?: string }).walletClientType !== 'phantom' && (w as { walletClientType?: string }).walletClientType !== 'detected',
         ) ?? solanaWallets?.[0];
       if (!wallet) throw new Error('No wallet to sign the transaction.');
       const signedResult = await wallet.signTransaction({ transaction: txBytes });
@@ -284,7 +308,7 @@ export default function SendPaymentPage() {
       } else {
         const wallet =
           solanaWallets?.find(
-            (w) => w.walletClientType !== 'phantom' && w.walletClientType !== 'detected',
+            (w) => (w as { walletClientType?: string }).walletClientType !== 'phantom' && (w as { walletClientType?: string }).walletClientType !== 'detected',
           ) ?? solanaWallets?.[0];
         if (!wallet) throw new Error('No wallet to sign the SOL transaction.');
         const signedResult = await wallet.signTransaction({ transaction: solTxBytes });
@@ -413,7 +437,7 @@ export default function SendPaymentPage() {
         const signed = await phantom.signTransaction(tx);
         txSignature = await sendSignedUSDCTransfer(signed);
       } else {
-        const solanaWallet = solanaWallets?.find((w) => w.walletClientType === 'phantom' || w.walletClientType === 'detected');
+        const solanaWallet = solanaWallets?.find((w) => (w as { walletClientType?: string }).walletClientType === 'phantom' || (w as { walletClientType?: string }).walletClientType === 'detected');
         const wallet = solanaWallet ?? solanaWallets?.[0];
         if (!wallet?.address) {
           const msg = 'Connect Phantom or another Solana wallet to pay.';
@@ -452,6 +476,65 @@ export default function SendPaymentPage() {
     setTimeout(() => setCopied(null), 2000);
   };
 
+  const loadRecoverLinks = async () => {
+    if (!user?.id || recoverLinks !== null) return;
+    setRecoverLoading(true);
+    try {
+      const list = await getMySendPaymentLinks(user.id);
+      setRecoverLinks(list);
+    } catch {
+      toast({ title: 'Could not load links', variant: 'destructive' });
+    } finally {
+      setRecoverLoading(false);
+    }
+  };
+
+  const restoreLink = async (id: string) => {
+    if (!user?.id) return;
+    setRestoringId(id);
+    try {
+      const publicData = await getSendPaymentPublic(id, user.id);
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const link: CreateSendPaymentResult = {
+        id: publicData.id,
+        link: `${origin}/s/${id}`,
+        deposit_address: publicData.deposit_address ?? '',
+        burner_address: publicData.burner_address ?? '',
+        amount: publicData.amount,
+        token: publicData.token,
+        required_sol_lamports: publicData.required_sol_lamports ?? 500_000,
+      };
+      setCurrentLink(link);
+      setStep(publicData.status === 'FUNDED' || publicData.status === 'CLAIMED' ? 'funded' : 'created');
+      toast({ title: 'Link restored', description: 'You can share it or mark as funded.' });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Could not restore link';
+      toast({ title: 'Restore failed', description: msg, variant: 'destructive' });
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  const handleReclaim = async () => {
+    if (!result?.id || !user?.id) return;
+    setReclaiming(true);
+    try {
+      const res = await reclaimSendPayment(result.id, user.id);
+      const amount = res?.amount_reclaimed ?? result.amount;
+      toast({
+        title: 'Funds reclaimed',
+        description: `$${amount} USDC has been sent back to your wallet.`,
+      });
+      clearCurrentLink();
+      setGifUrl(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Reclaim failed';
+      toast({ title: 'Reclaim failed', description: msg, variant: 'destructive' });
+    } finally {
+      setReclaiming(false);
+    }
+  };
+
   const shareLink = () => {
     if (!result?.link) return;
     if (navigator.share) {
@@ -470,6 +553,56 @@ export default function SendPaymentPage() {
       <div className="fixed inset-0 -z-10 bg-[#18181F]" />
       <main className="min-h-[calc(100vh-5rem)] px-4 py-8 md:py-12">
         <div className="mx-auto max-w-lg">
+          {/* Recover link — always visible at top so users can get a past link back */}
+          <div className="mb-6 rounded-xl border border-amber-200/80 bg-amber-50/50 p-4">
+            <button
+              type="button"
+              onClick={loadRecoverLinks}
+              disabled={recoverLoading}
+              className="flex w-full items-center justify-center gap-2 rounded-lg py-3 text-sm font-semibold text-amber-800 hover:bg-amber-100/80 transition-colors disabled:opacity-60"
+            >
+              <History className="h-5 w-5" />
+              {recoverLinks === null
+                ? recoverLoading
+                  ? 'Loading your links…'
+                  : 'Recover a recent payment link'
+                : 'Your recent payment links'}
+            </button>
+            {recoverLinks !== null && (
+              <ul className="mt-3 space-y-2">
+                {recoverLinks.length === 0 ? (
+                  <li className="text-sm text-amber-800/80">No payment links yet.</li>
+                ) : (
+                  recoverLinks.map((item) => (
+                    <li key={item.id} className="flex items-center justify-between gap-2 rounded-lg border border-amber-200/60 bg-white p-3">
+                      <span className="text-sm font-medium text-gray-900">
+                        ${item.amount} {item.token}
+                      </span>
+                      <span className="text-xs text-gray-500 capitalize">{item.status.toLowerCase()}</span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={restoringId !== null}
+                        onClick={() => restoreLink(item.id)}
+                        className="shrink-0 border-amber-300 text-amber-800 hover:bg-amber-100"
+                      >
+                        {restoringId === item.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            <Link2 className="h-4 w-4 mr-1" />
+                            Restore
+                          </>
+                        )}
+                      </Button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            )}
+          </div>
+
           <AnimatePresence mode="wait">
             {step === 'form' && (
               <motion.div
@@ -682,15 +815,15 @@ export default function SendPaymentPage() {
                         <div className="flex flex-col gap-2">
                           <div className="flex gap-2">
                             <Input readOnly value={result.deposit_address} className="font-mono text-xs" placeholder="USDC deposit" />
-                            <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.deposit_address, 'address')}>
-                              {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                            <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.deposit_address, 'address')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
+                              {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
                             </Button>
                           </div>
                           {result.burner_address != null && (
                             <div className="flex gap-2">
                               <Input readOnly value={result.burner_address} className="font-mono text-xs" placeholder="SOL (0.0005) for gas" />
-                              <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.burner_address!, 'address')}>
-                                {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                              <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.burner_address!, 'address')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
+                                {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
                               </Button>
                             </div>
                           )}
@@ -701,8 +834,8 @@ export default function SendPaymentPage() {
                     {step === 'funded' && (
                       <div className="flex gap-2">
                         <Input readOnly value={result.deposit_address} className="font-mono text-xs" />
-                        <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.deposit_address, 'address')}>
-                          {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                        <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.deposit_address, 'address')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
+                          {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
                         </Button>
                       </div>
                     )}
@@ -716,8 +849,8 @@ export default function SendPaymentPage() {
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
                       <div className="flex-1 flex gap-2">
                         <Input readOnly value={result.link} className="font-mono text-xs" />
-                        <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.link, 'link')}>
-                          {copied === 'link' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                        <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.link, 'link')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
+                          {copied === 'link' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
                         </Button>
                       </div>
                       <Button type="button" variant="outline" className="shrink-0" onClick={shareLink}>
@@ -744,9 +877,21 @@ export default function SendPaymentPage() {
                   </p>
                 )}
 
-                <Button variant="ghost" className="mt-6 w-full text-gray-500" onClick={() => { clearCurrentLink(); setGifUrl(null); }}>
-                  Create another link
-                </Button>
+                <div className="mt-6 flex flex-col gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full text-gray-700 border-gray-300 hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+                    onClick={handleReclaim}
+                    disabled={reclaiming}
+                  >
+                    {reclaiming ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                    Reclaim funds (cancel and get USDC back)
+                  </Button>
+                  <Button variant="ghost" className="w-full text-gray-500" onClick={() => { clearCurrentLink(); setGifUrl(null); }}>
+                    Create another link
+                  </Button>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

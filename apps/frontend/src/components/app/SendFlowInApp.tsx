@@ -153,12 +153,12 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
         </button>
       </div>
       {isEmail && (
-        <p className="text-slate-400 text-xs">
+        <p className="text-slate-400 text-sm">
           They&apos;ll claim by signing in with this email (account not required yet).
         </p>
       )}
       {!isEmail && usernameNotOnLoofta && (
-        <p className="text-slate-400 text-xs">
+        <p className="text-slate-400 text-sm">
           This user isn&apos;t on Loofta yet. You can still create a link; they can claim it when they sign up with this username.
         </p>
       )}

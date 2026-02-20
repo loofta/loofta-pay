@@ -159,6 +159,32 @@ export class SendPaymentService {
   }
 
   /**
+   * List send payment links created by the given user (for recovery after reload).
+   */
+  async listBySender(senderUserId: string): Promise<
+    { id: string; amount: string; token: string; status: string; recipient_type: string; created_at: string }[]
+  > {
+    const { data, error } = await this.supabaseService.sendPaymentLinks
+      .select('id, amount, token, status, recipient_type, created_at')
+      .eq('sender_user_id', senderUserId)
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    if (error) {
+      this.logger.warn('listBySender failed:', error);
+      return [];
+    }
+    return (data ?? []).map((row) => ({
+      id: row.id,
+      amount: row.amount,
+      token: row.token,
+      status: row.status,
+      recipient_type: row.recipient_type,
+      created_at: row.created_at,
+    }));
+  }
+
+  /**
    * Get public details for a send payment link (no sensitive data).
    * If userId is provided and matches sender, includes is_sender: true.
    */

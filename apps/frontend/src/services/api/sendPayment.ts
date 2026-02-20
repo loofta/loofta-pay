@@ -62,6 +62,19 @@ export async function createSendPayment(
   });
 }
 
+export interface MySendPaymentLinkItem {
+  id: string;
+  amount: string;
+  token: string;
+  status: string;
+  recipient_type: string;
+  created_at: string;
+}
+
+export async function getMySendPaymentLinks(userId: string): Promise<MySendPaymentLinkItem[]> {
+  return fetchApi<MySendPaymentLinkItem[]>('/send-payment/my-links', { userId });
+}
+
 export async function getSendPaymentPublic(
   id: string,
   userId?: string

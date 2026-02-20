@@ -97,8 +97,8 @@ export class DepositService {
       return this.handleSameChainDeposit(claim, fromToken, originChain, sameToken);
     }
 
-    // Cross-chain: use Near Intents
-    return this.handleCrossChainDeposit(claim, fromToken, amount, userAddress, refundAddress, orgReferral, isPrivate, recipientSolanaAddress);
+    // Cross-chain: use Near Intents (pass rawClaim so we have recipient_address for quote/burner logic)
+    return this.handleCrossChainDeposit(claim, rawClaim, fromToken, amount, userAddress, refundAddress, orgReferral, isPrivate, recipientSolanaAddress);
   }
 
   /**
@@ -154,10 +154,12 @@ export class DepositService {
   }
 
   /**
-   * Handle cross-chain deposit using Near Intents
+   * Handle cross-chain deposit using Near Intents.
+   * For cross-chain to Solana: private mode uses payer's embedded wallet; non-private uses platform burner so quote succeeds.
    */
   private async handleCrossChainDeposit(
     claim: any,
+    rawClaim: { recipient_address?: string | null; claim_burner_address?: string | null },
     fromToken: RequestDepositDto['fromToken'],
     amount: string,
     userAddress?: string,
@@ -168,16 +170,16 @@ export class DepositService {
   ): Promise<DepositResult> {
     const originChain = String(fromToken.chain || '').toLowerCase();
     const destChain = String(claim.to_chain || '').toLowerCase();
-    // Note: We now use SIMPLE deposit mode with ORIGIN_CHAIN deposit type for all routes
-    // This matches the working example and provides Arbitrum deposit addresses instead of INTENTS addresses
-    const useIntentsMode = false; // Disabled - using SIMPLE mode instead
+    const useIntentsMode = false;
 
     try {
-      // For private cross-chain to Solana USDC: user must be logged in; Near-Intents sends to their embedded Solana wallet.
-      // They then complete Privacy Cash (deposit + withdraw to recipient) in the UI with their wallet.
-      let recipientAddress = claim.recipient_address;
       const toChainLower = (claim.to_chain || '').toLowerCase();
-      if (isPrivate && originChain !== 'solana' && (toChainLower === 'solana' || toChainLower === 'sol') && claim.to_symbol === 'USDC') {
+      const isDestSolana = toChainLower === 'solana' || toChainLower === 'sol';
+      const finalRecipient = (rawClaim.recipient_address || '').trim();
+
+      // Quote recipient: private -> user embedded wallet; non-private Solana dest -> platform burner; else -> final recipient
+      let recipientAddress: string;
+      if (isPrivate && originChain !== 'solana' && isDestSolana && claim.to_symbol === 'USDC') {
         if (!recipientSolanaAddress) {
           throw new BadRequestException(
             'Private cross-chain payment to Solana requires login. Please connect your Loofta account and use your embedded Solana wallet address as recipient.'
@@ -185,8 +187,22 @@ export class DepositService {
         }
         recipientAddress = recipientSolanaAddress;
         this.logger.log(`[Deposit] Private cross-chain: using user embedded Solana wallet as recipient: ${recipientAddress}`);
+      } else if (!isPrivate && isDestSolana) {
+        // Use unique claim burner (like Privacy Cash / send-payment)
+        const claimBurner = (rawClaim.claim_burner_address || '').trim();
+        recipientAddress = claimBurner || finalRecipient;
+        if (claimBurner) this.logger.log(`[Deposit] Non-private cross-chain to Solana: using claim unique burner as quote recipient`);
+        else this.logger.log(`[Deposit] Using final recipient for quote: ${recipientAddress}`);
       } else {
+        recipientAddress = finalRecipient;
         this.logger.log(`[Deposit] Using recipient: ${recipientAddress}`);
+      }
+
+      if (!recipientAddress || typeof recipientAddress !== 'string') {
+        throw new BadRequestException({
+          message: 'Recipient address is required. For payment links to a username/email, the recipient must open the link and claim first.',
+          code: 'MISSING_RECIPIENT',
+        });
       }
 
       // Get destination asset ID
