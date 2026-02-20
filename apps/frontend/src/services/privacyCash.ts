@@ -15,7 +15,13 @@ export const PRIVACY_CASH_FEES = {
   usdc_withdraw_rent_fee: 0.744548676,
 };
 
-export const PRIVATE_PAYMENT_COMING_SOON = true;
+/** When "true" or "1", private payment is enabled; otherwise UI shows "Coming soon". */
+const enablePrivatePayment =
+  typeof process !== "undefined" &&
+  (process.env.NEXT_PUBLIC_ENABLE_PRIVATE_PAYMENT === "true" ||
+   process.env.NEXT_PUBLIC_ENABLE_PRIVATE_PAYMENT === "1");
+
+export const PRIVATE_PAYMENT_COMING_SOON = !enablePrivatePayment;
 
 /** No-op: private payments are coming soon. */
 export async function payPrivatelyWithPrivacyCash(_options: {

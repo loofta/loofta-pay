@@ -56,13 +56,20 @@ export class DepositService {
       throw new BadRequestException('Missing required fields');
     }
 
-    // Get claim details
+    // Get claim details (masked for display) and raw for recipient_address (pending check)
     const claim = await this.claimsService.findOne(claimId);
+    const rawClaim = await this.claimsService.findOneRaw(claimId);
 
-    // Reject deposit if recipient has not claimed yet (created by email, no account)
-    if (claim.recipient_address?.startsWith(ClaimsService.PENDING_EMAIL_PREFIX)) {
+    // Reject deposit if recipient has not claimed yet (created by email or username, no account / not signed up)
+    const ra = rawClaim.recipient_address;
+    if (ra?.startsWith(ClaimsService.PENDING_EMAIL_PREFIX)) {
       throw new BadRequestException(
         'Recipient has not claimed this payment yet. They need to open the link and sign in with their email first.'
+      );
+    }
+    if (ra?.startsWith(ClaimsService.PENDING_USERNAME_PREFIX)) {
+      throw new BadRequestException(
+        'Recipient has not claimed this payment yet. They need to open the link and sign up with that username to claim it.'
       );
     }
 

@@ -44,14 +44,18 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
   const isEmail = looksLikeEmail(recipientUsername);
   const [loadingUser, setLoadingUser] = useState(!isEmail);
   const [userError, setUserError] = useState<string | null>(null);
+  /** When username lookup fails we still allow creating a link (burner); they claim when they sign up. */
+  const [usernameNotOnLoofta, setUsernameNotOnLoofta] = useState(false);
 
   useEffect(() => {
     if (isEmail) {
       setLoadingUser(false);
+      setUsernameNotOnLoofta(false);
       if (initialAmount) setAmount(initialAmount);
       return;
     }
     let cancelled = false;
+    setUsernameNotOnLoofta(false);
     fetchUserByUsername(recipientUsername)
       .then((data) => {
         if (!cancelled) {
@@ -60,7 +64,10 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
         }
       })
       .catch(() => {
-        if (!cancelled) setUserError("User not found");
+        if (!cancelled) {
+          setRequirePrivate(false);
+          setUsernameNotOnLoofta(true);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingUser(false);
@@ -148,6 +155,11 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
       {isEmail && (
         <p className="text-slate-400 text-xs">
           They&apos;ll claim by signing in with this email (account not required yet).
+        </p>
+      )}
+      {!isEmail && usernameNotOnLoofta && (
+        <p className="text-slate-400 text-xs">
+          This user isn&apos;t on Loofta yet. You can still create a link; they can claim it when they sign up with this username.
         </p>
       )}
 
