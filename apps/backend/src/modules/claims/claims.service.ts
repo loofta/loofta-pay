@@ -1,5 +1,8 @@
 import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createDecipheriv } from 'crypto';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
 import { Keypair, PublicKey } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
@@ -16,6 +19,12 @@ import { SolanaSponsorService } from './solana-sponsor.service';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 
+/** Same as SendPaymentEncryptionService – used when that service is not injected or key not loaded there */
+const ENC_ALGO = 'aes-256-gcm';
+const ENC_IV_LENGTH = 16;
+const ENC_TAG_LENGTH = 16;
+const ENC_KEY_LENGTH = 32;
+
 @Injectable()
 export class ClaimsService {
   private readonly logger = new Logger(ClaimsService.name);
@@ -31,6 +40,9 @@ export class ClaimsService {
     this.baseUrl = this.configService.get<string>(
       'NEXT_PUBLIC_BASE_URL',
       'https://pay.loofta.xyz',
+    );
+    this.logger.log(
+      `ClaimsService init: encryption=${this.encryption ? (this.encryption.isAvailable() ? 'available' : 'not configured') : 'null'}, sponsor=${this.solanaSponsor?.isAvailable() ?? false}`,
     );
   }
 
@@ -169,6 +181,78 @@ export class ClaimsService {
       claim_burner_address: burnerKeypair.publicKey.toBase58(),
       claim_burner_encrypted_secret: encrypted,
     };
+  }
+
+  /**
+   * Read SEND_PAYMENT_ENC_KEY from .env file (fallback when ConfigService/process.env don't have it).
+   * Tries backend root and cwd so it works whether run from monorepo root or apps/backend.
+   */
+  private getClaimBurnerDecryptionKeyFromFile(): string | null {
+    const tryPaths = [
+      join(process.cwd(), 'apps', 'backend', '.env.local'),
+      join(process.cwd(), '.env.local'),
+      join(__dirname, '..', '..', '..', '.env.local'),
+      join(__dirname, '..', '..', '.env.local'),
+    ];
+    for (const p of tryPaths) {
+      try {
+        if (existsSync(p)) {
+          const content = readFileSync(p, 'utf8');
+          const match = content.match(/SEND_PAYMENT_ENC_KEY\s*=\s*(["']?)([^\s#'"]+)\1/);
+          if (match?.[2]) return match[2].trim();
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Read SEND_PAYMENT_ENC_KEY (ConfigService → process.env → .env.local file) so reclaim and
+   * recipient claim-sweep can decrypt even when SendPaymentEncryptionService is not injected.
+   */
+  private getClaimBurnerDecryptionKey(): Buffer | null {
+    let raw =
+      this.configService.get<string>('SEND_PAYMENT_ENC_KEY') ??
+      (typeof process !== 'undefined' ? process.env.SEND_PAYMENT_ENC_KEY : undefined);
+    if (!raw || typeof raw !== 'string') {
+      raw = this.getClaimBurnerDecryptionKeyFromFile() ?? undefined;
+    }
+    if (!raw || typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    const hexBuf = Buffer.from(trimmed, 'hex');
+    if (hexBuf.length === ENC_KEY_LENGTH) return hexBuf;
+    if (trimmed.length >= 32) return Buffer.from(trimmed.slice(0, 32), 'utf8');
+    return null;
+  }
+
+  /** Decrypt burner secret (same format as SendPaymentEncryptionService). */
+  private decryptBurnerSecret(ciphertextBase64: string, key: Buffer): Buffer {
+    const buf = Buffer.from(ciphertextBase64, 'base64');
+    if (buf.length < ENC_IV_LENGTH + ENC_TAG_LENGTH) throw new Error('Invalid ciphertext');
+    const iv = buf.subarray(0, ENC_IV_LENGTH);
+    const tag = buf.subarray(ENC_IV_LENGTH, ENC_IV_LENGTH + ENC_TAG_LENGTH);
+    const encrypted = buf.subarray(ENC_IV_LENGTH + ENC_TAG_LENGTH);
+    const decipher = createDecipheriv(ENC_ALGO, key, iv, { authTagLength: ENC_TAG_LENGTH });
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  }
+
+  /** True if we can decrypt claim burner secrets (injected service or direct key). */
+  private canDecryptBurnerSecret(): boolean {
+    if (this.encryption?.isAvailable()) return true;
+    return this.getClaimBurnerDecryptionKey() !== null;
+  }
+
+  /** Decrypt claim burner secret; uses injected encryption service or direct key. */
+  private decryptClaimBurnerSecret(ciphertextBase64: string): Buffer {
+    if (this.encryption?.isAvailable()) {
+      return this.encryption.decrypt(ciphertextBase64);
+    }
+    const key = this.getClaimBurnerDecryptionKey();
+    if (!key) throw new Error('SEND_PAYMENT_ENC_KEY not available for decrypt');
+    return this.decryptBurnerSecret(ciphertextBase64, key);
   }
 
   /**
@@ -363,14 +447,15 @@ export class ClaimsService {
 
     // If this claim had a unique burner and funds landed there, sweep USDC to the recipient (like Privacy Cash)
     const rawClaim = claim as { claim_burner_address?: string | null; claim_burner_encrypted_secret?: string | null };
+    const burnerAddr = (rawClaim.claim_burner_address || '').trim();
     if (
-      rawClaim.claim_burner_address &&
+      burnerAddr &&
       rawClaim.claim_burner_encrypted_secret &&
-      this.encryption?.isAvailable() &&
-      this.solanaSponsor
+      this.canDecryptBurnerSecret() &&
+      this.solanaSponsor?.isAvailable()
     ) {
       try {
-        const secretKey = this.encryption!.decrypt(rawClaim.claim_burner_encrypted_secret);
+        const secretKey = this.decryptClaimBurnerSecret(rawClaim.claim_burner_encrypted_secret);
         const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
         const conn = this.solanaSponsor.getConnection();
         const burnerAta = await getAssociatedTokenAddress(USDC_MINT, burnerKeypair.publicKey);
@@ -381,6 +466,7 @@ export class ClaimsService {
         } catch {
           // ATA may not exist
         }
+        this.logger.log(`Claim ${claimId}: [MONEY] claim sweep – burner ${burnerKeypair.publicKey.toBase58()} balance=${balance.toString()} -> recipient ${wallet.slice(0, 8)}...`);
         if (balance > BigInt(0)) {
           const recipientPubkey = new PublicKey(wallet.trim());
           const recipientAta = await getAssociatedTokenAddress(USDC_MINT, recipientPubkey);
@@ -404,14 +490,17 @@ export class ClaimsService {
           tx.add(createTransferInstruction(burnerAta, recipientAta, burnerKeypair.publicKey, balance));
           const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
           tx.recentBlockhash = blockhash;
-          tx.feePayer = this.solanaSponsor.getFeePayerKeypair()?.publicKey ?? burnerKeypair.publicKey;
+          const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+          tx.feePayer = feePayerKp?.publicKey ?? burnerKeypair.publicKey;
           tx.sign(burnerKeypair);
-          if (this.solanaSponsor.getFeePayerKeypair()) {
-            tx.sign(this.solanaSponsor.getFeePayerKeypair()!);
+          const signers = [burnerKeypair];
+          if (feePayerKp) {
+            tx.sign(feePayerKp);
+            signers.push(feePayerKp);
           }
-          const sig = await conn.sendTransaction(tx, { skipPreflight: true });
+          const sig = await conn.sendTransaction(tx, signers, { skipPreflight: true });
           await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
-          this.logger.log(`Claim ${claimId}: swept ${balance} USDC from burner to ${wallet.slice(0, 8)}... tx=${sig}`);
+          this.logger.log(`Claim ${claimId}: [MONEY] swept ${balance} USDC from burner ${burnerKeypair.publicKey.toBase58()} to recipient ${wallet} tx=${sig}`);
         }
       } catch (e: any) {
         this.logger.warn(`Claim ${claimId}: burner sweep failed (recipient updated) – ${e?.message ?? e}`);
@@ -425,30 +514,49 @@ export class ClaimsService {
   /**
    * Reclaim (cancel) a claim by the creator. Sets status to CANCELLED.
    * If the claim has a burner with USDC, sweeps it to the creator's Loofta (Solana) wallet.
+   * Both flows are supported: sender can reclaim (this method); recipient can claim (claimByRecipient).
    */
   async reclaimByCreator(claimId: string, privyUserId: string): Promise<{ cancelled: boolean }> {
+    this.logger.log(`Claim ${claimId}: reclaim requested by creator (privy ${privyUserId})`);
     const claim = await this.findOneRaw(claimId);
     if (!claim.created_by || claim.created_by !== privyUserId) {
       throw new ForbiddenException('Only the creator of this payment can reclaim it.');
     }
     const status = (claim.status || '').toUpperCase();
     if (status === 'CANCELLED') {
+      this.logger.log(`Claim ${claimId}: already cancelled`);
       return { cancelled: true };
     }
 
     const rawClaim = claim as { claim_burner_address?: string | null; claim_burner_encrypted_secret?: string | null };
-    if (
-      rawClaim.claim_burner_address &&
-      rawClaim.claim_burner_encrypted_secret &&
-      this.encryption?.isAvailable() &&
-      this.solanaSponsor
-    ) {
+    const burnerAddress = (rawClaim.claim_burner_address || '').trim();
+    const hasBurner = !!(burnerAddress && rawClaim.claim_burner_encrypted_secret);
+    const hasEncryption = this.canDecryptBurnerSecret();
+    const hasSponsor = !!(this.solanaSponsor && this.solanaSponsor.isAvailable());
+
+    this.logger.log(
+      `Claim ${claimId}: reclaim sweep check – burner=${burnerAddress || 'none'}, encryption=${hasEncryption} (injected=${!!this.encryption?.isAvailable()}, directKey=${!!this.getClaimBurnerDecryptionKey()}), sponsor=${hasSponsor}`,
+    );
+
+    if (!hasBurner) {
+      this.logger.log(`Claim ${claimId}: no burner on claim (not funded yet or legacy claim), skipping sweep`);
+    } else if (!hasEncryption) {
+      this.logger.warn(
+        `Claim ${claimId}: SEND_PAYMENT_ENC_KEY not available (config or process.env); cannot decrypt burner secret. Burner address: ${burnerAddress}`,
+      );
+    } else if (!hasSponsor) {
+      this.logger.warn(`Claim ${claimId}: Solana sponsor not available; cannot pay for sweep. Burner address: ${burnerAddress}`);
+    } else {
       try {
         const creatorWallet = await this.usersService.getSolanaWalletAddress(privyUserId);
-        if (creatorWallet?.trim()) {
-          const secretKey = this.encryption!.decrypt(rawClaim.claim_burner_encrypted_secret);
+        this.logger.log(`Claim ${claimId}: creator Solana wallet for reclaim: ${creatorWallet ? `${creatorWallet.slice(0, 8)}...${creatorWallet.slice(-4)}` : 'not found'}`);
+        if (!creatorWallet?.trim()) {
+          this.logger.warn(`Claim ${claimId}: creator Solana wallet not found for privy ${privyUserId}; skipping sweep`);
+        } else {
+          const encryptedSecret = rawClaim.claim_burner_encrypted_secret!;
+          const secretKey = this.decryptClaimBurnerSecret(encryptedSecret);
           const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
-          const conn = this.solanaSponsor.getConnection();
+          const conn = this.solanaSponsor!.getConnection();
           const burnerAta = await getAssociatedTokenAddress(USDC_MINT, burnerKeypair.publicKey);
           let balance = BigInt(0);
           try {
@@ -457,6 +565,7 @@ export class ClaimsService {
           } catch {
             // ATA may not exist
           }
+          this.logger.log(`Claim ${claimId}: burner ${burnerKeypair.publicKey.toBase58()} USDC balance=${balance.toString()}`);
           if (balance > BigInt(0)) {
             const creatorPubkey = new PublicKey(creatorWallet.trim());
             const creatorAta = await getAssociatedTokenAddress(USDC_MINT, creatorPubkey);
@@ -465,7 +574,7 @@ export class ClaimsService {
             try {
               await getAccount(conn, creatorAta);
             } catch {
-              const feePayer = this.solanaSponsor.getFeePayerKeypair();
+              const feePayer = this.solanaSponsor!.getFeePayerKeypair();
               if (feePayer) {
                 tx.add(
                   createAssociatedTokenAccountInstruction(
@@ -480,14 +589,20 @@ export class ClaimsService {
             tx.add(createTransferInstruction(burnerAta, creatorAta, burnerKeypair.publicKey, balance));
             const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
             tx.recentBlockhash = blockhash;
-            tx.feePayer = this.solanaSponsor.getFeePayerKeypair()?.publicKey ?? burnerKeypair.publicKey;
+            const feePayerKp = this.solanaSponsor!.getFeePayerKeypair();
+            tx.feePayer = feePayerKp?.publicKey ?? burnerKeypair.publicKey;
             tx.sign(burnerKeypair);
-            if (this.solanaSponsor.getFeePayerKeypair()) {
-              tx.sign(this.solanaSponsor.getFeePayerKeypair()!);
+            const signers = [burnerKeypair];
+            if (feePayerKp) {
+              tx.sign(feePayerKp);
+              signers.push(feePayerKp);
             }
-            const sig = await conn.sendTransaction(tx, { skipPreflight: true });
+            this.logger.log(`Claim ${claimId}: sending reclaim transfer ${balance} USDC burner->creator ${creatorWallet.slice(0, 8)}...`);
+            const sig = await conn.sendTransaction(tx, signers, { skipPreflight: true });
             await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
-            this.logger.log(`Claim ${claimId}: reclaimed ${balance} USDC from burner to creator tx=${sig}`);
+            this.logger.log(`Claim ${claimId}: [MONEY] reclaimed ${balance} USDC from burner ${burnerKeypair.publicKey.toBase58()} to creator ${creatorWallet} tx=${sig}`);
+          } else {
+            this.logger.log(`Claim ${claimId}: burner ${burnerKeypair.publicKey.toBase58()} has 0 USDC balance, nothing to transfer`);
           }
         }
       } catch (e: any) {
@@ -695,7 +810,6 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
-    this.logger.debug(`Found ${data?.length || 0} pending intents (excluding expired/old)`);
     return data || [];
   }
 

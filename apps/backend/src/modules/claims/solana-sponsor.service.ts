@@ -1,12 +1,40 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import {
   Keypair,
   VersionedTransaction,
   Connection,
   SystemProgram,
 } from '@solana/web3.js';
-import * as bs58 from 'bs58';
+// bs58 may export default depending on bundler/runtime
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const bs58Module = require('bs58');
+const bs58 = bs58Module?.default ?? bs58Module;
+
+/** Read env var from .env.local on disk when ConfigService doesn't have it (e.g. run from monorepo root). */
+function getEnvFromFile(varName: string): string | null {
+  const tryPaths = [
+    join(process.cwd(), 'apps', 'backend', '.env.local'),
+    join(process.cwd(), '.env.local'),
+    join(__dirname, '..', '..', '..', '.env.local'),
+    join(__dirname, '..', '..', '.env.local'),
+  ];
+  for (const p of tryPaths) {
+    try {
+      if (existsSync(p)) {
+        const content = readFileSync(p, 'utf8');
+        const regex = new RegExp(`${varName}\\s*=\\s*(["']?)([^\\s#'"]+)\\1`);
+        const match = content.match(regex);
+        if (match?.[2]) return match[2].trim();
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
 
 /**
  * Service to sponsor Solana transaction fees for "Pay with Loofta" (embedded wallet with 0 SOL).
@@ -21,7 +49,11 @@ export class SolanaSponsorService {
   public readonly feePayerAddress: string | null = null;
 
   constructor(private readonly config: ConfigService) {
-    const privateKeyBase58 = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    let privateKeyBase58 =
+      this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY') ?? process.env.SOLANA_FEE_PAYER_PRIVATE_KEY ?? null;
+    if (!privateKeyBase58) {
+      privateKeyBase58 = getEnvFromFile('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    }
     const rpcUrl =
       this.config.get<string>('SOLANA_RPC_URL') ||
       (this.config.get<string>('HELIUS_API_KEY')
@@ -32,7 +64,8 @@ export class SolanaSponsorService {
 
     if (privateKeyBase58) {
       try {
-        const secret = bs58.decode(privateKeyBase58);
+        const decoded = bs58.decode(privateKeyBase58);
+        const secret = decoded instanceof Uint8Array ? decoded : new Uint8Array(decoded);
         this.feePayerKeypair = Keypair.fromSecretKey(secret);
         this.feePayerAddress = this.feePayerKeypair.publicKey.toBase58();
       } catch (e) {

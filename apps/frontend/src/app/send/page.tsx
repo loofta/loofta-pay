@@ -158,7 +158,10 @@ export default function SendPaymentPage() {
     try {
       const userId = user?.id;
       if (!userId) throw new Error('Not logged in');
-      const fullMessage = [form.message.trim(), gifUrl].filter(Boolean).join(' ').trim() || undefined;
+      // Strip GIF URLs from message so we never store them
+      const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
+      const textOnly = form.message.trim().replace(gifUrlPattern, '').replace(/\s+/g, ' ').trim();
+      const fullMessage = textOnly || undefined;
       const res = await createSendPayment(
         {
           amount,

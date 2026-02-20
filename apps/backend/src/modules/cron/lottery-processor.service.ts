@@ -138,7 +138,6 @@ export class LotteryProcessorService {
    */
   async processPendingLotteryPayments(): Promise<LotteryProcessingResult[]> {
     if (this.isProcessing) {
-      this.logger.debug('Already processing lottery payments, skipping');
       return [];
     }
 
@@ -146,11 +145,8 @@ export class LotteryProcessorService {
     const results: LotteryProcessingResult[] = [];
 
     try {
-      this.logger.log('Starting lottery payment processing...');
-
       // Get all pending wallet keys
       const pendingKeys = await this.redisService.sMembers(PENDING_WALLETS_KEY);
-      this.logger.log(`Found ${pendingKeys.length} pending lottery wallets`);
 
       if (pendingKeys.length === 0) {
         return [];
@@ -175,8 +171,6 @@ export class LotteryProcessorService {
           }
         }
       }
-
-      this.logger.log(`Processed ${results.length} lottery payments`);
     } catch (error: any) {
       this.logger.error('Error processing lottery payments:', error?.message);
     } finally {
@@ -203,18 +197,14 @@ export class LotteryProcessorService {
     const requiredEth = totalCostETH ? parseFloat(totalCostETH) : MIN_BALANCE_FOR_PURCHASE * numTickets;
     const paymentId = `${recipientAddress.toLowerCase()}_${createdAt}`;
 
-    this.logger.debug(`Processing lottery wallet for: ${recipientAddress}`);
-
     try {
       // Check if expired (24 hours)
       if (Date.now() - createdAt > 24 * 60 * 60 * 1000) {
-        this.logger.debug(`Lottery payment expired for ${recipientAddress}`);
         return { recipientAddress, companionAddress, status: 'expired' };
       }
 
       // Check balance
       const balance = await this.getCompanionBalance(companionAddress);
-      this.logger.debug(`Balance: ${balance.eth.toFixed(6)} ETH`);
 
       // No funds yet
       if (balance.eth < 0.0001) {
@@ -256,8 +246,6 @@ export class LotteryProcessorService {
 
       // Insufficient funds - refund
       if (balance.eth < requiredEth) {
-        this.logger.log(`Insufficient balance for ${recipientAddress}, refunding`);
-        
         const refundAmount = balance.eth - GAS_FOR_REFUND;
         if (refundAmount <= 0) {
           await this.updatePaymentLog(paymentId, { status: 'failed', error: 'Balance too low for refund' });
@@ -283,13 +271,11 @@ export class LotteryProcessorService {
         const refundTxHash = (refundResult as any)?.transactionHash || '';
 
         await this.updatePaymentLog(paymentId, { status: 'refunded', refundTxHash });
-        this.logger.log(`Refund complete: ${refundTxHash}`);
 
         return { recipientAddress, companionAddress, status: 'refunded', txHash: refundTxHash };
       }
 
       // Execute purchase
-      this.logger.log(`Executing purchase for ${recipientAddress}`);
       
       const ethToSend = balance.eth - 0.0002;
       const ethAmountWei = BigInt(Math.floor(ethToSend * 1e18));
@@ -313,7 +299,6 @@ export class LotteryProcessorService {
       const txHash = (result as any)?.transactionHash || '';
 
       await this.updatePaymentLog(paymentId, { status: 'executed', txHash });
-      this.logger.log(`Purchase executed: ${txHash}`);
 
       return { recipientAddress, companionAddress, status: 'executed', txHash };
 

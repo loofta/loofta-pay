@@ -182,7 +182,6 @@ export class SwapProcessorService {
    */
   async processPendingSwaps(): Promise<SwapProcessingResult[]> {
     if (this.isProcessing) {
-      this.logger.debug('Already processing swaps, skipping');
       return [];
     }
 
@@ -190,8 +189,6 @@ export class SwapProcessorService {
     const results: SwapProcessingResult[] = [];
 
     try {
-      this.logger.log('Starting swap processing...');
-
       // Process claim swaps
       const claimResults = await this.processSwapType(SWAP_PENDING_KEY, 'claim');
       results.push(...claimResults);
@@ -199,8 +196,6 @@ export class SwapProcessorService {
       // Process organization swaps
       const orgResults = await this.processSwapType(ORG_SWAP_PENDING_KEY, 'organization');
       results.push(...orgResults);
-
-      this.logger.log(`Processed ${results.length} swaps`);
     } catch (error: any) {
       this.logger.error('Error processing swaps:', error?.message);
     } finally {
@@ -219,8 +214,6 @@ export class SwapProcessorService {
   ): Promise<SwapProcessingResult[]> {
     const results: SwapProcessingResult[] = [];
     const pendingKeys = await this.redisService.sMembers(pendingKey);
-    
-    this.logger.log(`Found ${pendingKeys.length} pending ${type} swaps`);
 
     for (const redisKey of pendingKeys) {
       const dataStr = await this.redisService.get(redisKey);
@@ -263,12 +256,9 @@ export class SwapProcessorService {
   ): Promise<SwapProcessingResult | null> {
     const id = type === 'claim' ? data.claimId || '' : data.organizationId || '';
 
-    this.logger.debug(`Processing ${type} swap ${id}, status: ${data.status}`);
-
     try {
       // Idempotency check
       if (data.transferTxHash) {
-        this.logger.debug(`${type} ${id} already processed`);
         data.status = 'completed';
         data.updatedAt = Date.now();
         await this.redisService.set(redisKey, JSON.stringify(data));
@@ -278,7 +268,6 @@ export class SwapProcessorService {
 
       // Check if expired (24 hours)
       if (Date.now() - data.createdAt > 24 * 60 * 60 * 1000) {
-        this.logger.debug(`${type} ${id} expired`);
         data.status = 'failed';
         data.error = 'Expired - no deposit received within 24 hours';
         data.updatedAt = Date.now();
@@ -297,7 +286,6 @@ export class SwapProcessorService {
 
       // Check balance
       const balance = await this.getTokenBalance(data.companionAddress, data.fromToken, data.chainId);
-      this.logger.debug(`Balance for ${id}: ${balance.formatted} ${data.fromToken}`);
 
       if (balance.raw === BigInt(0)) {
         return { id, type, status: 'waiting' };
@@ -391,9 +379,6 @@ export class SwapProcessorService {
       const feeAmount = (balance.raw * BigInt(Math.floor(this.feePercent * 10000))) / BigInt(10000);
       const amountAfterFee = balance.raw - feeAmount;
 
-      this.logger.log(`Fee: ${formatUnits(feeAmount, data.fromDecimals)} ${data.fromToken}`);
-      this.logger.log(`After fee: ${formatUnits(amountAfterFee, data.fromDecimals)} ${data.fromToken}`);
-
       // Same token - direct transfer
       if (data.fromToken === data.toToken) {
         const calls: any[] = [];
@@ -450,13 +435,11 @@ export class SwapProcessorService {
         });
 
         const txHash = await orchestrator.sendTransaction(bundle);
-        this.logger.log(`Transfer TX: ${txHash}`);
 
         return { success: true, transferTxHash: txHash };
       }
 
       // Different tokens - swap via Rhinestone
-      this.logger.log(`Executing swap ${data.fromToken} → ${data.toToken}`);
 
       try {
         const swapResult = await sdk.swap({

@@ -83,7 +83,7 @@ function ClaimPayLayout({
   );
 }
 
-/** Shown when the current user is the sender of a pending-username claim: copy link, share, reclaim. */
+/** Shown only when the current user is the logged-in creator of a pending-username claim: copy link, share, reclaim. */
 function ClaimPageSenderShareView({
   claimId,
   amount,
@@ -96,6 +96,7 @@ function ClaimPageSenderShareView({
   amount: number;
   recipientUsername: string;
   status: string;
+  /** Logged-in creator's Privy user id; Reclaim is only shown when this is set. */
   userId?: string | null;
   onReclaimed?: () => void;
 }) {
@@ -198,6 +199,7 @@ function ClaimPageSenderShareView({
           Share
         </Button>
       </div>
+      {/* Reclaim only for logged-in creator (parent renders this view only when user?.id === claim.created_by) */}
       {!reclaimed && userId && (
         <div className="mt-6">
           <Button
