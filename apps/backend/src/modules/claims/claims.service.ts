@@ -35,14 +35,14 @@ export class ClaimsService {
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
     @Optional() private readonly encryption: SendPaymentEncryptionService | null,
-    @Optional() private readonly solanaSponsor: SolanaSponsorService | null,
+    private readonly solanaSponsor: SolanaSponsorService,
   ) {
     this.baseUrl = this.configService.get<string>(
       'NEXT_PUBLIC_BASE_URL',
       'https://pay.loofta.xyz',
     );
     this.logger.log(
-      `ClaimsService init: encryption=${this.encryption ? (this.encryption.isAvailable() ? 'available' : 'not configured') : 'null'}, sponsor=${this.solanaSponsor?.isAvailable() ?? false}`,
+      `ClaimsService init: encryption=${this.encryption ? (this.encryption.isAvailable() ? 'available' : 'not configured') : 'null'}, sponsor=${this.solanaSponsor.isAvailable()}`,
     );
   }
 
@@ -532,7 +532,7 @@ export class ClaimsService {
     const burnerAddress = (rawClaim.claim_burner_address || '').trim();
     const hasBurner = !!(burnerAddress && rawClaim.claim_burner_encrypted_secret);
     const hasEncryption = this.canDecryptBurnerSecret();
-    const hasSponsor = !!(this.solanaSponsor && this.solanaSponsor.isAvailable());
+    const hasSponsor = this.solanaSponsor.isAvailable();
 
     this.logger.log(
       `Claim ${claimId}: reclaim sweep check – burner=${burnerAddress || 'none'}, encryption=${hasEncryption} (injected=${!!this.encryption?.isAvailable()}, directKey=${!!this.getClaimBurnerDecryptionKey()}), sponsor=${hasSponsor}`,
@@ -548,15 +548,20 @@ export class ClaimsService {
       this.logger.warn(`Claim ${claimId}: Solana sponsor not available; cannot pay for sweep. Burner address: ${burnerAddress}`);
     } else {
       try {
-        const creatorWallet = await this.usersService.getSolanaWalletAddress(privyUserId);
+        let creatorWallet: string | null = null;
+        try {
+          creatorWallet = await this.usersService.getSolanaWalletAddress(privyUserId);
+        } catch (walletErr: any) {
+          this.logger.warn(`Claim ${claimId}: creator wallet lookup failed – ${walletErr?.message ?? walletErr}`);
+        }
         this.logger.log(`Claim ${claimId}: creator Solana wallet for reclaim: ${creatorWallet ? `${creatorWallet.slice(0, 8)}...${creatorWallet.slice(-4)}` : 'not found'}`);
         if (!creatorWallet?.trim()) {
-          this.logger.warn(`Claim ${claimId}: creator Solana wallet not found for privy ${privyUserId}; skipping sweep`);
+          this.logger.warn(`Claim ${claimId}: creator Solana wallet not found for privy ${privyUserId}; skipping sweep (claim will still be cancelled)`);
         } else {
           const encryptedSecret = rawClaim.claim_burner_encrypted_secret!;
           const secretKey = this.decryptClaimBurnerSecret(encryptedSecret);
           const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
-          const conn = this.solanaSponsor!.getConnection();
+          const conn = this.solanaSponsor.getConnection();
           const burnerAta = await getAssociatedTokenAddress(USDC_MINT, burnerKeypair.publicKey);
           let balance = BigInt(0);
           try {
@@ -574,7 +579,7 @@ export class ClaimsService {
             try {
               await getAccount(conn, creatorAta);
             } catch {
-              const feePayer = this.solanaSponsor!.getFeePayerKeypair();
+              const feePayer = this.solanaSponsor.getFeePayerKeypair();
               if (feePayer) {
                 tx.add(
                   createAssociatedTokenAccountInstruction(
@@ -589,7 +594,7 @@ export class ClaimsService {
             tx.add(createTransferInstruction(burnerAta, creatorAta, burnerKeypair.publicKey, balance));
             const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
             tx.recentBlockhash = blockhash;
-            const feePayerKp = this.solanaSponsor!.getFeePayerKeypair();
+            const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
             tx.feePayer = feePayerKp?.publicKey ?? burnerKeypair.publicKey;
             tx.sign(burnerKeypair);
             const signers = [burnerKeypair];
@@ -606,7 +611,9 @@ export class ClaimsService {
           }
         }
       } catch (e: any) {
-        this.logger.warn(`Claim ${claimId}: reclaim sweep failed – ${e?.message ?? e}`);
+        const msg = e?.message ?? String(e);
+        const stack = e?.stack ? `\n${e.stack}` : '';
+        this.logger.error(`Claim ${claimId}: reclaim sweep failed – ${msg}${stack}`);
       }
     }
 

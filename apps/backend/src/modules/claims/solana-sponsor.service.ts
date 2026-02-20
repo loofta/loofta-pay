@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
@@ -15,17 +15,32 @@ const bs58 = bs58Module?.default ?? bs58Module;
 
 /** Read env var from .env.local on disk when ConfigService doesn't have it (e.g. run from monorepo root). */
 function getEnvFromFile(varName: string): string | null {
+  // Match ConfigModule envFilePath: backend root .env.local (same as SendPaymentService key source)
   const tryPaths = [
     join(process.cwd(), 'apps', 'backend', '.env.local'),
     join(process.cwd(), '.env.local'),
-    join(__dirname, '..', '..', '..', '.env.local'),
+    join(__dirname, '..', '..', '..', '.env.local'), // backend root from src/modules/claims or dist
+    join(__dirname, '..', '..', '..', '..', '.env.local'),
     join(__dirname, '..', '..', '.env.local'),
   ];
   for (const p of tryPaths) {
     try {
       if (existsSync(p)) {
-        const content = readFileSync(p, 'utf8');
-        const regex = new RegExp(`${varName}\\s*=\\s*(["']?)([^\\s#'"]+)\\1`);
+        const content = readFileSync(p, 'utf8').replace(/^\uFEFF/, '');
+        const lineByLine = content.split(/\r?\n/);
+        for (const line of lineByLine) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('#') || !trimmed) continue;
+          const eq = trimmed.indexOf('=');
+          if (eq <= 0) continue;
+          const key = trimmed.slice(0, eq).trim().replace(/^\uFEFF/, '');
+          if (key === varName) {
+            const value = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+            if (value) return value;
+          }
+        }
+        const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`${escaped}\\s*=\\s*(["']?)([^\\s#'"]+)\\1`);
         const match = content.match(regex);
         if (match?.[2]) return match[2].trim();
       }
@@ -37,27 +52,35 @@ function getEnvFromFile(varName: string): string | null {
 }
 
 /**
- * Service to sponsor Solana transaction fees for "Pay with Loofta" (embedded wallet with 0 SOL).
- * Uses a dedicated fee-payer keypair; the client builds the transaction with this account as
- * payerKey, user signs, then we add the fee-payer signature and broadcast with skipPreflight.
- * See: https://docs.privy.io/wallets/gas-and-asset-management/gas/solana
+ * Service to sponsor Solana transaction fees (claim reclaim sweep, send-payment, etc.).
+ * SOLANA_FEE_PAYER_PRIVATE_KEY = Solana wallet keypair (base58) that pays tx fees; this wallet must hold SOL.
+ * Not the same as SEND_PAYMENT_ENC_KEY (which is an AES key for encrypting burner secrets in the DB).
  */
 @Injectable()
 export class SolanaSponsorService {
+  private readonly logger = new Logger(SolanaSponsorService.name);
   private readonly feePayerKeypair: Keypair | null = null;
   private readonly connection: Connection;
   public readonly feePayerAddress: string | null = null;
 
   constructor(private readonly config: ConfigService) {
-    let privateKeyBase58 =
+    // Load same way as SendPaymentService so ClaimsService sponsor is available when key is set
+    let privateKeyBase58: string | null =
       this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY') ?? process.env.SOLANA_FEE_PAYER_PRIVATE_KEY ?? null;
+    if (privateKeyBase58 && typeof privateKeyBase58 === 'string') privateKeyBase58 = privateKeyBase58.trim() || null;
+    let source = privateKeyBase58 ? 'config/env' : '';
     if (!privateKeyBase58) {
       privateKeyBase58 = getEnvFromFile('SOLANA_FEE_PAYER_PRIVATE_KEY');
+      source = privateKeyBase58 ? 'file' : '';
+    }
+    if (privateKeyBase58 && typeof privateKeyBase58 === 'string') {
+      privateKeyBase58 = privateKeyBase58.trim().replace(/^["']|["']$/g, '') || null;
     }
     const rpcUrl =
-      this.config.get<string>('SOLANA_RPC_URL') ||
-      (this.config.get<string>('HELIUS_API_KEY')
-        ? `https://mainnet.helius-rpc.com/?api-key=${this.config.get('HELIUS_API_KEY')}`
+      this.config.get<string>('SOLANA_RPC_URL') ??
+      process.env.SOLANA_RPC_URL ??
+      (this.config.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY
+        ? `https://mainnet.helius-rpc.com/?api-key=${this.config.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY}`
         : 'https://api.mainnet-beta.solana.com');
 
     this.connection = new Connection(rpcUrl, 'confirmed');
@@ -68,11 +91,17 @@ export class SolanaSponsorService {
         const secret = decoded instanceof Uint8Array ? decoded : new Uint8Array(decoded);
         this.feePayerKeypair = Keypair.fromSecretKey(secret);
         this.feePayerAddress = this.feePayerKeypair.publicKey.toBase58();
+        this.logger.log(`SolanaSponsor: SOLANA_FEE_PAYER_PRIVATE_KEY loaded (${source || 'config/env'}); fee payer ${this.feePayerAddress.slice(0, 8)}...`);
       } catch (e) {
-        console.error('[SolanaSponsor] Invalid SOLANA_FEE_PAYER_PRIVATE_KEY:', e);
+        this.logger.error('SolanaSponsor: Invalid SOLANA_FEE_PAYER_PRIVATE_KEY (bad base58 or length)', e);
       }
     } else {
-      console.warn('[SolanaSponsor] SOLANA_FEE_PAYER_PRIVATE_KEY not set; sponsorship disabled.');
+      const fromConfig = !!this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+      const fromEnv = !!process.env.SOLANA_FEE_PAYER_PRIVATE_KEY;
+      const fromFile = !!getEnvFromFile('SOLANA_FEE_PAYER_PRIVATE_KEY');
+      this.logger.warn(
+        `SolanaSponsor: SOLANA_FEE_PAYER_PRIVATE_KEY not loaded. config=${fromConfig} process.env=${fromEnv} file=${fromFile} cwd=${process.cwd()}. Add to apps/backend/.env.local (base58 Solana key, wallet needs SOL).`,
+      );
     }
   }
 
