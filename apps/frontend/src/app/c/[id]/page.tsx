@@ -104,6 +104,25 @@ function ClaimPageSenderShareView({
   const [copied, setCopied] = useState(false);
   const [reclaiming, setReclaiming] = useState(false);
   const [reclaimed, setReclaimed] = useState(false);
+  const [canReclaim, setCanReclaim] = useState<boolean | null>(null);
+  const statusUpper = (status || "").toUpperCase();
+  const isCancelled = statusUpper === "CANCELLED" || reclaimed;
+
+  // Reclaim button only when not cancelled and burner has balance
+  useEffect(() => {
+    if (!userId || isCancelled) {
+      setCanReclaim(false);
+      return;
+    }
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+    fetch(`${backendUrl}/claims/${claimId}/reclaim-eligibility`, {
+      headers: { "x-privy-user-id": userId },
+    })
+      .then((r) => (r.ok ? r.json() : { canReclaim: false }))
+      .then((data) => setCanReclaim(!!data?.canReclaim))
+      .catch(() => setCanReclaim(false));
+  }, [claimId, userId, isCancelled]);
+
   const claimLink =
     typeof window !== "undefined"
       ? `${window.location.origin}/c/${claimId}`
@@ -199,8 +218,8 @@ function ClaimPageSenderShareView({
           Share
         </Button>
       </div>
-      {/* Reclaim only for logged-in creator (parent renders this view only when user?.id === claim.created_by) */}
-      {!reclaimed && userId && (
+      {/* Reclaim only when not cancelled, creator is logged in, and burner has balance */}
+      {!isCancelled && userId && canReclaim === true && (
         <div className="mt-6">
           <Button
             type="button"
@@ -218,8 +237,8 @@ function ClaimPageSenderShareView({
           </Button>
         </div>
       )}
-      {reclaimed && (
-        <p className="mt-4 text-sm text-gray-500">Payment cancelled. Any funds will be returned to your Loofta wallet.</p>
+      {isCancelled && (
+        <p className="mt-4 text-sm text-gray-500">Payment cancelled. Any funds have been returned to your Loofta wallet.</p>
       )}
       <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900 mt-6">
         ← Back to Send

@@ -630,6 +630,43 @@ export class ClaimsService {
   }
 
   /**
+   * Whether the creator can reclaim (cancel and sweep). Only true when status is not CANCELLED
+   * and the claim's burner has a non-zero USDC balance.
+   */
+  async getReclaimEligibility(claimId: string, privyUserId: string): Promise<{ canReclaim: boolean }> {
+    const claim = await this.findOneRaw(claimId);
+    if (!claim.created_by || claim.created_by !== privyUserId) {
+      throw new ForbiddenException('Only the creator can check reclaim eligibility.');
+    }
+    const status = (claim.status || '').toUpperCase();
+    if (status === 'CANCELLED') {
+      return { canReclaim: false };
+    }
+    const rawClaim = claim as { claim_burner_address?: string | null; claim_burner_encrypted_secret?: string | null };
+    const burnerAddress = (rawClaim.claim_burner_address || '').trim();
+    const hasBurner = !!(burnerAddress && rawClaim.claim_burner_encrypted_secret);
+    if (!hasBurner || !this.canDecryptBurnerSecret() || !this.solanaSponsor.isAvailable()) {
+      return { canReclaim: false };
+    }
+    try {
+      const secretKey = this.decryptClaimBurnerSecret(rawClaim.claim_burner_encrypted_secret!);
+      const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
+      const conn = this.solanaSponsor.getConnection();
+      const burnerAta = await getAssociatedTokenAddress(USDC_MINT, burnerKeypair.publicKey);
+      let balance = BigInt(0);
+      try {
+        const acc = await getAccount(conn, burnerAta);
+        balance = acc.amount;
+      } catch {
+        // ATA may not exist
+      }
+      return { canReclaim: balance > BigInt(0) };
+    } catch {
+      return { canReclaim: false };
+    }
+  }
+
+  /**
    * Get claim with latest intent
    */
   async findWithLatestIntent(id: string): Promise<{

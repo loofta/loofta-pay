@@ -157,6 +157,26 @@ export class ClaimsController {
   }
 
   /**
+   * Check if the creator can reclaim (cancel and sweep). Only true when status is not CANCELLED
+   * and the burner has a non-zero USDC balance.
+   */
+  @Get(':id/reclaim-eligibility')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Check if creator can reclaim (status not cancelled and burner has balance)' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Eligibility', schema: { properties: { canReclaim: { type: 'boolean' } } } })
+  @ApiResponse({ status: 403, description: 'Not the creator' })
+  async getReclaimEligibility(
+    @Param('id') id: string,
+    @Req() req: { user?: { id: string } },
+  ): Promise<{ canReclaim: boolean }> {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) throw new UnauthorizedException('Login required.');
+    return this.claimsService.getReclaimEligibility(id, privyUserId);
+  }
+
+  /**
    * Reclaim (cancel) a payment as the creator. Sets claim to CANCELLED.
    * If the claim has a burner with USDC, sweeps it to the creator's Loofta wallet.
    */
