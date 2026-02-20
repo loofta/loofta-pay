@@ -9,6 +9,6 @@ import { UsersModule } from '../users/users.module';
   imports: [UsersModule],
   controllers: [SendPaymentController],
   providers: [SendPaymentService, SendPaymentEncryptionService, VaultService],
-  exports: [SendPaymentService],
+  exports: [SendPaymentService, SendPaymentEncryptionService],
 })
 export class SendPaymentModule {}

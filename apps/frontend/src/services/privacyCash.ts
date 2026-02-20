@@ -15,6 +15,9 @@ export const PRIVACY_CASH_FEES = {
   usdc_withdraw_rent_fee: 0.744548676,
 };
 
+/** Network fee in USDC (all payments; converted to SOL on burner when needed). */
+export const NETWORK_FEE_USD = 0.1;
+
 /** When "true" or "1", private payment is enabled; otherwise UI shows "Coming soon". */
 const enablePrivatePayment =
   typeof process !== "undefined" &&

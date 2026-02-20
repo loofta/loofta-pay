@@ -50,13 +50,6 @@ const STEP_CONFIG: Record<string, Omit<PaymentStep, 'status'>> = {
     icon: <Wallet className="w-5 h-5" />,
     estimatedTime: 30, // 30 seconds for blockchain confirmation
   },
-  routing: {
-    id: 'routing',
-    label: 'Routing & Swapping',
-    description: 'Finding the best route and executing the swap',
-    icon: <Zap className="w-5 h-5" />,
-    estimatedTime: 45, // 45 seconds for swap execution
-  },
   processing: {
     id: 'processing',
     label: 'Processing Payment',
@@ -99,35 +92,30 @@ function getStepsForStatus(
 
   // For same-chain: use network-specific confirmation times
   let depositTime: number;
-  let routingTime: number;
   let processingTime: number;
   let sendingTime: number;
 
   if (isSameChain && fromChain) {
-    // Same-chain: deposit confirmation + swap (~10-15s) + transfer confirmation
+    // Same-chain: deposit confirmation + transfer confirmation
     const confirmationTime = getNetworkConfirmationTime(fromChain);
     depositTime = confirmationTime; // Network-specific confirmation
-    routingTime = 10; // Swap execution on same chain is fast
     processingTime = 5; // Minimal processing for same-chain
     sendingTime = confirmationTime; // Network-specific confirmation for transfer
   } else if (averagePaymentTime) {
-    // Cross-chain: use average time distribution
-    // Distribution: deposit 20%, routing 40%, processing 15%, sending 25%
-    depositTime = Math.round(averagePaymentTime * 0.2);
-    routingTime = Math.round(averagePaymentTime * 0.4);
-    processingTime = Math.round(averagePaymentTime * 0.15);
-    sendingTime = Math.round(averagePaymentTime * 0.25);
+    // Cross-chain: use average time distribution (no routing step)
+    // Distribution: deposit 25%, processing 25%, sending 50%
+    depositTime = Math.round(averagePaymentTime * 0.25);
+    processingTime = Math.round(averagePaymentTime * 0.25);
+    sendingTime = Math.round(averagePaymentTime * 0.5);
   } else {
     // Default fallback
     depositTime = 30;
-    routingTime = 45;
     processingTime = 20;
     sendingTime = 30;
   }
 
   const configWithTimes = {
     deposit: { ...STEP_CONFIG.deposit, estimatedTime: depositTime },
-    routing: { ...STEP_CONFIG.routing, estimatedTime: routingTime },
     processing: { ...STEP_CONFIG.processing, estimatedTime: processingTime },
     sending: { ...STEP_CONFIG.sending, estimatedTime: sendingTime },
     privacyCash: { ...STEP_CONFIG.privacyCash, estimatedTime: 45 },
@@ -135,18 +123,14 @@ function getStepsForStatus(
   };
   const upperStatus = String(status || '').toUpperCase();
 
-  // For direct deposits, skip the routing step
-  const includeRouting = paymentType !== 'direct';
-  
   // For private cross-chain payments, include Privacy Cash step
   const isPrivateCrossChain = isPrivate && fromChain && toChain && 
                                fromChain.toLowerCase() !== toChain.toLowerCase() &&
                                toChain.toLowerCase() === 'solana';
 
-  // Helper to build steps array conditionally including routing and Privacy Cash
+  // Helper to build steps array conditionally including Privacy Cash
   const buildSteps = (
     depositStatus: 'pending' | 'active' | 'completed',
-    routingStatus: 'pending' | 'active' | 'completed',
     processingStatus: 'pending' | 'active' | 'completed',
     sendingStatus: 'pending' | 'active' | 'completed',
     privacyCashStatus: 'pending' | 'active' | 'completed',
@@ -154,7 +138,7 @@ function getStepsForStatus(
   ) => {
     const steps: PaymentStep[] = [];
 
-    // For Loofta Pay (USDC on Solana), skip deposit and routing steps
+    // For Loofta Pay (USDC on Solana), skip deposit step
     if (!isLooftaPay) {
       steps.push({
         ...configWithTimes.deposit,
@@ -164,10 +148,6 @@ function getStepsForStatus(
           description: 'Send the exact amount to the deposit address shown above',
         } : {}),
       });
-
-      if (includeRouting) {
-        steps.push({ ...configWithTimes.routing, status: routingStatus });
-      }
     }
 
     steps.push({ ...configWithTimes.processing, status: processingStatus });
@@ -186,41 +166,41 @@ function getStepsForStatus(
   };
 
   if (upperStatus === 'SUCCESS') {
-    return buildSteps('completed', 'completed', 'completed', 'completed', 'completed', 'completed');
+    return buildSteps('completed', 'completed', 'completed', 'completed', 'completed');
   }
 
   // For Loofta Pay, start from processing step
   if (isLooftaPay) {
     if (upperStatus === 'SUCCESS') {
-      return buildSteps('completed', 'completed', 'completed', 'completed', 'completed', 'completed');
+      return buildSteps('completed', 'completed', 'completed', 'completed', 'completed');
     }
     if (upperStatus === 'PROCESSING' || upperStatus === 'KNOWN_DEPOSIT_TX') {
-      return buildSteps('completed', 'completed', 'active', 'pending', 'pending', 'pending');
+      return buildSteps('completed', 'active', 'pending', 'pending', 'pending');
     }
     // For Loofta Pay, if status is not SUCCESS or PROCESSING, show processing as active
-    return buildSteps('completed', 'completed', 'active', 'pending', 'pending', 'pending');
+    return buildSteps('completed', 'active', 'pending', 'pending', 'pending');
   }
 
   // For private cross-chain: PRIVATE_TRANSFER_PENDING means Near Intents completed, Privacy Cash is executing
   if (isPrivateCrossChain && upperStatus === 'PRIVATE_TRANSFER_PENDING') {
-    return buildSteps('completed', includeRouting ? 'completed' : 'completed', 'completed', 'pending', 'active', 'pending');
+    return buildSteps('completed', 'completed', 'pending', 'active', 'pending');
   }
 
   // For private cross-chain: IN_FLIGHT means Near Intents completed, Privacy Cash is executing
   if (isPrivateCrossChain && upperStatus === 'IN_FLIGHT') {
-    return buildSteps('completed', includeRouting ? 'completed' : 'completed', 'completed', 'pending', 'active', 'pending');
+    return buildSteps('completed', 'completed', 'pending', 'active', 'pending');
   }
 
   if (upperStatus === 'PROCESSING' || upperStatus === 'KNOWN_DEPOSIT_TX') {
-    return buildSteps('completed', includeRouting ? 'active' : 'completed', 'pending', 'pending', 'pending', 'pending');
+    return buildSteps('completed', 'active', 'pending', 'pending', 'pending');
   }
 
   if (upperStatus === 'INCOMPLETE_DEPOSIT') {
-    return buildSteps('active', 'pending', 'pending', 'pending', 'pending', 'pending');
+    return buildSteps('active', 'pending', 'pending', 'pending', 'pending');
   }
 
   // PENDING_DEPOSIT or default
-  return buildSteps('active', 'pending', 'pending', 'pending', 'pending', 'pending');
+  return buildSteps('active', 'pending', 'pending', 'pending', 'pending');
 }
 
 function getStatusMessage(status: PaymentStatus | null): { title: string; subtitle: string } {

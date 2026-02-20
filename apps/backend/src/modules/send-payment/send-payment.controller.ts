@@ -63,6 +63,15 @@ export class SendPaymentController {
     };
   }
 
+  @Get('my-links')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'List send payment links created by the current user (for recovery after reload)' })
+  @ApiResponse({ status: 200, description: 'List of links (id, amount, status, recipient_type, created_at)' })
+  async myLinks(@PrivyUser() user: { id: string }) {
+    return this.sendPaymentService.listBySender(user.id);
+  }
+
   @Get(':id')
   @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Get public send payment link details (optional auth for is_sender)' })

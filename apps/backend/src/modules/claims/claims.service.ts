@@ -1,9 +1,20 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Keypair, PublicKey } from '@solana/web3.js';
+import {
+  getAssociatedTokenAddress,
+  getAccount,
+  createTransferInstruction,
+  createAssociatedTokenAccountInstruction,
+} from '@solana/spl-token';
 import { SupabaseService } from '@/database/supabase.service';
 import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto } from './dto';
 import { Claim, ClaimIntent, ClaimStatus } from './entities/claim.entity';
 import { UsersService } from '../users/users.service';
+import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
+import { SolanaSponsorService } from './solana-sponsor.service';
+
+const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 
 @Injectable()
 export class ClaimsService {
@@ -14,6 +25,8 @@ export class ClaimsService {
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
+    @Optional() private readonly encryption: SendPaymentEncryptionService | null,
+    @Optional() private readonly solanaSponsor: SolanaSponsorService | null,
   ) {
     this.baseUrl = this.configService.get<string>(
       'NEXT_PUBLIC_BASE_URL',
@@ -112,6 +125,7 @@ export class ClaimsService {
     }
 
     recipientAddress = `${ClaimsService.PENDING_USERNAME_PREFIX}${cleanUsername}`;
+    const burner = this.createClaimBurner();
 
     const { data: claim, error: claimError } = await this.supabaseService.claims
       .insert({
@@ -124,6 +138,7 @@ export class ClaimsService {
         status: 'OPEN' as ClaimStatus,
         is_private: isPrivate,
         description: description || null,
+        ...(burner ? { claim_burner_address: burner.claim_burner_address, claim_burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id')
       .single();
@@ -135,7 +150,7 @@ export class ClaimsService {
 
     const id = claim.id;
     const link = `${this.baseUrl}/c/${id}`;
-    this.logger.log(`Created claim from username (pending): ${id} for @${cleanUsername} – they can claim when they sign up`);
+    this.logger.log(`Created claim from username (pending): ${id} for @${cleanUsername} – they can claim when they sign up${burner ? ' (unique burner)' : ''}`);
     return { id, link };
   }
 
@@ -143,6 +158,18 @@ export class ClaimsService {
   static readonly PENDING_EMAIL_PREFIX = 'PENDING_EMAIL:';
   /** Sentinel prefix for claims when username doesn't exist yet; they claim by signing up with that username */
   static readonly PENDING_USERNAME_PREFIX = 'PENDING_USERNAME:';
+
+  /** Generate a unique burner keypair per claim (like send-payment); secret encrypted with SEND_PAYMENT_ENC_KEY. */
+  private createClaimBurner(): { claim_burner_address: string; claim_burner_encrypted_secret: string } | null {
+    if (!this.encryption?.isAvailable()) return null;
+    const burnerKeypair = Keypair.generate();
+    const secret = Buffer.from(burnerKeypair.secretKey);
+    const encrypted = this.encryption.encrypt(secret);
+    return {
+      claim_burner_address: burnerKeypair.publicKey.toBase58(),
+      claim_burner_encrypted_secret: encrypted,
+    };
+  }
 
   /**
    * Create a claim from email. If user exists, use their wallet. If not, create with PENDING_EMAIL so they can claim by signing in later.
@@ -196,6 +223,7 @@ export class ClaimsService {
     }
 
     recipientAddress = `${ClaimsService.PENDING_EMAIL_PREFIX}${cleanEmail}`;
+    const burner = this.createClaimBurner();
 
     const { data: claim, error: claimError } = await this.supabaseService.claims
       .insert({
@@ -208,6 +236,7 @@ export class ClaimsService {
         status: 'OPEN' as ClaimStatus,
         is_private: isPrivate,
         description: description || null,
+        ...(burner ? { claim_burner_address: burner.claim_burner_address, claim_burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id')
       .single();
@@ -219,7 +248,7 @@ export class ClaimsService {
 
     const id = claim.id;
     const link = `${this.baseUrl}/c/${id}`;
-    this.logger.log(`Created claim from email (pending): ${id} for ${cleanEmail} – they claim by signing in`);
+    this.logger.log(`Created claim from email (pending): ${id} for ${cleanEmail} – they claim by signing in${burner ? ' (unique burner)' : ''}`);
     return { id, link };
   }
 
@@ -245,6 +274,8 @@ export class ClaimsService {
     if (claim.recipient_address?.startsWith(ClaimsService.PENDING_EMAIL_PREFIX)) {
       (claim as Claim & { recipient_address?: string; recipient_pending_email?: boolean }).recipient_address = undefined;
       (claim as Claim & { recipient_pending_email?: boolean }).recipient_pending_email = true;
+      const dataWithBurner = data as { claim_burner_address?: string | null };
+      if (dataWithBurner.claim_burner_address) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = dataWithBurner.claim_burner_address;
     }
     // Mask pending-username claims: expose flag and username so UI can show "Claim with @username"
     if (claim.recipient_address?.startsWith(ClaimsService.PENDING_USERNAME_PREFIX)) {
@@ -252,6 +283,8 @@ export class ClaimsService {
       (claim as Claim & { recipient_address?: string }).recipient_address = undefined;
       (claim as Claim & { recipient_pending_username?: boolean }).recipient_pending_username = true;
       (claim as Claim & { recipient_pending_username_value?: string }).recipient_pending_username_value = pendingUsername;
+      const dataWithBurner = data as { claim_burner_address?: string | null };
+      if (dataWithBurner.claim_burner_address) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = dataWithBurner.claim_burner_address;
     }
     return claim;
   }
@@ -296,6 +329,182 @@ export class ClaimsService {
     } catch {
       return { isRecipient: false };
     }
+  }
+
+  /**
+   * Claim a pending payment (PENDING_EMAIL / PENDING_USERNAME) as the authenticated recipient.
+   * Updates recipient_address to the user's Solana wallet so the payer can complete deposit.
+   */
+  async claimAsRecipient(claimId: string, privyUserId: string): Promise<{ claimed: boolean }> {
+    const claim = await this.findOneRaw(claimId);
+    const ra = (claim.recipient_address || '').trim();
+    const isPendingEmail = ra.startsWith(ClaimsService.PENDING_EMAIL_PREFIX);
+    const isPendingUsername = ra.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
+    if (!isPendingEmail && !isPendingUsername) {
+      throw new BadRequestException('This payment is not pending claim or has already been claimed.');
+    }
+    const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
+    if (!isRecipient) {
+      throw new ForbiddenException('You are not the intended recipient of this payment.');
+    }
+    const wallet = await this.usersService.getSolanaWalletAddress(privyUserId);
+    if (!wallet?.trim()) {
+      throw new BadRequestException('No Solana wallet linked to your account. Please add a wallet in settings.');
+    }
+    const { error } = await this.supabaseService.claims
+      .update({ recipient_address: wallet.trim() })
+      .eq('id', claimId)
+      .select()
+      .single();
+    if (error) {
+      this.logger.error('Failed to claim payment:', error);
+      throw new BadRequestException('Failed to claim payment.');
+    }
+
+    // If this claim had a unique burner and funds landed there, sweep USDC to the recipient (like Privacy Cash)
+    const rawClaim = claim as { claim_burner_address?: string | null; claim_burner_encrypted_secret?: string | null };
+    if (
+      rawClaim.claim_burner_address &&
+      rawClaim.claim_burner_encrypted_secret &&
+      this.encryption?.isAvailable() &&
+      this.solanaSponsor
+    ) {
+      try {
+        const secretKey = this.encryption!.decrypt(rawClaim.claim_burner_encrypted_secret);
+        const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
+        const conn = this.solanaSponsor.getConnection();
+        const burnerAta = await getAssociatedTokenAddress(USDC_MINT, burnerKeypair.publicKey);
+        let balance = BigInt(0);
+        try {
+          const acc = await getAccount(conn, burnerAta);
+          balance = acc.amount;
+        } catch {
+          // ATA may not exist
+        }
+        if (balance > BigInt(0)) {
+          const recipientPubkey = new PublicKey(wallet.trim());
+          const recipientAta = await getAssociatedTokenAddress(USDC_MINT, recipientPubkey);
+          const { Transaction } = await import('@solana/web3.js');
+          const tx = new Transaction();
+          try {
+            await getAccount(conn, recipientAta);
+          } catch {
+            const feePayer = this.solanaSponsor.getFeePayerKeypair();
+            if (feePayer) {
+              tx.add(
+                createAssociatedTokenAccountInstruction(
+                  feePayer.publicKey,
+                  recipientAta,
+                  recipientPubkey,
+                  USDC_MINT,
+                ),
+              );
+            }
+          }
+          tx.add(createTransferInstruction(burnerAta, recipientAta, burnerKeypair.publicKey, balance));
+          const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
+          tx.recentBlockhash = blockhash;
+          tx.feePayer = this.solanaSponsor.getFeePayerKeypair()?.publicKey ?? burnerKeypair.publicKey;
+          tx.sign(burnerKeypair);
+          if (this.solanaSponsor.getFeePayerKeypair()) {
+            tx.sign(this.solanaSponsor.getFeePayerKeypair()!);
+          }
+          const sig = await conn.sendTransaction(tx, { skipPreflight: true });
+          await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+          this.logger.log(`Claim ${claimId}: swept ${balance} USDC from burner to ${wallet.slice(0, 8)}... tx=${sig}`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`Claim ${claimId}: burner sweep failed (recipient updated) – ${e?.message ?? e}`);
+      }
+    }
+
+    this.logger.log(`Claim ${claimId} claimed by recipient (privy ${privyUserId})`);
+    return { claimed: true };
+  }
+
+  /**
+   * Reclaim (cancel) a claim by the creator. Sets status to CANCELLED.
+   * If the claim has a burner with USDC, sweeps it to the creator's Loofta (Solana) wallet.
+   */
+  async reclaimByCreator(claimId: string, privyUserId: string): Promise<{ cancelled: boolean }> {
+    const claim = await this.findOneRaw(claimId);
+    if (!claim.created_by || claim.created_by !== privyUserId) {
+      throw new ForbiddenException('Only the creator of this payment can reclaim it.');
+    }
+    const status = (claim.status || '').toUpperCase();
+    if (status === 'CANCELLED') {
+      return { cancelled: true };
+    }
+
+    const rawClaim = claim as { claim_burner_address?: string | null; claim_burner_encrypted_secret?: string | null };
+    if (
+      rawClaim.claim_burner_address &&
+      rawClaim.claim_burner_encrypted_secret &&
+      this.encryption?.isAvailable() &&
+      this.solanaSponsor
+    ) {
+      try {
+        const creatorWallet = await this.usersService.getSolanaWalletAddress(privyUserId);
+        if (creatorWallet?.trim()) {
+          const secretKey = this.encryption!.decrypt(rawClaim.claim_burner_encrypted_secret);
+          const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
+          const conn = this.solanaSponsor.getConnection();
+          const burnerAta = await getAssociatedTokenAddress(USDC_MINT, burnerKeypair.publicKey);
+          let balance = BigInt(0);
+          try {
+            const acc = await getAccount(conn, burnerAta);
+            balance = acc.amount;
+          } catch {
+            // ATA may not exist
+          }
+          if (balance > BigInt(0)) {
+            const creatorPubkey = new PublicKey(creatorWallet.trim());
+            const creatorAta = await getAssociatedTokenAddress(USDC_MINT, creatorPubkey);
+            const { Transaction } = await import('@solana/web3.js');
+            const tx = new Transaction();
+            try {
+              await getAccount(conn, creatorAta);
+            } catch {
+              const feePayer = this.solanaSponsor.getFeePayerKeypair();
+              if (feePayer) {
+                tx.add(
+                  createAssociatedTokenAccountInstruction(
+                    feePayer.publicKey,
+                    creatorAta,
+                    creatorPubkey,
+                    USDC_MINT,
+                  ),
+                );
+              }
+            }
+            tx.add(createTransferInstruction(burnerAta, creatorAta, burnerKeypair.publicKey, balance));
+            const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
+            tx.recentBlockhash = blockhash;
+            tx.feePayer = this.solanaSponsor.getFeePayerKeypair()?.publicKey ?? burnerKeypair.publicKey;
+            tx.sign(burnerKeypair);
+            if (this.solanaSponsor.getFeePayerKeypair()) {
+              tx.sign(this.solanaSponsor.getFeePayerKeypair()!);
+            }
+            const sig = await conn.sendTransaction(tx, { skipPreflight: true });
+            await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+            this.logger.log(`Claim ${claimId}: reclaimed ${balance} USDC from burner to creator tx=${sig}`);
+          }
+        }
+      } catch (e: any) {
+        this.logger.warn(`Claim ${claimId}: reclaim sweep failed – ${e?.message ?? e}`);
+      }
+    }
+
+    const { error } = await this.supabaseService.claims
+      .update({ status: 'CANCELLED' })
+      .eq('id', claimId);
+
+    if (error) {
+      this.logger.error('Failed to cancel claim:', error);
+      throw new BadRequestException('Failed to cancel payment.');
+    }
+    this.logger.log(`Claim ${claimId} reclaimed (cancelled) by creator`);
+    return { cancelled: true };
   }
 
   /**
