@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 
 /**
  * SEND_PAYMENT_ENC_KEY: Used to encrypt/decrypt the one-time burner wallet private key for send-payment links.
@@ -10,22 +12,58 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
  */
 const ALGO = 'aes-256-gcm';
 const IV_LENGTH = 16;
-const SALT_LENGTH = 16;
 const KEY_LENGTH = 32;
 const TAG_LENGTH = 16;
+
+/** Read env var from .env.local when ConfigService/process.env don't have it. */
+function getEnvFromFile(varName: string): string | null {
+  const tryPaths = [
+    join(process.cwd(), 'apps', 'backend', '.env.local'),
+    join(process.cwd(), '.env.local'),
+    join(__dirname, '..', '..', '..', '.env.local'),
+    join(__dirname, '..', '..', '.env.local'),
+  ];
+  for (const p of tryPaths) {
+    try {
+      if (existsSync(p)) {
+        const content = readFileSync(p, 'utf8');
+        const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const match = content.match(new RegExp(`${escaped}\\s*=\\s*(["']?)([^\\s#'"]+)\\1`));
+        if (match?.[2]) return match[2].trim();
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
 
 @Injectable()
 export class SendPaymentEncryptionService {
   private readonly key: Buffer | null = null;
+  private readonly logger = new Logger(SendPaymentEncryptionService.name);
 
   constructor(private readonly config: ConfigService) {
-    const raw = this.config.get<string>('SEND_PAYMENT_ENC_KEY');
-    if (!raw) return;
-    const hexBuf = Buffer.from(raw, 'hex');
+    let raw =
+      this.config.get<string>('SEND_PAYMENT_ENC_KEY') ??
+      (typeof process !== 'undefined' ? process.env.SEND_PAYMENT_ENC_KEY : undefined);
+    if (!raw || typeof raw !== 'string') {
+      raw = getEnvFromFile('SEND_PAYMENT_ENC_KEY') ?? undefined;
+    }
+    if (!raw || typeof raw !== 'string') {
+      this.logger.warn('SEND_PAYMENT_ENC_KEY not set or empty; send-payment/claim encrypt/decrypt disabled');
+      return;
+    }
+    const trimmed = raw.trim();
+    const hexBuf = Buffer.from(trimmed, 'hex');
     if (hexBuf.length === KEY_LENGTH) {
       this.key = hexBuf;
-    } else if (raw.length >= 32) {
-      this.key = Buffer.from(raw.slice(0, 32), 'utf8');
+      this.logger.log('SEND_PAYMENT_ENC_KEY loaded (32-byte hex); encryption available');
+    } else if (trimmed.length >= 32) {
+      this.key = Buffer.from(trimmed.slice(0, 32), 'utf8');
+      this.logger.log('SEND_PAYMENT_ENC_KEY loaded (32+ char); encryption available');
+    } else {
+      this.logger.warn(`SEND_PAYMENT_ENC_KEY length ${trimmed.length} (need 32-byte hex or 32+ chars); encryption disabled`);
     }
   }
 

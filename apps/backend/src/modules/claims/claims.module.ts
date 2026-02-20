@@ -10,7 +10,7 @@ import { CronModule } from '../cron/cron.module';
 import { SendPaymentModule } from '../send-payment/send-payment.module';
 
 @Module({
-  imports: [IntentsModule, UsersModule, forwardRef(() => CronModule), SendPaymentModule],
+  imports: [IntentsModule, UsersModule, forwardRef(() => CronModule), forwardRef(() => SendPaymentModule)],
   controllers: [ClaimsController, AdminClaimsController],
   providers: [ClaimsService, DepositService, SolanaSponsorService],
   exports: [ClaimsService, DepositService],

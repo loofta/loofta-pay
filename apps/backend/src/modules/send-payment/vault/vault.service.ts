@@ -4,16 +4,44 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { createPublicKey, verify } from 'crypto';
 import * as nacl from 'tweetnacl';
-import * as bs58 from 'bs58';
+// bs58 may export default depending on bundler/runtime
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const bs58Module = require('bs58');
+const bs58 = bs58Module?.default ?? bs58Module;
 import { SESSION_MESSAGE } from './constants';
 import type { PrivateClaimLinkState } from './vault-types';
 import { SupabaseService } from '@/database/supabase.service';
 import { prepareClaimForLink, submitClaimForLink } from './claimFlowPh';
 
 export type { PrivateClaimLinkState } from './vault-types';
+
+/** Read env var from .env.local when ConfigService/process.env don't have it. */
+function getEnvFromFile(varName: string): string | null {
+  const tryPaths = [
+    join(process.cwd(), 'apps', 'backend', '.env.local'),
+    join(process.cwd(), '.env.local'),
+    join(__dirname, '..', '..', '..', '..', '..', '.env.local'),
+    join(__dirname, '..', '..', '..', '..', '.env.local'),
+  ];
+  for (const p of tryPaths) {
+    try {
+      if (existsSync(p)) {
+        const content = readFileSync(p, 'utf8');
+        const regex = new RegExp(`${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=\\s*(["']?)([^\\s#'"]+)\\1`);
+        const match = content.match(regex);
+        if (match?.[2]) return match[2].trim();
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
 
 @Injectable()
 export class VaultService {
@@ -24,12 +52,23 @@ export class VaultService {
     private readonly configService: ConfigService,
     private readonly supabaseService: SupabaseService,
   ) {
-    const rpcUrl =
-      this.configService.get<string>('SOLANA_RPC_URL') ||
-      (this.configService.get<string>('HELIUS_API_KEY')
-        ? `https://mainnet.helius-rpc.com/?api-key=${this.configService.get('HELIUS_API_KEY')}`
-        : null);
-    if (rpcUrl) this.connection = new Connection(rpcUrl, 'confirmed');
+    let rpcUrl =
+      this.configService.get<string>('SOLANA_RPC_URL') ??
+      process.env.SOLANA_RPC_URL ??
+      null;
+    if (!rpcUrl) {
+      const heliusKey =
+        this.configService.get<string>('HELIUS_API_KEY') ??
+        process.env.HELIUS_API_KEY ??
+        getEnvFromFile('HELIUS_API_KEY');
+      if (heliusKey) rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${heliusKey}`;
+    }
+    if (!rpcUrl) rpcUrl = getEnvFromFile('SOLANA_RPC_URL');
+    if (rpcUrl) {
+      this.connection = new Connection(rpcUrl, 'confirmed');
+    } else {
+      this.logger.warn('VaultService: SOLANA_RPC_URL / HELIUS_API_KEY not set; private vault RPC unavailable until configured.');
+    }
   }
 
   /** Decode session signature from base64 or base58 to 64-byte Buffer; throws if invalid. */
@@ -79,11 +118,12 @@ export class VaultService {
         const msgArr = new Uint8Array(msg);
         if (nacl.sign.detached.verify(msgArr, sigBytes, pubKeyBytes)) return true;
       }
-      const key = createPublicKey({
-        key: Buffer.from(senderPubkey.toBytes()),
-        format: 'raw',
-        type: 'ed25519',
-      });
+      // Node supports raw Ed25519; @types/node may not include 'raw' in KeyFormat
+      const key = createPublicKey(
+        { key: Buffer.from(senderPubkey.toBytes()), format: 'raw', type: 'ed25519' } as unknown as Parameters<
+          typeof createPublicKey
+        >[0],
+      );
       for (const msg of messages) {
         if (verify(null, msg, key, sessionSig)) return true;
       }

@@ -16,6 +16,7 @@ export type PaymentHistoryClaim = {
   paid_at: string | null;
   recipient_address: string;
   creator_email: string | null;
+  creator_username?: string | null;
   created_by: string | null;
   paid_with_token: string | null;
   paid_with_chain: string | null;
@@ -93,8 +94,28 @@ export async function GET(request: Request) {
 
     const sentRaw = (sentRows || []) as PaymentHistoryClaim[];
     const receivedRaw = receivedRows;
-    const sent = sentRaw.filter((c) => !isExpiredOpenPayment(c));
-    const received = receivedRaw.filter((c) => !isExpiredOpenPayment(c));
+    const allClaims = [...sentRaw, ...receivedRaw];
+    const creatorIds = [...new Set(allClaims.map((c) => c.created_by).filter(Boolean))] as string[];
+    let creatorUsernameMap: Record<string, string> = {};
+    if (creatorIds.length > 0) {
+      const { data: users } = await supabase
+        .from("app_users")
+        .select("privy_user_id, username")
+        .in("privy_user_id", creatorIds);
+      if (users) {
+        creatorUsernameMap = Object.fromEntries(
+          users
+            .filter((u) => u.privy_user_id && u.username != null)
+            .map((u) => [u.privy_user_id!, u.username!])
+        );
+      }
+    }
+    const enrich = (c: PaymentHistoryClaim) => ({
+      ...c,
+      creator_username: (c.created_by && creatorUsernameMap[c.created_by]) || null,
+    });
+    const sent = sentRaw.map(enrich).filter((c) => !isExpiredOpenPayment(c));
+    const received = receivedRaw.map(enrich).filter((c) => !isExpiredOpenPayment(c));
 
     const res = NextResponse.json({ sent, received });
     res.headers.set("Cache-Control", "private, max-age=60, stale-while-revalidate=120");

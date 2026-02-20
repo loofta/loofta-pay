@@ -1,10 +1,14 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
+
+const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
+const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
 
 export type PaymentHistoryClaim = {
   id: string;
@@ -16,12 +20,41 @@ export type PaymentHistoryClaim = {
   paid_at: string | null;
   recipient_address: string;
   creator_email: string | null;
+  creator_username?: string | null;
   created_by: string | null;
   paid_with_token: string | null;
   paid_with_chain: string | null;
   is_private: boolean | null;
   description: string | null;
 };
+
+/** For received: sender label = @username → email → Anonymous */
+function getSenderDisplay(claim: PaymentHistoryClaim): string {
+  if (claim.creator_username) return `@${claim.creator_username}`;
+  if (claim.creator_email) return claim.creator_email;
+  return "Anonymous";
+}
+
+/** For sent: payee label = @username → email → Anonymous (from recipient_address) */
+function getPayeeDisplay(claim: PaymentHistoryClaim): string {
+  const ra = (claim.recipient_address || "").trim();
+  if (ra.startsWith(PENDING_USERNAME_PREFIX)) return `@${ra.slice(PENDING_USERNAME_PREFIX.length).trim()}`;
+  if (ra.startsWith(PENDING_EMAIL_PREFIX)) return ra.slice(PENDING_EMAIL_PREFIX.length).trim();
+  return "Anonymous";
+}
+
+const GIF_URL_REGEX = new RegExp(
+  "https?://[^\\s]+(?:\\.gif|giphy\\.com|tenor\\.com|gfycat\\.com|media\\.giphy\\.com)[^\\s]*",
+  "gi"
+);
+const WHITESPACE_REGEX = new RegExp("\\s+", "g");
+
+function stripGifUrlsFromMessage(desc: string): string | null {
+  const trimmed = desc.trim();
+  if (!trimmed) return null;
+  const textOnly = trimmed.replace(GIF_URL_REGEX, "").replace(WHITESPACE_REGEX, " ").trim();
+  return textOnly || null;
+}
 
 async function fetchPaymentHistory(userId: string): Promise<{ sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[] }> {
   const r = await fetch("/api/payments/history", {
@@ -62,10 +95,26 @@ export default function HistoryPage() {
     .filter((c) => String(c.status).toUpperCase() === "SUCCESS")
     .reduce((sum, c) => sum + parseFloat(c.amount || "0"), 0);
 
-  const allPayments: { claim: PaymentHistoryClaim; type: "sent" | "received" }[] = [
-    ...sent.map((claim) => ({ claim, type: "sent" as const })),
-    ...received.map((claim) => ({ claim, type: "received" as const })),
-  ].sort((a, b) => new Date(b.claim.created_at).getTime() - new Date(a.claim.created_at).getTime());
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const allPayments: { claim: PaymentHistoryClaim; type: "sent" | "received" }[] = useMemo(() => {
+    const list = [
+      ...sent.map((claim) => ({ claim, type: "sent" as const })),
+      ...received.map((claim) => ({ claim, type: "received" as const })),
+    ].sort((a, b) => new Date(b.claim.created_at).getTime() - new Date(a.claim.created_at).getTime());
+    return list;
+  }, [sent, received]);
+
+  const filteredPayments = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return allPayments;
+    return allPayments.filter(({ claim, type }) => {
+      const senderOrPayee = type === "sent" ? getPayeeDisplay(claim) : getSenderDisplay(claim);
+      const message = (claim.description || "").toLowerCase();
+      return senderOrPayee.toLowerCase().includes(q) || message.includes(q);
+    });
+  }, [allPayments, searchQuery]);
 
   if (!authenticated) {
     return (
@@ -114,14 +163,40 @@ export default function HistoryPage() {
                 </div>
               </div>
 
-              <p className="text-slate-400 text-sm font-medium mb-2">Recent payments</p>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-slate-400 text-sm font-medium">Recent payments</p>
+                <button
+                  type="button"
+                  onClick={() => setSearchOpen((o) => !o)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                  aria-label="Search"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8" />
+                    <path d="m21 21-4.35-4.35" />
+                  </svg>
+                </button>
+              </div>
+              {searchOpen && (
+                <input
+                  type="search"
+                  placeholder="Search by sender, payee or message..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full mb-3 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-white/20"
+                />
+              )}
               {allPayments.length === 0 ? (
                 <p className="text-slate-500 text-sm">No payments yet.</p>
+              ) : filteredPayments.length === 0 ? (
+                <p className="text-slate-500 text-sm">No payments match your search.</p>
               ) : (
                 <ul className="space-y-2">
-                  {allPayments.map(({ claim, type }) => {
+                  {filteredPayments.map(({ claim, type }) => {
                     const isSuccess = String(claim.status).toUpperCase() === "SUCCESS";
                     const amount = parseFloat(claim.amount || "0");
+                    const senderOrPayee = type === "sent" ? getPayeeDisplay(claim) : getSenderDisplay(claim);
+                    const message = stripGifUrlsFromMessage(claim.description || "");
                     return (
                       <li key={`${type}-${claim.id}`}>
                         <Link
@@ -136,6 +211,14 @@ export default function HistoryPage() {
                               {type === "sent" ? "-" : "+"}${amount.toFixed(2)} {claim.to_symbol}
                             </span>
                           </div>
+                          <div className="mt-1.5 text-sm font-medium text-slate-300">
+                            {type === "sent" ? "To " : "From "}{senderOrPayee}
+                          </div>
+                          {message && (
+                            <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10">
+                              <p className="text-sm text-slate-300 line-clamp-2 italic">"{message}"</p>
+                            </div>
+                          )}
                           <div className="flex items-center justify-between gap-2 mt-1">
                             <span className="text-xs text-slate-500">
                               {new Date(claim.created_at).toLocaleDateString(undefined, {
