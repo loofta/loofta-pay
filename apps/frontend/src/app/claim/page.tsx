@@ -74,13 +74,13 @@ function CheckIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-type ClaimPageProps = {
-  params?: Promise<Record<string, string>>;
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
-  embedInApp?: boolean;
-};
-
-export default function ClaimPage(props: ClaimPageProps) {
+export default function ClaimPage(
+  props: {
+    params?: Promise<Record<string, string>>;
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+    embedInApp?: boolean;
+  }
+) {
   const { embedInApp } = props ?? {};
   const router = useRouter();
   const pathname = usePathname();
