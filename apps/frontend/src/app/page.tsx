@@ -15,7 +15,7 @@ import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { motion, AnimatePresence } from "framer-motion";
 
 const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
-  () => import("@/app/claim/page").then((mod) => ({ default: mod.default })),
+  () => import("@/app/claim/page").then((mod) => ({ default: mod.ClaimPageContent })),
   { ssr: false }
 );
 
