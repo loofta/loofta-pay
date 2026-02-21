@@ -14,7 +14,7 @@ export async function GET(_: Request, props: { params: Promise<{ id: string }> }
     
     const { data: rawClaim, error: claimError } = await supabase
       .from("claims")
-      .select("id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, claim_burner_address, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description")
+      .select("id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, recipient_username, claim_burner_address, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description")
       .eq("id", params.id)
       .single();
     

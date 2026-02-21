@@ -350,7 +350,7 @@ async function fetchClaim(id: string) {
       const c = data.claim || {};
       console.log("[fetchClaim] From backend:", { claimId: id, hasBurner: !!c.claim_burner_address, recipient_address: c.recipient_address ? `${String(c.recipient_address).slice(0, 20)}…` : "(empty)" });
       return {
-        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
         latestIntent: data.intent ? {
           depositAddress: data.intent.deposit_address || null,
           memo: data.intent.memo ?? null,
@@ -376,7 +376,7 @@ async function fetchClaim(id: string) {
   const c = data.claim || {};
   console.log("[fetchClaim] From frontend API:", { claimId: id, hasBurner: !!c.claim_burner_address, recipient_address: c.recipient_address ? `${String(c.recipient_address).slice(0, 20)}…` : "(empty)" });
   return {
-    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -1927,17 +1927,72 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         ) : claim ? (
           <>
             {isRecipient && String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
-              <div className="mt-6 text-center py-12">
-                <div className="mb-4 text-6xl">✅</div>
-                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                  Paid – Received to your Loofta account
-                </h3>
-                <p className="text-gray-600 text-base mb-4">
-                  ${parseFloat(claim?.amount || "0").toFixed(2)} was sent to you. It’s in your Loofta account.
-                </p>
-                <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900">
-                  ← Back to Send
-                </Link>
+              <div className="mt-6 py-12">
+                <div className="text-center mb-6">
+                  <div className="mb-4 text-6xl">✅</div>
+                  <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                    Paid – Received to your Loofta account
+                  </h3>
+                  <p className="text-gray-600 text-base mb-4">
+                    ${parseFloat(claim?.amount || "0").toFixed(2)} was sent to you. It’s in your Loofta account.
+                  </p>
+                </div>
+                {claim?.description && (
+                  <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                    <div className="text-sm text-gray-600 mb-1">Message</div>
+                    <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
+                      {(() => {
+                        const desc = claim.description || "";
+                        const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
+                        const parts: string[] = [];
+                        let lastIndex = 0;
+                        let match;
+                        gifUrlPattern.lastIndex = 0;
+                        while ((match = gifUrlPattern.exec(desc)) !== null) {
+                          if (match.index > lastIndex) parts.push(desc.slice(lastIndex, match.index));
+                          parts.push(match[0]);
+                          lastIndex = match.index + match[0].length;
+                        }
+                        if (lastIndex < desc.length) parts.push(desc.slice(lastIndex));
+                        if (parts.length === 0) return desc;
+                        return parts.map((part, idx) => {
+                          if (/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i.test(part)) {
+                            let imageUrl = part;
+                            if (part.includes("giphy.com") && !part.endsWith(".gif")) {
+                              const giphyIdMatch = part.match(/giphy\.com\/media\/([^/]+)/);
+                              if (giphyIdMatch) imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
+                              else imageUrl = part.replace(/\/$/, "") + ".gif";
+                            }
+                            return (
+                              <img
+                                key={idx}
+                                src={imageUrl}
+                                alt="GIF"
+                                className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
+                                style={{ maxHeight: "200px", maxWidth: "100%" }}
+                              />
+                            );
+                          }
+                          return <span key={idx}>{part}</span>;
+                        });
+                      })()}
+                    </div>
+                  </div>
+                )}
+                <div className="mb-6 p-3 rounded-lg bg-gray-50 border border-gray-200 space-y-2">
+                  {claim?.created_at && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-600 text-sm">Created</span>
+                      <span className="text-sm text-gray-700">{formatUTCTimestamp(claim.created_at)}</span>
+                    </div>
+                  )}
+                  {claim?.paid_at && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-600 text-sm">Claimed</span>
+                      <span className="text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             ) : isRecipient && claim?.recipient_pending_email ? (
               <div className="mt-6 text-center py-12">

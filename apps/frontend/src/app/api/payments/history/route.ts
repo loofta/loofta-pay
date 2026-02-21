@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
 const CLAIM_SELECT =
-  "id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description";
+  "id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, recipient_username, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description";
 
 const OPEN_PAYMENT_EXPIRY_DAYS = 7;
 
@@ -15,6 +15,7 @@ export type PaymentHistoryClaim = {
   created_at: string;
   paid_at: string | null;
   recipient_address: string;
+  recipient_username?: string | null;
   creator_email: string | null;
   creator_username?: string | null;
   created_by: string | null;

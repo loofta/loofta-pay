@@ -29,6 +29,9 @@ export class Claim {
   @ApiPropertyOptional({ description: 'Recipient wallet address (omitted when recipient_pending_email is true)' })
   recipient_address?: string;
 
+  @ApiPropertyOptional({ description: 'Recipient username when claim was created to an existing user (by @handle); for display e.g. To @username' })
+  recipient_username?: string | null;
+
   @ApiPropertyOptional({ description: 'True when claim was created by email and recipient has not signed in to claim yet' })
   recipient_pending_email?: boolean;
 
