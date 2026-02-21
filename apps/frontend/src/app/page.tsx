@@ -404,9 +404,11 @@ export default function Home() {
           </div>
         )}
         </div>
+      </div>
 
-        {/* FAQ — below the fold, above footer (same styling as /about) */}
-        <section className="mt-12 py-12 md:py-16">
+      {/* FAQ — below the fold, above footer (same styling as /about), wider than main column */}
+      <section className="mt-12 py-12 md:py-16 px-4 pb-24">
+        <div className="max-w-xl mx-auto">
           <h2 className="text-3xl md:text-4xl font-medium font-sans text-white text-center mb-8 md:mb-10">
             Frequently asked<br />questions
           </h2>
@@ -456,8 +458,8 @@ export default function Home() {
               </div>
             ))}
           </div>
-        </section>
-      </div>
+        </div>
+      </section>
     </div>
   );
 }
