@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 // Re-export ClaimStatus from the constraint check in database
-// Matches: check (status in ('OPEN','PENDING_DEPOSIT','IN_FLIGHT','PRIVATE_TRANSFER_PENDING','SUCCESS','REFUNDED','EXPIRED','CANCELLED'))
+// Matches: check (status in (...,'DELETED'))
 export type ClaimStatus = 
   | 'OPEN'
   | 'PENDING_DEPOSIT'
@@ -10,7 +10,8 @@ export type ClaimStatus =
   | 'SUCCESS'
   | 'REFUNDED'
   | 'EXPIRED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'DELETED';
 
 export class Claim {
   @ApiProperty({ description: 'Claim UUID' })
@@ -45,7 +46,7 @@ export class Claim {
 
   @ApiProperty({ 
     description: 'Claim status', 
-    enum: ['OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'PRIVATE_TRANSFER_PENDING', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED'] 
+    enum: ['OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'PRIVATE_TRANSFER_PENDING', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED', 'DELETED'] 
   })
   status: ClaimStatus;
 

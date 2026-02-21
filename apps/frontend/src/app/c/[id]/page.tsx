@@ -14,6 +14,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -30,11 +40,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Share2 } from "lucide-react";
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { QRCodeSVG } from "qrcode.react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { isEvmChainId } from "@/config/biconomy";
-import { createSwapTransaction, getSwapStatus, checkSwapEligibility } from "@/services/swapProvider";
-import { ACTIVE_SWAP_PROVIDER, getProviderDisplayName, type SwapProvider } from "@/config/swapProvider";
-import { ethers } from "ethers";
 import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction, useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
@@ -56,18 +63,28 @@ import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 /** When embedInApp: only the pay content in a dark card (no tabs, no full page). When false: full page with SendReceiveTabs and white card. */
 function ClaimPayLayout({
   embedInApp,
+  topRight,
   children,
 }: {
   embedInApp?: boolean;
+  topRight?: React.ReactNode;
   children: React.ReactNode;
 }) {
   if (embedInApp) {
     return (
-      <div
-        className="rounded-xl border border-white/10 bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30"
-        data-embed-pay
-      >
-        {children}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
+            ← Back to Send
+          </Link>
+          {topRight}
+        </div>
+        <div
+          className="rounded-xl border border-white/10 bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30"
+          data-embed-pay
+        >
+          {children}
+        </div>
       </div>
     );
   }
@@ -75,6 +92,12 @@ function ClaimPayLayout({
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
       <div className="max-w-lg mx-auto px-4 py-6 pb-24">
         <SendReceiveTabs activeTab="send" visualOnly />
+        <div className="flex items-center justify-between gap-2 mt-4 mb-4">
+          <Link href="/" className="items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
+            ← Back to Send
+          </Link>
+          {topRight}
+        </div>
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30">
           {children}
         </div>
@@ -240,9 +263,6 @@ function ClaimPageSenderShareView({
       {isCancelled && (
         <p className="mt-4 text-sm text-gray-500">Payment cancelled. Any funds have been returned to your Loofta wallet.</p>
       )}
-      <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900 mt-6">
-        ← Back to Send
-      </Link>
     </div>
   );
 }
@@ -316,11 +336,6 @@ function getPhantomProvider(): { connect: () => Promise<{ publicKey: PublicKey }
   if (!solana?.signTransaction || !solana?.signMessage) return null;
   return solana as { connect: () => Promise<{ publicKey: PublicKey }>; publicKey: PublicKey | null; signMessage: (msg: Uint8Array, display?: string) => Promise<{ signature: Uint8Array }>; signTransaction: (tx: VersionedTransaction) => Promise<VersionedTransaction> };
 }
-import {
-  isRhinestoneChainSupported,
-  getSupportedTokensForChain,
-  getRhinestoneChainId,
-} from "@/config/rhinestoneChains";
 
 // Check demo mode at module level for consistent behavior
 const DEMO_MODE = isDemoMode();
@@ -332,8 +347,10 @@ async function fetchClaim(id: string) {
     const r = await fetch(`${backendUrl}/claims/${id}/latest-intent`);
     if (r.ok) {
       const data = await r.json();
+      const c = data.claim || {};
+      console.log("[fetchClaim] From backend:", { claimId: id, hasBurner: !!c.claim_burner_address, recipient_address: c.recipient_address ? `${String(c.recipient_address).slice(0, 20)}…` : "(empty)" });
       return {
-        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_pending_email?: boolean; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
         latestIntent: data.intent ? {
           depositAddress: data.intent.deposit_address || null,
           memo: data.intent.memo ?? null,
@@ -356,11 +373,25 @@ async function fetchClaim(id: string) {
     throw new Error(errorData?.error || errorData?.message || "Claim not found");
   }
   const data = await r.json();
-
+  const c = data.claim || {};
+  console.log("[fetchClaim] From frontend API:", { claimId: id, hasBurner: !!c.claim_burner_address, recipient_address: c.recipient_address ? `${String(c.recipient_address).slice(0, 20)}…` : "(empty)" });
   return {
-    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_pending_email?: boolean; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
     latestIntent: data.latestIntent || null,
   };
+}
+
+const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
+const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
+
+/** Recipient for payments: pending → burner, existing → recipient_address. See docs/CLAIM_PAYMENT_ROUTING.md */
+function getEffectiveRecipient(claim: { recipient_address?: string; claim_burner_address?: string } | null): string {
+  if (!claim) return "";
+  const c = claim as { recipient_address?: string; claim_burner_address?: string };
+  const ra = (c.recipient_address || "").trim();
+  const burner = (c.claim_burner_address || "").trim();
+  if (ra && !ra.startsWith(PENDING_EMAIL_PREFIX) && !ra.startsWith(PENDING_USERNAME_PREFIX)) return ra;
+  return burner;
 }
 
 async function prepareDeposit(input: {
@@ -447,13 +478,18 @@ async function prepareDeposit(input: {
   return await r.json();
 }
 
-async function updateClaimStatus(claimId: string, status: string, extra?: { txHash?: string; paidWith?: string; depositReceivedAt?: string; originAsset?: string; destinationAsset?: string; isPrivate?: boolean }) {
+async function updateClaimStatus(
+  claimId: string,
+  status: string,
+  extra?: { txHash?: string; paidWith?: string; depositReceivedAt?: string; originAsset?: string; destinationAsset?: string; isPrivate?: boolean },
+  userId?: string
+) {
   try {
     // Try backend API first (more reliable)
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
     const r = await fetch(`${backendUrl}/claims/${claimId}/status`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(userId ? { "x-privy-user-id": userId } : {}) },
       body: JSON.stringify({ status, ...extra }),
     });
 
@@ -462,11 +498,11 @@ async function updateClaimStatus(claimId: string, status: string, extra?: { txHa
       return;
     }
 
-    // Fallback to frontend API route
+    // Fallback to frontend API route (pass userId so PATCH can backfill created_by for history)
     console.log("[updateClaimStatus] Backend failed, trying frontend API route");
     const r2 = await fetch(`/api/claims/${claimId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(userId ? { "x-privy-user-id": userId } : {}) },
       body: JSON.stringify({ status, ...extra }),
     });
 
@@ -479,7 +515,7 @@ async function updateClaimStatus(claimId: string, status: string, extra?: { txHa
   }
 }
 
-export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
+function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
   const id = claimId;
   const { toast } = useToast();
   const { data: tokens = [], isLoading } = useTokensQuery();
@@ -598,6 +634,8 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
   /** When set, we're waiting for on-chain confirmation; show tracker UI in Pay Now modal. */
   const [confirmingTxSignature, setConfirmingTxSignature] = useState<string | null>(null);
   const [confirmingTxSource, setConfirmingTxSource] = useState<"loofta" | "wallet" | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const { signMessage: privySignMessage } = usePrivySignMessage();
   const { signTransaction: privySignTransaction } = usePrivySignTransaction();
   const solanaPayment = useSolanaPayment({ enabled: showPayNowModal });
@@ -672,17 +710,9 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
     return String(selectedFrom.symbol || "").toLowerCase() === String(destToken.symbol || "").toLowerCase();
   }, [selectedFrom, destToken, sameChain]);
 
-  // Check if destination chain supports Rhinestone companion swaps
-  const destChainSupportsSwap = useMemo(() => {
-    if (!destToken?.chain) return false;
-    return isRhinestoneChainSupported(destToken.chain);
-  }, [destToken?.chain]);
-
-  // Get supported tokens for same-chain swaps on destination chain
-  const supportedSwapTokens = useMemo(() => {
-    if (!destToken?.chain) return [];
-    return getSupportedTokensForChain(destToken.chain);
-  }, [destToken?.chain]);
+  // Swap (Rhinestone/Biconomy) is not used — only USDC on Solana (Pay with Loofta / Use wallet)
+  const destChainSupportsSwap = false;
+  const supportedSwapTokens: string[] = [];
 
   // Filter tokens to show: 
   // - For same-chain EVM: only show supported tokens (ETH, WETH, USDC, USDT)
@@ -731,15 +761,8 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
       setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
     }
   }, [isPrivateMode, usdcSolanaToken]);
-  // Check if direct pay via swap provider is available
-  const swapEligibility = useMemo(() => {
-    if (!selectedFrom || !destToken) return { eligible: false, provider: null as SwapProvider | null };
-    if (!sameChain) return { eligible: false, provider: null as SwapProvider | null };
-    if (!isEvmChainId(selectedFrom.chain)) return { eligible: false, provider: null as SwapProvider | null };
-    return checkSwapEligibility({ fromToken: selectedFrom, toToken: destToken });
-  }, [selectedFrom, destToken, sameChain]);
-  const swapProviderEligible = swapEligibility.eligible;
-  const activeProvider = swapEligibility.provider;
+  // Rhinestone and Biconomy are not used — only USDC on Solana (Pay with Loofta / Use wallet) is supported
+  const swapProviderEligible = false;
   // Derive payer token from status originAsset if available, or from claim.is_private for private payments
   const paidToken = useMemo(() => {
     // For private payments, return USDC on Solana
@@ -790,14 +813,24 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
       setDeposit(dep);
       useClaimPayStore.getState().setDeposit(id, dep as any);
     }
-    // Set status if we have one and haven't set it yet
+    // Set status from intent only when we don't have one yet, and avoid showing
+    // "Deposit failed" when the claim is still in progress (e.g. intent failed from
+    // an expired quote but claim is still PENDING_DEPOSIT and user can get a new intent).
     if (d?.status && !status) {
-      const s = String(d.status);
+      const s = String(d.status).toUpperCase();
+      const intentTerminal = s === "FAILED" || s === "REFUNDED";
+      const claimInProgress = claim?.status
+        ? ["PENDING", "PENDING_DEPOSIT", "IN_FLIGHT", "CREATED"].includes(String(claim.status).toUpperCase())
+        : false;
+      if (intentTerminal && claimInProgress) {
+        // Don't set FAILED/REFUNDED from intent when claim is still in progress
+        return;
+      }
       console.log("[Claim] Setting status from intent/deposit:", { claimId: id, status: s, from: "latestIntentData/deposit" });
       setStatus(s);
       useClaimPayStore.getState().setStatus(id, s);
     }
-  }, [latestIntentData, deposit, status, id]);
+  }, [latestIntentData, deposit, status, id, claim?.status]);
 
   // Hydrate status from claim data (for cross-device support and after refetch)
   useEffect(() => {
@@ -820,13 +853,18 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
     // 1. We don't have a status yet, OR
     // 2. The claim status is SUCCESS (always sync SUCCESS from DB)
     // 3. The claim status changed to a terminal state or PRIVATE_TRANSFER_PENDING
+    // 4. Claim is in progress (PENDING_DEPOSIT etc.) and we're currently showing FAILED/REFUNDED (fix flicker)
     const isTerminalStatus = ["SUCCESS", "FAILED", "REFUNDED"].includes(mappedStatus);
-    if ((!status || mappedStatus === "SUCCESS" || mappedStatus === "PRIVATE_TRANSFER_PENDING" || isTerminalStatus) && mappedStatus !== "PENDING" && mappedStatus !== "CREATED") {
-      if (status !== mappedStatus) {
-        console.log(`[Claim Status] Syncing status from DB: ${status} -> ${mappedStatus}`);
-        setStatus(mappedStatus);
-        useClaimPayStore.getState().setStatus(id, mappedStatus);
-      }
+    const claimInProgress = ["PENDING_DEPOSIT", "IN_FLIGHT", "PRIVATE_TRANSFER_PENDING"].includes(mappedStatus);
+    const showingStaleFailure = status === "FAILED" || status === "REFUNDED";
+    const shouldSync =
+      (!status || mappedStatus === "SUCCESS" || mappedStatus === "PRIVATE_TRANSFER_PENDING" || isTerminalStatus || (claimInProgress && showingStaleFailure))
+      && mappedStatus !== "PENDING"
+      && mappedStatus !== "CREATED";
+    if (shouldSync && status !== mappedStatus) {
+      console.log(`[Claim Status] Syncing status from DB: ${status} -> ${mappedStatus}`);
+      setStatus(mappedStatus);
+      useClaimPayStore.getState().setStatus(id, mappedStatus);
     }
   }, [claim?.status, status, id]);
 
@@ -933,10 +971,11 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
     try {
       useClaimPayStore.getState().setFromSel(id, { symbol: selectedFrom.symbol, chain: selectedFrom.chain } as any);
 
-      // If same token AND same chain, use recipient address directly (no swap needed)
-      if (sameTokenAndChain && claim.recipient_address) {
+      // If same token AND same chain, use recipient address (or burner for pending claims) directly (no swap needed)
+      const effectiveRecipient = getEffectiveRecipient(claim);
+      if (sameTokenAndChain && effectiveRecipient) {
         const directDeposit = {
-          depositAddress: claim.recipient_address,
+          depositAddress: effectiveRecipient,
           memo: undefined,
           deadline: undefined,
           quoteId: undefined,
@@ -995,7 +1034,7 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
           amount: claim.amount,
           to_symbol: claim.to_symbol,
           to_chain: claim.to_chain,
-          recipient_address: claim.recipient_address,
+          recipient_address: getEffectiveRecipient(claim),
         },
         fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain, symbol: selectedFrom.symbol },
         amount: claim.amount,
@@ -1080,7 +1119,8 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
       return;
     }
 
-    const recipient = String(claim?.recipient_address || "").trim();
+    // Private payment: always use burner as recipient when claim has a burner (see docs/CLAIM_PAYMENT_ROUTING.md)
+    const recipient = (claim && ((claim as { claim_burner_address?: string }).claim_burner_address || claim.recipient_address) || "").trim();
     if (!recipient) {
       console.log("[PrivateTransfer] Early exit: no recipient");
       toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
@@ -1175,16 +1215,17 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
         toast({ title: "Payment successful!", description: "Your private payment has been completed." });
         // Update claim status with transaction signature and is_private flag
         if (result.signature) {
-          await updateClaimStatus(claim.id, 'SUCCESS', { txHash: result.signature, paidWith: 'USDC (Private)', isPrivate: true });
+          await updateClaimStatus(claim.id, 'SUCCESS', { txHash: result.signature, paidWith: 'USDC (Private)', isPrivate: true }, user?.id);
         } else {
           // If no signature, still update status (transaction might be pending)
-          await updateClaimStatus(claim.id, 'SUCCESS', { paidWith: 'USDC (Private)', isPrivate: true });
+          await updateClaimStatus(claim.id, 'SUCCESS', { paidWith: 'USDC (Private)', isPrivate: true }, user?.id);
         }
         // Update local status immediately
         setStatus("SUCCESS");
         useClaimPayStore.getState().setStatus(id, "SUCCESS");
-        // Refresh claim data
+        // Refresh claim data and payment history list
         await claimQuery.refetch();
+        queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
         console.log("[PrivateTransfer] Claim refetched, flow complete");
       } else {
         console.log("[PrivateTransfer] SDK returned success: false", result.error);
@@ -1218,9 +1259,11 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
   const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(claimAmountUSD);
   const balanceData = solanaPayment.isBalanceLoading ? undefined : { balanceUSD: looftaBalanceUSD };
 
+  /** Direct Solana only; never Near-Intent. Recipient = burner for pending, user address for existing. See docs/CLAIM_PAYMENT_ROUTING.md */
   async function payWithWallet() {
-    if (!claim?.id || !claim?.amount) {
-      toast({ variant: "destructive", title: "Missing info", description: "Claim or amount is missing." });
+    const effectiveRecipient = getEffectiveRecipient(claim);
+    if (!claim?.id || !effectiveRecipient || !claim?.amount) {
+      toast({ variant: "destructive", title: "Missing info", description: "Claim or recipient address is missing." });
       return;
     }
     const baseAmount = parseFloat(claim.amount) || 0;
@@ -1228,7 +1271,17 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
       toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
       return;
     }
-    const amountUSD = baseAmount + NETWORK_FEE_USD;
+    // Same amount logic as Pay with Loofta: base + network fee (or private fees when required)
+    const amountUSD = requiresPrivate
+      ? baseAmount + NETWORK_FEE_USD
+      : isPrivateMode
+        ? (() => {
+          const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
+          const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+          const withdrawalAmountNeeded = (baseAmount + rentFee) / (1 - feeRate);
+          return withdrawalAmountNeeded + NETWORK_FEE_USD;
+        })()
+        : baseAmount + NETWORK_FEE_USD;
     const phantom = getPhantomProvider();
     if (!phantom) {
       toast({ variant: "destructive", title: "Phantom not found", description: "Install the Phantom extension to pay with wallet." });
@@ -1241,54 +1294,22 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
     setPayingWithWallet(true);
     setPayWithWalletError(null);
     try {
-      // 1. Connect wallet first (refund address = connected wallet)
       const { publicKey } = await phantom.connect();
       if (!publicKey) throw new Error("Could not get wallet address from Phantom.");
-      const refundAddress = publicKey.toBase58();
+      const senderAddress = publicKey.toBase58();
 
-      // 2. Get quote and deposit address via prepareDeposit (refund = connected wallet)
-      const fromTokenPayload = {
-        tokenId: usdcSolanaToken.tokenId || usdcSolanaToken.address,
-        decimals: usdcSolanaToken.decimals ?? 6,
-        chain: usdcSolanaToken.chain,
-        symbol: usdcSolanaToken.symbol,
-      };
-      const prepareRequest = {
-        claimId: id,
-        claim: {
-          id: claim.id,
-          amount: claim.amount,
-          to_symbol: claim.to_symbol,
-          to_chain: claim.to_chain,
-          recipient_address: claim.recipient_address,
-        },
-        fromToken: fromTokenPayload,
-        amount: String(amountUSD),
-        refundAddress,
-      };
-      console.log("[PayWithWallet] Request to prepareDeposit (NearIntent):", JSON.stringify(prepareRequest, null, 2));
-
-      const res = await prepareDeposit(prepareRequest);
-
-      const depositAddress = (res?.depositAddress || "").trim().replace(/\s/g, "");
-      console.log("[PayWithWallet] Deposit address from NearIntent:", depositAddress);
-      console.log("[PayWithWallet] Full prepareDeposit response:", res);
-      if (!depositAddress) {
-        throw new Error("Could not get deposit address. Try Pay with Loofta instead.");
+      const rawRecipient = effectiveRecipient.replace(/\s/g, "");
+      if (/^0x/i.test(rawRecipient)) {
+        throw new Error("This payment link is for a different network. Use Pay with Loofta.");
       }
-      // Deposit must be Solana (base58) for Phantom
-      if (/^0x/i.test(depositAddress)) {
-        throw new Error("This payment route uses a different network. Use Pay with Loofta to pay with any token.");
-      }
-      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(depositAddress)) {
-        throw new Error("Deposit address is not valid for Phantom. Use Pay with Loofta for this link.");
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(rawRecipient)) {
+        throw new Error("Recipient address is not a valid Solana address.");
       }
 
-      const amountHuman = res?.minAmountInFormatted ?? res?.minDepositFormatted ?? String(amountUSD);
       const amountRaw = Math.floor(amountUSD * 1e6);
       if (amountRaw <= 0) throw new Error("Invalid amount to send.");
 
-      // 3. Build and send transaction: connected wallet -> deposit address (USDC)
+      // Direct USDC transfer: Phantom -> claim recipient/burner (no Near-Intent)
       const rpc =
         process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
         (process.env.NEXT_PUBLIC_HELIUS_API_KEY
@@ -1296,8 +1317,8 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
           : "https://api.mainnet-beta.solana.com");
       const connection = new Connection(rpc, "confirmed");
       const mint = new PublicKey(USDC_MINT);
-      const sender = new PublicKey(refundAddress);
-      const recipient = new PublicKey(depositAddress);
+      const sender = new PublicKey(senderAddress);
+      const recipient = new PublicKey(rawRecipient);
 
       const senderAta = getAssociatedTokenAddressSync(mint, sender, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
       const recipientAta = getAssociatedTokenAddressSync(mint, recipient, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
@@ -1337,10 +1358,11 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
         );
       }
 
-      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana wallet)" });
+      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana wallet)" }, user?.id);
       setStatus("SUCCESS");
       useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
       await claimQuery.refetch();
+      queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
       setShowPayNowModal(false);
       toast({ title: "Payment confirmed", description: `$${amountUSD.toFixed(2)} sent from your wallet.` });
     } catch (e: any) {
@@ -1356,8 +1378,22 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
   }
 
   async function payWithLooftaBalance() {
-    if (!claim?.id || !claim?.recipient_address || !claim?.amount) {
-      toast({ variant: "destructive", title: "Missing info", description: "Claim or recipient address is missing." });
+    const isPending = !!(claim as { recipient_pending_username?: boolean; recipient_pending_email?: boolean })?.recipient_pending_username || (claim as { recipient_pending_email?: boolean })?.recipient_pending_email;
+    console.log("[PayWithLoofta] Clicked:", { claimId: claim?.id, isPending, claim_burner_address: (claim as { claim_burner_address?: string })?.claim_burner_address ? "present" : "missing", recipient_address: (claim as { recipient_address?: string })?.recipient_address ? "present" : "missing" });
+    let effectiveRecipient = getEffectiveRecipient(claim);
+    if (!effectiveRecipient && isPending && claim?.id) {
+      console.log("[PayWithLoofta] Pending claim missing burner, refetching...", { claimId: claim.id, recipient_address: (claim as { recipient_address?: string }).recipient_address, claim_burner_address: (claim as { claim_burner_address?: string }).claim_burner_address });
+      const result = await claimQuery.refetch();
+      const freshClaim = (result.data as { claim?: typeof claim } | undefined)?.claim;
+      effectiveRecipient = getEffectiveRecipient(freshClaim ?? null);
+      console.log("[PayWithLoofta] After refetch:", { claim_burner_address: freshClaim ? (freshClaim as { claim_burner_address?: string }).claim_burner_address : "(no claim)", effectiveRecipient: effectiveRecipient ? `${effectiveRecipient.slice(0, 8)}…` : "(empty)" });
+    }
+    if (!claim?.id || !effectiveRecipient || !claim?.amount) {
+      console.warn("[PayWithLoofta] Missing recipient:", { claimId: claim?.id, effectiveRecipient: effectiveRecipient ? `${effectiveRecipient.slice(0, 8)}…` : "(empty)", recipient_address: (claim as { recipient_address?: string })?.recipient_address, claim_burner_address: (claim as { claim_burner_address?: string })?.claim_burner_address, isPending });
+      const description = isPending && !effectiveRecipient
+        ? "This payment link is for someone who hasn't signed up yet. The burner address could not be loaded — try refreshing the page or use a different browser."
+        : "Claim or recipient address is missing.";
+      toast({ variant: "destructive", title: "Missing info", description });
       return;
     }
     const baseAmount = parseFloat(claim.amount) || 0;
@@ -1389,8 +1425,8 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
     setPayingWithLoofta(true);
     setPayWithLooftaError(null);
     try {
-      // Normalize and validate Solana recipient (base58)
-      const rawRecipient = (claim.recipient_address || "").trim().replace(/\s/g, "");
+      // Normalize and validate Solana recipient (base58) — use burner when recipient not yet claimed
+      const rawRecipient = effectiveRecipient.replace(/\s/g, "");
       if (/^0x/i.test(rawRecipient)) {
         throw new Error("This payment link is for a different network. Use another payment method.");
       }
@@ -1424,24 +1460,47 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
         createTransferInstruction(senderAta, recipientAta, sender, amountRaw, [], TOKEN_PROGRAM_ID)
       );
 
-      const { blockhash } = await connection.getLatestBlockhash("confirmed");
-      const message = new TransactionMessage({
-        payerKey: sender,
-        recentBlockhash: blockhash,
-        instructions,
-      }).compileToV0Message();
-      const transaction = new VersionedTransaction(message);
-      const transactionBytes = new Uint8Array(transaction.serialize());
+      const isBlockhashError = (err: unknown) => {
+        const e = err as { message?: string; error?: { message?: string }; r?: { message?: string } };
+        const msg = [e?.message, e?.error?.message, e?.r?.message].filter(Boolean).join(" ").toLowerCase();
+        return msg.includes("blockhash") || msg.includes("block hash");
+      };
 
-      const result = await signAndSendTransaction({
-        transaction: transactionBytes,
-        wallet: selectedWallet,
-        options: {
-          sponsor: true,
-          skipPreflight: true,
-        } as Parameters<typeof signAndSendTransaction>[0]["options"],
-      });
-      const sig = typeof result?.signature !== "undefined" ? bs58.encode(result.signature) : String(result);
+      let rawResult: { signature?: Uint8Array } | { signature?: Uint8Array }[] | null = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const { blockhash } = await connection.getLatestBlockhash("confirmed");
+        const message = new TransactionMessage({
+          payerKey: sender,
+          recentBlockhash: blockhash,
+          instructions,
+        }).compileToV0Message();
+        const transaction = new VersionedTransaction(message);
+        const transactionBytes = new Uint8Array(transaction.serialize());
+
+        try {
+          rawResult = await signAndSendTransaction({
+            transaction: transactionBytes,
+            wallet: selectedWallet,
+            options: {
+              sponsor: true,
+              skipPreflight: true,
+            } as Parameters<typeof signAndSendTransaction>[0]["options"],
+          });
+          break;
+        } catch (sendErr: unknown) {
+          if (attempt === 0 && isBlockhashError(sendErr)) {
+            console.warn("[PayWithLoofta] Blockhash expired, retrying with fresh blockhash...");
+            continue;
+          }
+          throw sendErr;
+        }
+      }
+      const result = Array.isArray(rawResult) ? rawResult[0] : rawResult;
+      if (!result) throw new Error("Failed to send transaction.");
+
+      const sig = typeof (result as { signature?: Uint8Array })?.signature !== "undefined"
+        ? bs58.encode((result as { signature: Uint8Array }).signature)
+        : String(result);
       setConfirmingTxSignature(sig);
       setConfirmingTxSource("loofta");
 
@@ -1452,10 +1511,11 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
         );
       }
 
-      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana)" });
+      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana)" }, user?.id);
       setStatus("SUCCESS");
       useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
       await claimQuery.refetch();
+      queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
       setShowPayNowModal(false);
       toast({
         title: "Payment confirmed",
@@ -1505,244 +1565,10 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
       return;
     }
 
-    if (!swapProviderEligible || !activeProvider) {
-      toast({ variant: "destructive", title: "Not supported", description: "This network is not supported for direct pay." });
+    // Only USDC on Solana (Pay with Loofta / Use wallet) is supported; Rhinestone/Biconomy are not used
+    if (!swapProviderEligible) {
+      toast({ variant: "destructive", title: "Not supported", description: "This network is not supported for direct pay. Use Pay with Loofta or your wallet for USDC on Solana." });
       return;
-    }
-    try {
-      const wallet = wallets[0];
-      if (!wallet) {
-        toast({ variant: "destructive", title: "No wallet", description: "Please connect a wallet to continue." });
-        login(); // Trigger login if no wallet
-        return;
-      }
-
-      console.log("🔐 [Wallet] Using wallet from Privy:", {
-        walletAddress: wallet.address,
-        walletType: wallet.walletClientType,
-        chainId: wallet.chainId,
-      });
-
-      const ethereumProvider = await wallet.getEthereumProvider();
-      const provider = new ethers.BrowserProvider(ethereumProvider);
-      const signer = await provider.getSigner();
-      const ownerAddress = await signer.getAddress();
-
-      console.log("🔐 [Wallet] Signer address:", ownerAddress);
-
-      // Verify wallet address matches
-      if (wallet.address?.toLowerCase() !== ownerAddress.toLowerCase()) {
-        console.warn("⚠️ [Wallet] Address mismatch!", {
-          privyWallet: wallet.address,
-          signerAddress: ownerAddress,
-        });
-      }
-
-      const recipient = String(claim?.recipient_address || "").trim();
-      if (!recipient) {
-        toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
-        return;
-      }
-
-      // Calculate amount to send (use quote if available, else estimate from prices)
-      const amountHuman = quote?.amountInFormatted
-        ? roundUpDecimals(String(quote.amountInFormatted), selectedFrom.decimals > 6 ? 6 : selectedFrom.decimals)
-        : destTokenAmount != null
-          ? roundUpDecimals(String(destTokenAmount), 6)
-          : null;
-
-      if (!amountHuman || parseFloat(amountHuman) === 0) {
-        toast({ variant: "destructive", title: "Quote failed", description: "Could not determine payment amount." });
-        return;
-      }
-
-      setPreparing(true);
-      // Don't set status to PROCESSING yet - wait until deposit is actually received
-      // For Rhinestone: deposit happens when funding tx confirms
-      // For Biconomy: deposit happens when transaction is sent
-
-      const providerName = getProviderDisplayName(activeProvider);
-      console.log(`[${providerName}] Starting payment:`, {
-        from: selectedFrom.symbol,
-        to: destToken.symbol,
-        amount: amountHuman,
-        recipient,
-        provider: activeProvider,
-      });
-
-      // Calculate destination amount (what recipient should receive)
-      const destinationAmount = destTokenAmount != null
-        ? String(destTokenAmount)
-        : undefined;
-
-      // Create swap transaction via unified provider
-      const payload = await createSwapTransaction({
-        fromToken: {
-          tokenId: selectedFrom.tokenId || selectedFrom.address,
-          address: selectedFrom.address,
-          decimals: selectedFrom.decimals,
-          chain: selectedFrom.chain,
-          symbol: selectedFrom.symbol,
-          name: selectedFrom.name || selectedFrom.symbol,
-          price: selectedFrom.price,
-        },
-        toToken: {
-          tokenId: destToken.tokenId || destToken.address,
-          address: destToken.address,
-          decimals: destToken.decimals,
-          chain: destToken.chain,
-          symbol: destToken.symbol,
-          name: destToken.name || destToken.symbol,
-          price: destToken.price,
-        },
-        amountHuman,
-        destinationAmountHuman: destinationAmount, // Amount recipient should receive
-        recipient,
-        userAddress: ownerAddress,
-        forceProvider: activeProvider,
-        ethereumProvider, // Pass provider for Rhinestone signing
-      });
-
-      const { to, data, value, chainId, id: intentId, provider: usedProvider, meta } = payload || {};
-      if (!to) {
-        throw new Error("Invalid transaction payload");
-      }
-
-      // Switch chain if needed
-      if (chainId) {
-        try {
-          await wallet.switchChain(Number(chainId));
-        } catch { }
-      }
-
-      // For Rhinestone 1-click deposit: check if we can skip funding
-      if (meta?.type === "1-click-deposit" && meta?.companionAddress && meta?.signerPk) {
-
-        // If skip-funding, companion already has enough - go directly to intent execution
-        if (meta?.step === "skip-funding") {
-          console.log("[Rhinestone] Companion already funded, executing intent directly...");
-          toast({ title: "Companion funded", description: "Executing swap + transfer..." });
-
-          // Skip-funding: companion already funded, deposit happened earlier
-          // Use current time as deposit received (or we could track when companion was funded)
-          const depositReceivedAt = new Date().toISOString();
-          setStatus("PROCESSING"); // UI status (display only)
-          useClaimPayStore.getState().setStatus(id, "PROCESSING");
-          updateClaimStatus(id, "IN_FLIGHT", { // DB status (valid constraint)
-            paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}`,
-            depositReceivedAt
-          });
-        } else {
-          // Need to fund the companion first
-          console.log("[Rhinestone] Funding companion account...");
-          toast({ title: "Funding companion", description: "Please approve the transfer..." });
-
-          const tx = await signer.sendTransaction({
-            to,
-            data: data || "0x",
-            value: value && value !== "0" ? BigInt(value) : undefined
-          });
-
-          await tx.wait();
-          console.log("[Rhinestone] Funding transaction confirmed on-chain");
-
-          // Deposit is received when funding transaction confirms
-          const depositReceivedAt = new Date().toISOString();
-          setStatus("PROCESSING"); // UI status (display only)
-          useClaimPayStore.getState().setStatus(id, "PROCESSING");
-          updateClaimStatus(id, "IN_FLIGHT", { // DB status (valid constraint)
-            paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}`,
-            depositReceivedAt // Pass deposit time to API
-          });
-
-          toast({ title: "Funding confirmed ✓", description: "Waiting for balance to sync..." });
-
-          // Wait for balance to be indexed (Rhinestone needs this)
-          // Per docs: "You might need to wait a few seconds between funding and executing"
-          console.log("[Rhinestone] Waiting 5 seconds for balance sync...");
-          await new Promise(resolve => setTimeout(resolve, 5000));
-
-          toast({ title: "Balance synced ✓", description: "Executing swap + transfer..." });
-        }
-
-        // Execute the intent
-        console.log("[Rhinestone] Starting intent execution...");
-        const { executeRhinestoneIntent } = await import("@/services/rhinestone");
-
-        const result = await executeRhinestoneIntent({
-          companionAddress: meta.companionAddress,
-          signerPk: meta.signerPk,
-        });
-
-        console.log("[Rhinestone] Intent executed:", result);
-        setStatus("SUCCESS");
-        useClaimPayStore.getState().setStatus(id, "SUCCESS");
-        updateClaimStatus(id, "SUCCESS", { paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}` });
-
-        // Update statusData with the paid amount for display
-        // Use totalSourceAmount which represents the actual ETH used for the swap
-        const paidAmount = (payload as any)?.totalSourceAmount || amountHuman;
-        console.log("[Rhinestone] Payment summary:", { paidAmount, token: selectedFrom?.symbol });
-
-        setStatusData((prev: any) => ({
-          ...prev,
-          swapDetails: {
-            ...(prev?.swapDetails || {}),
-            depositedAmountFormatted: paidAmount,
-            amountInFormatted: paidAmount,
-          },
-        }));
-
-        toast({ title: "Payment complete!", description: `Swap + transfer successful via Rhinestone.` });
-      } else {
-        // Non-Rhinestone flow (Biconomy or others)
-        // Deposit happens when transaction is sent (before confirmation)
-        const depositReceivedAt = new Date().toISOString();
-        setStatus("PROCESSING"); // UI status (display only)
-        useClaimPayStore.getState().setStatus(id, "PROCESSING");
-        updateClaimStatus(id, "IN_FLIGHT", { // DB status (valid constraint)
-          paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}`,
-          depositReceivedAt
-        });
-
-        const tx = await signer.sendTransaction({
-          to,
-          data: data || "0x",
-          value: value ? BigInt(value) : undefined
-        });
-
-        await tx.wait();
-        setStatus("SUCCESS");
-        useClaimPayStore.getState().setStatus(id, "SUCCESS");
-        updateClaimStatus(id, "SUCCESS", { txHash: tx.hash, paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}` });
-        toast({ title: "Transaction confirmed", description: `Payment successful via ${getProviderDisplayName(usedProvider)}.` });
-      }
-
-      // Optional: Poll status in background
-      if (intentId) {
-        const iv = setInterval(async () => {
-          try {
-            const s = await getSwapStatus(intentId, usedProvider);
-            const st = String(s?.status || "").toUpperCase();
-            if (st === "SUCCESS" || st === "FAILED") {
-              if (st === "FAILED") {
-                setStatus("FAILED");
-                useClaimPayStore.getState().setStatus(id, "FAILED");
-                updateClaimStatus(id, "FAILED");
-              }
-              clearInterval(iv);
-            }
-          } catch { clearInterval(iv); }
-        }, 5000);
-        setTimeout(() => clearInterval(iv), 120000);
-      }
-    } catch (e: any) {
-      setStatus("FAILED");
-      useClaimPayStore.getState().setStatus(id, "FAILED");
-      updateClaimStatus(id, "FAILED");
-      toast({ variant: "destructive", title: "Payment failed", description: e?.message || "Could not complete payment" });
-    } finally {
-      setPreparing(false);
     }
   }
 
@@ -1801,7 +1627,7 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
           // Store route info from 1-click API response
           originAsset,
           destinationAsset,
-        }).catch((e) => {
+        }, user?.id).catch((e) => {
           console.error("[statusQuery] Failed to update deposit_received_at:", e);
         });
       }
@@ -1820,9 +1646,10 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
                 : selectedFrom?.symbol
                   ? `${selectedFrom.symbol} on ${selectedFrom.chain}`
                   : undefined,
-            });
+            }, user?.id);
+            queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
           } else {
-            await updateClaimStatus(id, upperStatus);
+            await updateClaimStatus(id, upperStatus, undefined, user?.id);
           }
           // Refetch claim after DB is updated
           claimQuery.refetch();
@@ -1871,7 +1698,7 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
     useClaimPayStore.getState().setStatus(id, "IN_FLIGHT");
 
     // Update claim status in database
-    updateClaimStatus(id, "IN_FLIGHT", { txHash: hash }).catch((e) => {
+    updateClaimStatus(id, "IN_FLIGHT", { txHash: hash }, user?.id).catch((e) => {
       console.error("[onSubmitTxHash] Failed to update claim status:", e);
     });
 
@@ -2019,7 +1846,68 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
         </div>
       )}
 
-      <ClaimPayLayout embedInApp={embedInApp}>
+      <ClaimPayLayout
+        embedInApp={embedInApp}
+        topRight={
+          user?.id && claim?.created_by === user.id && ["OPEN", "PENDING_DEPOSIT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(true)}
+                className="text-sm font-medium text-red-500 hover:text-gray-400 transition-colors"
+              >
+                Delete this payment
+              </button>
+              <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+                <AlertDialogContent className="[&_.text-gray-900]:!text-white [&_.text-muted-foreground]:!text-slate-400 [&_.border]:!border-white/10 bg-[#0f0f12] border-white/10">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this payment?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will remove the payment link. It won&apos;t be visible to you or anyone else. This cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel className="border-white/20 text-slate-300 hover:bg-white/10 hover:text-white">
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        if (!user?.id) return;
+                        setDeleting(true);
+                        try {
+                          const r = await fetch(`/api/claims/${id}`, {
+                            method: "DELETE",
+                            headers: { "x-privy-user-id": user.id },
+                          });
+                          if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            toast({ variant: "destructive", title: "Could not delete", description: (err as { error?: string })?.error || "Try again." });
+                            setDeleting(false);
+                            return;
+                          }
+                          setShowDeleteConfirm(false);
+                          queryClient.setQueryData(["claim", id], undefined);
+                          queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
+                          toast({ title: "Payment deleted" });
+                        } catch (e) {
+                          toast({ variant: "destructive", title: "Could not delete", description: (e as Error)?.message || "Try again." });
+                        } finally {
+                          setDeleting(false);
+                        }
+                      }}
+                      disabled={deleting}
+                      className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
+                    >
+                      {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </>
+          ) : null
+        }
+      >
         {/* Demo Mode Banner */}
         {DEMO_MODE && (
           <div className="mb-4 -mx-6 -mt-6 px-4 py-3 bg-amber-50 border-b border-amber-200 rounded-t-2xl">
@@ -2081,7 +1969,7 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
                   ← Back to Send
                 </Link>
               </div>
-            ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id ? (
+            ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
               <ClaimPageSenderShareView
                 claimId={id}
                 amount={parseFloat(claim?.amount || "0")}
@@ -2089,7 +1977,7 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
                 status={String(status || claim?.status || "").toUpperCase()}
                 userId={user?.id}
               />
-            ) : claim?.recipient_pending_username ? (
+            ) : claim?.recipient_pending_username && !(user?.id && claim?.created_by === user.id) ? (
               <div className="mt-6 text-center py-12">
                 <div className="mb-4 text-6xl">🎁</div>
                 <h3 className="text-2xl font-semibold text-gray-900 mb-2">
@@ -3344,7 +3232,12 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
             ))}
           </>
         ) : (
-          <div className="text-red-600">Claim not found.</div>
+          <div className="mt-6 text-center py-12">
+            <p className="text-lg font-medium text-slate-300">This payment doesn&apos;t exist.</p>
+            <Link href="/" className="inline-flex items-center gap-2 mt-4 text-sm font-medium text-slate-400 hover:text-white transition-colors">
+              ← Back to Send
+            </Link>
+          </div>
         )}
       </ClaimPayLayout>
 
@@ -3464,7 +3357,7 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
                       className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
-                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-700" />}
+                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-900" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <span className="font-semibold text-gray-900 block">Use wallet</span>
@@ -3528,7 +3421,7 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
                       className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
-                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-700" />}
+                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-900" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <span className="font-semibold text-gray-900 block">Use wallet</span>
@@ -3551,10 +3444,6 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
         </DialogContent>
       </Dialog>
 
-      {/* Debug Section - Rhinestone Companion Account Recovery */}
-      {process.env.NODE_ENV === "development" && (
-        <CompanionDebugSection wallets={wallets} />
-      )}
     </>
   );
 }
@@ -3562,157 +3451,6 @@ export function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedIn
 export default function ClaimPayPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = React.use(params);
   return <ClaimPayView claimId={id} />;
-}
-
-function CompanionDebugSection({ wallets }: { wallets: any[] }) {
-  const [companionAddress, setCompanionAddress] = useState("");
-  const [companionBalance, setCompanionBalance] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [withdrawing, setWithdrawing] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [hasStoredKey, setHasStoredKey] = useState<boolean | null>(null);
-  const { toast } = useToast();
-
-  // Check for stored signer key on mount
-  useEffect(() => {
-    if (wallets[0]?.address) {
-      try {
-        const stored = localStorage.getItem("rhinestone_signer_keys");
-        const keys = stored ? JSON.parse(stored) : {};
-        setHasStoredKey(!!keys[wallets[0].address.toLowerCase()]);
-      } catch {
-        setHasStoredKey(false);
-      }
-    }
-  }, [wallets]);
-
-  const checkBalance = async () => {
-    if (!companionAddress) return;
-    setIsLoading(true);
-    setMessage(null);
-    try {
-      const { getCompanionBalance } = await import("@/services/rhinestone");
-      const balance = await getCompanionBalance(companionAddress, 8453);
-      setCompanionBalance(balance.eth);
-      setMessage({ type: "success", text: `Balance: ${balance.eth} ETH` });
-    } catch (e: any) {
-      setMessage({ type: "error", text: e?.message || "Failed to check balance" });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const withdrawFunds = async () => {
-    if (!companionAddress || !wallets[0]) {
-      toast({ variant: "destructive", title: "Error", description: "Connect wallet and enter companion address" });
-      return;
-    }
-
-    setWithdrawing(true);
-    setMessage(null);
-    try {
-      const ethereumProvider = await wallets[0].getEthereumProvider();
-      const { withdrawFromCompanion } = await import("@/services/rhinestone");
-
-      const result = await withdrawFromCompanion({
-        companionAddress,
-        userAddress: wallets[0].address,
-        ethereumProvider,
-        recipient: wallets[0].address,
-        chainId: 8453,
-      });
-
-      setMessage({ type: "success", text: `Withdrawal successful! TX: ${result.txHash.slice(0, 10)}...` });
-      toast({ title: "Withdrawal successful!", description: "Funds sent to your wallet" });
-
-      // Refresh balance
-      await checkBalance();
-    } catch (e: any) {
-      setMessage({ type: "error", text: e?.message || "Withdrawal failed" });
-      toast({ variant: "destructive", title: "Withdrawal failed", description: e?.message });
-    } finally {
-      setWithdrawing(false);
-    }
-  };
-
-  const getCurrentCompanion = async () => {
-    if (!wallets[0]) return;
-    try {
-      const { getCompanionAddress } = await import("@/services/rhinestone");
-      const addr = await getCompanionAddress(wallets[0].address);
-      setCompanionAddress(addr);
-      toast({ title: "Current Companion", description: addr });
-    } catch (e: any) {
-      toast({ variant: "destructive", title: "Error", description: e?.message });
-    }
-  };
-
-  return (
-    <div className="mt-8 mb-24 mx-auto max-w-xl p-4 border-2 border-dashed border-red-300 rounded-lg bg-red-50">
-      <h3 className="text-lg font-bold text-red-800 mb-2">🔧 Debug: Companion Account Recovery</h3>
-      <p className="text-sm text-red-600 mb-4">
-        Use this to withdraw funds from any Rhinestone companion account you own.
-      </p>
-
-      <div className="space-y-3">
-        <div>
-          <label className="text-sm font-medium text-gray-700">Companion Address</label>
-          <div className="flex gap-2 mt-1">
-            <Input
-              value={companionAddress}
-              onChange={(e) => setCompanionAddress(e.target.value)}
-              placeholder="0x7f86c6D89D..."
-              className="flex-1 font-mono text-sm"
-            />
-            <Button variant="outline" size="sm" onClick={getCurrentCompanion}>
-              Get Current
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={checkBalance}
-            disabled={isLoading || !companionAddress}
-            className="flex-1"
-          >
-            {isLoading ? "Checking..." : "Check Balance"}
-          </Button>
-          <Button
-            onClick={withdrawFunds}
-            disabled={withdrawing || !companionAddress}
-            className="flex-1 bg-red-600 hover:bg-red-700 text-white"
-          >
-            {withdrawing ? "Withdrawing..." : "Withdraw All ETH"}
-          </Button>
-        </div>
-
-        {message && (
-          <div className={`p-2 rounded text-sm ${message.type === "success" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
-            {message.text}
-          </div>
-        )}
-
-        {hasStoredKey !== null && (
-          <div className={`text-sm  mt-2 p-2 rounded border ${hasStoredKey ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800"}`}>
-            <strong>{hasStoredKey ? "✅ Signer Key Found" : "⚠️ No Signer Key Found"}</strong><br />
-            {hasStoredKey
-              ? "You can withdraw from companions created in this browser session."
-              : "Companions created in previous sessions may not be recoverable."
-            }
-          </div>
-        )}
-
-        <div className="text-sm  text-gray-500 mt-2 p-2 bg-gray-100 rounded">
-          <strong>Known stuck companions (keys lost):</strong><br />
-          • 0x7f86c6D89D715082Ca64bbA78eF9d7421052F641<br />
-          • 0x9353C0f04F8B4781ed2a8F67FC5037e51738B855<br /><br />
-          <strong>To recover:</strong> Contact <a href="https://t.me/kurt_larsen" className="underline text-blue-600">Rhinestone support</a>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function StatusBadge({ status }: { status: string }) {

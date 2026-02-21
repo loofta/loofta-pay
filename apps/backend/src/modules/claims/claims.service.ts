@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createDecipheriv } from 'crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { Keypair, PublicKey } from '@solana/web3.js';
@@ -41,8 +41,9 @@ export class ClaimsService {
       'NEXT_PUBLIC_BASE_URL',
       'https://pay.loofta.xyz',
     );
+    const burnerOk = !!(this.encryption?.isAvailable() || this.getClaimBurnerDecryptionKey());
     this.logger.log(
-      `ClaimsService init: encryption=${this.encryption ? (this.encryption.isAvailable() ? 'available' : 'not configured') : 'null'}, sponsor=${this.solanaSponsor.isAvailable()}`,
+      `ClaimsService init: encryption=${this.encryption ? (this.encryption.isAvailable() ? 'available' : 'not configured') : 'null'}, claim burner creation=${burnerOk ? 'enabled' : 'disabled (set SEND_PAYMENT_ENC_KEY)'}, sponsor=${this.solanaSponsor.isAvailable()}`,
     );
   }
 
@@ -138,6 +139,9 @@ export class ClaimsService {
 
     recipientAddress = `${ClaimsService.PENDING_USERNAME_PREFIX}${cleanUsername}`;
     const burner = this.createClaimBurner();
+    if (!burner) {
+      this.logger.warn('Creating pending-username claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Pay-with-Loofta will fail until the key is set.');
+    }
 
     const { data: claim, error: claimError } = await this.supabaseService.claims
       .insert({
@@ -173,14 +177,29 @@ export class ClaimsService {
 
   /** Generate a unique burner keypair per claim (like send-payment); secret encrypted with SEND_PAYMENT_ENC_KEY. */
   private createClaimBurner(): { claim_burner_address: string; claim_burner_encrypted_secret: string } | null {
-    if (!this.encryption?.isAvailable()) return null;
     const burnerKeypair = Keypair.generate();
     const secret = Buffer.from(burnerKeypair.secretKey);
-    const encrypted = this.encryption.encrypt(secret);
+    let encrypted: string;
+    if (this.encryption?.isAvailable()) {
+      encrypted = this.encryption.encrypt(secret);
+    } else {
+      const key = this.getClaimBurnerDecryptionKey();
+      if (!key) return null;
+      encrypted = this.encryptBurnerSecret(secret, key);
+    }
     return {
       claim_burner_address: burnerKeypair.publicKey.toBase58(),
       claim_burner_encrypted_secret: encrypted,
     };
+  }
+
+  /** Encrypt burner secret (same format as SendPaymentEncryptionService) when encryption service is not available. */
+  private encryptBurnerSecret(plaintext: Buffer, key: Buffer): string {
+    const iv = randomBytes(ENC_IV_LENGTH);
+    const cipher = createCipheriv(ENC_ALGO, key, iv, { authTagLength: ENC_TAG_LENGTH });
+    const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return Buffer.concat([iv, tag, encrypted]).toString('base64');
   }
 
   /**
@@ -308,6 +327,9 @@ export class ClaimsService {
 
     recipientAddress = `${ClaimsService.PENDING_EMAIL_PREFIX}${cleanEmail}`;
     const burner = this.createClaimBurner();
+    if (!burner) {
+      this.logger.warn('Creating pending-email claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Pay-with-Loofta will fail until the key is set.');
+    }
 
     const { data: claim, error: claimError } = await this.supabaseService.claims
       .insert({
@@ -350,6 +372,9 @@ export class ClaimsService {
     }
 
     const claim = data as Claim;
+    if ((claim.status || '').toUpperCase() === 'DELETED') {
+      throw new NotFoundException('This payment doesn\'t exist.');
+    }
     if (claim.created_by) {
       const creator = await this.usersService.findByPrivyId(claim.created_by);
       (claim as Claim & { creator_username?: string | null }).creator_username = creator?.username ?? null;
@@ -359,7 +384,12 @@ export class ClaimsService {
       (claim as Claim & { recipient_address?: string; recipient_pending_email?: boolean }).recipient_address = undefined;
       (claim as Claim & { recipient_pending_email?: boolean }).recipient_pending_email = true;
       const dataWithBurner = data as { claim_burner_address?: string | null };
-      if (dataWithBurner.claim_burner_address) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = dataWithBurner.claim_burner_address;
+      this.logger.log(`[findOne] Pending-email claim ${id}: DB has claim_burner_address=${!!dataWithBurner.claim_burner_address}`);
+      let burnerAddr = dataWithBurner.claim_burner_address?.trim() || null;
+      if (!burnerAddr) {
+        burnerAddr = await this.backfillBurnerForClaim(id);
+      }
+      if (burnerAddr) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = burnerAddr;
     }
     // Mask pending-username claims: expose flag and username so UI can show "Claim with @username"
     if (claim.recipient_address?.startsWith(ClaimsService.PENDING_USERNAME_PREFIX)) {
@@ -368,9 +398,38 @@ export class ClaimsService {
       (claim as Claim & { recipient_pending_username?: boolean }).recipient_pending_username = true;
       (claim as Claim & { recipient_pending_username_value?: string }).recipient_pending_username_value = pendingUsername;
       const dataWithBurner = data as { claim_burner_address?: string | null };
-      if (dataWithBurner.claim_burner_address) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = dataWithBurner.claim_burner_address;
+      this.logger.log(`[findOne] Pending-username claim ${id}: DB has claim_burner_address=${!!dataWithBurner.claim_burner_address}`);
+      let burnerAddr = dataWithBurner.claim_burner_address?.trim() || null;
+      if (!burnerAddr) {
+        burnerAddr = await this.backfillBurnerForClaim(id);
+      }
+      if (burnerAddr) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = burnerAddr;
     }
     return claim;
+  }
+
+  /**
+   * Backfill a burner for an existing pending claim that was created without one.
+   * Creates burner, persists to DB, returns burner address or null if key unavailable.
+   */
+  private async backfillBurnerForClaim(claimId: string): Promise<string | null> {
+    const burner = this.createClaimBurner();
+    if (!burner) {
+      this.logger.warn(`[findOne] Cannot backfill burner for claim ${claimId}: SEND_PAYMENT_ENC_KEY not available`);
+      return null;
+    }
+    const { error } = await this.supabaseService.claims
+      .update({
+        claim_burner_address: burner.claim_burner_address,
+        claim_burner_encrypted_secret: burner.claim_burner_encrypted_secret,
+      })
+      .eq('id', claimId);
+    if (error) {
+      this.logger.error(`[findOne] Failed to backfill burner for claim ${claimId}:`, error);
+      return null;
+    }
+    this.logger.log(`[findOne] Backfilled burner for pending claim ${claimId}`);
+    return burner.claim_burner_address;
   }
 
   /**
@@ -384,7 +443,11 @@ export class ClaimsService {
     if (error || !data) {
       throw new NotFoundException(`Claim with ID ${id} not found`);
     }
-    return data as Claim & { recipient_address?: string };
+    const row = data as Claim & { recipient_address?: string };
+    if ((row.status || '').toUpperCase() === 'DELETED') {
+      throw new NotFoundException('This payment doesn\'t exist.');
+    }
+    return row;
   }
 
   /**
@@ -686,7 +749,7 @@ export class ClaimsService {
   }
 
   /**
-   * Update claim status
+   * Update claim status. When status is SUCCESS and createdByUserId is provided, backfill created_by if currently null (so payment shows in history).
    */
   async updateStatus(id: string, status: ClaimStatus, extra?: { 
     txHash?: string; 
@@ -694,12 +757,22 @@ export class ClaimsService {
     isPrivate?: boolean;
     paidWithToken?: string;
     paidWithChain?: string;
-  }): Promise<Claim> {
+  }, createdByUserId?: string): Promise<Claim> {
     const updateData: Record<string, any> = { status };
     
     // Set paid_at timestamp when status becomes SUCCESS
     if (status === 'SUCCESS') {
       updateData.paid_at = new Date().toISOString();
+      // Backfill created_by when missing so the payment appears in history
+      if (createdByUserId) {
+        const { data: existing } = await this.supabaseService.claims
+          .select('created_by')
+          .eq('id', id)
+          .maybeSingle();
+        if (existing && !existing.created_by) {
+          updateData.created_by = createdByUserId;
+        }
+      }
     }
     
     // Set is_private flag if provided (for private payments)

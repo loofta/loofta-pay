@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				// Detect external Solana wallets (e.g. Phantom) for "Pay with wallet" and connection flows.
 				externalWallets: {
 					solana: {
-						connectors: toSolanaWalletConnectors(),
+						connectors: toSolanaWalletConnectors({ shouldAutoConnect: false }),
 					},
 				},
 				appearance: {
@@ -58,6 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 					logo: "/loofta.svg",
 					accentColor: "#FF0F00",
 					showWalletLoginFirst: false,
+					walletChainType: "solana-only",
 				},
 			}}
 		>
