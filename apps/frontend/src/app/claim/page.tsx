@@ -74,13 +74,8 @@ function CheckIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-export default function ClaimPage(
-  props: {
-    params?: Promise<Record<string, string>>;
-    searchParams?: Promise<Record<string, string | string[] | undefined>>;
-    embedInApp?: boolean;
-  }
-) {
+/** Named export for embedding in home page (accepts embedInApp). */
+export function ClaimPageContent(props: { embedInApp?: boolean }) {
   const { embedInApp } = props ?? {};
   const router = useRouter();
   const pathname = usePathname();
@@ -918,6 +913,16 @@ export default function ClaimPage(
       </div>
     </>
   );
+}
+
+/** Next.js page: only params/searchParams. embedInApp comes from ?embed=1 when needed. */
+export default function ClaimPage(props: {
+  params?: Promise<Record<string, string>>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const searchParams = props.searchParams != null ? React.use(props.searchParams) : ({} as Record<string, string | string[] | undefined>);
+  const embedInApp = (searchParams && typeof searchParams === "object" && (searchParams as Record<string, string>)["embed"] === "1") ?? false;
+  return <ClaimPageContent embedInApp={embedInApp} />;
 }
 
 function ConfettiCanvas() {
