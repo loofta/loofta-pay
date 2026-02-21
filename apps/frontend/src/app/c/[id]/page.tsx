@@ -1859,15 +1859,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 Delete this payment
               </button>
               <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-                <AlertDialogContent className="[&_.text-gray-900]:!text-white [&_.text-muted-foreground]:!text-slate-400 [&_.border]:!border-white/10 bg-[#0f0f12] border-white/10">
+                <AlertDialogContent className="[&_.text-gray-900]:!text-white [&_.text-muted-foreground]:!text-slate-300 [&_.border]:!border-white/10 bg-[#0f0f12] border-white/10">
                   <AlertDialogHeader>
-                    <AlertDialogTitle>Delete this payment?</AlertDialogTitle>
-                    <AlertDialogDescription>
+                    <AlertDialogTitle className="text-white">Delete this payment?</AlertDialogTitle>
+                    <AlertDialogDescription className="text-slate-300">
                       This will remove the payment link. It won&apos;t be visible to you or anyone else. This cannot be undone.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogCancel className="border-white/20 text-slate-300 hover:bg-white/10 hover:text-white">
+                    <AlertDialogCancel className="bg-white text-gray-900 border border-white/20 hover:bg-gray-100 hover:text-gray-900">
                       Cancel
                     </AlertDialogCancel>
                     <AlertDialogAction
