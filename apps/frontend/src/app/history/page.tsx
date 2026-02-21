@@ -35,8 +35,9 @@ function getSenderDisplay(claim: PaymentHistoryClaim): string {
   return "Anonymous";
 }
 
-/** For sent: payee label = @username → email → Anonymous (from recipient_address) */
+/** For sent: payee label = @recipient_username → PENDING_USERNAME → email → Anonymous */
 function getPayeeDisplay(claim: PaymentHistoryClaim): string {
+  if (claim.recipient_username) return `@${claim.recipient_username}`;
   const ra = (claim.recipient_address || "").trim();
   if (ra.startsWith(PENDING_USERNAME_PREFIX)) return `@${ra.slice(PENDING_USERNAME_PREFIX.length).trim()}`;
   if (ra.startsWith(PENDING_EMAIL_PREFIX)) return ra.slice(PENDING_EMAIL_PREFIX.length).trim();

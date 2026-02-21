@@ -113,6 +113,7 @@ export class ClaimsService {
           to_symbol: 'USDC',
           to_chain: 'solana',
           recipient_address: recipientAddress,
+          recipient_username: cleanUsername,
           created_by: userId ? String(userId) : null,
           creator_email: null,
           status: 'OPEN' as ClaimStatus,

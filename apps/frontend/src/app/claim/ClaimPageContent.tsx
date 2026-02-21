@@ -631,6 +631,15 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         );
                       })()}
                     </div>
+                    <div className="mt-6">
+                      <Button
+                        variant="outline"
+                        className="w-full rounded-xl border-2 border-gray-200 bg-white text-gray-700 hover:bg-gray-50 font-medium"
+                        onClick={() => clearLink()}
+                      >
+                        Create a new link
+                      </Button>
+                    </div>
                     {!authenticated && (
                       <div className="mt-8 rounded-xl border border-gray-200 bg-gray-50 p-4 text-center space-y-3">
                         <div className="text-lg font-semibold text-gray-900">Create your profile</div>
