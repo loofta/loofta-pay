@@ -16,7 +16,7 @@ export function MinimalHeader() {
   const { authenticated, email, logout } = useAuth();
   const { login: privyLogin, user: privyUser } = usePrivy();
   const username = useAuthStore((s) => s.username ?? null);
-  const headerRef = useRef<HTMLHeaderElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
 
   const [showBalanceModal, setShowBalanceModal] = useState(false);
   const [balanceUSD, setBalanceUSD] = useState<string>("0.00");
@@ -55,7 +55,7 @@ export function MinimalHeader() {
       setSolanaAddress(null);
       return;
     }
-    const addr = solanaLinkedWallet.address;
+    const addr = (solanaLinkedWallet as { address: string }).address;
     setSolanaAddress(addr);
     setLoadingBalance(true);
     getSolanaBalanceUSD(addr)
