@@ -275,12 +275,15 @@ export class ClaimsController {
   async updateStatus(
     @Param('id') id: string,
     @Body() body: { status: string; txHash?: string; paidWith?: string; isPrivate?: boolean },
+    @Req() req?: { headers?: { [k: string]: string | string[] | undefined } },
   ): Promise<Claim> {
+    const userId = req?.headers?.['x-privy-user-id'];
+    const createdByUserId = typeof userId === 'string' ? userId : Array.isArray(userId) ? userId[0] : undefined;
     return this.claimsService.updateStatus(id, body.status as any, {
       txHash: body.txHash,
       paidWith: body.paidWith,
       isPrivate: body.isPrivate,
-    });
+    }, createdByUserId);
   }
 
   /**

@@ -24,9 +24,11 @@ export type PaymentHistoryClaim = {
   description: string | null;
 };
 
+const TERMINAL_STATUSES = ["SUCCESS", "CANCELLED", "REFUNDED", "EXPIRED", "DELETED"];
+
 function isExpiredOpenPayment(claim: PaymentHistoryClaim): boolean {
   const status = String(claim.status || "").toUpperCase();
-  if (status === "SUCCESS") return false;
+  if (TERMINAL_STATUSES.includes(status)) return false;
   const created = new Date(claim.created_at).getTime();
   const cutoff = Date.now() - OPEN_PAYMENT_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
   return created < cutoff;
@@ -114,8 +116,12 @@ export async function GET(request: Request) {
       ...c,
       creator_username: (c.created_by && creatorUsernameMap[c.created_by]) || null,
     });
-    const sent = sentRaw.map(enrich).filter((c) => !isExpiredOpenPayment(c));
-    const received = receivedRaw.map(enrich).filter((c) => !isExpiredOpenPayment(c));
+    const sent = sentRaw
+      .map(enrich)
+      .filter((c) => !isExpiredOpenPayment(c) && String(c.status || "").toUpperCase() !== "DELETED");
+    const received = receivedRaw
+      .map(enrich)
+      .filter((c) => String(c.status || "").toUpperCase() === "SUCCESS");
 
     const res = NextResponse.json({ sent, received });
     res.headers.set("Cache-Control", "private, max-age=60, stale-while-revalidate=120");

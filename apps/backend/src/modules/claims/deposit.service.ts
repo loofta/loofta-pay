@@ -35,6 +35,10 @@ export interface DepositResult {
   code?: string;
 }
 
+/**
+ * Deposit (quote/deposit address) for claim payments.
+ * Routing rules: see docs/CLAIM_PAYMENT_ROUTING.md. Pending claims use burner; never reject them.
+ */
 @Injectable()
 export class DepositService {
   private readonly logger = new Logger(DepositService.name);
@@ -56,22 +60,9 @@ export class DepositService {
       throw new BadRequestException('Missing required fields');
     }
 
-    // Get claim details (masked for display) and raw for recipient_address (pending check)
+    // Get claim details (masked for display) and raw for recipient_address / claim_burner_address (pending claims use burner)
     const claim = await this.claimsService.findOne(claimId);
     const rawClaim = await this.claimsService.findOneRaw(claimId);
-
-    // Reject deposit if recipient has not claimed yet (created by email or username, no account / not signed up)
-    const ra = rawClaim.recipient_address;
-    if (ra?.startsWith(ClaimsService.PENDING_EMAIL_PREFIX)) {
-      throw new BadRequestException(
-        'Recipient has not claimed this payment yet. They need to open the link and sign in with their email first.'
-      );
-    }
-    if (ra?.startsWith(ClaimsService.PENDING_USERNAME_PREFIX)) {
-      throw new BadRequestException(
-        'Recipient has not claimed this payment yet. They need to open the link and sign up with that username to claim it.'
-      );
-    }
 
     // Enforce private payment if claim requires it
     // If claim requires private payments, the request must have isPrivate: true
@@ -94,7 +85,7 @@ export class DepositService {
 
     // Handle same-chain scenarios
     if (sameChain) {
-      return this.handleSameChainDeposit(claim, fromToken, originChain, sameToken);
+      return this.handleSameChainDeposit(claim, rawClaim, fromToken, originChain, sameToken);
     }
 
     // Cross-chain: use Near Intents (pass rawClaim so we have recipient_address for quote/burner logic)
@@ -102,10 +93,12 @@ export class DepositService {
   }
 
   /**
-   * Handle same-chain deposit scenarios
+   * Handle same-chain deposit scenarios.
+   * For pending claims (PENDING_EMAIL/PENDING_USERNAME), depositAddress = claim_burner_address; else recipient_address.
    */
   private async handleSameChainDeposit(
     claim: any,
+    rawClaim: { recipient_address?: string | null; claim_burner_address?: string | null },
     fromToken: RequestDepositDto['fromToken'],
     originChain: string,
     sameToken: boolean,
@@ -115,6 +108,18 @@ export class DepositService {
     if (sameToken) {
       // Direct transfer - no swap needed
       this.logger.log('[Deposit] Same chain + same token -> Direct transfer');
+
+      const ra = rawClaim.recipient_address || '';
+      const isPending = ra.startsWith(ClaimsService.PENDING_EMAIL_PREFIX) || ra.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
+      const depositAddress = isPending
+        ? (rawClaim.claim_burner_address || '').trim()
+        : (claim.recipient_address || rawClaim.recipient_address || '').trim();
+      if (isPending && !depositAddress) {
+        throw new BadRequestException({
+          message: 'Burner address required for pending claim.',
+          code: 'MISSING_BURNER',
+        });
+      }
 
       // Calculate token amount from USD using token price
       const tokenPrice = await this.nearIntentsService.getTokenPrice(fromToken.symbol, originChain);
@@ -128,7 +133,7 @@ export class DepositService {
 
       return {
         directTransfer: true,
-        depositAddress: claim.recipient_address,
+        depositAddress: depositAddress || undefined,
         depositToken: fromToken.symbol,
         depositChain: originChain,
         amount: tokenAmount,
@@ -176,10 +181,21 @@ export class DepositService {
       const toChainLower = (claim.to_chain || '').toLowerCase();
       const isDestSolana = toChainLower === 'solana' || toChainLower === 'sol';
       const finalRecipient = (rawClaim.recipient_address || '').trim();
+      const claimBurner = (rawClaim.claim_burner_address || '').trim();
+      const isPending = finalRecipient.startsWith(ClaimsService.PENDING_EMAIL_PREFIX) || finalRecipient.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
 
-      // Quote recipient: private -> user embedded wallet; non-private Solana dest -> platform burner; else -> final recipient
+      // Quote recipient: pending -> burner only; private -> user embedded wallet; non-private Solana dest -> burner or finalRecipient; else -> finalRecipient
       let recipientAddress: string;
-      if (isPrivate && originChain !== 'solana' && isDestSolana && claim.to_symbol === 'USDC') {
+      if (isPending) {
+        if (!claimBurner) {
+          throw new BadRequestException({
+            message: 'Burner address required for pending claim.',
+            code: 'MISSING_BURNER',
+          });
+        }
+        recipientAddress = claimBurner;
+        this.logger.log(`[Deposit] Pending claim: using claim burner as Near-Intent recipient`);
+      } else if (isPrivate && originChain !== 'solana' && isDestSolana && claim.to_symbol === 'USDC') {
         if (!recipientSolanaAddress) {
           throw new BadRequestException(
             'Private cross-chain payment to Solana requires login. Please connect your Loofta account and use your embedded Solana wallet address as recipient.'
@@ -188,8 +204,6 @@ export class DepositService {
         recipientAddress = recipientSolanaAddress;
         this.logger.log(`[Deposit] Private cross-chain: using user embedded Solana wallet as recipient: ${recipientAddress}`);
       } else if (!isPrivate && isDestSolana) {
-        // Use unique claim burner (like Privacy Cash / send-payment)
-        const claimBurner = (rawClaim.claim_burner_address || '').trim();
         recipientAddress = claimBurner || finalRecipient;
         if (claimBurner) this.logger.log(`[Deposit] Non-private cross-chain to Solana: using claim unique burner as quote recipient`);
         else this.logger.log(`[Deposit] Using final recipient for quote: ${recipientAddress}`);

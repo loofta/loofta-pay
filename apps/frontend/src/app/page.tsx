@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
-import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
@@ -11,11 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SendFlowInApp } from "@/components/app/SendFlowInApp";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
-
-const ClaimPayView = dynamic<{ claimId: string; embedInApp?: boolean }>(
-  () => import("@/app/c/[id]/page").then((mod) => ({ default: mod.ClaimPayView })),
-  { ssr: false }
-);
+import { motion, AnimatePresence } from "framer-motion";
 
 const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
   () => import("@/app/claim/page").then((mod) => ({ default: mod.default })),
@@ -27,6 +24,7 @@ const HOME_TAB_KEY = "loofta.home.tab";
 
 export default function Home() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { authenticated } = useAuth();
   const username = useAuthStore((s) => s.username ?? null);
   const { login: privyLogin } = usePrivy();
@@ -80,6 +78,7 @@ export default function Home() {
   const [dropdownClosed, setDropdownClosed] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [showClaimOverlay, setShowClaimOverlay] = useState(false);
+  const [openFaq, setOpenFaq] = useState<number | null>(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const searchCacheRef = useRef<Map<string, { usernames: string[]; ts: number }>>(new Map());
@@ -87,6 +86,15 @@ export default function Home() {
 
   const searchQuery = recipient.replace(/^@/, "").trim().toLowerCase();
   const showDropdown = false; // Autocomplete/suggestions disabled for now
+
+  const faqItems = [
+    { question: "What is the network fee?", answer: "A small network fee is applied to cover on-chain transaction costs. For private payments we use Privacy Cash; we are migrating to a cheaper SDK to keep fees low." },
+    { question: "What is a burner wallet?", answer: "A burner wallet is a temporary deposit address we generate for your payment. You send funds to this address and Loofta Pay routes them to the recipient. You don't need to connect a wallet to pay—just send to the deposit address." },
+    { question: "How do private payments work?", answer: "Private payments use Privacy Cash so the transfer is shielded. We are migrating to a cheaper SDK to reduce costs while keeping the same privacy guarantees." },
+    { question: "Can I send to someone before they have an account?", answer: "Yes. You can send to a Twitter/X username or email. They'll get a link to sign up and claim the payment. Once they log in with that identity, they can claim the funds." },
+    { question: "APY on received amount & auto-compound?", answer: "We're building APY in USD on your received balance, with every claimed payment auto-compounding. Coming soon." },
+    { question: "Points system", answer: "A points system is coming soon. You'll earn points for receiving and for sending both private and standard payments." },
+  ];
 
   // Exact email only: no partial match to avoid linking/leaking users
   const isExactEmail = (q: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q);
@@ -165,10 +173,12 @@ export default function Home() {
   return (
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
       <div className="max-w-lg mx-auto px-4 py-6 pb-24">
-        <SendReceiveTabs activeTab={activeTab} onTabChange={(tab) => setActiveTab(tab)} />
+        {/* Header + tab content: min one screen so FAQ is below the fold */}
+        <div className="min-h-[calc(100vh-var(--header-h,0px))]">
+          <SendReceiveTabs activeTab={activeTab} onTabChange={(tab) => setActiveTab(tab)} />
 
-        {/* Cool info area */}
-        <div className="rounded-2xl bg-gradient-to-r from-amber-500/10 to-red-500/10 border border-white/10 px-4 py-3 mb-6">
+          {/* Cool info area */}
+          <div className="rounded-2xl bg-gradient-to-r from-amber-500/10 to-red-500/10 border border-white/10 px-4 py-3 mb-6">
           <p className="text-sm text-slate-300">
             💳 USDC on Solana = no extra Loofta fee. Private payments use Privacy Cash (fee on receive).
           </p>
@@ -177,7 +187,7 @@ export default function Home() {
         {activeTab === "send" && (
           <>
             {sendStep === 3 && claimId ? (
-              <div className="space-y-4">
+              <div className="space-y-4 rounded-2xl border border-white/10 bg-white/5 p-6 text-white">
                 <div className="flex items-center justify-between">
                   <button
                     type="button"
@@ -191,7 +201,13 @@ export default function Home() {
                     ← New payment
                   </button>
                 </div>
-                <ClaimPayView claimId={claimId} embedInApp />
+                <p className="text-slate-200 mb-4">Payment link created. Share it or open it to view status.</p>
+                <Link
+                  href={`/c/${claimId}`}
+                  className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90"
+                >
+                  View payment
+                </Link>
               </div>
             ) : selectedRecipient ? (
               <SendFlowInApp
@@ -202,8 +218,7 @@ export default function Home() {
                   setSendStep(1);
                 }}
                 onClaimCreated={(id) => {
-                  setClaimId(id);
-                  setSendStep(3);
+                  router.push(`/c/${id}`);
                 }}
               />
             ) : (
@@ -320,74 +335,128 @@ export default function Home() {
               </>
             ) : (
               <>
-            {/* Share your personal link */}
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
-              <p className="text-slate-300 text-sm font-medium">Share your personal link</p>
-              {authenticated && username ? (
-                <>
+                {/* Share your personal link */}
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+                  <p className="text-slate-300 text-sm font-medium">Share your personal link</p>
+                  {authenticated && username ? (
+                    <>
+                      <p className="text-slate-400 text-sm">
+                        Anyone can pay you by opening this link. You receive in your preferred token and chain.
+                      </p>
+                      <div className="flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5">
+                        <span className="flex-1 text-sm font-mono text-white truncate">
+                          {typeof window !== "undefined" ? `${window.location.origin}/link/@${username}` : `/link/@${username}`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const link = typeof window !== "undefined" ? `${window.location.origin}/link/@${username}` : "";
+                            navigator.clipboard.writeText(link);
+                            setLinkCopied(true);
+                            setTimeout(() => setLinkCopied(false), 2000);
+                          }}
+                          className="shrink-0 px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 hover:text-white hover:bg-white/15 text-sm font-medium transition-colors"
+                        >
+                          {linkCopied ? "Copied" : "Copy"}
+                        </button>
+                      </div>
+                      <Button
+                        variant="receiveSignIn"
+                        className="w-full h-12 rounded-xl"
+                        onClick={() => useAuthStore.getState().setOpenShareModal(true)}
+                      >
+                        Share & settings
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-slate-400 text-sm">
+                        Sign in to get your own payment link. Add Twitter later to get a unique @username.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="receiveSignIn"
+                        onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}
+                        className="w-full h-12 rounded-xl"
+                      >
+                        Sign in to get your payment link
+                      </Button>
+                    </>
+                  )}
+                </div>
+
+                {/* Create new payment link */}
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+                  <p className="text-slate-300 text-sm font-medium">Create new payment link</p>
                   <p className="text-slate-400 text-sm">
-                    Anyone can pay you by opening this link. You receive in your preferred token and chain.
-                  </p>
-                  <div className="flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5">
-                    <span className="flex-1 text-sm font-mono text-white truncate">
-                      {typeof window !== "undefined" ? `${window.location.origin}/link/@${username}` : `/link/@${username}`}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const link = typeof window !== "undefined" ? `${window.location.origin}/link/@${username}` : "";
-                        navigator.clipboard.writeText(link);
-                        setLinkCopied(true);
-                        setTimeout(() => setLinkCopied(false), 2000);
-                      }}
-                      className="shrink-0 px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 hover:text-white hover:bg-white/15 text-sm font-medium transition-colors"
-                    >
-                      {linkCopied ? "Copied" : "Copy"}
-                    </button>
-                  </div>
-                  <Button
-                    variant="receiveSignIn"
-                    className="w-full h-12 rounded-xl"
-                    onClick={() => useAuthStore.getState().setOpenShareModal(true)}
-                  >
-                    Share & settings
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <p className="text-slate-400 text-sm">
-                    Sign in to get your own payment link. Add Twitter later to get a unique @username.
+                    Create a one-off payment request. You choose amount, token, and chain. No account required to create.
                   </p>
                   <Button
                     type="button"
-                    variant="receiveSignIn"
-                    onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}
-                    className="w-full h-12 rounded-xl"
+                    onClick={() => setShowClaimOverlay(true)}
+                    className="w-full h-11 rounded-xl text-base font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 border-0"
                   >
-                    Sign in to get your payment link
+                    Create new payment link
                   </Button>
-                </>
-              )}
-            </div>
-
-            {/* Create new payment link */}
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
-              <p className="text-slate-300 text-sm font-medium">Create new payment link</p>
-              <p className="text-slate-400 text-sm">
-                Create a one-off payment request. You choose amount, token, and chain. No account required to create.
-              </p>
-              <Button
-                type="button"
-                onClick={() => setShowClaimOverlay(true)}
-                className="w-full h-11 rounded-xl text-base font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 border-0"
-              >
-                Create new payment link
-              </Button>
-            </div>
+                </div>
               </>
             )}
           </div>
         )}
+        </div>
+
+        {/* FAQ — below the fold, above footer (same styling as /about) */}
+        <section className="mt-12 py-12 md:py-16">
+          <h2 className="text-3xl md:text-4xl font-medium font-sans text-white text-center mb-8 md:mb-10">
+            Frequently asked<br />questions
+          </h2>
+          <div className="flex flex-col gap-4">
+            {faqItems.map((item, index) => (
+              <div
+                key={index}
+                className="rounded-[20px] bg-[#F6F6F8] overflow-hidden"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    requestAnimationFrame(() => {
+                      setOpenFaq(openFaq === index ? null : index);
+                    });
+                  }}
+                  className="w-full px-6 py-5 flex items-center justify-between text-left"
+                >
+                  <span className="text-lg md:text-xl font-semibold font-sans text-slate-900">
+                    {item.question}
+                  </span>
+                  <motion.span
+                    className="text-4xl text-slate-900 shrink-0 ml-4"
+                    animate={{ rotate: openFaq === index ? 45 : 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    +
+                  </motion.span>
+                </button>
+                <AnimatePresence initial={false}>
+                  {openFaq === index && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.3, ease: "easeInOut" }}
+                      className="overflow-hidden"
+                    >
+                      <div className="px-6 pb-5">
+                        <p className="text-lg text-slate-500">
+                          {item.answer}
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
     </div>
   );
