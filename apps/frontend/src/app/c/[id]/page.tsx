@@ -1,6 +1,8 @@
 'use client'
 
 import React, { useEffect, useMemo, useState, type SVGProps } from "react";
+import Link from "next/link";
+import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import type { TokenSelection } from "@/app/utils/types";
@@ -12,31 +14,39 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
+import { cn } from "@/lib/utils";
 import { trimDecimals, roundUpDecimals, formatUTCTimestamp } from "@/lib/format";
 import { findTokenBySelection } from "@/lib/tokens";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { useClaimPayStore } from "@/store/claimPay";
 import { TokenIcon } from "@/components/TokenIcon";
 import Image from "next/image";
-import { useQuery } from "@tanstack/react-query";
-import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Share2 } from "lucide-react";
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { QRCodeSVG } from "qrcode.react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { isEvmChainId } from "@/config/biconomy";
-import { createSwapTransaction, getSwapStatus, checkSwapEligibility } from "@/services/swapProvider";
-import { ACTIVE_SWAP_PROVIDER, getProviderDisplayName, type SwapProvider } from "@/config/swapProvider";
-import { ethers } from "ethers";
 import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction, useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
-import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES, PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
+import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES, PRIVATE_PAYMENT_COMING_SOON, NETWORK_FEE_USD } from "@/services/privacyCash";
 import { Connection, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -49,6 +59,213 @@ import { USDC_MINT } from "@/services/solanaBalance";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
 import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
+
+/** When embedInApp: only the pay content in a dark card (no tabs, no full page). When false: full page with SendReceiveTabs and white card. */
+function ClaimPayLayout({
+  embedInApp,
+  topRight,
+  children,
+}: {
+  embedInApp?: boolean;
+  topRight?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  if (embedInApp) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
+            ← Back to Send
+          </Link>
+          {topRight}
+        </div>
+        <div
+          className="rounded-xl border border-white/10 bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30"
+          data-embed-pay
+        >
+          {children}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
+      <div className="max-w-lg mx-auto px-4 py-6 pb-24">
+        <SendReceiveTabs activeTab="send" visualOnly />
+        <div className="flex items-center justify-between gap-2 mt-4 mb-4">
+          <Link href="/" className="items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
+            ← Back to Send
+          </Link>
+          {topRight}
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Shown only when the current user is the logged-in creator of a pending-username claim: copy link, share, reclaim. */
+function ClaimPageSenderShareView({
+  claimId,
+  amount,
+  recipientUsername,
+  status,
+  userId,
+  onReclaimed,
+}: {
+  claimId: string;
+  amount: number;
+  recipientUsername: string;
+  status: string;
+  /** Logged-in creator's Privy user id; Reclaim is only shown when this is set. */
+  userId?: string | null;
+  onReclaimed?: () => void;
+}) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+  const [reclaiming, setReclaiming] = useState(false);
+  const [reclaimed, setReclaimed] = useState(false);
+  const [canReclaim, setCanReclaim] = useState<boolean | null>(null);
+  const statusUpper = (status || "").toUpperCase();
+  const isCancelled = statusUpper === "CANCELLED" || reclaimed;
+
+  // Reclaim button only when not cancelled and burner has balance
+  useEffect(() => {
+    if (!userId || isCancelled) {
+      setCanReclaim(false);
+      return;
+    }
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+    fetch(`${backendUrl}/claims/${claimId}/reclaim-eligibility`, {
+      headers: { "x-privy-user-id": userId },
+    })
+      .then((r) => (r.ok ? r.json() : { canReclaim: false }))
+      .then((data) => setCanReclaim(!!data?.canReclaim))
+      .catch(() => setCanReclaim(false));
+  }, [claimId, userId, isCancelled]);
+
+  const claimLink =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/c/${claimId}`
+      : `https://pay.loofta.xyz/c/${claimId}`;
+
+  const handleReclaim = async () => {
+    if (!userId) {
+      toast({ variant: "destructive", title: "Sign in to reclaim" });
+      return;
+    }
+    setReclaiming(true);
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const r = await fetch(`${backendUrl}/claims/${claimId}/reclaim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-privy-user-id": userId },
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err?.message || `Reclaim failed: ${r.status}`);
+      }
+      setReclaimed(true);
+      toast({ title: "Payment cancelled", description: "Funds (if any were sent) will be returned to your Loofta wallet." });
+      onReclaimed?.();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Reclaim failed";
+      toast({ variant: "destructive", title: "Reclaim failed", description: msg });
+    } finally {
+      setReclaiming(false);
+    }
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(claimLink);
+      setCopied(true);
+      toast({ title: "Link copied" });
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast({ variant: "destructive", title: "Copy failed" });
+    }
+  };
+
+  const handleShare = () => {
+    if (navigator.share) {
+      navigator
+        .share({
+          title: "Payment for you",
+          text: `You have a payment of $${amount.toFixed(2)} to claim. Sign up with @${recipientUsername} on Loofta to claim it.`,
+          url: claimLink,
+        })
+        .then(() => toast({ title: "Shared!" }))
+        .catch(() => handleCopy());
+    } else {
+      handleCopy();
+    }
+  };
+
+  return (
+    <div className="mt-6 text-center py-12">
+      <div className="mb-4 text-6xl">🔗</div>
+      <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+        Share this link with @{recipientUsername}
+      </h3>
+      <p className="text-gray-600 text-base mb-4">
+        {status === "SUCCESS"
+          ? `$${amount.toFixed(2)} is ready. They can claim it by signing up with this username on Loofta.`
+          : `They can claim $${amount.toFixed(2)} when they sign up with this username on Loofta.`}
+      </p>
+      <div className="flex flex-col sm:flex-row gap-2 justify-center items-stretch sm:items-center">
+        <div className="flex gap-2 flex-1 max-w-md mx-auto">
+          <Input
+            readOnly
+            value={claimLink}
+            className="font-mono text-xs flex-1 bg-gray-50"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={handleCopy}
+            className="shrink-0 !text-slate-900 border-gray-400 hover:bg-gray-100 hover:!text-slate-900"
+          >
+            {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 !text-slate-900" />}
+          </Button>
+        </div>
+        <Button
+          type="button"
+          onClick={handleShare}
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90 shrink-0"
+        >
+          <Share2 className="h-5 w-5" />
+          Share
+        </Button>
+      </div>
+      {/* Reclaim only when not cancelled, creator is logged in, and burner has balance */}
+      {!isCancelled && userId && canReclaim === true && (
+        <div className="mt-6">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleReclaim}
+            disabled={reclaiming}
+            className="rounded-xl border-2 border-amber-200 bg-amber-50/50 text-amber-800 hover:bg-amber-100 hover:border-amber-300 font-medium transition-all shadow-sm cursor-pointer"
+          >
+            {reclaiming ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Wallet className="mr-2 h-4 w-4" />
+            )}
+            Reclaim funds
+          </Button>
+        </div>
+      )}
+      {isCancelled && (
+        <p className="mt-4 text-sm text-gray-500">Payment cancelled. Any funds have been returned to your Loofta wallet.</p>
+      )}
+    </div>
+  );
+}
 
 /** Inline Loofta logo SVG (no Image component). */
 function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
@@ -119,11 +336,6 @@ function getPhantomProvider(): { connect: () => Promise<{ publicKey: PublicKey }
   if (!solana?.signTransaction || !solana?.signMessage) return null;
   return solana as { connect: () => Promise<{ publicKey: PublicKey }>; publicKey: PublicKey | null; signMessage: (msg: Uint8Array, display?: string) => Promise<{ signature: Uint8Array }>; signTransaction: (tx: VersionedTransaction) => Promise<VersionedTransaction> };
 }
-import {
-  isRhinestoneChainSupported,
-  getSupportedTokensForChain,
-  getRhinestoneChainId,
-} from "@/config/rhinestoneChains";
 
 // Check demo mode at module level for consistent behavior
 const DEMO_MODE = isDemoMode();
@@ -135,8 +347,10 @@ async function fetchClaim(id: string) {
     const r = await fetch(`${backendUrl}/claims/${id}/latest-intent`);
     if (r.ok) {
       const data = await r.json();
+      const c = data.claim || {};
+      console.log("[fetchClaim] From backend:", { claimId: id, hasBurner: !!c.claim_burner_address, recipient_address: c.recipient_address ? `${String(c.recipient_address).slice(0, 20)}…` : "(empty)" });
       return {
-        claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
         latestIntent: data.intent ? {
           depositAddress: data.intent.deposit_address || null,
           memo: data.intent.memo ?? null,
@@ -159,11 +373,25 @@ async function fetchClaim(id: string) {
     throw new Error(errorData?.error || errorData?.message || "Claim not found");
   }
   const data = await r.json();
-
+  const c = data.claim || {};
+  console.log("[fetchClaim] From frontend API:", { claimId: id, hasBurner: !!c.claim_burner_address, recipient_address: c.recipient_address ? `${String(c.recipient_address).slice(0, 20)}…` : "(empty)" });
   return {
-    claim: data.claim as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
     latestIntent: data.latestIntent || null,
   };
+}
+
+const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
+const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
+
+/** Recipient for payments: pending → burner, existing → recipient_address. See docs/CLAIM_PAYMENT_ROUTING.md */
+function getEffectiveRecipient(claim: { recipient_address?: string; claim_burner_address?: string } | null): string {
+  if (!claim) return "";
+  const c = claim as { recipient_address?: string; claim_burner_address?: string };
+  const ra = (c.recipient_address || "").trim();
+  const burner = (c.claim_burner_address || "").trim();
+  if (ra && !ra.startsWith(PENDING_EMAIL_PREFIX) && !ra.startsWith(PENDING_USERNAME_PREFIX)) return ra;
+  return burner;
 }
 
 async function prepareDeposit(input: {
@@ -250,13 +478,18 @@ async function prepareDeposit(input: {
   return await r.json();
 }
 
-async function updateClaimStatus(claimId: string, status: string, extra?: { txHash?: string; paidWith?: string; depositReceivedAt?: string; originAsset?: string; destinationAsset?: string; isPrivate?: boolean }) {
+async function updateClaimStatus(
+  claimId: string,
+  status: string,
+  extra?: { txHash?: string; paidWith?: string; depositReceivedAt?: string; originAsset?: string; destinationAsset?: string; isPrivate?: boolean },
+  userId?: string
+) {
   try {
     // Try backend API first (more reliable)
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
     const r = await fetch(`${backendUrl}/claims/${claimId}/status`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(userId ? { "x-privy-user-id": userId } : {}) },
       body: JSON.stringify({ status, ...extra }),
     });
 
@@ -265,11 +498,11 @@ async function updateClaimStatus(claimId: string, status: string, extra?: { txHa
       return;
     }
 
-    // Fallback to frontend API route
+    // Fallback to frontend API route (pass userId so PATCH can backfill created_by for history)
     console.log("[updateClaimStatus] Backend failed, trying frontend API route");
     const r2 = await fetch(`/api/claims/${claimId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(userId ? { "x-privy-user-id": userId } : {}) },
       body: JSON.stringify({ status, ...extra }),
     });
 
@@ -282,8 +515,8 @@ async function updateClaimStatus(claimId: string, status: string, extra?: { txHa
   }
 }
 
-export default function ClaimPayPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = React.use(params);
+function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
+  const id = claimId;
   const { toast } = useToast();
   const { data: tokens = [], isLoading } = useTokensQuery();
   const claimQuery = useQuery({
@@ -298,10 +531,63 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const claimData = claimQuery.data as any;
   const claim = claimData?.claim;
   const loadingClaim = claimQuery.isLoading;
+  const { user } = usePrivy();
   // Extract latest intent from claim query (merged into main GET endpoint)
   const latestIntentData = useMemo(() => {
     return claimData?.latestIntent || null;
   }, [claimData]);
+
+  const recipientCheckQuery = useQuery({
+    queryKey: ["claim", id, "recipient-check", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return { isRecipient: false };
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const r = await fetch(`${backendUrl}/claims/${id}/recipient-check`, {
+        headers: { "x-privy-user-id": user.id },
+      });
+      if (!r.ok) return { isRecipient: false };
+      const data = await r.json();
+      return { isRecipient: data?.isRecipient === true };
+    },
+    enabled: !!claim && !!user?.id,
+    staleTime: 60_000,
+  });
+  const isRecipient = recipientCheckQuery.data?.isRecipient === true;
+  const queryClient = useQueryClient();
+  const claimAsRecipientMutation = useMutation({
+    mutationFn: async () => {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const r = await fetch(`${backendUrl}/claims/${id}/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-privy-user-id": user!.id },
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err?.message || `Claim failed: ${r.status}`);
+      }
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["claim", id] });
+      queryClient.invalidateQueries({ queryKey: ["claim", id, "recipient-check", user?.id] });
+    },
+  });
+  const hasClaimedPendingRef = React.useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !claim?.id ||
+      !user?.id ||
+      !isRecipient ||
+      claimAsRecipientMutation.isPending ||
+      claimAsRecipientMutation.isSuccess
+    )
+      return;
+    const isPending = claim?.recipient_pending_email === true || claim?.recipient_pending_username === true;
+    if (!isPending) return;
+    if (hasClaimedPendingRef.current === claim.id) return;
+    hasClaimedPendingRef.current = claim.id;
+    claimAsRecipientMutation.mutate();
+  }, [claim?.id, claim?.recipient_pending_email, claim?.recipient_pending_username, user?.id, isRecipient, claimAsRecipientMutation.isPending, claimAsRecipientMutation.isSuccess]);
 
   // Log claim + intent when data loads or updates
   useEffect(() => {
@@ -336,7 +622,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const userCancelled = React.useRef<boolean>(false); // Track if user manually cancelled to prevent re-hydration
   const privateTransferTriggeredRef = React.useRef<Set<string>>(new Set()); // Auto-run Privacy Cash once per claim when PRIVATE_TRANSFER_PENDING
   const onPayPrivatelyRef = React.useRef<(() => Promise<void>) | null>(null);
-  const { logout, login, authenticated, user, getAccessToken } = usePrivy();
+  const { logout, login, authenticated, getAccessToken } = usePrivy();
   const { wallets } = useEvmWallets();
   const { wallets: standardWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
@@ -348,6 +634,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   /** When set, we're waiting for on-chain confirmation; show tracker UI in Pay Now modal. */
   const [confirmingTxSignature, setConfirmingTxSignature] = useState<string | null>(null);
   const [confirmingTxSource, setConfirmingTxSource] = useState<"loofta" | "wallet" | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const { signMessage: privySignMessage } = usePrivySignMessage();
   const { signTransaction: privySignTransaction } = usePrivySignTransaction();
   const solanaPayment = useSolanaPayment({ enabled: showPayNowModal });
@@ -422,17 +710,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     return String(selectedFrom.symbol || "").toLowerCase() === String(destToken.symbol || "").toLowerCase();
   }, [selectedFrom, destToken, sameChain]);
 
-  // Check if destination chain supports Rhinestone companion swaps
-  const destChainSupportsSwap = useMemo(() => {
-    if (!destToken?.chain) return false;
-    return isRhinestoneChainSupported(destToken.chain);
-  }, [destToken?.chain]);
-
-  // Get supported tokens for same-chain swaps on destination chain
-  const supportedSwapTokens = useMemo(() => {
-    if (!destToken?.chain) return [];
-    return getSupportedTokensForChain(destToken.chain);
-  }, [destToken?.chain]);
+  // Swap (Rhinestone/Biconomy) is not used — only USDC on Solana (Pay with Loofta / Use wallet)
+  const destChainSupportsSwap = false;
+  const supportedSwapTokens: string[] = [];
 
   // Filter tokens to show: 
   // - For same-chain EVM: only show supported tokens (ETH, WETH, USDC, USDT)
@@ -481,15 +761,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
     }
   }, [isPrivateMode, usdcSolanaToken]);
-  // Check if direct pay via swap provider is available
-  const swapEligibility = useMemo(() => {
-    if (!selectedFrom || !destToken) return { eligible: false, provider: null as SwapProvider | null };
-    if (!sameChain) return { eligible: false, provider: null as SwapProvider | null };
-    if (!isEvmChainId(selectedFrom.chain)) return { eligible: false, provider: null as SwapProvider | null };
-    return checkSwapEligibility({ fromToken: selectedFrom, toToken: destToken });
-  }, [selectedFrom, destToken, sameChain]);
-  const swapProviderEligible = swapEligibility.eligible;
-  const activeProvider = swapEligibility.provider;
+  // Rhinestone and Biconomy are not used — only USDC on Solana (Pay with Loofta / Use wallet) is supported
+  const swapProviderEligible = false;
   // Derive payer token from status originAsset if available, or from claim.is_private for private payments
   const paidToken = useMemo(() => {
     // For private payments, return USDC on Solana
@@ -540,14 +813,24 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       setDeposit(dep);
       useClaimPayStore.getState().setDeposit(id, dep as any);
     }
-    // Set status if we have one and haven't set it yet
+    // Set status from intent only when we don't have one yet, and avoid showing
+    // "Deposit failed" when the claim is still in progress (e.g. intent failed from
+    // an expired quote but claim is still PENDING_DEPOSIT and user can get a new intent).
     if (d?.status && !status) {
-      const s = String(d.status);
+      const s = String(d.status).toUpperCase();
+      const intentTerminal = s === "FAILED" || s === "REFUNDED";
+      const claimInProgress = claim?.status
+        ? ["PENDING", "PENDING_DEPOSIT", "IN_FLIGHT", "CREATED"].includes(String(claim.status).toUpperCase())
+        : false;
+      if (intentTerminal && claimInProgress) {
+        // Don't set FAILED/REFUNDED from intent when claim is still in progress
+        return;
+      }
       console.log("[Claim] Setting status from intent/deposit:", { claimId: id, status: s, from: "latestIntentData/deposit" });
       setStatus(s);
       useClaimPayStore.getState().setStatus(id, s);
     }
-  }, [latestIntentData, deposit, status, id]);
+  }, [latestIntentData, deposit, status, id, claim?.status]);
 
   // Hydrate status from claim data (for cross-device support and after refetch)
   useEffect(() => {
@@ -570,13 +853,18 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     // 1. We don't have a status yet, OR
     // 2. The claim status is SUCCESS (always sync SUCCESS from DB)
     // 3. The claim status changed to a terminal state or PRIVATE_TRANSFER_PENDING
+    // 4. Claim is in progress (PENDING_DEPOSIT etc.) and we're currently showing FAILED/REFUNDED (fix flicker)
     const isTerminalStatus = ["SUCCESS", "FAILED", "REFUNDED"].includes(mappedStatus);
-    if ((!status || mappedStatus === "SUCCESS" || mappedStatus === "PRIVATE_TRANSFER_PENDING" || isTerminalStatus) && mappedStatus !== "PENDING" && mappedStatus !== "CREATED") {
-      if (status !== mappedStatus) {
-        console.log(`[Claim Status] Syncing status from DB: ${status} -> ${mappedStatus}`);
-        setStatus(mappedStatus);
-        useClaimPayStore.getState().setStatus(id, mappedStatus);
-      }
+    const claimInProgress = ["PENDING_DEPOSIT", "IN_FLIGHT", "PRIVATE_TRANSFER_PENDING"].includes(mappedStatus);
+    const showingStaleFailure = status === "FAILED" || status === "REFUNDED";
+    const shouldSync =
+      (!status || mappedStatus === "SUCCESS" || mappedStatus === "PRIVATE_TRANSFER_PENDING" || isTerminalStatus || (claimInProgress && showingStaleFailure))
+      && mappedStatus !== "PENDING"
+      && mappedStatus !== "CREATED";
+    if (shouldSync && status !== mappedStatus) {
+      console.log(`[Claim Status] Syncing status from DB: ${status} -> ${mappedStatus}`);
+      setStatus(mappedStatus);
+      useClaimPayStore.getState().setStatus(id, mappedStatus);
     }
   }, [claim?.status, status, id]);
 
@@ -683,10 +971,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     try {
       useClaimPayStore.getState().setFromSel(id, { symbol: selectedFrom.symbol, chain: selectedFrom.chain } as any);
 
-      // If same token AND same chain, use recipient address directly (no swap needed)
-      if (sameTokenAndChain && claim.recipient_address) {
+      // If same token AND same chain, use recipient address (or burner for pending claims) directly (no swap needed)
+      const effectiveRecipient = getEffectiveRecipient(claim);
+      if (sameTokenAndChain && effectiveRecipient) {
         const directDeposit = {
-          depositAddress: claim.recipient_address,
+          depositAddress: effectiveRecipient,
           memo: undefined,
           deadline: undefined,
           quoteId: undefined,
@@ -745,7 +1034,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
           amount: claim.amount,
           to_symbol: claim.to_symbol,
           to_chain: claim.to_chain,
-          recipient_address: claim.recipient_address,
+          recipient_address: getEffectiveRecipient(claim),
         },
         fromToken: { tokenId: selectedFrom.tokenId || selectedFrom.address, decimals: selectedFrom.decimals, chain: selectedFrom.chain, symbol: selectedFrom.symbol },
         amount: claim.amount,
@@ -830,19 +1119,30 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       return;
     }
 
-    const recipient = String(claim?.recipient_address || "").trim();
+    // Private payment: always use burner as recipient when claim has a burner (see docs/CLAIM_PAYMENT_ROUTING.md)
+    const recipient = (claim && ((claim as { claim_burner_address?: string }).claim_burner_address || claim.recipient_address) || "").trim();
     if (!recipient) {
       console.log("[PrivateTransfer] Early exit: no recipient");
       toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
       return;
     }
 
-    const amountUSD = parseFloat(claim.amount);
-    if (!amountUSD || amountUSD <= 0) {
+    const requestedAmount = parseFloat(claim.amount);
+    if (!requestedAmount || requestedAmount <= 0) {
       console.log("[PrivateTransfer] Early exit: invalid amount", { amount: claim.amount });
       toast({ variant: "destructive", title: "Invalid amount", description: "Please enter a valid amount." });
       return;
     }
+
+    // Total USDC to send: recipient amount + network fee (sent in USDC, converted to SOL on burner)
+    const amountUSD = requiresPrivate
+      ? requestedAmount + NETWORK_FEE_USD
+      : (() => {
+        const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
+        const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+        const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
+        return withdrawalAmountNeeded + NETWORK_FEE_USD;
+      })();
 
     console.log("[PrivateTransfer] Starting", { claimId: claim.id, amountUSD, recipient: recipient.slice(0, 8) + "…" });
     setPreparing(true);
@@ -915,16 +1215,17 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         toast({ title: "Payment successful!", description: "Your private payment has been completed." });
         // Update claim status with transaction signature and is_private flag
         if (result.signature) {
-          await updateClaimStatus(claim.id, 'SUCCESS', { txHash: result.signature, paidWith: 'USDC (Private)', isPrivate: true });
+          await updateClaimStatus(claim.id, 'SUCCESS', { txHash: result.signature, paidWith: 'USDC (Private)', isPrivate: true }, user?.id);
         } else {
           // If no signature, still update status (transaction might be pending)
-          await updateClaimStatus(claim.id, 'SUCCESS', { paidWith: 'USDC (Private)', isPrivate: true });
+          await updateClaimStatus(claim.id, 'SUCCESS', { paidWith: 'USDC (Private)', isPrivate: true }, user?.id);
         }
         // Update local status immediately
         setStatus("SUCCESS");
         useClaimPayStore.getState().setStatus(id, "SUCCESS");
-        // Refresh claim data
+        // Refresh claim data and payment history list
         await claimQuery.refetch();
+        queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
         console.log("[PrivateTransfer] Claim refetched, flow complete");
       } else {
         console.log("[PrivateTransfer] SDK returned success: false", result.error);
@@ -943,34 +1244,72 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   // Fetch Loofta balance when Pay Now modal is open (for "Pay with Loofta" option).
   // This is USDC only (backend uses getTokenAccountsByOwner for USDC mint).
   // Note: Privy’s confirm modal shows the wallet’s SOL balance (for gas), not USDC — so you may see "$0.00" there even when you have USDC; gas sponsorship covers fees.
-  const claimAmountUSD = parseFloat(claim?.amount || "0") || 0;
+  const claimAmountUSD = (() => {
+    const base = parseFloat(claim?.amount || "0") || 0;
+    if (requiresPrivate) return base + NETWORK_FEE_USD;
+    if (isPrivateMode) {
+      const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
+      const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+      const withdrawalAmountNeeded = (base + rentFee) / (1 - feeRate);
+      return withdrawalAmountNeeded + NETWORK_FEE_USD;
+    }
+    return base + NETWORK_FEE_USD;
+  })();
   const looftaBalanceUSD = solanaPayment.balanceUSD;
   const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(claimAmountUSD);
   const balanceData = solanaPayment.isBalanceLoading ? undefined : { balanceUSD: looftaBalanceUSD };
 
+  /** Direct Solana only; never Near-Intent. Recipient = burner for pending, user address for existing. See docs/CLAIM_PAYMENT_ROUTING.md */
   async function payWithWallet() {
-    if (!claim?.id || !claim?.recipient_address || !claim?.amount) {
+    const effectiveRecipient = getEffectiveRecipient(claim);
+    if (!claim?.id || !effectiveRecipient || !claim?.amount) {
       toast({ variant: "destructive", title: "Missing info", description: "Claim or recipient address is missing." });
       return;
     }
-    const amountUSD = parseFloat(claim.amount) || 0;
-    if (amountUSD <= 0) {
+    const baseAmount = parseFloat(claim.amount) || 0;
+    if (baseAmount <= 0) {
       toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
       return;
     }
+    // Same amount logic as Pay with Loofta: base + network fee (or private fees when required)
+    const amountUSD = requiresPrivate
+      ? baseAmount + NETWORK_FEE_USD
+      : isPrivateMode
+        ? (() => {
+          const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
+          const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+          const withdrawalAmountNeeded = (baseAmount + rentFee) / (1 - feeRate);
+          return withdrawalAmountNeeded + NETWORK_FEE_USD;
+        })()
+        : baseAmount + NETWORK_FEE_USD;
     const phantom = getPhantomProvider();
     if (!phantom) {
       toast({ variant: "destructive", title: "Phantom not found", description: "Install the Phantom extension to pay with wallet." });
       return;
     }
+    if (!usdcSolanaToken) {
+      toast({ variant: "destructive", title: "Token not loaded", description: "USDC on Solana is required. Please try again." });
+      return;
+    }
     setPayingWithWallet(true);
     setPayWithWalletError(null);
     try {
-      // Connect and get sender address from Phantom
       const { publicKey } = await phantom.connect();
       if (!publicKey) throw new Error("Could not get wallet address from Phantom.");
-      const senderAddressWallet = publicKey.toBase58();
+      const senderAddress = publicKey.toBase58();
 
+      const rawRecipient = effectiveRecipient.replace(/\s/g, "");
+      if (/^0x/i.test(rawRecipient)) {
+        throw new Error("This payment link is for a different network. Use Pay with Loofta.");
+      }
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(rawRecipient)) {
+        throw new Error("Recipient address is not a valid Solana address.");
+      }
+
+      const amountRaw = Math.floor(amountUSD * 1e6);
+      if (amountRaw <= 0) throw new Error("Invalid amount to send.");
+
+      // Direct USDC transfer: Phantom -> claim recipient/burner (no Near-Intent)
       const rpc =
         process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
         (process.env.NEXT_PUBLIC_HELIUS_API_KEY
@@ -978,10 +1317,8 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
           : "https://api.mainnet-beta.solana.com");
       const connection = new Connection(rpc, "confirmed");
       const mint = new PublicKey(USDC_MINT);
-      const sender = new PublicKey(senderAddressWallet);
-      const recipient = new PublicKey(claim.recipient_address.trim());
-      const amountRaw = Math.floor(amountUSD * 1e6);
-      if (amountRaw <= 0) throw new Error("Amount must be greater than 0");
+      const sender = new PublicKey(senderAddress);
+      const recipient = new PublicKey(rawRecipient);
 
       const senderAta = getAssociatedTokenAddressSync(mint, sender, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
       const recipientAta = getAssociatedTokenAddressSync(mint, recipient, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
@@ -1021,12 +1358,13 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         );
       }
 
-      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana wallet)" });
+      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana wallet)" }, user?.id);
       setStatus("SUCCESS");
       useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
       await claimQuery.refetch();
+      queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
       setShowPayNowModal(false);
-      toast({ title: "Payment confirmed", description: `$${amountUSD.toFixed(2)} USDC sent from your wallet.` });
+      toast({ title: "Payment confirmed", description: `$${amountUSD.toFixed(2)} sent from your wallet.` });
     } catch (e: any) {
       console.error("[PayWithWallet] Error:", e);
       const message = e?.message || "Could not complete payment with wallet.";
@@ -1040,15 +1378,40 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   }
 
   async function payWithLooftaBalance() {
-    if (!claim?.id || !claim?.recipient_address || !claim?.amount) {
-      toast({ variant: "destructive", title: "Missing info", description: "Claim or recipient address is missing." });
+    const isPending = !!(claim as { recipient_pending_username?: boolean; recipient_pending_email?: boolean })?.recipient_pending_username || (claim as { recipient_pending_email?: boolean })?.recipient_pending_email;
+    console.log("[PayWithLoofta] Clicked:", { claimId: claim?.id, isPending, claim_burner_address: (claim as { claim_burner_address?: string })?.claim_burner_address ? "present" : "missing", recipient_address: (claim as { recipient_address?: string })?.recipient_address ? "present" : "missing" });
+    let effectiveRecipient = getEffectiveRecipient(claim);
+    if (!effectiveRecipient && isPending && claim?.id) {
+      console.log("[PayWithLoofta] Pending claim missing burner, refetching...", { claimId: claim.id, recipient_address: (claim as { recipient_address?: string }).recipient_address, claim_burner_address: (claim as { claim_burner_address?: string }).claim_burner_address });
+      const result = await claimQuery.refetch();
+      const freshClaim = (result.data as { claim?: typeof claim } | undefined)?.claim;
+      effectiveRecipient = getEffectiveRecipient(freshClaim ?? null);
+      console.log("[PayWithLoofta] After refetch:", { claim_burner_address: freshClaim ? (freshClaim as { claim_burner_address?: string }).claim_burner_address : "(no claim)", effectiveRecipient: effectiveRecipient ? `${effectiveRecipient.slice(0, 8)}…` : "(empty)" });
+    }
+    if (!claim?.id || !effectiveRecipient || !claim?.amount) {
+      console.warn("[PayWithLoofta] Missing recipient:", { claimId: claim?.id, effectiveRecipient: effectiveRecipient ? `${effectiveRecipient.slice(0, 8)}…` : "(empty)", recipient_address: (claim as { recipient_address?: string })?.recipient_address, claim_burner_address: (claim as { claim_burner_address?: string })?.claim_burner_address, isPending });
+      const description = isPending && !effectiveRecipient
+        ? "This payment link is for someone who hasn't signed up yet. The burner address could not be loaded — try refreshing the page or use a different browser."
+        : "Claim or recipient address is missing.";
+      toast({ variant: "destructive", title: "Missing info", description });
       return;
     }
-    const amountUSD = parseFloat(claim.amount) || 0;
-    if (amountUSD <= 0) {
+    const baseAmount = parseFloat(claim.amount) || 0;
+    if (baseAmount <= 0) {
       toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
       return;
     }
+    // When paying privately: total includes Privacy Cash fees (if payer covers) + network fee in USDC (converted to SOL on burner)
+    const amountUSD = requiresPrivate
+      ? baseAmount + NETWORK_FEE_USD
+      : isPrivateMode
+        ? (() => {
+          const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
+          const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+          const withdrawalAmountNeeded = (baseAmount + rentFee) / (1 - feeRate);
+          return withdrawalAmountNeeded + NETWORK_FEE_USD;
+        })()
+        : baseAmount + NETWORK_FEE_USD;
     const senderAddress = solanaPayment.senderAddress;
     if (!senderAddress) {
       toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta Solana wallet was not found. Try logging in again." });
@@ -1062,6 +1425,15 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     setPayingWithLoofta(true);
     setPayWithLooftaError(null);
     try {
+      // Normalize and validate Solana recipient (base58) — use burner when recipient not yet claimed
+      const rawRecipient = effectiveRecipient.replace(/\s/g, "");
+      if (/^0x/i.test(rawRecipient)) {
+        throw new Error("This payment link is for a different network. Use another payment method.");
+      }
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(rawRecipient)) {
+        throw new Error("Recipient address is not a valid Solana address for this payment.");
+      }
+
       const rpc =
         process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
         (process.env.NEXT_PUBLIC_HELIUS_API_KEY
@@ -1070,7 +1442,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       const connection = new Connection(rpc, "confirmed");
       const mint = new PublicKey(USDC_MINT);
       const sender = new PublicKey(senderAddress);
-      const recipient = new PublicKey(claim.recipient_address.trim());
+      const recipient = new PublicKey(rawRecipient);
       const amountRaw = Math.floor(amountUSD * 1e6);
       if (amountRaw <= 0) throw new Error("Amount must be greater than 0");
 
@@ -1088,24 +1460,47 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         createTransferInstruction(senderAta, recipientAta, sender, amountRaw, [], TOKEN_PROGRAM_ID)
       );
 
-      const { blockhash } = await connection.getLatestBlockhash("confirmed");
-      const message = new TransactionMessage({
-        payerKey: sender,
-        recentBlockhash: blockhash,
-        instructions,
-      }).compileToV0Message();
-      const transaction = new VersionedTransaction(message);
-      const transactionBytes = new Uint8Array(transaction.serialize());
+      const isBlockhashError = (err: unknown) => {
+        const e = err as { message?: string; error?: { message?: string }; r?: { message?: string } };
+        const msg = [e?.message, e?.error?.message, e?.r?.message].filter(Boolean).join(" ").toLowerCase();
+        return msg.includes("blockhash") || msg.includes("block hash");
+      };
 
-      const result = await signAndSendTransaction({
-        transaction: transactionBytes,
-        wallet: selectedWallet,
-        options: {
-          sponsor: true,
-          skipPreflight: true,
-        } as Parameters<typeof signAndSendTransaction>[0]["options"],
-      });
-      const sig = typeof result?.signature !== "undefined" ? bs58.encode(result.signature) : String(result);
+      let rawResult: { signature?: Uint8Array } | { signature?: Uint8Array }[] | null = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const { blockhash } = await connection.getLatestBlockhash("confirmed");
+        const message = new TransactionMessage({
+          payerKey: sender,
+          recentBlockhash: blockhash,
+          instructions,
+        }).compileToV0Message();
+        const transaction = new VersionedTransaction(message);
+        const transactionBytes = new Uint8Array(transaction.serialize());
+
+        try {
+          rawResult = await signAndSendTransaction({
+            transaction: transactionBytes,
+            wallet: selectedWallet,
+            options: {
+              sponsor: true,
+              skipPreflight: true,
+            } as Parameters<typeof signAndSendTransaction>[0]["options"],
+          });
+          break;
+        } catch (sendErr: unknown) {
+          if (attempt === 0 && isBlockhashError(sendErr)) {
+            console.warn("[PayWithLoofta] Blockhash expired, retrying with fresh blockhash...");
+            continue;
+          }
+          throw sendErr;
+        }
+      }
+      const result = Array.isArray(rawResult) ? rawResult[0] : rawResult;
+      if (!result) throw new Error("Failed to send transaction.");
+
+      const sig = typeof (result as { signature?: Uint8Array })?.signature !== "undefined"
+        ? bs58.encode((result as { signature: Uint8Array }).signature)
+        : String(result);
       setConfirmingTxSignature(sig);
       setConfirmingTxSource("loofta");
 
@@ -1116,10 +1511,11 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         );
       }
 
-      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana)" });
+      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana)" }, user?.id);
       setStatus("SUCCESS");
       useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
       await claimQuery.refetch();
+      queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
       setShowPayNowModal(false);
       toast({
         title: "Payment confirmed",
@@ -1169,244 +1565,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
       return;
     }
 
-    if (!swapProviderEligible || !activeProvider) {
-      toast({ variant: "destructive", title: "Not supported", description: "This network is not supported for direct pay." });
+    // Only USDC on Solana (Pay with Loofta / Use wallet) is supported; Rhinestone/Biconomy are not used
+    if (!swapProviderEligible) {
+      toast({ variant: "destructive", title: "Not supported", description: "This network is not supported for direct pay. Use Pay with Loofta or your wallet for USDC on Solana." });
       return;
-    }
-    try {
-      const wallet = wallets[0];
-      if (!wallet) {
-        toast({ variant: "destructive", title: "No wallet", description: "Please connect a wallet to continue." });
-        login(); // Trigger login if no wallet
-        return;
-      }
-
-      console.log("🔐 [Wallet] Using wallet from Privy:", {
-        walletAddress: wallet.address,
-        walletType: wallet.walletClientType,
-        chainId: wallet.chainId,
-      });
-
-      const ethereumProvider = await wallet.getEthereumProvider();
-      const provider = new ethers.BrowserProvider(ethereumProvider);
-      const signer = await provider.getSigner();
-      const ownerAddress = await signer.getAddress();
-
-      console.log("🔐 [Wallet] Signer address:", ownerAddress);
-
-      // Verify wallet address matches
-      if (wallet.address?.toLowerCase() !== ownerAddress.toLowerCase()) {
-        console.warn("⚠️ [Wallet] Address mismatch!", {
-          privyWallet: wallet.address,
-          signerAddress: ownerAddress,
-        });
-      }
-
-      const recipient = String(claim?.recipient_address || "").trim();
-      if (!recipient) {
-        toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
-        return;
-      }
-
-      // Calculate amount to send (use quote if available, else estimate from prices)
-      const amountHuman = quote?.amountInFormatted
-        ? roundUpDecimals(String(quote.amountInFormatted), selectedFrom.decimals > 6 ? 6 : selectedFrom.decimals)
-        : destTokenAmount != null
-          ? roundUpDecimals(String(destTokenAmount), 6)
-          : null;
-
-      if (!amountHuman || parseFloat(amountHuman) === 0) {
-        toast({ variant: "destructive", title: "Quote failed", description: "Could not determine payment amount." });
-        return;
-      }
-
-      setPreparing(true);
-      // Don't set status to PROCESSING yet - wait until deposit is actually received
-      // For Rhinestone: deposit happens when funding tx confirms
-      // For Biconomy: deposit happens when transaction is sent
-
-      const providerName = getProviderDisplayName(activeProvider);
-      console.log(`[${providerName}] Starting payment:`, {
-        from: selectedFrom.symbol,
-        to: destToken.symbol,
-        amount: amountHuman,
-        recipient,
-        provider: activeProvider,
-      });
-
-      // Calculate destination amount (what recipient should receive)
-      const destinationAmount = destTokenAmount != null
-        ? String(destTokenAmount)
-        : undefined;
-
-      // Create swap transaction via unified provider
-      const payload = await createSwapTransaction({
-        fromToken: {
-          tokenId: selectedFrom.tokenId || selectedFrom.address,
-          address: selectedFrom.address,
-          decimals: selectedFrom.decimals,
-          chain: selectedFrom.chain,
-          symbol: selectedFrom.symbol,
-          name: selectedFrom.name || selectedFrom.symbol,
-          price: selectedFrom.price,
-        },
-        toToken: {
-          tokenId: destToken.tokenId || destToken.address,
-          address: destToken.address,
-          decimals: destToken.decimals,
-          chain: destToken.chain,
-          symbol: destToken.symbol,
-          name: destToken.name || destToken.symbol,
-          price: destToken.price,
-        },
-        amountHuman,
-        destinationAmountHuman: destinationAmount, // Amount recipient should receive
-        recipient,
-        userAddress: ownerAddress,
-        forceProvider: activeProvider,
-        ethereumProvider, // Pass provider for Rhinestone signing
-      });
-
-      const { to, data, value, chainId, id: intentId, provider: usedProvider, meta } = payload || {};
-      if (!to) {
-        throw new Error("Invalid transaction payload");
-      }
-
-      // Switch chain if needed
-      if (chainId) {
-        try {
-          await wallet.switchChain(Number(chainId));
-        } catch { }
-      }
-
-      // For Rhinestone 1-click deposit: check if we can skip funding
-      if (meta?.type === "1-click-deposit" && meta?.companionAddress && meta?.signerPk) {
-
-        // If skip-funding, companion already has enough - go directly to intent execution
-        if (meta?.step === "skip-funding") {
-          console.log("[Rhinestone] Companion already funded, executing intent directly...");
-          toast({ title: "Companion funded", description: "Executing swap + transfer..." });
-
-          // Skip-funding: companion already funded, deposit happened earlier
-          // Use current time as deposit received (or we could track when companion was funded)
-          const depositReceivedAt = new Date().toISOString();
-          setStatus("PROCESSING"); // UI status (display only)
-          useClaimPayStore.getState().setStatus(id, "PROCESSING");
-          updateClaimStatus(id, "IN_FLIGHT", { // DB status (valid constraint)
-            paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}`,
-            depositReceivedAt
-          });
-        } else {
-          // Need to fund the companion first
-          console.log("[Rhinestone] Funding companion account...");
-          toast({ title: "Funding companion", description: "Please approve the transfer..." });
-
-          const tx = await signer.sendTransaction({
-            to,
-            data: data || "0x",
-            value: value && value !== "0" ? BigInt(value) : undefined
-          });
-
-          await tx.wait();
-          console.log("[Rhinestone] Funding transaction confirmed on-chain");
-
-          // Deposit is received when funding transaction confirms
-          const depositReceivedAt = new Date().toISOString();
-          setStatus("PROCESSING"); // UI status (display only)
-          useClaimPayStore.getState().setStatus(id, "PROCESSING");
-          updateClaimStatus(id, "IN_FLIGHT", { // DB status (valid constraint)
-            paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}`,
-            depositReceivedAt // Pass deposit time to API
-          });
-
-          toast({ title: "Funding confirmed ✓", description: "Waiting for balance to sync..." });
-
-          // Wait for balance to be indexed (Rhinestone needs this)
-          // Per docs: "You might need to wait a few seconds between funding and executing"
-          console.log("[Rhinestone] Waiting 5 seconds for balance sync...");
-          await new Promise(resolve => setTimeout(resolve, 5000));
-
-          toast({ title: "Balance synced ✓", description: "Executing swap + transfer..." });
-        }
-
-        // Execute the intent
-        console.log("[Rhinestone] Starting intent execution...");
-        const { executeRhinestoneIntent } = await import("@/services/rhinestone");
-
-        const result = await executeRhinestoneIntent({
-          companionAddress: meta.companionAddress,
-          signerPk: meta.signerPk,
-        });
-
-        console.log("[Rhinestone] Intent executed:", result);
-        setStatus("SUCCESS");
-        useClaimPayStore.getState().setStatus(id, "SUCCESS");
-        updateClaimStatus(id, "SUCCESS", { paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}` });
-
-        // Update statusData with the paid amount for display
-        // Use totalSourceAmount which represents the actual ETH used for the swap
-        const paidAmount = (payload as any)?.totalSourceAmount || amountHuman;
-        console.log("[Rhinestone] Payment summary:", { paidAmount, token: selectedFrom?.symbol });
-
-        setStatusData((prev: any) => ({
-          ...prev,
-          swapDetails: {
-            ...(prev?.swapDetails || {}),
-            depositedAmountFormatted: paidAmount,
-            amountInFormatted: paidAmount,
-          },
-        }));
-
-        toast({ title: "Payment complete!", description: `Swap + transfer successful via Rhinestone.` });
-      } else {
-        // Non-Rhinestone flow (Biconomy or others)
-        // Deposit happens when transaction is sent (before confirmation)
-        const depositReceivedAt = new Date().toISOString();
-        setStatus("PROCESSING"); // UI status (display only)
-        useClaimPayStore.getState().setStatus(id, "PROCESSING");
-        updateClaimStatus(id, "IN_FLIGHT", { // DB status (valid constraint)
-          paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}`,
-          depositReceivedAt
-        });
-
-        const tx = await signer.sendTransaction({
-          to,
-          data: data || "0x",
-          value: value ? BigInt(value) : undefined
-        });
-
-        await tx.wait();
-        setStatus("SUCCESS");
-        useClaimPayStore.getState().setStatus(id, "SUCCESS");
-        updateClaimStatus(id, "SUCCESS", { txHash: tx.hash, paidWith: `${selectedFrom.symbol} on ${selectedFrom.chain}` });
-        toast({ title: "Transaction confirmed", description: `Payment successful via ${getProviderDisplayName(usedProvider)}.` });
-      }
-
-      // Optional: Poll status in background
-      if (intentId) {
-        const iv = setInterval(async () => {
-          try {
-            const s = await getSwapStatus(intentId, usedProvider);
-            const st = String(s?.status || "").toUpperCase();
-            if (st === "SUCCESS" || st === "FAILED") {
-              if (st === "FAILED") {
-                setStatus("FAILED");
-                useClaimPayStore.getState().setStatus(id, "FAILED");
-                updateClaimStatus(id, "FAILED");
-              }
-              clearInterval(iv);
-            }
-          } catch { clearInterval(iv); }
-        }, 5000);
-        setTimeout(() => clearInterval(iv), 120000);
-      }
-    } catch (e: any) {
-      setStatus("FAILED");
-      useClaimPayStore.getState().setStatus(id, "FAILED");
-      updateClaimStatus(id, "FAILED");
-      toast({ variant: "destructive", title: "Payment failed", description: e?.message || "Could not complete payment" });
-    } finally {
-      setPreparing(false);
     }
   }
 
@@ -1465,7 +1627,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
           // Store route info from 1-click API response
           originAsset,
           destinationAsset,
-        }).catch((e) => {
+        }, user?.id).catch((e) => {
           console.error("[statusQuery] Failed to update deposit_received_at:", e);
         });
       }
@@ -1484,9 +1646,10 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                 : selectedFrom?.symbol
                   ? `${selectedFrom.symbol} on ${selectedFrom.chain}`
                   : undefined,
-            });
+            }, user?.id);
+            queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
           } else {
-            await updateClaimStatus(id, upperStatus);
+            await updateClaimStatus(id, upperStatus, undefined, user?.id);
           }
           // Refetch claim after DB is updated
           claimQuery.refetch();
@@ -1535,7 +1698,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     useClaimPayStore.getState().setStatus(id, "IN_FLIGHT");
 
     // Update claim status in database
-    updateClaimStatus(id, "IN_FLIGHT", { txHash: hash }).catch((e) => {
+    updateClaimStatus(id, "IN_FLIGHT", { txHash: hash }, user?.id).catch((e) => {
       console.error("[onSubmitTxHash] Failed to update claim status:", e);
     });
 
@@ -1683,1332 +1846,1420 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         </div>
       )}
 
-      <div className="fixed inset-0 -z-10 bg-[#18181F]" />
-      <div className="min-h-screen text-white">
-        <div className="max-w-7xl mx-auto px-4 pb-12">
-          <div className="flex items-center justify-center min-h-[calc(100vh-7rem)]">
-            {/* Centered card - full width */}
-            <div className="w-full max-w-2xl">
-              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm text-gray-900">
-                {/* Demo Mode Banner */}
-                {DEMO_MODE && (
-                  <div className="mb-4 -mx-6 -mt-6 px-4 py-3 bg-amber-50 border-b border-amber-200 rounded-t-2xl">
-                    <div className="flex items-center gap-2 text-amber-800">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                        <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                      </svg>
-                      <span className="text-sm font-medium">Demo Mode - Payments are disabled</span>
+      <ClaimPayLayout
+        embedInApp={embedInApp}
+        topRight={
+          user?.id && claim?.created_by === user.id && ["OPEN", "PENDING_DEPOSIT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(true)}
+                className="text-sm font-medium text-red-500 hover:text-gray-400 transition-colors"
+              >
+                Delete this payment
+              </button>
+              <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+                <AlertDialogContent className="[&_.text-gray-900]:!text-white [&_.text-muted-foreground]:!text-slate-300 [&_.border]:!border-white/10 bg-[#0f0f12] border-white/10">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle className="text-white">Delete this payment?</AlertDialogTitle>
+                    <AlertDialogDescription className="text-slate-300">
+                      This will remove the payment link. It won&apos;t be visible to you or anyone else. This cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel className="bg-white text-gray-900 border border-white/20 hover:bg-gray-100 hover:text-gray-900">
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        if (!user?.id) return;
+                        setDeleting(true);
+                        try {
+                          const r = await fetch(`/api/claims/${id}`, {
+                            method: "DELETE",
+                            headers: { "x-privy-user-id": user.id },
+                          });
+                          if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            toast({ variant: "destructive", title: "Could not delete", description: (err as { error?: string })?.error || "Try again." });
+                            setDeleting(false);
+                            return;
+                          }
+                          setShowDeleteConfirm(false);
+                          queryClient.setQueryData(["claim", id], undefined);
+                          queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
+                          toast({ title: "Payment deleted" });
+                        } catch (e) {
+                          toast({ variant: "destructive", title: "Could not delete", description: (e as Error)?.message || "Try again." });
+                        } finally {
+                          setDeleting(false);
+                        }
+                      }}
+                      disabled={deleting}
+                      className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
+                    >
+                      {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </>
+          ) : null
+        }
+      >
+        {/* Demo Mode Banner */}
+        {DEMO_MODE && (
+          <div className="mb-4 -mx-6 -mt-6 px-4 py-3 bg-amber-50 border-b border-amber-200 rounded-t-2xl">
+            <div className="flex items-center gap-2 text-amber-800">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              <span className="text-sm font-medium">Demo Mode - Payments are disabled</span>
+            </div>
+          </div>
+        )}
+        {loadingClaim ? (
+          <div className="space-y-4">
+            <Skeleton className="h-8 w-1/2" />
+            <Skeleton className="h-12 w-full" />
+          </div>
+        ) : claim ? (
+          <>
+            {isRecipient && String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
+              <div className="mt-6 py-12">
+                <div className="text-center mb-6">
+                  <div className="mb-4 text-6xl">✅</div>
+                  <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                    Paid – Received to your Loofta account
+                  </h3>
+                  <p className="text-gray-600 text-base mb-4">
+                    ${parseFloat(claim?.amount || "0").toFixed(2)} was sent to you. It’s in your Loofta account.
+                  </p>
+                </div>
+                {claim?.description && (
+                  <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                    <div className="text-sm text-gray-600 mb-1">Message</div>
+                    <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
+                      {(() => {
+                        const desc = claim.description || "";
+                        const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
+                        const parts: string[] = [];
+                        let lastIndex = 0;
+                        let match;
+                        gifUrlPattern.lastIndex = 0;
+                        while ((match = gifUrlPattern.exec(desc)) !== null) {
+                          if (match.index > lastIndex) parts.push(desc.slice(lastIndex, match.index));
+                          parts.push(match[0]);
+                          lastIndex = match.index + match[0].length;
+                        }
+                        if (lastIndex < desc.length) parts.push(desc.slice(lastIndex));
+                        if (parts.length === 0) return desc;
+                        return parts.map((part, idx) => {
+                          if (/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i.test(part)) {
+                            let imageUrl = part;
+                            if (part.includes("giphy.com") && !part.endsWith(".gif")) {
+                              const giphyIdMatch = part.match(/giphy\.com\/media\/([^/]+)/);
+                              if (giphyIdMatch) imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
+                              else imageUrl = part.replace(/\/$/, "") + ".gif";
+                            }
+                            return (
+                              <img
+                                key={idx}
+                                src={imageUrl}
+                                alt="GIF"
+                                className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
+                                style={{ maxHeight: "200px", maxWidth: "100%" }}
+                              />
+                            );
+                          }
+                          return <span key={idx}>{part}</span>;
+                        });
+                      })()}
                     </div>
                   </div>
                 )}
-                {loadingClaim ? (
-                  <div className="space-y-4">
-                    <Skeleton className="h-8 w-1/2" />
-                    <Skeleton className="h-12 w-full" />
+                <div className="mb-6 p-3 rounded-lg bg-gray-50 border border-gray-200 space-y-2">
+                  {claim?.created_at && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-600 text-sm">Created</span>
+                      <span className="text-sm text-gray-700">{formatUTCTimestamp(claim.created_at)}</span>
+                    </div>
+                  )}
+                  {claim?.paid_at && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-600 text-sm">Claimed</span>
+                      <span className="text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : isRecipient && claim?.recipient_pending_email ? (
+              <div className="mt-6 text-center py-12">
+                <div className="mb-4 text-6xl">🎁</div>
+                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                  Claim this payment
+                </h3>
+                <p className="text-gray-600 text-base mb-4">
+                  Sign in with the email this link was sent to to claim ${parseFloat(claim?.amount || "0").toFixed(2)}.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => login({ loginMethods: ["email"], disableSignup: false })}
+                  className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90"
+                >
+                  Sign in to claim
+                </button>
+              </div>
+            ) : isRecipient && claim?.recipient_pending_username ? (
+              <div className="mt-6 text-center py-12">
+                <div className="mb-4 text-6xl">📩</div>
+                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                  This payment is for you
+                </h3>
+                <p className="text-gray-600 text-base mb-4">
+                  ${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay. When they do, it&apos;ll show up here and in your Loofta account.
+                </p>
+                <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900">
+                  ← Back to Send
+                </Link>
+              </div>
+            ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
+              <ClaimPageSenderShareView
+                claimId={id}
+                amount={parseFloat(claim?.amount || "0")}
+                recipientUsername={claim.recipient_pending_username_value || "username"}
+                status={String(status || claim?.status || "").toUpperCase()}
+                userId={user?.id}
+              />
+            ) : claim?.recipient_pending_username && !(user?.id && claim?.created_by === user.id) ? (
+              <div className="mt-6 text-center py-12">
+                <div className="mb-4 text-6xl">🎁</div>
+                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                  Payment for @{claim.recipient_pending_username_value || "username"}
+                </h3>
+                <p className="text-gray-600 text-base mb-4">
+                  {String(status || claim?.status || "").toUpperCase() === "SUCCESS"
+                    ? `${parseFloat(claim?.amount || "0").toFixed(2)} is ready. They can claim it by signing up with this username on Loofta.`
+                    : `They can claim ${parseFloat(claim?.amount || "0").toFixed(2)} when they sign up with this username on Loofta.`}
+                </p>
+                {String(status || claim?.status || "").toUpperCase() === "SUCCESS" && (
+                  <button
+                    type="button"
+                    onClick={() => login({ disableSignup: false })}
+                    className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90"
+                  >
+                    Sign up to claim
+                  </button>
+                )}
+              </div>
+            ) : isRecipient ? (
+              <div className="mt-6 text-center py-12">
+                <div className="mb-4 text-6xl">📩</div>
+                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                  This payment is for you
+                </h3>
+                <p className="text-gray-600 text-base mb-4">
+                  ${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay. When they do, it’ll show up here and in your Loofta account.
+                </p>
+                <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900">
+                  ← Back to Send
+                </Link>
+              </div>
+            ) : String(status || "").toUpperCase() === "SUCCESS" ? (
+              <>
+                {/* Payment Complete Message (payer view) */}
+                <div className="mt-6 text-center py-12">
+                  <div className="mb-4 text-6xl">✅</div>
+                  <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                    Payment Complete
+                  </h3>
+                  <p className="text-gray-600 text-base mb-4">
+                    Your payment has been successfully processed and sent to the recipient.
+                  </p>
+                </div>
+                {/* Display description/message if available — hidden when embedded in send flow */}
+                {!embedInApp && claim?.description && (
+                  <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                    <div className="text-sm text-gray-600 mb-1">Message</div>
+                    <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
+                      {(() => {
+                        const desc = claim.description || '';
+                        // Check if description contains GIF URLs (common patterns including Giphy)
+                        const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
+                        const parts: string[] = [];
+                        let lastIndex = 0;
+                        let match;
+
+                        // Reset regex lastIndex
+                        gifUrlPattern.lastIndex = 0;
+
+                        while ((match = gifUrlPattern.exec(desc)) !== null) {
+                          // Add text before match
+                          if (match.index > lastIndex) {
+                            parts.push(desc.slice(lastIndex, match.index));
+                          }
+                          // Add GIF URL
+                          parts.push(match[0]);
+                          lastIndex = match.index + match[0].length;
+                        }
+
+                        // Add remaining text
+                        if (lastIndex < desc.length) {
+                          parts.push(desc.slice(lastIndex));
+                        }
+
+                        // If no matches, return original text
+                        if (parts.length === 0) {
+                          return desc;
+                        }
+
+                        return parts.map((part, idx) => {
+                          // Check if this part is a GIF URL
+                          if (gifUrlPattern.test(part) || part.match(/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i)) {
+                            // Convert Giphy URL to direct image URL if needed
+                            let imageUrl = part;
+                            if (part.includes('giphy.com') && !part.endsWith('.gif')) {
+                              // Extract Giphy ID and use direct GIF URL
+                              const giphyIdMatch = part.match(/giphy\.com\/media\/([^\/]+)/);
+                              if (giphyIdMatch) {
+                                imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
+                              } else {
+                                // Try to get the original URL
+                                imageUrl = part.replace(/\/$/, '') + '.gif';
+                              }
+                            }
+                            return (
+                              <img
+                                key={idx}
+                                src={imageUrl}
+                                alt="GIF"
+                                className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
+                                style={{ maxHeight: '200px', maxWidth: '100%' }}
+                              />
+                            );
+                          }
+                          return <span key={idx}>{part}</span>;
+                        });
+                      })()}
+                    </div>
                   </div>
-                ) : claim ? (
-                  <>
-                    {String(status || "").toUpperCase() === "SUCCESS" ? (
-                      <>
-                        {/* Payment Complete Message */}
-                        <div className="mt-6 text-center py-12">
-                          <div className="mb-4 text-6xl">✅</div>
-                          <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                            Payment Complete
-                          </h3>
-                          <p className="text-gray-600 text-base mb-4">
-                            Your payment has been successfully processed and sent to the recipient.
-                          </p>
-                        </div>
-                        {/* Display description/message if available */}
-                        {claim?.description && (
-                          <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                            <div className="text-sm text-gray-600 mb-1">Message</div>
-                            <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
-                              {(() => {
-                                const desc = claim.description || '';
-                                // Check if description contains GIF URLs (common patterns including Giphy)
-                                const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
-                                const parts: string[] = [];
-                                let lastIndex = 0;
-                                let match;
+                )}
+                <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <div className="text-base font-medium text-gray-800 mb-2">Payment summary</div>
+                  <div className="text-base text-gray-700 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-600">Amount requested</span>
+                      <span className="text-lg font-semibold text-gray-900">
+                        <span className="inline-flex items-center gap-1">
+                          <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={18} />
+                          ${parseFloat(claim.amount || "0").toFixed(2)}
+                        </span>
+                      </span>
+                    </div>
+                    {claim.created_at && (
+                      <div className="flex items-center justify-between pt-2 border-t border-gray-200 mt-2">
+                        <span className="text-gray-600">Created</span>
+                        <span className="text-sm text-gray-700">
+                          {formatUTCTimestamp(claim.created_at)}
+                        </span>
+                      </div>
+                    )}
+                    {claim.paid_at && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-600">Paid</span>
+                        <span className="text-sm text-gray-700">
+                          {formatUTCTimestamp(claim.paid_at)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {String(status || "").toUpperCase() !== "SUCCESS" && (
+                  <div className="mt-6">
+                    <PaymentStatusTracker
+                      status={status}
+                      statusData={statusData}
+                      depositReceivedAt={latestIntentData?.depositReceivedAt || statusData?.updatedAt}
+                      startedAt={claim.created_at}
+                      fromChain={selectedFrom?.chain}
+                      toChain={destToken?.chain}
+                      depositAddress={deposit?.depositAddress}
+                      isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
+                      paidAt={claim.paid_at}
+                      paymentType={
+                        deposit?.isDirect ? 'direct' :
+                          deposit?.isCompanionSwap ? 'companion-swap' :
+                            'near-intent'
+                      }
+                      isLooftaPay={
+                        claim?.paid_with_token?.toUpperCase() === "USDC" &&
+                        (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
+                      }
+                    />
+                  </div>
+                )}
 
-                                // Reset regex lastIndex
-                                gifUrlPattern.lastIndex = 0;
+              </>
+            ) : (
+              <>
+                {!embedInApp && (
+                  <div className="mb-3 flex items-start justify-between">
+                    <div className="text-base font-medium text-gray-700">Payment request</div>
+                    {claim?.created_by ? (
+                      <div className="text-sm text-gray-600">
+                        {claim.creator_username ? `@${claim.creator_username}` : 'User'}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-gray-500">Anonymous</div>
+                    )}
+                  </div>
+                )}
+                {!embedInApp && claim?.description && (
+                  <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                    <div className="text-sm text-gray-600 mb-1">Message</div>
+                    <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
+                      {(() => {
+                        const desc = claim.description || '';
+                        // Check if description contains GIF URLs (common patterns including Giphy)
+                        const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
+                        const parts: string[] = [];
+                        let lastIndex = 0;
+                        let match;
 
-                                while ((match = gifUrlPattern.exec(desc)) !== null) {
-                                  // Add text before match
-                                  if (match.index > lastIndex) {
-                                    parts.push(desc.slice(lastIndex, match.index));
-                                  }
-                                  // Add GIF URL
-                                  parts.push(match[0]);
-                                  lastIndex = match.index + match[0].length;
-                                }
+                        // Reset regex lastIndex
+                        gifUrlPattern.lastIndex = 0;
 
-                                // Add remaining text
-                                if (lastIndex < desc.length) {
-                                  parts.push(desc.slice(lastIndex));
-                                }
+                        while ((match = gifUrlPattern.exec(desc)) !== null) {
+                          // Add text before match
+                          if (match.index > lastIndex) {
+                            parts.push(desc.slice(lastIndex, match.index));
+                          }
+                          // Add GIF URL
+                          parts.push(match[0]);
+                          lastIndex = match.index + match[0].length;
+                        }
 
-                                // If no matches, return original text
-                                if (parts.length === 0) {
-                                  return desc;
-                                }
+                        // Add remaining text
+                        if (lastIndex < desc.length) {
+                          parts.push(desc.slice(lastIndex));
+                        }
 
-                                return parts.map((part, idx) => {
-                                  // Check if this part is a GIF URL
-                                  if (gifUrlPattern.test(part) || part.match(/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i)) {
-                                    // Convert Giphy URL to direct image URL if needed
-                                    let imageUrl = part;
-                                    if (part.includes('giphy.com') && !part.endsWith('.gif')) {
-                                      // Extract Giphy ID and use direct GIF URL
-                                      const giphyIdMatch = part.match(/giphy\.com\/media\/([^\/]+)/);
-                                      if (giphyIdMatch) {
-                                        imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
-                                      } else {
-                                        // Try to get the original URL
-                                        imageUrl = part.replace(/\/$/, '') + '.gif';
-                                      }
-                                    }
-                                    return (
-                                      <img
-                                        key={idx}
-                                        src={imageUrl}
-                                        alt="GIF"
-                                        className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
-                                        style={{ maxHeight: '200px', maxWidth: '100%' }}
-                                      />
-                                    );
-                                  }
-                                  return <span key={idx}>{part}</span>;
-                                });
-                              })()}
-                            </div>
-                          </div>
+                        // If no matches, return original text
+                        if (parts.length === 0) {
+                          return desc;
+                        }
+
+                        return parts.map((part, idx) => {
+                          // Check if this part is a GIF URL
+                          if (gifUrlPattern.test(part) || part.match(/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i)) {
+                            // Convert Giphy URL to direct image URL if needed
+                            let imageUrl = part;
+                            if (part.includes('giphy.com') && !part.endsWith('.gif')) {
+                              // Extract Giphy ID and use direct GIF URL
+                              const giphyIdMatch = part.match(/giphy\.com\/media\/([^\/]+)/);
+                              if (giphyIdMatch) {
+                                imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
+                              } else {
+                                // Try to get the original URL
+                                imageUrl = part.replace(/\/$/, '') + '.gif';
+                              }
+                            }
+                            return (
+                              <img
+                                key={idx}
+                                src={imageUrl}
+                                alt="GIF"
+                                className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
+                                style={{ maxHeight: '200px', maxWidth: '100%' }}
+                              />
+                            );
+                          }
+                          return <span key={idx}>{part}</span>;
+                        });
+                      })()}
+                    </div>
+                  </div>
+                )}
+                {!embedInApp && <div className="text-base text-gray-700">Amount requested</div>}
+                <div className={embedInApp ? "mt-2 flex items-baseline justify-between" : "mt-1 flex items-baseline justify-between"}>
+                  <div className="text-3xl md:text-4xl font-semibold text-gray-900 leading-none">
+                    {destUSD != null ? `$${destUSD.toFixed(2)}` : `—`}
+                  </div>
+                  <div className="text-base text-gray-500">
+                    <span className="inline-flex items-center gap-1">
+                      <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
+                      {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol} {destToken?.chain ? `on ${destToken.chain.charAt(0).toUpperCase() + destToken.chain.slice(1)}` : ""}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {String(status || "").toUpperCase() !== "SUCCESS" && (!deposit ? (
+              <>
+                {/* Private payment switch — show whenever the link does not require private */}
+                {!requiresPrivate && (
+                  <div className="mt-5 p-4 rounded-xl border border-gray-200 bg-gray-50">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-base font-semibold text-gray-900">
+                          🔒 Private payment
+                        </span>
+                        {PRIVATE_PAYMENT_COMING_SOON && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
+                            Coming soon
+                          </span>
                         )}
-                        <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
-                          <div className="text-base font-medium text-gray-800 mb-2">Payment summary</div>
-                          <div className="text-base text-gray-700 space-y-1">
-                            <div className="flex items-center justify-between">
-                              <span className="text-gray-600">Amount requested</span>
-                              <span className="text-lg font-semibold text-gray-900">
-                                <span className="inline-flex items-center gap-1">
-                                  <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={18} />
-                                  ${parseFloat(claim.amount || "0").toFixed(2)}
+                      </div>
+                      <Switch
+                        checked={PRIVATE_PAYMENT_COMING_SOON ? false : isPrivateMode}
+                        onCheckedChange={PRIVATE_PAYMENT_COMING_SOON ? () => { } : handleSetPrivateMode}
+                        disabled={PRIVATE_PAYMENT_COMING_SOON}
+                        aria-label={PRIVATE_PAYMENT_COMING_SOON ? "Private payment — coming soon" : "Private payment"}
+                      />
+                    </div>
+                    <p className="text-sm text-gray-600 mt-3 w-full block">
+                      {PRIVATE_PAYMENT_COMING_SOON
+                        ? "When available, payment will be processed through privacy pools for complete privacy."
+                        : "Payment via Privacy Cash for privacy. Funds go to recipient directly or to burner if they have no account."}
+                    </p>
+                  </div>
+                )}
+
+                {/* Show private-only indicator if claim requires it */}
+                {requiresPrivate && (
+                  <div className="mt-5 flex items-center gap-2 text-sm text-gray-600">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    </svg>
+                    <span className="font-medium">
+                      {PRIVATE_PAYMENT_COMING_SOON ? "Private payment only — coming soon" : "Private payment only"}
+                    </span>
+                  </div>
+                )}
+
+                {/* Pay with section */}
+                <div className="mt-5">
+                  <div className="text-base font-medium text-gray-700 mb-2">Pay with</div>
+
+                  {requiresPrivate || isPrivateMode ? (
+                    /* Private mode (required or optional) - Show USDC on SOL as best option, but allow other tokens */
+                    <>
+                      {/* Best option: Pay USDC on SOL (FREE) - select only; Phantom opens when user clicks "Use wallet" */}
+                      {usdcSolanaToken && (
+                        <div className="mb-4">
+                          <button
+                            type="button"
+                            onClick={() => setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain })}
+                            className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
+                              ? 'border-green-400 bg-green-100'
+                              : 'border-gray-300 bg-white hover:bg-gray-50'
+                              }`}
+                          >
+                            <TokenIcon token={usdcSolanaToken} chain="solana" size={32} />
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className={cn(
+                                  "text-lg font-semibold",
+                                  selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-900" : "text-gray-900"
+                                )}>Pay USDC on Solana</span>
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
+                                  FREE
                                 </span>
-                              </span>
+
+                              </div>
+                              <div className={cn(
+                                "text-sm mt-0.5",
+                                selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-800" : "text-slate-200"
+                              )}>
+                                Pay now with Phantom or your Loofta balance
+                              </div>
                             </div>
+                            {selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain && (
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-600">
+                                <path d="M20 6L9 17l-5-5" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Divider - two line segments so line never strikes through text */}
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="flex-1 h-px bg-white/20" />
+                        <span className="text-sm text-slate-400 shrink-0">or choose another token</span>
+                        <div className="flex-1 h-px bg-white/20" />
+                      </div>
+
+                      {/* Token selector - hide Solana for private flow */}
+                      <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
+                        <TokenCombobox
+                          tokens={filteredTokens as any}
+                          value={fromSel}
+                          onChange={(sel) => {
+                            // Check if token is unsupported
+                            const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
+                            if (selected?._unsupported) {
+                              toast({
+                                variant: "destructive",
+                                title: "Token not supported",
+                                description: selected._reason || "This token cannot be used for this payment."
+                              });
+                              return;
+                            }
+                            setFromSel(sel);
+                          }}
+                          placeholder="Select token to pay with"
+                          onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                          hideChains={['solana', 'sol']}
+                          className={embedInApp
+                            ? `bg-white/10 text-white border border-white/20 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors hover:bg-white/15 placeholder:text-slate-400 ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400/50 ring-offset-2 ring-offset-[#0f0f12]' : ''}`
+                            : `bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'border-emerald-400 hover:bg-emerald-50' : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'}`
+                          }
+                        />
+                      </div>
+                      {/* Selected Token Display - Show when a token is selected */}
+                      {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? (
+                        <motion.div
+                          initial={{ opacity: 0, y: -10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="mt-4"
+                        >
+                          <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
                             <div className="flex items-center justify-between">
-                              <span className="text-gray-600">Paid with</span>
-                              <span className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
-                                {(() => {
-                                  // Use actual payment info from database if available
-                                  if (claim?.paid_with_token && claim?.paid_with_chain) {
-                                    // Find the token that was actually used to pay
-                                    const paidTokenObj = tokens.find(t =>
-                                      t.symbol?.toUpperCase() === claim.paid_with_token.toUpperCase() &&
-                                      t.chain?.toLowerCase() === claim.paid_with_chain.toLowerCase()
-                                    );
-                                    // Show the actual amount requested (not fees - fees are deducted from recipient for private)
-                                    const amountPaid = parseFloat(claim?.amount || "0");
-                                    
-                                    // Special formatting for USDC on Solana (Loofta Pay)
-                                    const isUSDCOnSolana = claim.paid_with_token.toUpperCase() === "USDC" && 
-                                                          (claim.paid_with_chain.toLowerCase() === "solana" || claim.paid_with_chain.toLowerCase() === "sol");
-                                    
-                                    if (isUSDCOnSolana) {
-                                      return (
-                                        <>
-                                          <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={18} />
-                                          <span>usdc on SOL</span>
-                                        </>
-                                      );
-                                    }
-                                    
-                                    return (
-                                      <>
-                                        <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={18} />
-                                        <span>${amountPaid.toFixed(2)} {claim.paid_with_token} ({claim.paid_with_chain})</span>
-                                      </>
-                                    );
-                                  }
-
-                                  // Fallback: For private payments, calculate the total amount paid (requested + fees)
-                                  if (claim?.is_private) {
-                                    const requestedAmount = parseFloat(claim?.amount || "0");
-                                    const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-                                    const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
-                                    const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
-                                    return (
-                                      <>
-                                        <TokenIcon token={usdcSolanaToken} chain="solana" size={18} />
-                                        <span>${roundUpDecimals(String(withdrawalAmountNeeded), 2)}</span>
-                                      </>
-                                    );
-                                  }
-
-                                  // For standard payments, use statusData
-                                  const paid = statusData?.swapDetails?.depositedAmountFormatted ?? statusData?.swapDetails?.amountInFormatted ?? null;
-                                  const sym = paidToken?.symbol || selectedFrom?.symbol;
-                                  const chain = paidToken?.chain || selectedFrom?.chain;
-                                  return (
-                                    <>
-                                      <TokenIcon token={(paidToken as any) ?? (selectedFrom as any)} chain={(paidToken?.chain as any) ?? (selectedFrom?.chain as any)} size={18} />
-                                      <span>{paid != null ? `$${roundUpDecimals(String(paid), 2)}` : "—"} {sym ? `(${sym})` : ""}</span>
-                                    </>
-                                  );
-                                })()}
-                              </span>
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                                  <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
+                                </div>
+                                <div>
+                                  <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send approximately</p>
+                                  {quoteLoading ? (
+                                    <div className="flex items-center gap-2">
+                                      <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                                      <p className="text-lg font-bold text-emerald-900">Calculating...</p>
+                                    </div>
+                                  ) : (
+                                    <p className="text-lg font-bold text-emerald-900">
+                                      {quote?.amountInFormatted
+                                        ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                        : quote?.est
+                                          ? `${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
+                                          : quote?.usd
+                                            ? `≈ $${quote.usd.toFixed(2)}`
+                                            : selectedFrom.price && claim?.amount
+                                              ? `${roundUpDecimals((parseFloat(claim.amount) / selectedFrom.price).toFixed(6), 6)} ${selectedFrom.symbol}`
+                                              : "Unable to calculate"}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                              <ArrowRight className="w-5 h-5 text-emerald-600" />
                             </div>
-                            {claim.created_at && (
-                              <div className="flex items-center justify-between pt-2 border-t border-gray-200 mt-2">
-                                <span className="text-gray-600">Created</span>
-                                <span className="text-sm text-gray-700">
-                                  {formatUTCTimestamp(claim.created_at)}
+                          </div>
+                        </motion.div>
+                      ) : selectedFrom && selectedFrom.symbol === usdcSolanaToken?.symbol && selectedFrom.chain === usdcSolanaToken?.chain ? (
+                        PRIVATE_PAYMENT_COMING_SOON ? (
+                          <div className="mt-2 text-sm text-amber-700">
+                            Private payments coming soon
+                          </div>
+                        ) : null
+                      ) : null}
+                      {PRIVATE_PAYMENT_COMING_SOON && selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) && (
+                        <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                          <span className="font-medium">Private payment:</span> Coming soon.
+                        </div>
+                      )}
+                      {(() => {
+                        const requestedAmount = parseFloat(claim?.amount || "0");
+                        const isUSDCSelected = selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain;
+
+                        // If requiresPrivate is true, recipient pays fees - payer pays amount + network fee in USDC
+                        if (requiresPrivate && isUSDCSelected) {
+                          const totalWithNetworkFee = requestedAmount + NETWORK_FEE_USD;
+                          return (
+                            <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                              <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
+                              <div className="space-y-1.5 text-sm">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-gray-600">Amount to recipient</span>
+                                  <span className="font-semibold text-gray-900">${requestedAmount.toFixed(2)}</span>
+                                </div>
+                                <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
+                                  <span className="font-medium text-gray-900">Total to pay (USDC)</span>
+                                  <span className="font-semibold text-lg text-gray-900">${totalWithNetworkFee.toFixed(2)}</span>
+                                </div>
+                                <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
+                                  Fees (0.35% + $0.74) will be deducted from the recipient when they withdraw.
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        // Optional private payment - payer covers fees (only for USDC)
+                        if (isUSDCSelected && !requiresPrivate) {
+                          const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
+                          const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+                          const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
+                          const withdrawalFee = withdrawalAmountNeeded * feeRate;
+                          const rentFeeAmount = rentFee;
+                          const totalToPay = withdrawalAmountNeeded + NETWORK_FEE_USD;
+
+                          return (
+                            <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                              <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
+                              <div className="space-y-1.5 text-sm">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-gray-600">Recipient receives</span>
+                                  <span className="font-semibold text-gray-900">${requestedAmount.toFixed(2)}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-gray-600">Withdrawal fee (0.35%)</span>
+                                  <span className="text-gray-700">${withdrawalFee.toFixed(6)}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-gray-600">Rent fee</span>
+                                  <span className="text-gray-700">${rentFeeAmount.toFixed(6)}</span>
+                                </div>
+                                <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
+                                  <span className="font-medium text-gray-900">Total to pay (USDC)</span>
+                                  <span className="font-semibold text-lg text-gray-900">${totalToPay.toFixed(2)}</span>
+                                </div>
+                                <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
+                                  Privacy Cash fees above.
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        // For other tokens in private mode, show estimated amount only
+                        return null;
+                      })()}
+                    </>
+                  ) : (
+                    /* Standard mode - Show USDC on SOL (FREE) option first, then token selector */
+                    <>
+                      {/* Best option: Pay USDC on SOL (FREE) - select only; Phantom opens when user clicks "Use wallet" */}
+                      {usdcSolanaToken && (
+                        <div className="mb-4">
+                          <button
+                            type="button"
+                            onClick={() => setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain })}
+                            className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
+                              ? 'border-green-400 bg-green-100'
+                              : 'border-gray-300 bg-white hover:bg-gray-50'
+                              }`}
+                          >
+                            <TokenIcon token={usdcSolanaToken} chain="solana" size={32} />
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className={cn(
+                                  "text-lg font-semibold",
+                                  selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-900" : "text-gray-900"
+                                )}>Pay USDC on Solana</span>
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
+                                  FREE
                                 </span>
                               </div>
-                            )}
-                            {claim.paid_at && (
-                              <div className="flex items-center justify-between">
-                                <span className="text-gray-600">Paid</span>
-                                <span className="text-sm text-gray-700">
-                                  {formatUTCTimestamp(claim.paid_at)}
-                                </span>
+                              <div className={cn(
+                                "text-sm mt-0.5",
+                                selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-800" : "text-slate-200"
+                              )}>
+                                Pay now with Phantom or your Loofta balance
                               </div>
+                            </div>
+                            {selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain && (
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-600">
+                                <path d="M20 6L9 17l-5-5" />
+                              </svg>
                             )}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Divider - two line segments so line never strikes through text */}
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="flex-1 h-px bg-white/20" />
+                        <span className="text-sm text-slate-400 shrink-0">or choose token</span>
+                        <div className="flex-1 h-px bg-white/20" />
+                      </div>
+
+                      {/* Token selector - hide Solana for private flow */}
+                      <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
+                        <TokenCombobox
+                          tokens={filteredTokens as any}
+                          value={fromSel}
+                          onChange={(sel) => {
+                            // Check if token is unsupported
+                            const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
+                            if (selected?._unsupported) {
+                              toast({
+                                variant: "destructive",
+                                title: "Token not supported",
+                                description: selected._reason || "This token cannot be used for this payment."
+                              });
+                              return;
+                            }
+                            setFromSel(sel);
+                          }}
+                          placeholder="Select token to pay with"
+                          onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                          hideChains={['solana', 'sol']}
+                          className={embedInApp
+                            ? `bg-white/10 text-white border border-white/20 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors hover:bg-white/15 placeholder:text-slate-400 ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400/50 ring-offset-2 ring-offset-[#0f0f12]' : ''}`
+                            : `bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'border-emerald-400 hover:bg-emerald-50' : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'}`
+                          }
+                        />
+                      </div>
+                      {/* Selected Token Display - Show when a token is selected */}
+                      {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? (
+                        <motion.div
+                          initial={{ opacity: 0, y: -10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="mt-4"
+                        >
+                          <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                                  <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
+                                </div>
+                                <div>
+                                  <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send approximately</p>
+                                  {quoteLoading ? (
+                                    <div className="flex items-center gap-2">
+                                      <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                                      <p className="text-lg font-bold text-emerald-900">Calculating...</p>
+                                    </div>
+                                  ) : (
+                                    <p className="text-lg font-bold text-emerald-900">
+                                      {quote?.amountInFormatted
+                                        ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                        : quote?.est
+                                          ? `${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
+                                          : quote?.usd
+                                            ? `≈ $${quote.usd.toFixed(2)}`
+                                            : selectedFrom.price && claim?.amount
+                                              ? `${roundUpDecimals((parseFloat(claim.amount) / selectedFrom.price).toFixed(6), 6)} ${selectedFrom.symbol}`
+                                              : "Unable to calculate"}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                              <ArrowRight className="w-5 h-5 text-emerald-600" />
+                            </div>
+                          </div>
+                        </motion.div>
+                      ) : selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain ? (
+                        <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                          <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
+                          <div className="space-y-1.5 text-sm">
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-600">Amount to recipient</span>
+                              <span className="font-semibold text-gray-900">${(parseFloat(claim?.amount || "0") || 0).toFixed(2)}</span>
+                            </div>
+                            <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
+                              <span className="font-medium text-gray-900">Total to pay (USDC)</span>
+                              <span className="font-semibold text-lg text-gray-900">${((parseFloat(claim?.amount || "0") || 0) + NETWORK_FEE_USD).toFixed(2)}</span>
+                            </div>
                           </div>
                         </div>
+                      ) : null}
+                    </>
+                  )}
+
+                  {/* Refund Address Input - Show when a token is selected (not USDC on Solana) */}
+                  {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) && (
+                    <div className="mt-4 space-y-2">
+                      <Label htmlFor="refundAddress" className="text-sm font-medium text-gray-700">
+                        Refund Address ({selectedFrom.chain.toUpperCase()})
+                      </Label>
+                      <Input
+                        id="refundAddress"
+                        type="text"
+                        value={refundAddress}
+                        onChange={(e) => {
+                          setRefundAddress(e.target.value);
+                          setRefundAddressError(null);
+                        }}
+                        placeholder={`Enter ${selectedFrom.chain.toUpperCase()} address for refunds`}
+                        className={cn(refundAddressError && "border-red-500 focus:border-red-500", embedInApp && "bg-white/10 border-white/20 text-white placeholder:text-slate-400")}
+                      />
+                      {refundAddressError && (
+                        <p className="text-sm text-red-600">{refundAddressError}</p>
+                      )}
+                      <p className="text-xs text-gray-500">
+                        Funds will be refunded to this address if the payment fails or expires. For quotes, a safe placeholder may be used.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="mt-4 flex gap-3">
+                    {DEMO_MODE ? (
+                      <Button
+                        disabled
+                        className="w-full rounded-xl"
+                        style={{ background: '#9CA3AF' }}
+                      >
+                        Demo Mode - Payments Disabled
+                      </Button>
+                    ) : (
+                      <>
+                        <GradientActionButton
+                          onClick={() => {
+                            const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                              selectedFrom?.chain === usdcSolanaToken?.chain;
+                            if (!authenticated && !isUSDCOnSolana) {
+                              login();
+                              return;
+                            }
+                            // USDC on Solana = Pay now → show modal (Login to Loofta or Use wallet / Pay with Loofta or Use wallet)
+                            if (isUSDCOnSolana) {
+                              setPayWithLooftaError(null);
+                              setPayWithWalletError(null);
+                              setConfirmingTxSignature(null);
+                              setConfirmingTxSource(null);
+                              setShowPayNowModal(true);
+                              return;
+                            }
+                            if ((isPrivateMode || requiresPrivate)) {
+                              onPayPrivately();
+                            } else {
+                              onPrepare();
+                            }
+                          }}
+                          disabled={
+                            requiresPrivate && !isPrivateMode
+                              ? true
+                              : (() => {
+                                const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                                  selectedFrom?.chain === usdcSolanaToken?.chain;
+                                if (!authenticated && !isUSDCOnSolana) return false;
+                                if (isUSDCOnSolana) {
+                                  return (!usdcSolanaToken || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
+                                }
+                                if (isPrivateMode || requiresPrivate) {
+                                  return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
+                                }
+                                return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
+                              })()
+                          }
+                          loading={preparing}
+                          loadingText={(() => {
+                            const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                              selectedFrom?.chain === usdcSolanaToken?.chain;
+                            if (isUSDCOnSolana) return "Opening…";
+                            if (isPrivateMode || requiresPrivate) return "Processing private payment…";
+                            return "Preparing…";
+                          })()}
+                        >
+                          {(() => {
+                            const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                              selectedFrom?.chain === usdcSolanaToken?.chain;
+                            if (!authenticated && !isUSDCOnSolana) return "Login to pay";
+                            if (requiresPrivate && !isPrivateMode) return "Private payment required";
+                            if (isUSDCOnSolana) return "Pay now";
+                            if (isPrivateMode || requiresPrivate) {
+                              return "Get deposit address";
+                            }
+                            return "Get deposit address";
+                          })()}
+                        </GradientActionButton>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                {(() => {
+                  const s = String(status || "").toUpperCase();
+                  const isTerminal = s === "FAILED" || s === "REFUNDED";
+
+                  // Check if deadline has expired (only for PENDING_DEPOSIT/INCOMPLETE_DEPOSIT)
+                  const isExpired = (s === "PENDING_DEPOSIT" || s === "INCOMPLETE_DEPOSIT") && deposit?.deadline
+                    ? new Date(deposit.deadline).getTime() < Date.now()
+                    : false;
+
+                  // If expired, show expired message
+                  if (isExpired) {
+                    return (
+                      <div className="mt-6 text-center py-12">
+                        <div className="mb-4 text-6xl">🔗</div>
+                        <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                          Payment Link Expired
+                        </h3>
+                        <p className="text-gray-600 text-base mb-4">
+                          This payment link has expired. The deadline was {deposit.deadline ? formatUTCTimestamp(deposit.deadline) : 'not set'}.
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          Please request a new payment link from the sender.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  // Get deposit address from multiple sources - ALWAYS show for PENDING_DEPOSIT/INCOMPLETE_DEPOSIT
+                  const depositAddr = deposit?.depositAddress
+                    || statusData?.quoteResponse?.quote?.depositAddress
+                    || statusData?.depositAddress
+                    || latestIntentData?.depositAddress;
+                  const amountToSend = deposit?.minAmountInFormatted
+                    || statusData?.quoteResponse?.quote?.amountInFormatted
+                    || quote?.amountInFormatted;
+                  const timeEstimate = statusData?.quoteResponse?.quote?.timeEstimate
+                    || deposit?.timeEstimate;
+
+                  // Debug log
+                  if (!depositAddr && statusData) {
+                    console.log('[DEBUG] No deposit address found. statusData:', {
+                      hasQuoteResponse: !!statusData?.quoteResponse,
+                      hasQuote: !!statusData?.quoteResponse?.quote,
+                      depositAddress: statusData?.quoteResponse?.quote?.depositAddress,
+                      statusDataKeys: Object.keys(statusData || {}),
+                    });
+                  }
+
+                  // Show status tracker for active payment states (PROCESSING/KNOWN_DEPOSIT_TX only)
+                  if (s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX") {
+                    return (
+                      <>
                         <div className="mt-6">
                           <PaymentStatusTracker
                             status={status}
                             statusData={statusData}
                             depositReceivedAt={latestIntentData?.depositReceivedAt || statusData?.updatedAt}
-                            startedAt={claim.created_at}
+                            startedAt={deposit?.deadline ? new Date(deposit.deadline).toISOString() : undefined}
                             fromChain={selectedFrom?.chain}
                             toChain={destToken?.chain}
-                            depositAddress={deposit?.depositAddress}
-                            isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
-                            paidAt={claim.paid_at}
+                            depositAddress={depositAddr}
+                            timeEstimate={timeEstimate}
                             paymentType={
                               deposit?.isDirect ? 'direct' :
                                 deposit?.isCompanionSwap ? 'companion-swap' :
                                   'near-intent'
                             }
+                            isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
                             isLooftaPay={
-                              claim?.paid_with_token?.toUpperCase() === "USDC" && 
+                              claim?.paid_with_token?.toUpperCase() === "USDC" &&
                               (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
                             }
                           />
                         </div>
+                        <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                          <div className="text-lg font-semibold text-gray-900 mb-2">Payment summary</div>
+                          <div className="text-base text-gray-700 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-600">Amount requested</span>
+                              <span className="text-lg font-semibold text-gray-900">
+                                <span className="inline-flex items-center gap-1">
+                                  <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={24} />
+                                  {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol}
 
-                      </>
-                    ) : (
-                      <>
-                        <div className="mb-3 flex items-start justify-between">
-                          <div className="text-base font-medium text-gray-700">Payment request</div>
-                          {claim?.created_by ? (
-                            <div className="text-sm text-gray-600">
-                              {claim.creator_username ? `@${claim.creator_username}` : 'User'}
+                                </span>
+                              </span>
                             </div>
-                          ) : (
-                            <div className="text-sm text-gray-500">Anonymous</div>
-                          )}
-                        </div>
-                        {claim?.description && (
-                          <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                            <div className="text-sm text-gray-600 mb-1">Message</div>
-                            <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
-                              {(() => {
-                                const desc = claim.description || '';
-                                // Check if description contains GIF URLs (common patterns including Giphy)
-                                const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
-                                const parts: string[] = [];
-                                let lastIndex = 0;
-                                let match;
-
-                                // Reset regex lastIndex
-                                gifUrlPattern.lastIndex = 0;
-
-                                while ((match = gifUrlPattern.exec(desc)) !== null) {
-                                  // Add text before match
-                                  if (match.index > lastIndex) {
-                                    parts.push(desc.slice(lastIndex, match.index));
-                                  }
-                                  // Add GIF URL
-                                  parts.push(match[0]);
-                                  lastIndex = match.index + match[0].length;
-                                }
-
-                                // Add remaining text
-                                if (lastIndex < desc.length) {
-                                  parts.push(desc.slice(lastIndex));
-                                }
-
-                                // If no matches, return original text
-                                if (parts.length === 0) {
-                                  return desc;
-                                }
-
-                                return parts.map((part, idx) => {
-                                  // Check if this part is a GIF URL
-                                  if (gifUrlPattern.test(part) || part.match(/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i)) {
-                                    // Convert Giphy URL to direct image URL if needed
-                                    let imageUrl = part;
-                                    if (part.includes('giphy.com') && !part.endsWith('.gif')) {
-                                      // Extract Giphy ID and use direct GIF URL
-                                      const giphyIdMatch = part.match(/giphy\.com\/media\/([^\/]+)/);
-                                      if (giphyIdMatch) {
-                                        imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
-                                      } else {
-                                        // Try to get the original URL
-                                        imageUrl = part.replace(/\/$/, '') + '.gif';
-                                      }
-                                    }
-                                    return (
-                                      <img
-                                        key={idx}
-                                        src={imageUrl}
-                                        alt="GIF"
-                                        className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
-                                        style={{ maxHeight: '200px', maxWidth: '100%' }}
-                                      />
-                                    );
-                                  }
-                                  return <span key={idx}>{part}</span>;
-                                });
-                              })()}
-                            </div>
-                          </div>
-                        )}
-                        <div className="text-base text-gray-700">Amount requested</div>
-                        <div className="mt-1 flex items-baseline justify-between">
-                          <div className="text-3xl md:text-4xl font-semibold text-gray-900 leading-none">
-                            {destUSD != null ? `$${destUSD.toFixed(2)}` : `—`}
-                          </div>
-                          <div className="text-base text-gray-500">
-                            <span className="inline-flex items-center gap-1">
-                              <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
-                              {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol} {destToken?.chain ? `on ${destToken.chain.charAt(0).toUpperCase() + destToken.chain.slice(1)}` : ""}
-                            </span>
                           </div>
                         </div>
                       </>
-                    )}
-
-                    {String(status || "").toUpperCase() !== "SUCCESS" && (!deposit ? (
+                    );
+                  }
+                  if (s === "SUCCESS") return null;
+                  if (isTerminal) {
+                    return (
                       <>
-                        {/* Private payment switch — only show when is_private was not set at creation (null/undefined) */}
-                        {claim?.is_private == null && !requiresPrivate && (
-                          <div className="mt-5 p-4 rounded-xl border border-gray-200 bg-gray-50">
-                            <div className="flex items-center justify-between gap-4">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-base font-semibold text-gray-900">
-                                  🔒 Private payment
-                                </span>
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
-                                  Coming soon
+                        <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-3">
+                          <div className="text-sm font-semibold text-red-700">
+                            {s === "FAILED" ? "Deposit failed." : "Deposit was refunded."}
+                          </div>
+                          <div className="text-sm  text-red-700/80 mt-1">
+                            Please try again with a different token or network.
+                          </div>
+                        </div>
+                      </>
+                    );
+                  }
+
+                  // For PENDING_DEPOSIT and INCOMPLETE_DEPOSIT - show deposit info FIRST, then status tracker
+                  return (
+                    <div className="mt-6">
+                      {depositAddr ? (
+                        <>
+                          {/* Amount to Pay - AT THE TOP */}
+                          <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                            <div className="text-base text-gray-700 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600">Amount to pay</span>
+                                <span className="text-lg font-medium text-gray-900 inline-flex items-center gap-2">
+                                  <TokenIcon
+                                    token={(selectedFrom as any) ?? (destToken as any) ?? undefined}
+                                    chain={(selectedFrom?.chain as any) ?? (destToken?.chain as any)}
+                                    size={24}
+                                  />
+                                  <span>
+                                    {amountToSend && selectedFrom
+                                      ? `${roundUpDecimals(amountToSend, 6)} ${selectedFrom.symbol}`
+                                      : quote?.amountInFormatted && selectedFrom
+                                        ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                        : `${roundUpDecimals(claim.amount, 6)} ${claim.to_symbol}`}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors ml-2"
+                                    onClick={async () => {
+                                      try {
+                                        const amountToCopy = amountToSend && selectedFrom
+                                          ? roundUpDecimals(amountToSend, 6)
+                                          : quote?.amountInFormatted && selectedFrom
+                                            ? roundUpDecimals(quote.amountInFormatted, 6)
+                                            : roundUpDecimals(claim.amount, 6);
+                                        await navigator.clipboard.writeText(amountToCopy);
+                                        toast({ title: "Copied", description: "Amount copied to clipboard." });
+                                      } catch {
+                                        toast({ variant: "destructive", title: "Copy failed", description: "Could not copy amount. Please try again." });
+                                      }
+                                    }}
+                                    title="Copy amount"
+                                  >
+                                    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+                                      <path d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
+                                    </svg>
+                                  </button>
                                 </span>
                               </div>
-                              <Switch
-                                checked={false}
-                                onCheckedChange={() => { }}
-                                disabled={PRIVATE_PAYMENT_COMING_SOON}
-                                aria-label="Private payment — coming soon"
-                              />
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600">Deposit address</span>
+                                <span className="text-lg font-medium text-gray-900 inline-flex items-center gap-2">
+                                  <span className="font-display  text-sm break-all">
+                                    {depositAddr}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center justify-center w-8 h-8 rounded-md  border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors ml-2"
+                                    onClick={async () => {
+                                      try {
+                                        await navigator.clipboard.writeText(depositAddr);
+                                        toast({ title: "Copied", description: "Deposit address copied to clipboard." });
+                                      } catch {
+                                        toast({ variant: "destructive", title: "Copy failed", description: "Could not copy address. Please try again." });
+                                      }
+                                    }}
+                                    title="Copy address"
+                                  >
+                                    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+                                      <path d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
+                                    </svg>
+                                  </button>
+                                </span>
+                              </div>
                             </div>
-                            <p className="text-sm text-gray-600 mt-3 w-full block">
-                              When available, payment will be processed through privacy pools for complete privacy.
-                            </p>
                           </div>
-                        )}
 
-                        {/* Show private-only indicator if claim requires it */}
-                        {requiresPrivate && (
-                          <div className="mt-5 flex items-center gap-2 text-sm text-gray-600">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0">
-                              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                            </svg>
-                            <span className="font-medium">
-                              Private payment only — coming soon
-                            </span>
+                          {/* Additional Info - Simplified, unified styling */}
+                          <div className="mt-4 space-y-2">
+                            {/* Payment type info - subtle text only */}
+                            {deposit?.isCompanionSwap ? (
+                              <div className="text-sm text-gray-600">
+                                <span className="font-medium text-gray-700">Same-chain swap:</span> Send {selectedFrom?.symbol} to this address. We'll swap to {claim?.to_symbol} and send to recipient.
+                                {deposit?.fee && <span className="ml-1 text-gray-500">({deposit.fee} fee)</span>}
+                              </div>
+                            ) : deposit?.isDirect ? (
+                              <div className="text-sm text-gray-600">
+                                <span className="font-medium text-gray-700">Direct transfer:</span> Send {selectedFrom?.symbol} directly to recipient. Same token, same chain.
+                              </div>
+                            ) : null}
+
+                            {/* Incomplete deposit - subtle warning */}
+                            {String(status || "").toUpperCase() === "INCOMPLETE_DEPOSIT" ? (
+                              <div className="text-sm text-gray-600 pt-1 border-t border-gray-200">
+                                <span className="font-medium text-gray-700">Partial deposit:</span> {(() => {
+                                  const depStr = String(statusData?.swapDetails?.depositedAmountFormatted ?? "");
+                                  const minStr = String(deposit?.minDepositFormatted ?? "");
+                                  const dep = parseFloat(depStr);
+                                  const min = parseFloat(minStr);
+                                  const sym = selectedFrom?.symbol || claim?.to_symbol || "";
+                                  if (Number.isFinite(min) && Number.isFinite(dep)) {
+                                    const remaining = Math.max(min - dep, 0);
+                                    const topUp = roundUpDecimals(remaining, 6);
+                                    return `Deposited ${roundUpDecimals(dep, 6)} ${sym}, need ${topUp} ${sym} more.`;
+                                  }
+                                  return "Please send the remaining amount.";
+                                })()}
+                              </div>
+                            ) : null}
+
+                            {/* Speed up form - shown when speedUpOpen is true */}
+                            {speedUpOpen && (
+                              <div className="pt-1 border-t border-gray-200 space-y-2">
+                                <div className="text-sm text-gray-700 font-medium">Submit transaction hash</div>
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    value={txInput}
+                                    onChange={(e) => setTxInput(e.target.value)}
+                                    placeholder="0x... or explorer link"
+                                    className="flex-1"
+                                  />
+                                  <Button
+                                    onClick={onSubmitTxHash}
+                                    disabled={submittingTx || !txInput}
+                                    className="rounded-xl"
+                                    style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
+                                  >
+                                    {submittingTx ? "Submitting…" : "Submit"}
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Memo - if exists */}
+                            {deposit?.memo ? (
+                              <div className="pt-1 border-t border-gray-200">
+                                <div className="text-sm text-gray-600">
+                                  <span className="font-medium text-gray-700">Memo:</span> <span className="font-mono">{deposit.memo}</span>
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
-                        )}
 
-                        {/* Pay with section */}
-                        <div className="mt-5">
-                          <div className="text-base font-medium text-gray-700 mb-2">Pay with</div>
+                          {/* Animated Character and Status Message - ABOVE QR CODE */}
+                          {(() => {
+                            const s = String(status || "PENDING_DEPOSIT").toUpperCase();
+                            let statusTitle = "Waiting for Deposit";
+                            let statusSubtitle: string | React.ReactNode = "Send the exact amount to the deposit address shown above.";
+                            const isProcessing = s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX" || s === "PRIVATE_TRANSFER_PENDING";
+                            const isSuccess = s === "SUCCESS";
+                            const isWaiting = s === "PENDING_DEPOSIT" || !status;
 
-                          {requiresPrivate || isPrivateMode ? (
-                            /* Private mode (required or optional) - Show USDC on SOL as best option, but allow other tokens */
-                            <>
-                              {/* Best option: Pay USDC on SOL (FREE) - pay now with Phantom or Loofta balance */}
-                              {usdcSolanaToken && (
-                                <div className="mb-4">
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      const phantom = getPhantomProvider();
-                                      if (phantom) {
-                                        try {
-                                          await phantom.connect();
-                                        } catch (e) {
-                                          // User cancelled or Phantom not available
-                                        }
-                                      }
-                                      setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
-                                    }}
-                                    className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
-                                      ? 'border-green-400 bg-green-100'
-                                      : 'border-gray-300 bg-white hover:bg-gray-50'
-                                      }`}
-                                  >
-                                    <TokenIcon token={usdcSolanaToken} chain="solana" size={32} />
-                                    <div className="flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-lg font-semibold text-gray-900">Pay USDC on Solana</span>
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
-                                          FREE
-                                        </span>
+                            if (s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX") {
+                              statusTitle = "Route & swapping";
+                              statusSubtitle = "We're routing your funds and executing the swap. This usually takes 1-2 minutes.";
+                            } else if (s === "PRIVATE_TRANSFER_PENDING") {
+                              statusTitle = "Performing private deposit";
+                              statusSubtitle = "Funds are in your wallet. Complete the private transfer to the recipient using the button below.";
+                            } else if (s === "INCOMPLETE_DEPOSIT") {
+                              statusTitle = "Incomplete Deposit";
+                              statusSubtitle = "Please send the remaining amount to complete your payment.";
+                            } else if (s === "SUCCESS") {
+                              statusTitle = "Payment Complete! 🎉";
+                              statusSubtitle = "Your funds have been successfully sent to the recipient.";
+                            } else if (s === "REFUNDED") {
+                              statusTitle = "Payment Refunded";
+                              statusSubtitle = "Your deposit has been refunded. Please check your wallet.";
+                            } else if (s === "FAILED") {
+                              statusTitle = "Payment Failed";
+                              statusSubtitle = "The payment could not be completed. Your funds may be refunded.";
+                            }
 
-                                      </div>
-                                      <div className="text-sm text-gray-600 mt-0.5">
-                                        Pay now with Phantom or your Loofta balance
-                                      </div>
-                                    </div>
-                                    {selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain && (
-                                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-600">
-                                        <path d="M20 6L9 17l-5-5" />
-                                      </svg>
-                                    )}
-                                  </button>
+                            // For PENDING_DEPOSIT, add important info and speed up link to subtitle
+                            if (isWaiting && !deposit?.isCompanionSwap && !deposit?.isDirect) {
+                              statusSubtitle = (
+                                <>
+                                  Send the exact amount to the deposit address shown above.
+                                  <br />
+                                  <span className="text-base font-medium block">Only deposit {selectedFrom?.symbol} from {String(selectedFrom?.chain || "").toUpperCase()} network.</span>
+                                  {!speedUpOpen && (
+                                    <>
+                                      <br />
+                                      <button
+                                        type="button"
+                                        className="text-sm text-gray-600 hover:text-gray-900 underline mt-1"
+                                        onClick={() => setSpeedUpOpen(true)}
+                                      >
+                                        Already deposited? Speed up processing
+                                      </button>
+                                    </>
+                                  )}
+                                </>
+                              );
+                            }
+
+                            return (
+                              <div className="mb-6 mt-6 text-center">
+                                {/* Animated Character */}
+                                <div className="mb-4 flex justify-center">
+                                  {isProcessing ? (
+                                    <motion.div
+                                      animate={{ rotate: [0, 10, -10, 10, -10, 0] }}
+                                      transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                                      className="text-6xl"
+                                    >
+                                      ⚡
+                                    </motion.div>
+                                  ) : isSuccess ? (
+                                    <motion.div
+                                      initial={{ scale: 0 }}
+                                      animate={{ scale: [0, 1.2, 1] }}
+                                      transition={{ duration: 0.5 }}
+                                      className="text-6xl"
+                                    >
+                                      🎉
+                                    </motion.div>
+                                  ) : isWaiting ? (
+                                    <motion.div
+                                      animate={{ y: [0, -10, 0] }}
+                                      transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                                      className="text-6xl"
+                                    >
+                                      💳
+                                    </motion.div>
+                                  ) : (
+                                    <div className="text-6xl">💳</div>
+                                  )}
                                 </div>
-                              )}
 
-                              {/* Divider */}
-                              <div className="relative mb-4">
-                                <div className="absolute inset-0 flex items-center">
-                                  <div className="w-full border-t border-gray-300"></div>
-                                </div>
-                                <div className="relative flex justify-center text-sm">
-                                  <span className="px-2 bg-white text-gray-500">or choose another token</span>
+                                {/* Status Message */}
+                                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                                  {statusTitle}
+                                </h3>
+                                <div className="text-gray-600 text-base">
+                                  {typeof statusSubtitle === 'string' ? statusSubtitle : statusSubtitle}
                                 </div>
                               </div>
+                            );
+                          })()}
 
-                              {/* Token selector - hide Solana for private flow */}
-                              <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
-                                <TokenCombobox
-                                  tokens={filteredTokens as any}
-                                  value={fromSel}
-                                  onChange={(sel) => {
-                                    // Check if token is unsupported
-                                    const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
-                                    if (selected?._unsupported) {
-                                      toast({
-                                        variant: "destructive",
-                                        title: "Token not supported",
-                                        description: selected._reason || "This token cannot be used for this payment."
-                                      });
-                                      return;
-                                    }
-                                    setFromSel(sel);
-                                  }}
-                                  placeholder="Select token to pay with"
-                                  onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                                  hideChains={['solana', 'sol']}
-                                  className={`bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain)
-                                    ? 'border-emerald-400 hover:bg-emerald-50'
-                                    : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'
-                                    }`}
-                                />
-                              </div>
-                              {/* Selected Token Display - Show when a token is selected */}
-                              {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? (
-                                <motion.div
-                                  initial={{ opacity: 0, y: -10 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  transition={{ duration: 0.2 }}
-                                  className="mt-4"
-                                >
-                                  <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
-                                          <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
-                                        </div>
-                                        <div>
-                                          <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send approximately</p>
-                                          {quoteLoading ? (
-                                            <div className="flex items-center gap-2">
-                                              <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
-                                              <p className="text-lg font-bold text-emerald-900">Calculating...</p>
-                                            </div>
-                                          ) : (
-                                            <p className="text-lg font-bold text-emerald-900">
-                                              {quote?.amountInFormatted
-                                                ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                                : quote?.est
-                                                  ? `${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
-                                                  : quote?.usd
-                                                    ? `≈ $${quote.usd.toFixed(2)}`
-                                                    : selectedFrom.price && claim?.amount
-                                                      ? `${roundUpDecimals((parseFloat(claim.amount) / selectedFrom.price).toFixed(6), 6)} ${selectedFrom.symbol}`
-                                                      : "Unable to calculate"}
-                                            </p>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <ArrowRight className="w-5 h-5 text-emerald-600" />
-                                    </div>
+                          {/* Progress Bar and Step Counter - BELOW QR CODE */}
+                          {(() => {
+                            // Calculate steps and progress based on status
+                            const s = String(status || "PENDING_DEPOSIT").toUpperCase();
+                            let completedSteps = 0;
+                            const totalSteps = 5; // deposit, routing, processing, private deposit, success
+
+                            if (s === 'SUCCESS') {
+                              completedSteps = 5;
+                            } else if (s === 'PRIVATE_TRANSFER_PENDING') {
+                              completedSteps = 3; // Route done, performing private deposit step
+                            } else if (s === 'PROCESSING' || s === 'KNOWN_DEPOSIT_TX') {
+                              completedSteps = 1; // Deposit completed, routing active
+                            } else if (s === 'INCOMPLETE_DEPOSIT') {
+                              completedSteps = 0; // Deposit active but incomplete
+                            } else {
+                              completedSteps = 0; // PENDING_DEPOSIT
+                            }
+
+                            const progress = (completedSteps / (totalSteps - 1)) * 100; // -1 because success step doesn't count
+
+                            return (
+                              <div className="mb-6">
+                                {/* Progress Bar */}
+                                <div className="mb-2">
+                                  <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                                    <motion.div
+                                      initial={{ width: 0 }}
+                                      animate={{ width: `${progress}%` }}
+                                      transition={{ duration: 0.5, ease: 'easeOut' }}
+                                      className="h-full rounded-full"
+                                      style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                                    />
                                   </div>
-                                </motion.div>
-                              ) : selectedFrom && selectedFrom.symbol === usdcSolanaToken?.symbol && selectedFrom.chain === usdcSolanaToken?.chain ? (
-                                <div className="mt-2 text-sm text-amber-700">
-                                  Private payments coming soon
                                 </div>
-                              ) : null}
-                              {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) && (
-                                <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
-                                  <span className="font-medium">Private payment:</span> Coming soon.
-                                </div>
-                              )}
-                              {(() => {
-                                const requestedAmount = parseFloat(claim?.amount || "0");
-                                const isUSDCSelected = selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain;
-
-                                // If requiresPrivate is true, recipient pays fees - payer only pays exact amount (only for USDC)
-                                if (requiresPrivate && isUSDCSelected) {
-                                  return (
-                                    <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                                      <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
-                                      <div className="space-y-1.5 text-sm">
-                                        <div className="flex items-center justify-between">
-                                          <span className="font-medium text-gray-900">Total to pay</span>
-                                          <span className="font-semibold text-lg text-gray-900">${requestedAmount.toFixed(2)}</span>
-                                        </div>
-                                        <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
-                                          Fees (0.35% + $0.74) will be deducted from the recipient when they withdraw
-                                        </div>
-                                      </div>
-                                    </div>
-                                  );
-                                }
-
-                                // Optional private payment - payer covers fees (only for USDC)
-                                if (isUSDCSelected && !requiresPrivate) {
-                                  const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-                                  const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
-                                  const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
-                                  const withdrawalFee = withdrawalAmountNeeded * feeRate;
-                                  const rentFeeAmount = rentFee;
-                                  const totalToPay = withdrawalAmountNeeded;
-
-                                  return (
-                                    <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                                      <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
-                                      <div className="space-y-1.5 text-sm">
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-gray-600">Recipient receives</span>
-                                          <span className="font-semibold text-gray-900">${requestedAmount.toFixed(2)}</span>
-                                        </div>
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-gray-600">Withdrawal fee (0.35%)</span>
-                                          <span className="text-gray-700">${withdrawalFee.toFixed(6)}</span>
-                                        </div>
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-gray-600">Rent fee</span>
-                                          <span className="text-gray-700">${rentFeeAmount.toFixed(6)}</span>
-                                        </div>
-                                        <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
-                                          <span className="font-medium text-gray-900">Total to pay</span>
-                                          <span className="font-semibold text-lg text-gray-900">${totalToPay.toFixed(6)}</span>
-                                        </div>
-                                        <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
-                                          Fees apply when private payments are available
-                                        </div>
-                                      </div>
-                                    </div>
-                                  );
-                                }
-
-                                // For other tokens in private mode, show estimated amount only
-                                return null;
-                              })()}
-                            </>
-                          ) : (
-                            /* Standard mode - Show USDC on SOL (FREE) option first, then token selector */
-                            <>
-                              {/* Best option: Pay USDC on SOL (FREE) - pay now with Phantom or Loofta balance */}
-                              {usdcSolanaToken && (
-                                <div className="mb-4">
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      const phantom = getPhantomProvider();
-                                      if (phantom) {
-                                        try {
-                                          await phantom.connect();
-                                        } catch (e) {
-                                          // User cancelled or Phantom not available
-                                        }
-                                      }
-                                      setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
-                                    }}
-                                    className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
-                                      ? 'border-green-400 bg-green-100'
-                                      : 'border-gray-300 bg-white hover:bg-gray-50'
-                                      }`}
-                                  >
-                                    <TokenIcon token={usdcSolanaToken} chain="solana" size={32} />
-                                    <div className="flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-lg font-semibold text-gray-900">Pay USDC on Solana</span>
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
-                                          FREE
-                                        </span>
-                                      </div>
-                                      <div className="text-sm text-gray-600 mt-0.5">
-                                        Pay now with Phantom or your Loofta balance
-                                      </div>
-                                    </div>
-                                    {selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain && (
-                                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-600">
-                                        <path d="M20 6L9 17l-5-5" />
-                                      </svg>
-                                    )}
-                                  </button>
-                                </div>
-                              )}
-
-                              {/* Divider */}
-                              <div className="relative mb-4">
-                                <div className="absolute inset-0 flex items-center">
-                                  <div className="w-full border-t border-gray-300"></div>
-                                </div>
-                                <div className="relative flex justify-center text-sm">
-                                  <span className="px-2 bg-white text-gray-500">or choose token</span>
+                                {/* Step Counter */}
+                                <div className="text-center text-sm text-gray-500">
+                                  Step {completedSteps} of {totalSteps - 1}
                                 </div>
                               </div>
+                            );
+                          })()}
 
-                              {/* Token selector - hide Solana for private flow */}
-                              <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
-                                <TokenCombobox
-                                  tokens={filteredTokens as any}
-                                  value={fromSel}
-                                  onChange={(sel) => {
-                                    // Check if token is unsupported
-                                    const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
-                                    if (selected?._unsupported) {
-                                      toast({
-                                        variant: "destructive",
-                                        title: "Token not supported",
-                                        description: selected._reason || "This token cannot be used for this payment."
-                                      });
-                                      return;
-                                    }
-                                    setFromSel(sel);
-                                  }}
-                                  placeholder="Select token to pay with"
-                                  onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                                  hideChains={['solana', 'sol']}
-                                  className={`bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain)
-                                    ? 'border-emerald-400 hover:bg-emerald-50'
-                                    : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'
-                                    }`}
-                                />
-                              </div>
-                              {/* Selected Token Display - Show when a token is selected */}
-                              {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? (
-                                <motion.div
-                                  initial={{ opacity: 0, y: -10 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  transition={{ duration: 0.2 }}
-                                  className="mt-4"
-                                >
-                                  <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
-                                          <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
-                                        </div>
-                                        <div>
-                                          <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send approximately</p>
-                                          {quoteLoading ? (
-                                            <div className="flex items-center gap-2">
-                                              <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
-                                              <p className="text-lg font-bold text-emerald-900">Calculating...</p>
-                                            </div>
-                                          ) : (
-                                            <p className="text-lg font-bold text-emerald-900">
-                                              {quote?.amountInFormatted
-                                                ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                                : quote?.est
-                                                  ? `${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
-                                                  : quote?.usd
-                                                    ? `≈ $${quote.usd.toFixed(2)}`
-                                                    : selectedFrom.price && claim?.amount
-                                                      ? `${roundUpDecimals((parseFloat(claim.amount) / selectedFrom.price).toFixed(6), 6)} ${selectedFrom.symbol}`
-                                                      : "Unable to calculate"}
-                                            </p>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <ArrowRight className="w-5 h-5 text-emerald-600" />
-                                    </div>
-                                  </div>
-                                </motion.div>
-                              ) : null}
-                            </>
-                          )}
-
-                          {/* Refund Address Input - Show when a token is selected (not USDC on Solana) */}
-                          {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) && (
-                            <div className="mt-4 space-y-2">
-                              <Label htmlFor="refundAddress" className="text-sm font-medium text-gray-700">
-                                Refund Address ({selectedFrom.chain.toUpperCase()})
-                              </Label>
-                              <Input
-                                id="refundAddress"
-                                type="text"
-                                value={refundAddress}
-                                onChange={(e) => {
-                                  setRefundAddress(e.target.value);
-                                  setRefundAddressError(null);
-                                }}
-                                placeholder={`Enter ${selectedFrom.chain.toUpperCase()} address for refunds`}
-                                className={refundAddressError ? "border-red-500 focus:border-red-500" : ""}
-                              />
-                              {refundAddressError && (
-                                <p className="text-sm text-red-600">{refundAddressError}</p>
-                              )}
-                              <p className="text-xs text-gray-500">
-                                Funds will be refunded to this address if the payment fails or expires. For quotes, a safe placeholder may be used.
+                          {/* PRIVATE_TRANSFER_PENDING */}
+                          {String(status || "").toUpperCase() === "PRIVATE_TRANSFER_PENDING" && claim?.is_private && (
+                            <div className="mb-6 p-4 rounded-xl border-2 border-amber-200 bg-amber-50">
+                              <p className="text-sm text-amber-900">
+                                {PRIVATE_PAYMENT_COMING_SOON ? "Private payments — coming soon." : "Processing private transfer…"}
                               </p>
                             </div>
                           )}
 
-                          <div className="mt-4 flex gap-3">
-                            {DEMO_MODE ? (
-                              <Button
-                                disabled
-                                className="w-full rounded-xl"
-                                style={{ background: '#9CA3AF' }}
-                              >
-                                Demo Mode - Payments Disabled
-                              </Button>
-                            ) : (
-                              <>
-                                <GradientActionButton
-                                  onClick={() => {
-                                    const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
-                                      selectedFrom?.chain === usdcSolanaToken?.chain;
-                                    if (!authenticated && !isUSDCOnSolana) {
-                                      login();
-                                      return;
-                                    }
-                                    // USDC on Solana = Pay now → show modal (Login to Loofta or Use wallet / Pay with Loofta or Use wallet)
-                                    if (isUSDCOnSolana) {
-                                      setPayWithLooftaError(null);
-                                      setPayWithWalletError(null);
-                                      setConfirmingTxSignature(null);
-                                      setConfirmingTxSource(null);
-                                      setShowPayNowModal(true);
-                                      return;
-                                    }
-                                    if ((isPrivateMode || requiresPrivate)) {
-                                      onPayPrivately();
-                                    } else {
-                                      onPrepare();
-                                    }
-                                  }}
-                                  disabled={
-                                    requiresPrivate && !isPrivateMode
-                                      ? true
-                                      : (() => {
-                                        const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
-                                          selectedFrom?.chain === usdcSolanaToken?.chain;
-                                        if (!authenticated && !isUSDCOnSolana) return false;
-                                        if (isUSDCOnSolana) {
-                                          return (!usdcSolanaToken || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
-                                        }
-                                        if (isPrivateMode || requiresPrivate) {
-                                          return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
-                                        }
-                                        return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
-                                      })()
-                                  }
-                                  loading={preparing}
-                                  loadingText={(() => {
-                                    const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
-                                      selectedFrom?.chain === usdcSolanaToken?.chain;
-                                    if (isUSDCOnSolana) return "Opening…";
-                                    if (isPrivateMode || requiresPrivate) return "Processing private payment…";
-                                    return "Preparing…";
-                                  })()}
-                                >
-                                  {(() => {
-                                    const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
-                                      selectedFrom?.chain === usdcSolanaToken?.chain;
-                                    if (!authenticated && !isUSDCOnSolana) return "Login to pay";
-                                    if (requiresPrivate && !isPrivateMode) return "Private payment required";
-                                    if (isUSDCOnSolana) return "Pay now";
-                                    if (isPrivateMode || requiresPrivate) {
-                                      return "Get deposit address";
-                                    }
-                                    return "Get deposit address";
-                                  })()}
-                                </GradientActionButton>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        {(() => {
-                          const s = String(status || "").toUpperCase();
-                          const isTerminal = s === "FAILED" || s === "REFUNDED";
-
-                          // Check if deadline has expired (only for PENDING_DEPOSIT/INCOMPLETE_DEPOSIT)
-                          const isExpired = (s === "PENDING_DEPOSIT" || s === "INCOMPLETE_DEPOSIT") && deposit?.deadline
-                            ? new Date(deposit.deadline).getTime() < Date.now()
-                            : false;
-
-                          // If expired, show expired message
-                          if (isExpired) {
-                            return (
-                              <div className="mt-6 text-center py-12">
-                                <div className="mb-4 text-6xl">🔗</div>
-                                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                                  Payment Link Expired
-                                </h3>
-                                <p className="text-gray-600 text-base mb-4">
-                                  This payment link has expired. The deadline was {deposit.deadline ? formatUTCTimestamp(deposit.deadline) : 'not set'}.
-                                </p>
-                                <p className="text-sm text-gray-500">
-                                  Please request a new payment link from the sender.
-                                </p>
+                          {/* QR Code and Deposit Address - BELOW STATUS MESSAGE */}
+                          <div className="mb-6 hidden">
+                            <div className="text-base font-medium text-gray-700 mb-4">Scan to pay</div>
+                            <div className="flex flex-col items-center gap-6">
+                              {/* QR Code */}
+                              <div className="flex items-center justify-center p-6 bg-white rounded-xl border-2 border-gray-200 shadow-sm">
+                                <QRCodeSVG
+                                  value={depositAddr}
+                                  size={100}
+                                  level="M"
+                                  includeMargin={true}
+                                  fgColor="#000000"
+                                  bgColor="#ffffff"
+                                />
                               </div>
-                            );
-                          }
-
-                          // Get deposit address from multiple sources - ALWAYS show for PENDING_DEPOSIT/INCOMPLETE_DEPOSIT
-                          const depositAddr = deposit?.depositAddress
-                            || statusData?.quoteResponse?.quote?.depositAddress
-                            || statusData?.depositAddress
-                            || latestIntentData?.depositAddress;
-                          const amountToSend = deposit?.minAmountInFormatted
-                            || statusData?.quoteResponse?.quote?.amountInFormatted
-                            || quote?.amountInFormatted;
-                          const timeEstimate = statusData?.quoteResponse?.quote?.timeEstimate
-                            || deposit?.timeEstimate;
-
-                          // Debug log
-                          if (!depositAddr && statusData) {
-                            console.log('[DEBUG] No deposit address found. statusData:', {
-                              hasQuoteResponse: !!statusData?.quoteResponse,
-                              hasQuote: !!statusData?.quoteResponse?.quote,
-                              depositAddress: statusData?.quoteResponse?.quote?.depositAddress,
-                              statusDataKeys: Object.keys(statusData || {}),
-                            });
-                          }
-
-                          // Show status tracker for active payment states (PROCESSING/KNOWN_DEPOSIT_TX only)
-                          if (s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX") {
-                            return (
-                              <>
-                                <div className="mt-6">
-                                  <PaymentStatusTracker
-                                    status={status}
-                                    statusData={statusData}
-                                    depositReceivedAt={latestIntentData?.depositReceivedAt || statusData?.updatedAt}
-                                    startedAt={deposit?.deadline ? new Date(deposit.deadline).toISOString() : undefined}
-                                    fromChain={selectedFrom?.chain}
-                                    toChain={destToken?.chain}
-                                    depositAddress={depositAddr}
-                                    timeEstimate={timeEstimate}
-                                    paymentType={
-                                      deposit?.isDirect ? 'direct' :
-                                        deposit?.isCompanionSwap ? 'companion-swap' :
-                                          'near-intent'
-                                    }
-                                    isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
-                                    isLooftaPay={
-                                      claim?.paid_with_token?.toUpperCase() === "USDC" && 
-                                      (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
-                                    }
-                                  />
-                                </div>
-                                <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
-                                  <div className="text-lg font-semibold text-gray-900 mb-2">Payment summary</div>
-                                  <div className="text-base text-gray-700 space-y-1">
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-gray-600">Amount requested</span>
-                                      <span className="text-lg font-semibold text-gray-900">
-                                        <span className="inline-flex items-center gap-1">
-                                          <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={24} />
-                                          {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol}
-
-                                        </span>
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-gray-600">Paid with</span>
-                                      <span className="text-lg font-semibold text-gray-900 inline-flex items-center gap-2">
-                                        {(() => {
-                                          // Use actual payment info from database if available
-                                          if (claim?.paid_with_token && claim?.paid_with_chain) {
-                                            // Find the token that was actually used to pay
-                                            const paidTokenObj = tokens.find(t =>
-                                              t.symbol?.toUpperCase() === claim.paid_with_token.toUpperCase() &&
-                                              t.chain?.toLowerCase() === claim.paid_with_chain.toLowerCase()
-                                            );
-                                            // Show the actual amount requested (not fees - fees are deducted from recipient for private)
-                                            const amountPaid = parseFloat(claim?.amount || "0");
-                                            
-                                            // Special formatting for USDC on Solana (Loofta Pay)
-                                            const isUSDCOnSolana = claim.paid_with_token.toUpperCase() === "USDC" && 
-                                                                  (claim.paid_with_chain.toLowerCase() === "solana" || claim.paid_with_chain.toLowerCase() === "sol");
-                                            
-                                            if (isUSDCOnSolana) {
-                                              return (
-                                                <>
-                                                  <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={24} />
-                                                  <span>usdc on SOL</span>
-                                                </>
-                                              );
-                                            }
-                                            
-                                            return (
-                                              <>
-                                                <TokenIcon token={paidTokenObj} chain={claim.paid_with_chain} size={24} />
-                                                <span>${amountPaid.toFixed(2)} {claim.paid_with_token} ({claim.paid_with_chain})</span>
-                                              </>
-                                            );
-                                          }
-
-                                          // Fallback: For private payments, calculate the total amount paid (requested + fees)
-                                          if (claim?.is_private) {
-                                            const requestedAmount = parseFloat(claim?.amount || "0");
-                                            const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-                                            const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
-                                            const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
-                                            return (
-                                              <>
-                                                <TokenIcon token={usdcSolanaToken} chain="solana" size={24} />
-                                                <span>${roundUpDecimals(String(withdrawalAmountNeeded), 2)}</span>
-                                              </>
-                                            );
-                                          }
-
-                                          // For standard payments, use statusData
-                                          const paid = statusData?.swapDetails?.depositedAmountFormatted ?? null;
-                                          const sym = paidToken?.symbol || selectedFrom?.symbol;
-                                          return (
-                                            <>
-                                              <TokenIcon token={(paidToken as any) ?? (selectedFrom as any)} chain={(paidToken?.chain as any) ?? (selectedFrom?.chain as any)} size={24} />
-                                              <span>{paid != null ? `$${roundUpDecimals(String(paid), 2)}` : "—"} {sym ? `(${sym})` : ""}</span>
-                                            </>
-                                          );
-                                        })()}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                              </>
-                            );
-                          }
-                          if (s === "SUCCESS") return null;
-                          if (isTerminal) {
-                            return (
-                              <>
-                                <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-3">
-                                  <div className="text-sm font-semibold text-red-700">
-                                    {s === "FAILED" ? "Deposit failed." : "Deposit was refunded."}
-                                  </div>
-                                  <div className="text-sm  text-red-700/80 mt-1">
-                                    Please try again with a different token or network.
-                                  </div>
-                                </div>
-                              </>
-                            );
-                          }
-
-                          // For PENDING_DEPOSIT and INCOMPLETE_DEPOSIT - show deposit info FIRST, then status tracker
-                          return (
-                            <div className="mt-6">
-                              {depositAddr ? (
-                                <>
-                                  {/* Amount to Pay - AT THE TOP */}
-                                  <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
-                                    <div className="text-base text-gray-700 space-y-2">
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-gray-600">Amount to pay</span>
-                                        <span className="text-lg font-medium text-gray-900 inline-flex items-center gap-2">
-                                          <TokenIcon
-                                            token={(selectedFrom as any) ?? (destToken as any) ?? undefined}
-                                            chain={(selectedFrom?.chain as any) ?? (destToken?.chain as any)}
-                                            size={24}
-                                          />
-                                          <span>
-                                            {amountToSend && selectedFrom
-                                              ? `${roundUpDecimals(amountToSend, 6)} ${selectedFrom.symbol}`
-                                              : quote?.amountInFormatted && selectedFrom
-                                                ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                                : `${roundUpDecimals(claim.amount, 6)} ${claim.to_symbol}`}
-                                          </span>
-                                          <button
-                                            type="button"
-                                            className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors ml-2"
-                                            onClick={async () => {
-                                              try {
-                                                const amountToCopy = amountToSend && selectedFrom
-                                                  ? roundUpDecimals(amountToSend, 6)
-                                                  : quote?.amountInFormatted && selectedFrom
-                                                    ? roundUpDecimals(quote.amountInFormatted, 6)
-                                                    : roundUpDecimals(claim.amount, 6);
-                                                await navigator.clipboard.writeText(amountToCopy);
-                                                toast({ title: "Copied", description: "Amount copied to clipboard." });
-                                              } catch {
-                                                toast({ variant: "destructive", title: "Copy failed", description: "Could not copy amount. Please try again." });
-                                              }
-                                            }}
-                                            title="Copy amount"
-                                          >
-                                            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-                                              <path d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
-                                            </svg>
-                                          </button>
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-gray-600">Deposit address</span>
-                                        <span className="text-lg font-medium text-gray-900 inline-flex items-center gap-2">
-                                          <span className="font-display  text-sm break-all">
-                                            {depositAddr}
-                                          </span>
-                                          <button
-                                            type="button"
-                                            className="inline-flex items-center justify-center w-8 h-8 rounded-md  border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors ml-2"
-                                            onClick={async () => {
-                                              try {
-                                                await navigator.clipboard.writeText(depositAddr);
-                                                toast({ title: "Copied", description: "Deposit address copied to clipboard." });
-                                              } catch {
-                                                toast({ variant: "destructive", title: "Copy failed", description: "Could not copy address. Please try again." });
-                                              }
-                                            }}
-                                            title="Copy address"
-                                          >
-                                            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
-                                              <path d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
-                                            </svg>
-                                          </button>
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  {/* Additional Info - Simplified, unified styling */}
-                                  <div className="mt-4 space-y-2">
-                                    {/* Payment type info - subtle text only */}
-                                    {deposit?.isCompanionSwap ? (
-                                      <div className="text-sm text-gray-600">
-                                        <span className="font-medium text-gray-700">Same-chain swap:</span> Send {selectedFrom?.symbol} to this address. We'll swap to {claim?.to_symbol} and send to recipient.
-                                        {deposit?.fee && <span className="ml-1 text-gray-500">({deposit.fee} fee)</span>}
-                                      </div>
-                                    ) : deposit?.isDirect ? (
-                                      <div className="text-sm text-gray-600">
-                                        <span className="font-medium text-gray-700">Direct transfer:</span> Send {selectedFrom?.symbol} directly to recipient. Same token, same chain.
-                                      </div>
-                                    ) : null}
-
-                                    {/* Incomplete deposit - subtle warning */}
-                                    {String(status || "").toUpperCase() === "INCOMPLETE_DEPOSIT" ? (
-                                      <div className="text-sm text-gray-600 pt-1 border-t border-gray-200">
-                                        <span className="font-medium text-gray-700">Partial deposit:</span> {(() => {
-                                          const depStr = String(statusData?.swapDetails?.depositedAmountFormatted ?? "");
-                                          const minStr = String(deposit?.minDepositFormatted ?? "");
-                                          const dep = parseFloat(depStr);
-                                          const min = parseFloat(minStr);
-                                          const sym = selectedFrom?.symbol || claim?.to_symbol || "";
-                                          if (Number.isFinite(min) && Number.isFinite(dep)) {
-                                            const remaining = Math.max(min - dep, 0);
-                                            const topUp = roundUpDecimals(remaining, 6);
-                                            return `Deposited ${roundUpDecimals(dep, 6)} ${sym}, need ${topUp} ${sym} more.`;
-                                          }
-                                          return "Please send the remaining amount.";
-                                        })()}
-                                      </div>
-                                    ) : null}
-
-                                    {/* Speed up form - shown when speedUpOpen is true */}
-                                    {speedUpOpen && (
-                                      <div className="pt-1 border-t border-gray-200 space-y-2">
-                                        <div className="text-sm text-gray-700 font-medium">Submit transaction hash</div>
-                                        <div className="flex items-center gap-2">
-                                          <Input
-                                            value={txInput}
-                                            onChange={(e) => setTxInput(e.target.value)}
-                                            placeholder="0x... or explorer link"
-                                            className="flex-1"
-                                          />
-                                          <Button
-                                            onClick={onSubmitTxHash}
-                                            disabled={submittingTx || !txInput}
-                                            className="rounded-xl"
-                                            style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
-                                          >
-                                            {submittingTx ? "Submitting…" : "Submit"}
-                                          </Button>
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {/* Memo - if exists */}
-                                    {deposit?.memo ? (
-                                      <div className="pt-1 border-t border-gray-200">
-                                        <div className="text-sm text-gray-600">
-                                          <span className="font-medium text-gray-700">Memo:</span> <span className="font-mono">{deposit.memo}</span>
-                                        </div>
-                                      </div>
-                                    ) : null}
-                                  </div>
-
-                                  {/* Animated Character and Status Message - ABOVE QR CODE */}
-                                  {(() => {
-                                    const s = String(status || "PENDING_DEPOSIT").toUpperCase();
-                                    let statusTitle = "Waiting for Deposit";
-                                    let statusSubtitle: string | React.ReactNode = "Send the exact amount to the deposit address shown above.";
-                                    const isProcessing = s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX" || s === "PRIVATE_TRANSFER_PENDING";
-                                    const isSuccess = s === "SUCCESS";
-                                    const isWaiting = s === "PENDING_DEPOSIT" || !status;
-
-                                    if (s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX") {
-                                      statusTitle = "Route & swapping";
-                                      statusSubtitle = "We're routing your funds and executing the swap. This usually takes 1-2 minutes.";
-                                    } else if (s === "PRIVATE_TRANSFER_PENDING") {
-                                      statusTitle = "Performing private deposit";
-                                      statusSubtitle = "Funds are in your wallet. Complete the private transfer to the recipient using the button below.";
-                                    } else if (s === "INCOMPLETE_DEPOSIT") {
-                                      statusTitle = "Incomplete Deposit";
-                                      statusSubtitle = "Please send the remaining amount to complete your payment.";
-                                    } else if (s === "SUCCESS") {
-                                      statusTitle = "Payment Complete! 🎉";
-                                      statusSubtitle = "Your funds have been successfully sent to the recipient.";
-                                    } else if (s === "REFUNDED") {
-                                      statusTitle = "Payment Refunded";
-                                      statusSubtitle = "Your deposit has been refunded. Please check your wallet.";
-                                    } else if (s === "FAILED") {
-                                      statusTitle = "Payment Failed";
-                                      statusSubtitle = "The payment could not be completed. Your funds may be refunded.";
-                                    }
-
-                                    // For PENDING_DEPOSIT, add important info and speed up link to subtitle
-                                    if (isWaiting && !deposit?.isCompanionSwap && !deposit?.isDirect) {
-                                      statusSubtitle = (
-                                        <>
-                                          Send the exact amount to the deposit address shown above.
-                                          <br />
-                                          <span className="text-base font-medium block">Only deposit {selectedFrom?.symbol} from {String(selectedFrom?.chain || "").toUpperCase()} network.</span>
-                                          {!speedUpOpen && (
-                                            <>
-                                              <br />
-                                              <button
-                                                type="button"
-                                                className="text-sm text-gray-600 hover:text-gray-900 underline mt-1"
-                                                onClick={() => setSpeedUpOpen(true)}
-                                              >
-                                                Already deposited? Speed up processing
-                                              </button>
-                                            </>
-                                          )}
-                                        </>
-                                      );
-                                    }
-
-                                    return (
-                                      <div className="mb-6 mt-6 text-center">
-                                        {/* Animated Character */}
-                                        <div className="mb-4 flex justify-center">
-                                          {isProcessing ? (
-                                            <motion.div
-                                              animate={{ rotate: [0, 10, -10, 10, -10, 0] }}
-                                              transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                                              className="text-6xl"
-                                            >
-                                              ⚡
-                                            </motion.div>
-                                          ) : isSuccess ? (
-                                            <motion.div
-                                              initial={{ scale: 0 }}
-                                              animate={{ scale: [0, 1.2, 1] }}
-                                              transition={{ duration: 0.5 }}
-                                              className="text-6xl"
-                                            >
-                                              🎉
-                                            </motion.div>
-                                          ) : isWaiting ? (
-                                            <motion.div
-                                              animate={{ y: [0, -10, 0] }}
-                                              transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                                              className="text-6xl"
-                                            >
-                                              💳
-                                            </motion.div>
-                                          ) : (
-                                            <div className="text-6xl">💳</div>
-                                          )}
-                                        </div>
-
-                                        {/* Status Message */}
-                                        <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                                          {statusTitle}
-                                        </h3>
-                                        <div className="text-gray-600 text-base">
-                                          {typeof statusSubtitle === 'string' ? statusSubtitle : statusSubtitle}
-                                        </div>
-                                      </div>
-                                    );
-                                  })()}
-
-                                  {/* Progress Bar and Step Counter - BELOW QR CODE */}
-                                  {(() => {
-                                    // Calculate steps and progress based on status
-                                    const s = String(status || "PENDING_DEPOSIT").toUpperCase();
-                                    let completedSteps = 0;
-                                    const totalSteps = 5; // deposit, routing, processing, private deposit, success
-
-                                    if (s === 'SUCCESS') {
-                                      completedSteps = 5;
-                                    } else if (s === 'PRIVATE_TRANSFER_PENDING') {
-                                      completedSteps = 3; // Route done, performing private deposit step
-                                    } else if (s === 'PROCESSING' || s === 'KNOWN_DEPOSIT_TX') {
-                                      completedSteps = 1; // Deposit completed, routing active
-                                    } else if (s === 'INCOMPLETE_DEPOSIT') {
-                                      completedSteps = 0; // Deposit active but incomplete
-                                    } else {
-                                      completedSteps = 0; // PENDING_DEPOSIT
-                                    }
-
-                                    const progress = (completedSteps / (totalSteps - 1)) * 100; // -1 because success step doesn't count
-
-                                    return (
-                                      <div className="mb-6">
-                                        {/* Progress Bar */}
-                                        <div className="mb-2">
-                                          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                                            <motion.div
-                                              initial={{ width: 0 }}
-                                              animate={{ width: `${progress}%` }}
-                                              transition={{ duration: 0.5, ease: 'easeOut' }}
-                                              className="h-full rounded-full"
-                                              style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
-                                            />
-                                          </div>
-                                        </div>
-                                        {/* Step Counter */}
-                                        <div className="text-center text-sm text-gray-500">
-                                          Step {completedSteps} of {totalSteps - 1}
-                                        </div>
-                                      </div>
-                                    );
-                                  })()}
-
-                                  {/* PRIVATE_TRANSFER_PENDING: private payments coming soon */}
-                                  {String(status || "").toUpperCase() === "PRIVATE_TRANSFER_PENDING" && claim?.is_private && (
-                                    <div className="mb-6 p-4 rounded-xl border-2 border-amber-200 bg-amber-50">
-                                      <p className="text-sm text-amber-900">
-                                        Private payments — coming soon.
-                                      </p>
-                                    </div>
-                                  )}
-
-                                  {/* QR Code and Deposit Address - BELOW STATUS MESSAGE */}
-                                  <div className="mb-6 hidden">
-                                    <div className="text-base font-medium text-gray-700 mb-4">Scan to pay</div>
-                                    <div className="flex flex-col items-center gap-6">
-                                      {/* QR Code */}
-                                      <div className="flex items-center justify-center p-6 bg-white rounded-xl border-2 border-gray-200 shadow-sm">
-                                        <QRCodeSVG
-                                          value={depositAddr}
-                                          size={100}
-                                          level="M"
-                                          includeMargin={true}
-                                          fgColor="#000000"
-                                          bgColor="#ffffff"
-                                        />
-                                      </div>
 
 
-                                    </div>
-                                  </div>
-
-
-                                  {/* Timeline/Steps - BELOW PROGRESS BAR */}
-                                  <div className="mb-6">
-                                    <PaymentStatusTracker
-                                      status={status || "PENDING_DEPOSIT"}
-                                      statusData={statusData}
-                                      depositReceivedAt={latestIntentData?.depositReceivedAt || (status === "PROCESSING" ? statusData?.updatedAt : null)}
-                                      startedAt={deposit?.deadline ? new Date(deposit.deadline).toISOString() : undefined}
-                                      fromChain={selectedFrom?.chain}
-                                      toChain={destToken?.chain}
-                                      depositAddress={depositAddr}
-                                      timeEstimate={timeEstimate}
-                                      paymentType={
-                                        deposit?.isDirect ? 'direct' :
-                                          deposit?.isCompanionSwap ? 'companion-swap' :
-                                            'near-intent'
-                                      }
-                                      isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
-                                      isLooftaPay={
-                                        claim?.paid_with_token?.toUpperCase() === "USDC" && 
-                                        (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
-                                      }
-                                    />
-                                  </div>
-
-                                  {/* Cancel/Change Token Button - AT THE BOTTOM */}
-                                  <div className="mt-6 flex justify-center">
-                                    <Button
-                                      variant="outline"
-                                      onClick={() => {
-                                        setDeposit(null);
-                                        setStatus(null);
-                                        setFromSel(undefined);
-                                        // Reset refund address - will be auto-populated by useEffect
-                                        setRefundAddress("");
-                                        setRefundAddressError(null);
-                                        userCancelled.current = true;
-                                        useClaimPayStore.getState().clear(id);
-                                        toast({ title: "Cancelled", description: "You can now choose a different token." });
-                                      }}
-                                      className="text-sm"
-                                    >
-                                      Cancel & Choose Different Token
-                                    </Button>
-                                  </div>
-                                </>
-                              ) : null}
-                              {/* Deadline at the very bottom */}
-                              {deposit?.deadline ? (
-                                <div className="mt-3 text-sm text-gray-700">Deadline: <span className="font-medium">{formatUTCTimestamp(deposit.deadline)}</span></div>
-                              ) : null}
                             </div>
-                          );
-                        })()}
-                      </>
-                    ))}
-                  </>
-                ) : (
-                  <div className="text-red-600">Claim not found.</div>
-                )}
-              </div>
-            </div>
+                          </div>
+
+
+                          {/* Timeline/Steps - BELOW PROGRESS BAR */}
+                          <div className="mb-6">
+                            <PaymentStatusTracker
+                              status={status || "PENDING_DEPOSIT"}
+                              statusData={statusData}
+                              depositReceivedAt={latestIntentData?.depositReceivedAt || (status === "PROCESSING" ? statusData?.updatedAt : null)}
+                              startedAt={deposit?.deadline ? new Date(deposit.deadline).toISOString() : undefined}
+                              fromChain={selectedFrom?.chain}
+                              toChain={destToken?.chain}
+                              depositAddress={depositAddr}
+                              timeEstimate={timeEstimate}
+                              paymentType={
+                                deposit?.isDirect ? 'direct' :
+                                  deposit?.isCompanionSwap ? 'companion-swap' :
+                                    'near-intent'
+                              }
+                              isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
+                              isLooftaPay={
+                                claim?.paid_with_token?.toUpperCase() === "USDC" &&
+                                (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
+                              }
+                            />
+                          </div>
+
+                          {/* Cancel/Change Token Button - AT THE BOTTOM */}
+                          <div className="mt-6 flex justify-center">
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                setDeposit(null);
+                                setStatus(null);
+                                setFromSel(undefined);
+                                // Reset refund address - will be auto-populated by useEffect
+                                setRefundAddress("");
+                                setRefundAddressError(null);
+                                userCancelled.current = true;
+                                useClaimPayStore.getState().clear(id);
+                                toast({ title: "Cancelled", description: "You can now choose a different token." });
+                              }}
+                              className="text-sm"
+                            >
+                              Cancel & Choose Different Token
+                            </Button>
+                          </div>
+                        </>
+                      ) : null}
+                      {/* Deadline at the very bottom */}
+                      {deposit?.deadline ? (
+                        <div className="mt-3 text-sm text-gray-700">Deadline: <span className="font-medium">{formatUTCTimestamp(deposit.deadline)}</span></div>
+                      ) : null}
+                    </div>
+                  );
+                })()}
+              </>
+            ))}
+          </>
+        ) : (
+          <div className="mt-6 text-center py-12">
+            <p className="text-lg font-medium text-slate-300">This payment doesn&apos;t exist.</p>
+            <Link href="/" className="inline-flex items-center gap-2 mt-4 text-sm font-medium text-slate-400 hover:text-white transition-colors">
+              ← Back to Send
+            </Link>
           </div>
-        </div>
-      </div>
+        )}
+      </ClaimPayLayout>
 
       {/* Pay Now modal: same centered style as onboarding (emoji + amount + subtitle), then 2 options */}
       <Dialog
@@ -3023,9 +3274,12 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
           }
         }}
       >
-        <DialogContent className="sm:max-w-md p-8" aria-describedby={undefined}>
+        <DialogContent
+          className="sm:max-w-md p-8 border-white/10 bg-[#0f0f12] text-white shadow-2xl [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-muted-foreground]:!text-slate-400 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.ring-offset-background]:!ring-offset-[#0f0f12] [&_.bg-red-50]:!bg-red-500/15 [&_.border-red-200]:!border-red-400/30 [&_.text-red-800]:!text-red-200 [&_.bg-emerald-50]:!bg-emerald-500/15 [&_.border-emerald-200]:!border-emerald-400/30 [&_.bg-emerald-100]:!bg-emerald-500/20 [&_.text-emerald-600]:!text-emerald-300 [&_.bg-orange-50]:!bg-orange-500/15 [&_.border-orange-200]:!border-orange-400/30 [&_.bg-orange-100]:!bg-orange-500/20 [&_.text-orange-600]:!text-orange-300 [&_.text-orange-500]:!text-orange-300 [&_.bg-amber-50]:!bg-amber-500/15 [&_.text-amber-600]:!text-amber-300 [&>*:last-child]:!text-slate-400 [&>*:last-child:hover]:!text-white [&>*:last-child:hover]:!bg-white/10"
+          aria-describedby={undefined}
+        >
           <DialogTitle id="pay-now-dialog-title" className="sr-only">
-            {confirmingTxSignature ? "Transaction on the way" : claim?.amount ? `Pay $${Number(claim.amount).toFixed(2)}` : "Pay now"}
+            {confirmingTxSignature ? "Transaction on the way" : claim?.amount ? `Pay $${claimAmountUSD.toFixed(2)}` : "Pay now"}
           </DialogTitle>
           {confirmingTxSignature ? (
             <>
@@ -3085,9 +3339,9 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                   <div className="text-6xl mb-4" aria-hidden>💳</div>
                 </div>
                 <h2 className="text-5xl font-semibold text-gray-900 tracking-tight text-center">
-                  {claim?.amount ? `$${Number(claim.amount).toFixed(2)}` : "Pay now"}
+                  {claim?.amount ? `$${claimAmountUSD.toFixed(2)}` : "Pay now"}
                 </h2>
-                <DialogDescription className="pt-2 text-base text-center">Choose how you'd like to pay</DialogDescription>
+                <DialogDescription className="pt-2 text-base text-center text-muted-foreground">Choose how you'd like to pay</DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3">
                 {!authenticated ? (
@@ -3123,7 +3377,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                       className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
-                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-700" />}
+                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-900" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <span className="font-semibold text-gray-900 block">Use wallet</span>
@@ -3187,7 +3441,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
                       className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
-                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-700" />}
+                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-900" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <span className="font-semibold text-gray-900 block">Use wallet</span>
@@ -3210,163 +3464,13 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
         </DialogContent>
       </Dialog>
 
-      {/* Debug Section - Rhinestone Companion Account Recovery */}
-      {process.env.NODE_ENV === "development" && (
-        <CompanionDebugSection wallets={wallets} />
-      )}
     </>
   );
 }
 
-function CompanionDebugSection({ wallets }: { wallets: any[] }) {
-  const [companionAddress, setCompanionAddress] = useState("");
-  const [companionBalance, setCompanionBalance] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [withdrawing, setWithdrawing] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [hasStoredKey, setHasStoredKey] = useState<boolean | null>(null);
-  const { toast } = useToast();
-
-  // Check for stored signer key on mount
-  useEffect(() => {
-    if (wallets[0]?.address) {
-      try {
-        const stored = localStorage.getItem("rhinestone_signer_keys");
-        const keys = stored ? JSON.parse(stored) : {};
-        setHasStoredKey(!!keys[wallets[0].address.toLowerCase()]);
-      } catch {
-        setHasStoredKey(false);
-      }
-    }
-  }, [wallets]);
-
-  const checkBalance = async () => {
-    if (!companionAddress) return;
-    setIsLoading(true);
-    setMessage(null);
-    try {
-      const { getCompanionBalance } = await import("@/services/rhinestone");
-      const balance = await getCompanionBalance(companionAddress, 8453);
-      setCompanionBalance(balance.eth);
-      setMessage({ type: "success", text: `Balance: ${balance.eth} ETH` });
-    } catch (e: any) {
-      setMessage({ type: "error", text: e?.message || "Failed to check balance" });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const withdrawFunds = async () => {
-    if (!companionAddress || !wallets[0]) {
-      toast({ variant: "destructive", title: "Error", description: "Connect wallet and enter companion address" });
-      return;
-    }
-
-    setWithdrawing(true);
-    setMessage(null);
-    try {
-      const ethereumProvider = await wallets[0].getEthereumProvider();
-      const { withdrawFromCompanion } = await import("@/services/rhinestone");
-
-      const result = await withdrawFromCompanion({
-        companionAddress,
-        userAddress: wallets[0].address,
-        ethereumProvider,
-        recipient: wallets[0].address,
-        chainId: 8453,
-      });
-
-      setMessage({ type: "success", text: `Withdrawal successful! TX: ${result.txHash.slice(0, 10)}...` });
-      toast({ title: "Withdrawal successful!", description: "Funds sent to your wallet" });
-
-      // Refresh balance
-      await checkBalance();
-    } catch (e: any) {
-      setMessage({ type: "error", text: e?.message || "Withdrawal failed" });
-      toast({ variant: "destructive", title: "Withdrawal failed", description: e?.message });
-    } finally {
-      setWithdrawing(false);
-    }
-  };
-
-  const getCurrentCompanion = async () => {
-    if (!wallets[0]) return;
-    try {
-      const { getCompanionAddress } = await import("@/services/rhinestone");
-      const addr = await getCompanionAddress(wallets[0].address);
-      setCompanionAddress(addr);
-      toast({ title: "Current Companion", description: addr });
-    } catch (e: any) {
-      toast({ variant: "destructive", title: "Error", description: e?.message });
-    }
-  };
-
-  return (
-    <div className="mt-8 mb-24 mx-auto max-w-xl p-4 border-2 border-dashed border-red-300 rounded-lg bg-red-50">
-      <h3 className="text-lg font-bold text-red-800 mb-2">🔧 Debug: Companion Account Recovery</h3>
-      <p className="text-sm text-red-600 mb-4">
-        Use this to withdraw funds from any Rhinestone companion account you own.
-      </p>
-
-      <div className="space-y-3">
-        <div>
-          <label className="text-sm font-medium text-gray-700">Companion Address</label>
-          <div className="flex gap-2 mt-1">
-            <Input
-              value={companionAddress}
-              onChange={(e) => setCompanionAddress(e.target.value)}
-              placeholder="0x7f86c6D89D..."
-              className="flex-1 font-mono text-sm"
-            />
-            <Button variant="outline" size="sm" onClick={getCurrentCompanion}>
-              Get Current
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={checkBalance}
-            disabled={isLoading || !companionAddress}
-            className="flex-1"
-          >
-            {isLoading ? "Checking..." : "Check Balance"}
-          </Button>
-          <Button
-            onClick={withdrawFunds}
-            disabled={withdrawing || !companionAddress}
-            className="flex-1 bg-red-600 hover:bg-red-700 text-white"
-          >
-            {withdrawing ? "Withdrawing..." : "Withdraw All ETH"}
-          </Button>
-        </div>
-
-        {message && (
-          <div className={`p-2 rounded text-sm ${message.type === "success" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
-            {message.text}
-          </div>
-        )}
-
-        {hasStoredKey !== null && (
-          <div className={`text-sm  mt-2 p-2 rounded border ${hasStoredKey ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800"}`}>
-            <strong>{hasStoredKey ? "✅ Signer Key Found" : "⚠️ No Signer Key Found"}</strong><br />
-            {hasStoredKey
-              ? "You can withdraw from companions created in this browser session."
-              : "Companions created in previous sessions may not be recoverable."
-            }
-          </div>
-        )}
-
-        <div className="text-sm  text-gray-500 mt-2 p-2 bg-gray-100 rounded">
-          <strong>Known stuck companions (keys lost):</strong><br />
-          • 0x7f86c6D89D715082Ca64bbA78eF9d7421052F641<br />
-          • 0x9353C0f04F8B4781ed2a8F67FC5037e51738B855<br /><br />
-          <strong>To recover:</strong> Contact <a href="https://t.me/kurt_larsen" className="underline text-blue-600">Rhinestone support</a>
-        </div>
-      </div>
-    </div>
-  );
+export default function ClaimPayPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = React.use(params);
+  return <ClaimPayView claimId={id} />;
 }
 
 function StatusBadge({ status }: { status: string }) {

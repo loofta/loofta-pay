@@ -1,10 +1,26 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Switch } from "@/components/ui/switch";
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, useLinkAccount } from "@privy-io/react-auth";
+
+const LOO_PREFIX = "loo-";
+
+/** Privy uses type "twitter_oauth" for Twitter. */
+const TWITTER_TYPES = ["twitter_oauth", "twitter", "x"] as const;
+
+function getTwitterUsername(linkedAccounts: Array<{ type?: string; username?: string; name?: string; subject?: string }> | undefined): string | null {
+  const tw = (linkedAccounts || []).find((a) => a.type && TWITTER_TYPES.includes(a.type as any));
+  if (!tw) return null;
+  const raw = (tw as { username?: string; name?: string; subject?: string }).username
+    || (tw as { name?: string }).name
+    || (tw as { subject?: string }).subject
+    || "";
+  const s = String(raw).replace(/^@/, "").toLowerCase().trim();
+  return s.length >= 3 ? s : null;
+}
 
 interface WelcomeOnboardingProps {
   open: boolean;
@@ -14,8 +30,36 @@ interface WelcomeOnboardingProps {
   onEditUsername?: () => void;
 }
 
+const TOTAL_STEPS = 5; // welcome, username, pay friend, top up, share
+
 export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEditUsername }: WelcomeOnboardingProps) {
   const { getAccessToken, user: privyUser } = usePrivy();
+  const [emailLinkError, setEmailLinkError] = useState<"already_linked" | null>(null);
+  const { linkEmail, linkTwitter } = useLinkAccount({
+    onSuccess: (arg: { linkedAccount?: { type?: string }; linkMethod?: string } | undefined) => {
+      const isEmail = arg?.linkedAccount?.type === "email" || arg?.linkMethod === "email";
+      const isTwitter = arg?.linkedAccount?.type === "twitter_oauth" || arg?.linkedAccount?.type === "twitter" || arg?.linkedAccount?.type === "x" || arg?.linkMethod === "twitter";
+      if (isEmail) {
+        setEmailLinkError(null);
+        setEmailStepDone(true);
+      }
+      if (isTwitter) setTwitterStepDone(true);
+    },
+    onError: (err: unknown) => {
+      const msg = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : String(err);
+      if (/already been linked|already linked|linked to another user/i.test(msg)) {
+        setEmailLinkError("already_linked");
+      }
+    },
+  });
+  const hasEmail = (privyUser?.linkedAccounts || []).some((a: { type?: string }) => a.type === "email");
+  const twitterUsername = useMemo(
+    () => getTwitterUsername(privyUser?.linkedAccounts as Array<{ type?: string; username?: string; name?: string; subject?: string }> | undefined),
+    [privyUser?.linkedAccounts]
+  );
+  const hasTwitter = !!twitterUsername;
+  const [emailStepDone, setEmailStepDone] = useState(false);
+  const [twitterStepDone, setTwitterStepDone] = useState(false);
   const [step, setStep] = useState(0);
   const [displayText, setDisplayText] = useState("");
   const [dontShowAgain, setDontShowAgain] = useState(false);
@@ -27,6 +71,10 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
   const [requirePrivatePayments, setRequirePrivatePayments] = useState(false);
   const [loadingPreferences, setLoadingPreferences] = useState(false);
   const [updatingPreferences, setUpdatingPreferences] = useState(false);
+
+  const showAddEmailStep = open && !hasEmail && !emailStepDone;
+  const showAddTwitterStep = open && !showAddEmailStep && !hasTwitter && !twitterStepDone;
+  const usernameFromTwitter = !!twitterUsername;
 
   const getPaymentLink = () => {
     const u = username || newUsername.trim() || "username";
@@ -74,28 +122,35 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
 
   const fullTexts = [
     `Pay your friend\nsend money to @${username || "username"}`,
-    "Pay from merchant,\nwithout worrying about network/token",
     "Top up with your favorite\nwallet and token",
-    "Welcome to universal\nprivate payment account",
   ];
 
-  // Reset step when modal opens
+  // Reset step when modal opens. Twitter → @handle (read-only). No Twitter → loo- + editable suffix.
   useEffect(() => {
     if (open) {
       setStep(0);
+      setEmailStepDone(hasEmail);
+      setTwitterStepDone(hasTwitter);
+      setEmailLinkError(null);
       setDisplayText("");
       setDontShowAgain(false);
-      setNewUsername(username || "");
+      if (twitterUsername) {
+        setNewUsername(twitterUsername);
+      } else if (username && username.startsWith(LOO_PREFIX)) {
+        setNewUsername(username);
+      } else {
+        setNewUsername(LOO_PREFIX);
+      }
       setUsernameError(null);
-      setUsernameAvailable(null);
+      setUsernameAvailable(twitterUsername ? true : null);
       setCheckingAvailability(false);
       setLinkCopied(false);
     }
-  }, [open, username]);
+  }, [open, username, hasEmail, hasTwitter, twitterUsername]);
 
-  // Fetch user preferences when on step 5 (share step)
+  // Fetch user preferences when on step 4 (share step)
   useEffect(() => {
-    if (step === 5 && open && getAccessToken && privyUser?.id) {
+    if (step === 4 && open && getAccessToken && privyUser?.id) {
       const fetchPreferences = async () => {
         setLoadingPreferences(true);
         try {
@@ -146,21 +201,19 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
     }
   };
 
-  // Check username availability with debounce
+  // Check username availability with debounce (only when user can choose — not when username is from Twitter)
   useEffect(() => {
-    if (step !== 1) return; // Only check on step 1
+    if (step !== 1 || usernameFromTwitter) return;
 
     const trimmed = newUsername.trim();
 
-    // Reset state if empty
-    if (!trimmed) {
+    if (!trimmed || (trimmed.startsWith(LOO_PREFIX) && trimmed.length <= LOO_PREFIX.length)) {
       setUsernameError(null);
       setUsernameAvailable(null);
       setCheckingAvailability(false);
       return;
     }
 
-    // Validate format first
     const validationError = validateUsername(trimmed);
     if (validationError) {
       setUsernameError(validationError);
@@ -169,7 +222,6 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
       return;
     }
 
-    // If username hasn't changed from current, it's available
     if (trimmed.toLowerCase() === username?.toLowerCase()) {
       setUsernameError(null);
       setUsernameAvailable(true);
@@ -177,7 +229,6 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
       return;
     }
 
-    // Debounce the API call
     const timeoutId = setTimeout(async () => {
       setCheckingAvailability(true);
       setUsernameError(null);
@@ -207,22 +258,24 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
       } finally {
         setCheckingAvailability(false);
       }
-    }, 500); // 500ms debounce
+    }, 500);
 
     return () => clearTimeout(timeoutId);
-  }, [newUsername, step, username, privyUserId]);
+  }, [newUsername, step, username, privyUserId, usernameFromTwitter]);
 
-  // Validate username format
+  // Validate username: Twitter-style [a-zA-Z0-9_]{3,20} or loo- + suffix [a-zA-Z0-9_]{1,16}
   const validateUsername = (value: string): string | null => {
-    if (value.length < 3) {
-      return "Username must be at least 3 characters";
+    const trimmed = value.trim();
+    if (trimmed.startsWith(LOO_PREFIX)) {
+      const suffix = trimmed.slice(LOO_PREFIX.length);
+      if (suffix.length < 1) return "Choose at least 1 character after loo-";
+      if (suffix.length > 16) return "Maximum 16 characters after loo-";
+      if (!/^[a-zA-Z0-9_]+$/.test(suffix)) return "Only letters, numbers, and underscores after loo-";
+      return null;
     }
-    if (value.length > 20) {
-      return "Username must be 20 characters or less";
-    }
-    if (!/^[a-zA-Z0-9_]+$/.test(value)) {
-      return "Username can only contain letters, numbers, and underscores";
-    }
+    if (trimmed.length < 3) return "Username must be at least 3 characters";
+    if (trimmed.length > 20) return "Username must be 20 characters or less";
+    if (!/^[a-zA-Z0-9_]+$/.test(trimmed)) return "Username can only contain letters, numbers, and underscores";
     return null;
   };
 
@@ -241,8 +294,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
       return false;
     }
 
-    // Check if username is available
-    if (usernameAvailable === false) {
+    if (!usernameFromTwitter && usernameAvailable === false) {
       setUsernameError("Please choose an available username");
       return false;
     }
@@ -293,13 +345,13 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
       return;
     }
 
-    // Only show typing animation for steps 2, 3, 4 (not 0, 1, 5 – step 5 is share content)
-    if (step < 2 || step > 4) {
+    // Only show typing animation for steps 2, 3 (pay friend, top up; step 4 is share)
+    if (step < 2 || step > 3) {
       setDisplayText("");
       return;
     }
 
-    const textIndex = step - 2; // Map step 2->0, 3->1, 4->2
+    const textIndex = step - 2; // Map step 2->0, 3->1
     const currentText = fullTexts[textIndex];
     if (!currentText) return;
 
@@ -327,7 +379,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
       }
     }
 
-    if (step < 5) {
+    if (step < 4) {
       setStep(step + 1);
     } else {
       // Save preference to database if checkbox is checked
@@ -383,21 +435,92 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
       >
         <motion.div
           initial={{ scale: 0.9, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.9, opacity: 0 }}
-          className="bg-white rounded-[24px] w-full max-w-md shadow-2xl overflow-hidden"
+          className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden"
         >
+          {/* Add email step (before main onboarding) */}
+          {showAddEmailStep && (
+            <div className="p-5 space-y-5">
+              <div className="text-center">
+                <h2 className="text-lg font-semibold text-white mb-1">Add a second sign-in method</h2>
+                <p className="text-sm text-slate-400">
+                  Add your email for account recovery and easier sign-in next time.
+                </p>
+              </div>
+              {emailLinkError === "already_linked" && (
+                <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2.5">
+                  <p className="text-sm text-amber-200">
+                    This email is already linked to another Loofta account. You can continue with Twitter only, or sign out and sign in with that email to use the other account.
+                  </p>
+                </div>
+              )}
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmailLinkError(null);
+                    linkEmail();
+                  }}
+                  className="w-full py-2.5 rounded-xl font-medium text-white bg-gradient-to-r from-[#FF1301] to-[#EAB308] hover:opacity-90 transition-opacity"
+                >
+                  Add email
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmailLinkError(null);
+                    setEmailStepDone(true);
+                  }}
+                  className="w-full py-2.5 rounded-xl font-medium text-slate-400 hover:text-white transition-colors"
+                >
+                  {emailLinkError === "already_linked" ? "Continue with Twitter only" : "Skip for now"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Add Twitter step: get payment link = exact Twitter username */}
+          {showAddTwitterStep && (
+            <div className="p-5 space-y-5">
+              <div className="text-center">
+                <h2 className="text-lg font-semibold text-white mb-1">Add Twitter to get your exact @username</h2>
+                <p className="text-sm text-slate-400">
+                  Your payment link will match your Twitter handle exactly (e.g. @you → pay.loofta.xyz/link/@you).
+                </p>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => linkTwitter()}
+                  className="w-full py-2.5 rounded-xl font-medium text-white bg-gradient-to-r from-[#FF1301] to-[#EAB308] hover:opacity-90 transition-opacity"
+                >
+                  Add Twitter
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTwitterStepDone(true)}
+                  className="w-full py-2.5 rounded-xl font-medium text-slate-400 hover:text-white transition-colors"
+                >
+                  Skip for now
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!showAddEmailStep && !showAddTwitterStep && (
+            <>
           {/* Progress bar */}
-          <div className="flex gap-1.5 p-4 pb-0">
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="flex-1 h-1.5 rounded-full bg-gray-200 overflow-hidden">
+          <div className="flex gap-1 p-3 pb-0">
+            {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
+              <div key={i} className="flex-1 h-1 rounded-full bg-white/10 overflow-hidden">
                 <motion.div
                   className="h-full"
-                  style={{ background: "linear-gradient(to right, #FF0F00, #EAB308)" }}
+                  style={{ background: "linear-gradient(to right, #FF1301, #EAB308)" }}
                   initial={{ width: 0 }}
                   animate={{ width: step >= i ? "100%" : "0%" }}
                   transition={{ duration: 0.3 }}
@@ -407,7 +530,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
           </div>
 
           {/* Content */}
-          <div className="relative h-[420px] overflow-hidden">
+          <div className="relative h-[320px] overflow-hidden">
             {/* Step 0: Welcome */}
             <AnimatePresence mode="wait">
               {step === 0 && (
@@ -416,21 +539,21 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -20 }}
-                  className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center"
+                  className="absolute inset-0 flex flex-col items-center justify-center p-5 text-center"
                 >
                   <motion.div
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
                     transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                    className="mb-6"
+                    className="mb-4"
                   >
                     <div
-                      className="w-24 h-24 rounded-full flex items-center justify-center mx-auto"
+                      className="w-16 h-16 rounded-full flex items-center justify-center mx-auto"
                       style={{
-                        background: "linear-gradient(135deg, rgba(255,15,0,0.15) 0%, rgba(234,179,8,0.15) 100%)",
+                        background: "linear-gradient(135deg, rgba(255,15,0,0.2) 0%, rgba(234,179,8,0.2) 100%)",
                       }}
                     >
-                      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" className="text-orange-500">
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className="text-amber-400">
                         <path
                           d="M20 6L9 17l-5-5"
                           stroke="currentColor"
@@ -445,7 +568,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.2 }}
-                    className="text-3xl font-bold text-gray-900 mb-3"
+                    className="text-xl font-bold text-white mb-2"
                   >
                     Welcome to Loofta Pay!
                   </motion.h2>
@@ -453,7 +576,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.3 }}
-                    className="text-lg text-gray-600 mb-2"
+                    className="text-sm text-slate-400 mb-1"
                   >
                     Your universal private payment account
                   </motion.p>
@@ -461,113 +584,133 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.4 }}
-                    className="text-sm text-gray-500"
+                    className="text-xs text-slate-500"
                   >
                     Pay & receive crypto privately
                   </motion.p>
                 </motion.div>
               )}
 
-              {/* Step 1: Edit username */}
+              {/* Step 1: Username = Twitter handle (read-only) */}
               {step === 1 && (
                 <motion.div
                   key="step1"
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -20 }}
-                  className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center"
+                  className="absolute inset-0 flex flex-col items-center justify-center p-5 text-center"
                 >
                   <motion.div
                     initial={{ scale: 0, rotate: -180 }}
                     animate={{ scale: 1, rotate: 0 }}
                     transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                    className="mb-6"
+                    className="mb-3"
                   >
-                    <div className="text-6xl mb-4">✏️</div>
+                    <div className="text-4xl mb-2">✏️</div>
                   </motion.div>
                   <motion.h2
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="text-2xl font-bold text-gray-900 mb-4"
+                    className="text-lg font-bold text-white mb-2"
                   >
-                    Start editing your unique username
+                    {usernameFromTwitter ? "Your username is your Twitter handle" : "Choose your username"}
                   </motion.h2>
                   <motion.p
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.2 }}
-                    className="text-base text-gray-600 mb-6"
+                    className="text-sm text-slate-400 mb-4"
                   >
-                    to receive payment from any chain, any token
+                    {usernameFromTwitter
+                      ? "Your payment link will use this username. It can't be changed."
+                      : username?.startsWith(LOO_PREFIX)
+                        ? "The loo- part is fixed. Add Twitter later to get a unique @handle."
+                        : "Your link will be @loo-yourname. Add Twitter later to get @yourhandle."}
                   </motion.p>
                   <motion.div
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ delay: 0.3 }}
-                    className="flex flex-col items-center gap-3 w-full max-w-xs"
+                    className="flex flex-col items-center gap-2 w-full max-w-xs"
                   >
-                    <div className="w-full space-y-3">
-                      <div className="relative">
-                        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-semibold text-lg">
-                          @
-                        </div>
-                        <input
-                          type="text"
-                          value={newUsername}
-                          onChange={(e) => {
-                            const value = e.target.value.replace(/[^a-zA-Z0-9_]/g, "");
-                            setNewUsername(value);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              handleNext();
-                            }
-                          }}
-                          placeholder="username"
-                          className={`w-full pl-8 pr-4 py-3 rounded-xl border-2 text-lg font-semibold text-center transition-colors ${checkingAvailability
-                            ? "border-gray-300"
-                            : usernameAvailable === true
-                              ? "border-green-500 focus:border-green-500 focus:ring-green-500"
-                              : usernameAvailable === false
-                                ? "border-red-500 focus:border-red-500 focus:ring-red-500"
-                                : "border-orange-300 focus:border-orange-500 focus:ring-orange-500"
-                            } focus:outline-none focus:ring-2`}
-                          autoFocus
-                          maxLength={20}
-                        />
-                        {checkingAvailability && (
-                          <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                            <div className="w-4 h-4 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
-                          </div>
-                        )}
-                        {!checkingAvailability && usernameAvailable === true && newUsername.trim() && (
-                          <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                            <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                          </div>
-                        )}
-                        {!checkingAvailability && usernameAvailable === false && newUsername.trim() && (
-                          <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                            <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </div>
+                    <div className="w-full space-y-2">
+                      <div className="relative flex items-center">
+                        <span className="absolute left-3 text-slate-500 font-semibold text-base">@</span>
+                        {usernameFromTwitter ? (
+                          <>
+                            <span className="absolute left-8 text-white font-medium text-base">{newUsername}</span>
+                            <div className="w-full pl-8 pr-10 py-2.5 rounded-xl border border-white/20 bg-white/5 text-base cursor-default min-h-[42px]" />
+                            <div className="absolute right-3">
+                              <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div
+                              className={`flex items-center w-full rounded-xl border pr-10 py-2.5 pl-3 bg-white/5 text-base ${checkingAvailability
+                                ? "border-white/20"
+                                : usernameAvailable === true
+                                  ? "border-emerald-500/70 focus-within:ring-2 focus-within:ring-emerald-500/30"
+                                  : usernameAvailable === false
+                                    ? "border-red-500/70 focus-within:ring-2 focus-within:ring-red-500/30"
+                                    : "border-white/20 focus-within:ring-2 focus-within:ring-amber-500/30"
+                              } focus-within:outline-none`}
+                            >
+                              <span className="text-slate-500 font-semibold shrink-0">@</span>
+                              <span className="text-slate-400 font-medium shrink-0 ml-0.5">{LOO_PREFIX}</span>
+                              <input
+                                type="text"
+                                value={newUsername.startsWith(LOO_PREFIX) ? newUsername.slice(LOO_PREFIX.length) : ""}
+                                onChange={(e) => {
+                                  const suffix = e.target.value.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 16);
+                                  setNewUsername(LOO_PREFIX + suffix);
+                                }}
+                                onKeyDown={(e) => { if (e.key === "Enter") handleNext(); }}
+                                placeholder="yourname"
+                                className="flex-1 min-w-0 bg-transparent border-0 py-0 text-white placeholder:text-slate-500 font-medium focus:ring-0 focus:outline-none"
+                                autoFocus
+                                maxLength={16}
+                              />
+                            </div>
+                            {checkingAvailability && (
+                              <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                <div className="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                              </div>
+                            )}
+                            {!checkingAvailability && usernameAvailable === true && newUsername.length > LOO_PREFIX.length && (
+                              <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                              </div>
+                            )}
+                            {!checkingAvailability && usernameAvailable === false && newUsername.length > LOO_PREFIX.length && (
+                              <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                       {usernameError && (
-                        <p className="text-sm text-red-600 text-center">{usernameError}</p>
+                        <p className="text-xs text-red-400 text-center">{usernameError}</p>
                       )}
-                      {!usernameError && checkingAvailability && newUsername.trim() && (
-                        <p className="text-sm text-gray-500 text-center">Checking availability...</p>
+                      {!usernameError && !usernameFromTwitter && checkingAvailability && newUsername.length > LOO_PREFIX.length && (
+                        <p className="text-xs text-slate-500 text-center">Checking availability...</p>
                       )}
-                      {!usernameError && !checkingAvailability && usernameAvailable === true && newUsername.trim() && (
-                        <p className="text-sm text-green-600 text-center">✓ Username available</p>
+                      {!usernameError && !usernameFromTwitter && !checkingAvailability && usernameAvailable === true && newUsername.length > LOO_PREFIX.length && (
+                        <p className="text-xs text-emerald-400 text-center">✓ Username available</p>
                       )}
-                      <p className="text-xs text-gray-500 text-center">
-                        3-20 characters, letters, numbers, and underscores only
-                      </p>
+                      {!usernameFromTwitter && (
+                        <p className="text-[10px] text-slate-500 text-center">
+                          loo- is fixed. 1–16 letters, numbers, underscores after it.
+                        </p>
+                      )}
                     </div>
                   </motion.div>
                 </motion.div>
@@ -580,21 +723,16 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -20 }}
-                  className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center"
+                  className="absolute inset-0 flex flex-col items-center justify-center p-5 text-center"
                 >
-                  <motion.div
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                    className="mb-6"
-                  >
-                    <div className="text-6xl mb-4">💸</div>
+                  <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 200, damping: 15 }} className="mb-3">
+                    <div className="text-4xl mb-2">💸</div>
                   </motion.div>
                   <motion.h2
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="text-2xl font-bold text-gray-900 mb-6 min-h-[80px] whitespace-pre-line"
+                    className="text-lg font-bold text-white mb-4 min-h-[56px] whitespace-pre-line"
                   >
                     {displayText.split("\n").map((line, i) => (
                       <span key={i}>
@@ -602,35 +740,28 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                         {i < displayText.split("\n").length - 1 && <br />}
                       </span>
                     ))}
-                    {displayText.length < fullTexts[0].length && (
-                      <span className="animate-pulse">|</span>
-                    )}
+                    {displayText.length < fullTexts[0].length && <span className="animate-pulse">|</span>}
                   </motion.h2>
                 </motion.div>
               )}
 
-              {/* Step 3: Pay merchant */}
+              {/* Step 3: Top up */}
               {step === 3 && (
                 <motion.div
                   key="step3"
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -20 }}
-                  className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center"
+                  className="absolute inset-0 flex flex-col items-center justify-center p-5 text-center"
                 >
-                  <motion.div
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                    className="mb-6"
-                  >
-                    <div className="text-6xl mb-4">🛒</div>
+                  <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 200, damping: 15 }} className="mb-3">
+                    <div className="text-4xl mb-2">💳</div>
                   </motion.div>
                   <motion.h2
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="text-2xl font-bold text-gray-900 mb-6 min-h-[80px] whitespace-pre-line"
+                    className="text-lg font-bold text-white mb-4 min-h-[56px] whitespace-pre-line"
                   >
                     {displayText.split("\n").map((line, i) => (
                       <span key={i}>
@@ -638,78 +769,40 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                         {i < displayText.split("\n").length - 1 && <br />}
                       </span>
                     ))}
-                    {displayText.length < fullTexts[1].length && (
-                      <span className="animate-pulse">|</span>
-                    )}
+                    {displayText.length < fullTexts[1].length && <span className="animate-pulse">|</span>}
                   </motion.h2>
                 </motion.div>
               )}
 
-              {/* Step 4: Top up */}
+              {/* Step 4: Share link */}
               {step === 4 && (
                 <motion.div
                   key="step4"
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -20 }}
-                  className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center"
+                  className="absolute inset-0 overflow-y-auto p-4"
                 >
                   <motion.div
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
                     transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                    className="mb-6"
-                  >
-                    <div className="text-6xl mb-4">💳</div>
-                  </motion.div>
-                  <motion.h2
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.1 }}
-                    className="text-2xl font-bold text-gray-900 mb-6 min-h-[80px] whitespace-pre-line"
-                  >
-                    {displayText.split("\n").map((line, i) => (
-                      <span key={i}>
-                        {line}
-                        {i < displayText.split("\n").length - 1 && <br />}
-                      </span>
-                    ))}
-                    {displayText.length < fullTexts[2].length && (
-                      <span className="animate-pulse">|</span>
-                    )}
-                  </motion.h2>
-                </motion.div>
-              )}
-
-              {/* Step 5: Share link – same content as Share modal */}
-              {step === 5 && (
-                <motion.div
-                  key="step5"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  className="absolute inset-0 overflow-y-auto p-6"
-                >
-                  <motion.div
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                    className="mb-4 flex justify-center"
+                    className="mb-3 flex justify-center"
                   >
                     <div
-                      className="w-16 h-16 rounded-full flex items-center justify-center"
+                      className="w-12 h-12 rounded-full flex items-center justify-center"
                       style={{
-                        background: "linear-gradient(135deg, rgba(255,15,0,0.15) 0%, rgba(234,179,8,0.15) 100%)",
+                        background: "linear-gradient(135deg, rgba(255,15,0,0.2) 0%, rgba(234,179,8,0.2) 100%)",
                       }}
                     >
-                      <span className="text-3xl">💰</span>
+                      <span className="text-2xl">💰</span>
                     </div>
                   </motion.div>
                   <motion.h2
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="text-2xl font-bold text-gray-900 mb-2 text-center"
+                    className="text-lg font-bold text-white mb-1 text-center"
                   >
                     Start receiving money now
                   </motion.h2>
@@ -717,121 +810,111 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.15 }}
-                    className="text-sm text-gray-600 mb-4 text-center"
+                    className="text-xs text-slate-400 mb-3 text-center"
                   >
                     Share your payment link to receive payments
                   </motion.p>
 
-                  {/* Payment Link Display */}
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.2 }}
-                    className="mb-4 p-3 rounded-xl bg-gray-50 border border-gray-200"
+                    className="mb-3 p-2.5 rounded-xl bg-white/5 border border-white/10"
                   >
-                    <p className="text-xs font-medium mb-2 text-gray-500">Your payment link</p>
+                    <p className="text-[10px] font-medium mb-1.5 text-slate-500">Your payment link</p>
                     <div className="flex items-center gap-2">
                       <a
                         href={getPaymentLink()}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex-1 text-sm font-mono truncate hover:underline text-orange-600"
+                        className="flex-1 text-xs font-mono truncate hover:underline text-amber-400"
                       >
                         {getPaymentLink().replace(/^https?:\/\//, "")}
                       </a>
                       <button
                         onClick={copyPaymentLink}
-                        className={`p-2 rounded hover:bg-gray-200 transition-colors flex-shrink-0 ${linkCopied ? "bg-green-100" : ""}`}
+                        className={`p-1.5 rounded-lg hover:bg-white/10 transition-colors flex-shrink-0 ${linkCopied ? "bg-emerald-500/20" : ""}`}
                         title={linkCopied ? "Copied!" : "Copy link"}
                       >
                         {linkCopied ? (
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-500">
-                            <polyline points="20 6 9 17 4 12"></polyline>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
+                            <polyline points="20 6 9 17 4 12" />
                           </svg>
                         ) : (
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                           </svg>
                         )}
                       </button>
                     </div>
                   </motion.div>
 
-                  {/* Require Private Payments Only */}
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.25 }}
-                    className={`mb-4 p-3 rounded-xl border ${requirePrivatePayments ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'}`}
+                    className={`mb-2 p-2.5 rounded-xl border ${requirePrivatePayments ? "bg-amber-500/10 border-amber-500/30" : "bg-white/5 border-white/10"}`}
                   >
-                    <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <span className="text-sm font-semibold text-gray-900">🔒 Require Private Payments Only</span>
-                        <p className="text-sm text-gray-600 mt-1">
-                          Private payments — coming soon. When available, you can require private-only payments.
+                        <span className="text-xs font-semibold text-white">🔒 Require Private Payments Only</span>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          When available, you can require private-only payments.
                         </p>
                       </div>
                       {loadingPreferences ? (
-                        <div className="h-6 w-9 rounded-full bg-gray-200 animate-pulse shrink-0" />
+                        <div className="h-5 w-8 rounded-full bg-white/10 animate-pulse shrink-0" />
                       ) : (
                         <Switch
                           checked={requirePrivatePayments}
                           onCheckedChange={handleTogglePrivatePayments}
                           disabled={updatingPreferences}
-                          className="shrink-0 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
+                          className="shrink-0 data-[state=checked]:bg-amber-500"
                         />
                       )}
                     </div>
                   </motion.div>
-
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
 
           {/* Footer buttons */}
-          <div className="p-6 pt-4 border-t border-gray-200">
-            {/* Action buttons */}
-            <div className="flex flex-col gap-3">
-              {/* Back button - above Next */}
-              {step > 1 && (
+          <div className="p-4 pt-3 border-t border-white/10">
+            <div className="flex flex-col gap-2">
+              {step > 0 && (
                 <button
                   onClick={handleBack}
-                  className="text-sm text-gray-500 hover:text-gray-700 transition-colors text-center"
+                  className="text-xs text-slate-500 hover:text-slate-300 transition-colors text-center"
                 >
                   Back
                 </button>
               )}
-
-              {/* Next button */}
               <button
                 onClick={handleNext}
-                disabled={step === 1 && (checkingAvailability || usernameAvailable === false || !newUsername.trim())}
-                className="w-full py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                style={{ background: "linear-gradient(to right, #FF0F00, #EAB308)" }}
+                disabled={step === 1 && (checkingAvailability || usernameAvailable === false || !newUsername.trim() || (!usernameFromTwitter && newUsername.length <= LOO_PREFIX.length))}
+                className="w-full py-2.5 rounded-xl font-semibold text-white transition-all hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ background: "linear-gradient(to right, #FF1301, #EAB308)" }}
               >
-                {step < 5 ? "Next" : "Get Started"}
+                {step < 4 ? "Next" : "Get Started"}
               </button>
             </div>
-
-            {/* Don't show again checkbox - below buttons */}
-            <div className="mt-4 flex items-center justify-center gap-2">
+            <div className="mt-3 flex items-center justify-center gap-2">
               <input
                 type="checkbox"
                 id="dontShowAgain"
                 checked={dontShowAgain}
                 onChange={(e) => setDontShowAgain(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 text-orange-500 focus:ring-orange-500 focus:ring-2"
+                className="w-3.5 h-3.5 rounded border-white/20 bg-white/5 text-amber-500 focus:ring-amber-500"
               />
-              <label
-                htmlFor="dontShowAgain"
-                className="text-sm text-gray-600 cursor-pointer select-none"
-              >
-                Don't show this again
+              <label htmlFor="dontShowAgain" className="text-xs text-slate-500 cursor-pointer select-none">
+                Don&apos;t show this again
               </label>
             </div>
           </div>
+            </>
+          )}
         </motion.div>
       </motion.div>
     </AnimatePresence>

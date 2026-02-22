@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 // Re-export ClaimStatus from the constraint check in database
-// Matches: check (status in ('OPEN','PENDING_DEPOSIT','IN_FLIGHT','PRIVATE_TRANSFER_PENDING','SUCCESS','REFUNDED','EXPIRED','CANCELLED'))
+// Matches: check (status in (...,'DELETED'))
 export type ClaimStatus = 
   | 'OPEN'
   | 'PENDING_DEPOSIT'
@@ -10,7 +10,8 @@ export type ClaimStatus =
   | 'SUCCESS'
   | 'REFUNDED'
   | 'EXPIRED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'DELETED';
 
 export class Claim {
   @ApiProperty({ description: 'Claim UUID' })
@@ -25,8 +26,14 @@ export class Claim {
   @ApiProperty({ description: 'Destination chain' })
   to_chain: string;
 
-  @ApiProperty({ description: 'Recipient wallet address' })
-  recipient_address: string;
+  @ApiPropertyOptional({ description: 'Recipient wallet address (omitted when recipient_pending_email is true)' })
+  recipient_address?: string;
+
+  @ApiPropertyOptional({ description: 'Recipient username when claim was created to an existing user (by @handle); for display e.g. To @username' })
+  recipient_username?: string | null;
+
+  @ApiPropertyOptional({ description: 'True when claim was created by email and recipient has not signed in to claim yet' })
+  recipient_pending_email?: boolean;
 
   @ApiPropertyOptional({ description: 'Privy user ID who created the claim' })
   created_by: string | null;
@@ -42,7 +49,7 @@ export class Claim {
 
   @ApiProperty({ 
     description: 'Claim status', 
-    enum: ['OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'PRIVATE_TRANSFER_PENDING', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED'] 
+    enum: ['OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'PRIVATE_TRANSFER_PENDING', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED', 'DELETED'] 
   })
   status: ClaimStatus;
 

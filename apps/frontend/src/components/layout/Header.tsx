@@ -26,7 +26,9 @@ export function Header() {
   const pathname = usePathname();
   const showHistory = pathname?.startsWith('/swap') === true;
   // Check if we're on a dark background page
-  const isDarkPage = pathname?.startsWith('/claim') === true || pathname?.startsWith('/c/') === true;
+  const isDarkPage = pathname?.startsWith('/claim') === true || pathname?.startsWith('/c/') === true || pathname?.startsWith('/send') === true || pathname?.startsWith('/s/') === true;
+  // About page: transparent blur header with blend so text stays visible on light and dark sections
+  const isAboutPage = pathname === '/about';
 
   // Get username from store (ensure it's string | null, not undefined)
   const username = useAuthStore((s) => s.username ?? null);
@@ -100,18 +102,7 @@ export function Header() {
             });
           }
 
-          // Show username modal if user needs to set username
-          if (userData.needsUsername) {
-            setShowUsernameModal(true);
-          } else if (userData.user.username) {
-            // User has username - check if we should show welcome onboarding
-            // Show onboarding if user just completed setup (check localStorage)
-            const hasSeenOnboarding = localStorage.getItem("loofta.hasSeenWelcomeOnboarding");
-            if (!hasSeenOnboarding) {
-              // Check if wallet exists - if yes, show onboarding
-              // We'll check this in a separate effect
-            }
-          }
+          // Onboarding (add-email, add-Twitter, username step) shows after login; no separate username modal
         }
       } catch (error) {
         console.error("[Header] Error checking user:", error);
@@ -121,14 +112,15 @@ export function Header() {
     checkUser();
   }, [authenticated, userId, email]);
 
-  // Check if we should show welcome onboarding (user + wallet ready)
-  // Always show until user opts out via "don't show again" checkbox
+  // Show onboarding right after login (add-email, add-Twitter, then username step). Don't wait for Solana wallet.
   useEffect(() => {
-    if (!authenticated || !username || !privyReady || !privyUser || !userId) {
+    if (!authenticated || !privyReady || !privyUser || !userId) {
       return;
     }
 
-    // Check user's onboarding preference from database
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
     const checkOnboardingPreference = async () => {
       try {
         const userResponse = await fetch("/api/users/check", {
@@ -142,41 +134,22 @@ export function Header() {
 
         const userData = await userResponse.json();
 
-        // If user has opted out, don't show onboarding
-        if (userData.user?.skipOnboarding) {
-          return;
-        }
+        if (cancelled || userData.user?.skipOnboarding) return;
 
-        // Check if Solana wallet exists in linked accounts (even if not connected)
-        const linkedAccounts = privyUser?.linkedAccounts || [];
-        const linkedWallets = linkedAccounts.filter(
-          (account: any) => account.type === 'wallet' || account.type === 'smart_wallet'
-        );
-
-        // Find Solana wallet by address format (base58, 32-44 chars)
-        const solanaLinkedWallet = linkedWallets.find((account: any) => {
-          // @ts-ignore
-          const address = account.address;
-          return address && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
-        });
-
-        // Show onboarding when both username and wallet are ready
-        // Wait a bit after username modal closes (if it was shown)
-        // @ts-ignore
-        if (username && solanaLinkedWallet?.address && !showUsernameModal) {
-          // Small delay to ensure everything is rendered
-          const timer = setTimeout(() => {
-            setShowWelcomeOnboarding(true);
-          }, 1500);
-          return () => clearTimeout(timer);
-        }
+        timer = setTimeout(() => {
+          if (!cancelled) setShowWelcomeOnboarding(true);
+        }, 600);
       } catch (error) {
         console.error("[Header] Error checking onboarding preference:", error);
       }
     };
 
     checkOnboardingPreference();
-  }, [authenticated, username, privyUser, privyReady, showUsernameModal, userId, email]);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [authenticated, privyUser, privyReady, userId, email]);
 
   // Fetch balance from Solana wallet (client-side, from Privy session)
   useEffect(() => {
@@ -252,6 +225,16 @@ export function Header() {
     }
   }, [solanaAddress]);
 
+  // Allow other pages (e.g. send-payment claim success) to open the Balance/Withdraw modal and refresh
+  useEffect(() => {
+    const handler = () => {
+      setShowBalanceModal(true);
+      refreshBalance();
+    };
+    window.addEventListener("openBalanceModal", handler);
+    return () => window.removeEventListener("openBalanceModal", handler);
+  }, [refreshBalance]);
+
   // Show success message when user authenticates after requesting access
   useEffect(() => {
     if (authenticated && pendingAccessRequest) {
@@ -300,22 +283,25 @@ export function Header() {
   }, [productMenuOpen]);
 
   return (
-    <div ref={headerRef} className="fixed inset-x-0 top-0 z-50" style={{ backdropFilter: 'blur(10px)' }}>
+    <div
+      ref={headerRef}
+      className={`fixed inset-x-0 top-0 z-50 isolate ${isAboutPage
+        ? 'bg-transparent border-b border-transparent backdrop-blur-md supports-[backdrop-filter]:bg-white/10'
+        : isDarkPage
+          ? 'bg-[#0f0f12]/95 border-b border-white/10'
+          : 'bg-white/95 border-b border-gray-200'
+        }`}
+      style={isAboutPage ? { backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' } : { backdropFilter: 'blur(10px)' }}
+    >
       <div className="max-w-7xl mx-auto px-4 py-6 md:py-8">
         <div className="flex justify-between items-center animate-fade-in">
-          <Link href="/" prefetch className="relative inline-block hover:opacity-90 transition-opacity">
+          <Link href="/" prefetch className="inline-block hover:opacity-90 transition-opacity">
             <Image
               src="/loofta.svg"
-              alt="Loofta Pay"
+              alt="Loofta"
               width={120}
               height={44}
             />
-            <span
-              className="absolute -top-4 -right-6 text-lg font-semibold px-1.5 py-0.5 rounded-full"
-              style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}
-            >
-              pay
-            </span>
           </Link>
 
           <div className="flex items-center gap-1">
@@ -368,19 +354,43 @@ export function Header() {
             </div>
             {/* Separator */}
             <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
-            {/* Make a payment link */}
-            <Link
-              href="/claim"
-              prefetch
-              className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isActive('/claim')
-                ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm'
-                : isDarkPage
-                  ? 'text-white/90 hover:text-white hover:bg-white/10'
-                  : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
-                }`}
-            >
-              Request a payment
-            </Link>
+            {/* On about page: single "Send & Receive" to app home; else Send + Request links */}
+            {isAboutPage ? (
+              <Link
+                href="/"
+                prefetch
+                className="hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-100"
+              >
+                Send & Receive
+              </Link>
+            ) : (
+              <>
+                <Link
+                  href="/send"
+                  prefetch
+                  className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isActive('/send')
+                    ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm'
+                    : isDarkPage
+                      ? 'text-white/90 hover:text-white hover:bg-white/10'
+                      : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                >
+                  Send payment
+                </Link>
+                <Link
+                  href="/claim"
+                  prefetch
+                  className={`hidden sm:flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isActive('/claim')
+                    ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm'
+                    : isDarkPage
+                      ? 'text-white/90 hover:text-white hover:bg-white/10'
+                      : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                >
+                  Request a payment
+                </Link>
+              </>
+            )}
             {/* Separator */}
             <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
             {/* contact us link */}
@@ -426,13 +436,24 @@ export function Header() {
             )}
             {!authenticated ? (
               <>
-                <Button
-                  className="hidden sm:flex font-semibold px-6 py-2.5 rounded-xl transition-all duration-300 hover:scale-105 hover:opacity-90 text-white border-0"
-                  style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
-                  onClick={handleRequestAccess}
-                >
-                  Login / Create Account
-                </Button>
+                {isAboutPage ? (
+                  <Link
+                    href="/"
+                    prefetch
+                    className="hidden sm:flex font-semibold px-6 py-2.5 rounded-xl transition-all duration-300 hover:scale-105 hover:opacity-90 text-white border-0 items-center justify-center"
+                    style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                  >
+                    Login / Create Account
+                  </Link>
+                ) : (
+                  <Button
+                    className="hidden sm:flex font-semibold px-6 py-2.5 rounded-xl transition-all duration-300 hover:scale-105 hover:opacity-90 text-white border-0"
+                    style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                    onClick={handleRequestAccess}
+                  >
+                    Login / Create Account
+                  </Button>
+                )}
                 {/* Mobile burger menu button */}
                 <button
                   onClick={() => setIsMobileMenuOpen(true)}
@@ -451,28 +472,32 @@ export function Header() {
               </>
             ) : (
               <>
-                {/* Balance Display – click to open Balance & Withdraw modal */}
-                <button
-                  type="button"
-                  onClick={() => setShowBalanceModal(true)}
-                  className={`hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${isDarkPage ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-                >
-                  <span className="text-sm font-medium">Balance:</span>
-                  <span className="text-sm font-semibold">
-                    {loadingBalance ? "..." : `$${balanceUSD}`}
-                  </span>
-                </button>
-                <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
-                {/* User Menu with Dropdown */}
-                <UserMenu
-                  username={username || null}
-                  email={email}
-                  isDarkPage={isDarkPage}
-                  onLogout={() => {
-                    setUsername(null); // Clear username from store
-                    logout();
-                  }}
-                />
+                {!isAboutPage && (
+                  <>
+                    {/* Balance Display – click to open Balance & Withdraw modal */}
+                    <button
+                      type="button"
+                      onClick={() => setShowBalanceModal(true)}
+                      className={`hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${isDarkPage ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                    >
+                      <span className="text-sm font-medium">Balance:</span>
+                      <span className="text-sm font-semibold">
+                        {loadingBalance ? "..." : `$${balanceUSD}`}
+                      </span>
+                    </button>
+                    <div className={`hidden sm:block h-4 w-px ${isDarkPage ? 'bg-white/20' : 'bg-gray-300'}`} />
+                    {/* User Menu with Dropdown */}
+                    <UserMenu
+                      username={username || null}
+                      email={email}
+                      isDarkPage={isDarkPage}
+                      onLogout={() => {
+                        setUsername(null); // Clear username from store
+                        logout();
+                      }}
+                    />
+                  </>
+                )}
                 {/* Mobile burger menu button */}
                 <button
                   onClick={() => setIsMobileMenuOpen(true)}
@@ -502,7 +527,7 @@ export function Header() {
             <div className="flex justify-between items-center p-4 border-b border-gray-200">
               <Image
                 src="/loofta.svg"
-                alt="Loofta Pay"
+                alt="Loofta"
                 width={100}
                 height={36}
               />
@@ -557,17 +582,41 @@ export function Header() {
                 </Link>
 
                 <span className="mt-4 px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Payments</span>
-                <Link
-                  href="/claim"
-                  prefetch
-                  onClick={() => setIsMobileMenuOpen(false)}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${isActive('/claim')
-                    ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
-                    : 'text-gray-900 hover:bg-gray-100'
-                    }`}
-                >
-                  Request a payment
-                </Link>
+                {isAboutPage ? (
+                  <Link
+                    href="/"
+                    prefetch
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className="flex items-center gap-3 px-4 py-3 rounded-lg font-medium text-gray-900 hover:bg-gray-100 transition-colors"
+                  >
+                    Send & Receive
+                  </Link>
+                ) : (
+                  <>
+                    <Link
+                      href="/send"
+                      prefetch
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${isActive('/send')
+                        ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
+                        : 'text-gray-900 hover:bg-gray-100'
+                        }`}
+                    >
+                      Send payment
+                    </Link>
+                    <Link
+                      href="/claim"
+                      prefetch
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${isActive('/claim')
+                        ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
+                        : 'text-gray-900 hover:bg-gray-100'
+                        }`}
+                    >
+                      Request a payment
+                    </Link>
+                  </>
+                )}
 
                 <a
                   href="https://t.me/looftaxyz"
@@ -605,7 +654,7 @@ export function Header() {
                   </button>
                 )}
 
-                {authenticated && (
+                {authenticated && !isAboutPage && (
                   <>
                     <div className="h-px bg-gray-200 my-2"></div>
                     <div className="px-4 py-2 text-sm font-medium text-gray-900 mb-1">
@@ -677,19 +726,30 @@ export function Header() {
                   </>
                 )}
 
-                {!authenticated && (
+                {(!authenticated || isAboutPage) && (
                   <>
                     <div className="h-px bg-gray-200 my-2"></div>
-                    <button
-                      onClick={() => {
-                        setIsMobileMenuOpen(false);
-                        handleRequestAccess();
-                      }}
-                      className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90"
-                      style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
-                    >
-                      Login / Create Account
-                    </button>
+                    {isAboutPage ? (
+                      <Link
+                        href="/"
+                        onClick={() => setIsMobileMenuOpen(false)}
+                        className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90"
+                        style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                      >
+                        {authenticated ? "Open app" : "Login / Create Account"}
+                      </Link>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setIsMobileMenuOpen(false);
+                          handleRequestAccess();
+                        }}
+                        className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90"
+                        style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                      >
+                        Login / Create Account
+                      </button>
+                    )}
                   </>
                 )}
               </nav>
@@ -712,8 +772,8 @@ export function Header() {
         />
       )}
 
-      {/* Welcome Onboarding Modal - rendered in portal to center on screen */}
-      {username && userId && (
+      {/* Welcome Onboarding Modal - shown after login (add-email, add-Twitter, username, etc.) */}
+      {userId && (
         <WelcomeOnboarding
           open={showWelcomeOnboarding}
           onClose={(dontShowAgain) => {
@@ -778,6 +838,7 @@ export function Header() {
           loadingBalance={loadingBalance}
           solanaAddress={solanaAddress}
           onRefresh={refreshBalance}
+          dark={isDarkPage}
         />
       )}
 

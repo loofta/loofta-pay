@@ -1,8 +1,13 @@
 'use client'
 
-import { type ReactNode } from "react";
-import { Header } from "./Header";
+import { type ReactNode, useState } from "react";
+import Link from "next/link";
+import { ChevronRight } from "lucide-react";
 import { Footer } from "./Footer";
+import { BottomNav } from "./BottomNav";
+import { Header } from "./Header";
+import { MinimalHeader } from "./MinimalHeader";
+import { UserSync } from "./UserSync";
 import { HistoryModalProvider, useHistoryModal } from "@/contexts/HistoryModalContext";
 import { HistoryModal } from "@/components/history/HistoryModal";
 import { usePathname } from "next/navigation";
@@ -10,17 +15,49 @@ import { usePathname } from "next/navigation";
 function ShellContent({ children }: { children: ReactNode }) {
   const { open, setOpen } = useHistoryModal();
   const pathname = usePathname();
+  const [bannerDismissed, setBannerDismissed] = useState(false);
   const showHistory = pathname?.startsWith('/swap') === true;
-  // Don't show footer on homepage (it has its own footer with different styling)
-  const isHomepage = pathname === '/';
-  // Don't show header/footer on checkout page (Stripe-like design)
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
-  const hideShell = isCheckoutPage;
+  const showBottomNav = !isCheckoutPage && (pathname === '/' || pathname === '/history' || pathname === '/settings' || pathname?.startsWith('/c/'));
+  const isAboutPage = pathname === '/about';
+  const showMinimalHeader = !isCheckoutPage && !isAboutPage;
+  const showBanner = showMinimalHeader && !bannerDismissed;
   return (
     <>
-      {!hideShell && <Header />}
-      {children}
-      {!isHomepage && !hideShell && <Footer />}
+      <UserSync />
+      {showBanner && (
+        <div className="relative w-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-4 py-3 mb-3 flex items-center justify-center text-white">
+          <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 min-w-0 text-center">
+            <span className="text-sm font-medium">
+              Claim your username, start sending and receiving payment. Points leaderboard will be live soon.
+            </span>
+            <Link
+              href="#"
+              className="inline-flex items-center gap-1 shrink-0 text-sm font-semibold text-white hover:underline underline-offset-2"
+            >
+              Leaderboard live soon
+              <ChevronRight className="h-4 w-4" />
+            </Link>
+          </div>
+          <button
+            type="button"
+            onClick={() => setBannerDismissed(true)}
+            className="absolute right-4 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-white/20 transition-colors text-white"
+            aria-label="Dismiss banner"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+      {isAboutPage && <Header />}
+      {showMinimalHeader && <MinimalHeader />}
+      <main className={showBottomNav ? "pb-20 md:pb-0" : undefined}>
+        {children}
+      </main>
+      {!isCheckoutPage && <Footer />}
+      {showBottomNav && <BottomNav />}
       {showHistory && <HistoryModal open={open} onOpenChange={setOpen} />}
     </>
   );

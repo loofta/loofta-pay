@@ -170,6 +170,7 @@ export type Database = {
           notify_email_to: string | null
           paid_at: string | null
           recipient_address: string
+          recipient_username: string | null
           status: string
           to_chain: string
           to_symbol: string
@@ -184,6 +185,7 @@ export type Database = {
           notify_email_to?: string | null
           paid_at?: string | null
           recipient_address: string
+          recipient_username?: string | null
           status?: string
           to_chain: string
           to_symbol: string
@@ -198,6 +200,7 @@ export type Database = {
           notify_email_to?: string | null
           paid_at?: string | null
           recipient_address?: string
+          recipient_username?: string | null
           status?: string
           to_chain?: string
           to_symbol?: string
