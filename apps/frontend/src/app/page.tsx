@@ -19,7 +19,6 @@ const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
   { ssr: false }
 );
 
-const SEND_FEE_SOL = "0.0015";
 const HOME_TAB_KEY = "loofta.home.tab";
 
 export default function Home() {
@@ -298,11 +297,6 @@ export default function Home() {
                         step="0.01"
                         className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500 text-lg"
                       />
-                    </div>
-                    <div className="rounded-xl bg-white/5 px-3 py-2">
-                      <p className="text-sm text-slate-400">
-                        Network fee: <span className="text-slate-300 font-medium">{SEND_FEE_SOL} SOL</span> per send (covers claim processing).
-                      </p>
                     </div>
                     <Button
                       onClick={handleSendContinue}
