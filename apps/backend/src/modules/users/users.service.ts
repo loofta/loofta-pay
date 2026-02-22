@@ -2,9 +2,12 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
 import { ConfigService } from '@nestjs/config';
 
+const SEARCH_CACHE_TTL_MS = 60 * 1000; // 1 min
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
+  private readonly searchCache = new Map<string, { usernames: string[]; ts: number }>();
 
   constructor(
     private readonly supabaseService: SupabaseService,
@@ -27,6 +30,80 @@ export class UsersService {
       return null;
     }
     return { username: user.username ?? null };
+  }
+
+  /**
+   * Get current user's email by Privy user ID (for recipient-check: compare to PENDING_EMAIL claim)
+   */
+  async getEmailByPrivyId(privyUserId: string): Promise<string | null> {
+    if (!privyUserId || !privyUserId.includes('did:privy:')) {
+      return null;
+    }
+    const { data: user, error } = await this.supabaseService.appUsers
+      .select('email')
+      .eq('privy_user_id', privyUserId)
+      .maybeSingle();
+    if (error || !user?.email) return null;
+    return (user.email as string).trim().toLowerCase();
+  }
+
+  /**
+   * Get user by email (for Send flow: resolve email to username)
+   * Returns same shape as findByUsername; used to redirect to /link/username
+   */
+  async findByEmail(email: string): Promise<{
+    id: string;
+    privyUserId: string;
+    email: string | null;
+    username: string | null;
+    requirePrivatePayments: boolean;
+  }> {
+    const clean = (email || '').trim().toLowerCase();
+    if (!clean) throw new NotFoundException('Email is required');
+    const { data: user, error } = await this.supabaseService.appUsers
+      .select('id, privy_user_id, email, username, require_private_payments')
+      .eq('email', clean)
+      .maybeSingle();
+    if (error) {
+      this.logger.error('Error querying user by email:', error);
+      throw new NotFoundException('User not found');
+    }
+    if (!user?.username) throw new NotFoundException('User not found');
+    return {
+      id: user.id,
+      privyUserId: user.privy_user_id,
+      email: user.email,
+      username: user.username,
+      requirePrivatePayments: user.require_private_payments || false,
+    };
+  }
+
+  /**
+   * Search usernames by prefix (for autocomplete). Cached 1 min; only selects username.
+   */
+  async searchUsernames(query: string, limit = 10): Promise<{ usernames: string[] }> {
+    const clean = (query || '').replace(/^@/, '').trim().toLowerCase();
+    if (clean.length < 2) {
+      return { usernames: [] };
+    }
+    const cacheKey = `${clean}:${limit}`;
+    const hit = this.searchCache.get(cacheKey);
+    if (hit && Date.now() - hit.ts < SEARCH_CACHE_TTL_MS) {
+      return { usernames: hit.usernames };
+    }
+    const { data: users, error } = await this.supabaseService.appUsers
+      .select('username')
+      .not('username', 'is', null)
+      .ilike('username', `${clean}%`)
+      .limit(limit);
+
+    if (error) {
+      this.logger.error('Error searching usernames:', error);
+      return { usernames: [] };
+    }
+    const usernames = (users || []).map((u: any) => u.username).filter(Boolean);
+    this.searchCache.set(cacheKey, { usernames, ts: Date.now() });
+    return { usernames };
   }
 
   /**
@@ -159,6 +236,103 @@ export class UsersService {
       }
       throw new Error('Failed to fetch wallet address');
     }
+  }
+
+  /**
+   * Get Privy user ID for an app user (by internal user id).
+   * Used to verify sender ownership via Privy linked accounts when wallet signature fails.
+   */
+  async getPrivyUserIdByAppUserId(appUserId: string): Promise<string | null> {
+    const { data: user, error } = await this.supabaseService.appUsers
+      .select('privy_user_id')
+      .eq('id', appUserId)
+      .maybeSingle();
+    if (error || !user?.privy_user_id) return null;
+    return user.privy_user_id;
+  }
+
+  /**
+   * Return true if the given Solana address is one of the Privy user's linked Solana wallets.
+   * Used as fallback when wallet message signature verification fails (e.g. Privy embedded wallet).
+   */
+  async isSolanaAddressInLinkedAccounts(privyUserId: string, solanaAddress: string): Promise<boolean> {
+    const user = await this.getPrivyUser(privyUserId);
+    if (!user?.linked_accounts?.length) return false;
+    const normalized = solanaAddress.trim();
+    for (const account of user.linked_accounts) {
+      const type = (account.type || '').toLowerCase();
+      const chainType = (account.chain_type || '').toLowerCase();
+      const chainId = (account.chain_id || '').toString().toLowerCase();
+      const isSolana =
+        type === 'wallet' ||
+        type === 'solana' ||
+        type === 'solana_embedded_wallet' ||
+        chainType === 'solana' ||
+        chainId.startsWith('solana:');
+      if (!isSolana) continue;
+      const addr = (account.address || '').toString().trim();
+      if (addr && addr === normalized) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Fetch full Privy user (linked_accounts etc.) for server-side verification
+   */
+  async getPrivyUser(privyUserId: string): Promise<{ linked_accounts: any[] } | null> {
+    const privyAppId = this.configService.get<string>('PRIVY_APP_ID');
+    const privyAppSecret = this.configService.get<string>('PRIVY_APP_SECRET');
+    if (!privyAppId || !privyAppSecret) return null;
+
+    const res = await fetch(`https://api.privy.io/v1/users/${privyUserId}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'privy-app-id': privyAppId,
+        Authorization: `Basic ${Buffer.from(`${privyAppId}:${privyAppSecret}`).toString('base64')}`,
+      },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const linkedAccounts = data?.linked_accounts || data?.linkedAccounts || [];
+    return { linked_accounts: linkedAccounts };
+  }
+
+  /**
+   * Verify that the Privy user's linked accounts match the send-payment recipient identifier.
+   * Used to authorize claim: only the designated email/twitter can claim.
+   */
+  async verifyRecipientIdentityForSendPayment(
+    privyUserId: string,
+    recipientType: 'email' | 'twitter',
+    recipientIdentifier: string,
+  ): Promise<boolean> {
+    const normalized = this.normalizeRecipientIdentifier(recipientType, recipientIdentifier);
+    const user = await this.getPrivyUser(privyUserId);
+    if (!user) return false;
+
+    for (const account of user.linked_accounts) {
+      const type = (account.type || '').toLowerCase();
+      if (recipientType === 'email' && (type === 'email' || type === 'google' || type === 'apple')) {
+        const email = (account.address || account.email || '').toString().toLowerCase().trim();
+        if (email && normalized === email) return true;
+      }
+      if (recipientType === 'twitter' && (type === 'twitter' || type === 'x')) {
+        const handle = (account.username || account.name || account.address || '')
+          .toString()
+          .replace(/^@/, '')
+          .toLowerCase()
+          .trim();
+        if (handle && normalized === handle) return true;
+      }
+    }
+    return false;
+  }
+
+  private normalizeRecipientIdentifier(type: 'email' | 'twitter', value: string): string {
+    const v = value.trim();
+    if (type === 'email') return v.toLowerCase();
+    return v.replace(/^@/, '').toLowerCase();
   }
 
   /**

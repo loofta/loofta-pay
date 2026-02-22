@@ -14,9 +14,11 @@
     "build:all": "npm run build --workspaces",
     "start": "npm run start --workspace=@loofta/frontend",
     "lint": "npm run lint --workspaces --if-present",
-    "test": "npm run test --workspace=@loofta/backend"
+    "test": "npm run test --workspace=@loofta/backend",
+    "postinstall": "patch-package"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "patch-package": "^8.0.1"
   }
 }

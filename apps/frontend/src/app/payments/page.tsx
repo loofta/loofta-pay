@@ -5,6 +5,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { useWallets } from "@privy-io/react-auth";
 import Link from "next/link";
 
+const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
+const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
+
 type Tab = "all" | "received" | "sent";
 
 export type PaymentHistoryClaim = {
@@ -17,12 +20,28 @@ export type PaymentHistoryClaim = {
   paid_at: string | null;
   recipient_address: string;
   creator_email: string | null;
+  creator_username?: string | null;
   created_by: string | null;
   paid_with_token: string | null;
   paid_with_chain: string | null;
   is_private: boolean | null;
   description: string | null;
 };
+
+/** For received: sender label = @username → email → Anonymous */
+function getSenderDisplay(claim: PaymentHistoryClaim): string {
+  if (claim.creator_username) return `@${claim.creator_username}`;
+  if (claim.creator_email) return claim.creator_email;
+  return "Anonymous";
+}
+
+/** For sent: payee label = @username → email → Anonymous (from recipient_address) */
+function getPayeeDisplay(claim: PaymentHistoryClaim): string {
+  const ra = (claim.recipient_address || "").trim();
+  if (ra.startsWith(PENDING_USERNAME_PREFIX)) return `@${ra.slice(PENDING_USERNAME_PREFIX.length).trim()}`;
+  if (ra.startsWith(PENDING_EMAIL_PREFIX)) return ra.slice(PENDING_EMAIL_PREFIX.length).trim();
+  return "Anonymous";
+}
 
 type Direction = "sent" | "received";
 
@@ -52,14 +71,25 @@ function PaymentRow({
   const date = claim.paid_at || claim.created_at;
   const statusLabel = STATUS_LABELS[String(claim.status).toUpperCase()] ?? claim.status;
   const isSent = direction === "sent";
+  const senderOrPayee = isSent ? getPayeeDisplay(claim) : getSenderDisplay(claim);
+  const rawDesc = claim.description?.trim() || "";
+  const gifUrlPattern = new RegExp(
+    "https?:\\/\\/[^\\s]+(?:\\.gif|giphy\\.com|tenor\\.com|gfycat\\.com|media\\.giphy\\.com)[^\\s]*",
+    "gi",
+  );
+  const whitespacePattern = new RegExp("\\s+", "g");
+  const emptyStr = "";
+  const singleSpace = " ";
+  const message = rawDesc
+    ? (rawDesc.replace(gifUrlPattern, emptyStr).replace(whitespacePattern, singleSpace).trim() || null)
+    : null;
+
+  const linkClassName =
+    "flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 hover:border-gray-300 transition-colors " +
+    (isSent ? "border-l-4 border-l-amber-400" : "border-l-4 border-l-green-400");
 
   return (
-    <Link
-      href={`/c/${claim.id}`}
-      className={`flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 hover:border-gray-300 transition-colors
-        ${isSent ? "border-l-4 border-l-amber-400" : "border-l-4 border-l-green-400"}
-      `}
-    >
+    <Link href={`/c/${claim.id}`} className={linkClassName}>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-semibold text-gray-900">
@@ -71,13 +101,15 @@ function PaymentRow({
             </span>
           )}
         </div>
-        <p className="mt-0.5 text-sm text-gray-500">
-          {isSent ? "To " : "From "}
-          {isSent
-            ? `${claim.recipient_address.slice(0, 6)}...${claim.recipient_address.slice(-4)}`
-            : claim.creator_email || "—"}
+        <p className="mt-1 text-base font-medium text-gray-700">
+          {isSent ? "To " : "From "}{senderOrPayee}
         </p>
-        <p className="mt-0.5 text-sm text-gray-400">
+        {message && (
+          <div className="mt-2 px-3 py-2 rounded-lg bg-gray-50 border border-gray-100">
+            <p className="text-base text-gray-700 line-clamp-2 italic">{'"'}{message}{'"'}</p>
+          </div>
+        )}
+        <p className="mt-1 text-sm text-gray-400">
           {new Date(date).toLocaleDateString(undefined, {
             month: "short",
             day: "numeric",
@@ -102,6 +134,8 @@ export default function PaymentsPage() {
   const { authenticated, userId, ready, login } = useAuth();
   const { wallets } = useWallets();
   const [tab, setTab] = useState<Tab>("all");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [sent, setSent] = useState<PaymentHistoryClaim[]>([]);
   const [received, setReceived] = useState<PaymentHistoryClaim[]>([]);
   const [loading, setLoading] = useState(true);
@@ -170,6 +204,16 @@ export default function PaymentsPage() {
     );
     return withDir;
   }, [sent, received]);
+
+  const filteredPayments = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return allPayments;
+    return allPayments.filter(({ claim, direction }) => {
+      const senderOrPayee = direction === "sent" ? getPayeeDisplay(claim) : getSenderDisplay(claim);
+      const message = (claim.description || "").toLowerCase();
+      return senderOrPayee.toLowerCase().includes(q) || message.includes(q);
+    });
+  }, [allPayments, searchQuery]);
 
   const totals = useMemo(() => {
     const sum = (arr: PaymentHistoryClaim[]) =>
@@ -264,22 +308,44 @@ export default function PaymentsPage() {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-1 p-1 rounded-lg bg-gray-100 mb-6">
-          {(["all", "received", "sent"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === t
-                ? "bg-white text-gray-900 shadow-sm"
-                : "text-gray-600 hover:text-gray-900"
-                }`}
-            >
-              {t === "all" ? "All" : t === "received" ? "Received" : "Sent"}
-            </button>
-          ))}
+        {/* Tabs and search */}
+        <div className="flex items-center gap-2 mb-6">
+          <div className="flex gap-1 p-1 rounded-lg bg-gray-100 flex-1">
+            {(["all", "received", "sent"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTab(t)}
+                className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === t
+                  ? "bg-white text-gray-900 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900"
+                  }`}
+              >
+                {t === "all" ? "All" : t === "received" ? "Received" : "Sent"}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setSearchOpen((o) => !o)}
+            className="p-2 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors shrink-0"
+            aria-label="Search"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.35-4.35" />
+            </svg>
+          </button>
         </div>
+        {searchOpen && (
+          <input
+            type="search"
+            placeholder="Search by sender, payee or message..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full mb-4 px-3 py-2 rounded-lg border border-gray-200 text-gray-900 placeholder-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500"
+          />
+        )}
 
         {error && (
           <div className="rounded-lg bg-red-50 text-red-700 px-4 py-3 text-sm mb-4 border border-red-100">
@@ -296,17 +362,21 @@ export default function PaymentsPage() {
         ) : (
           <div className="space-y-3">
             {tab === "all" &&
-              allPayments.map(({ claim, direction }) => (
+              filteredPayments.map(({ claim, direction }) => (
                 <PaymentRow key={claim.id} claim={claim} direction={direction} />
               ))}
             {tab === "received" &&
-              received.map((claim) => (
-                <PaymentRow key={claim.id} claim={claim} direction="received" />
-              ))}
+              filteredPayments
+                .filter(({ direction }) => direction === "received")
+                .map(({ claim }) => (
+                  <PaymentRow key={claim.id} claim={claim} direction="received" />
+                ))}
             {tab === "sent" &&
-              sent.map((claim) => (
-                <PaymentRow key={claim.id} claim={claim} direction="sent" />
-              ))}
+              filteredPayments
+                .filter(({ direction }) => direction === "sent")
+                .map(({ claim }) => (
+                  <PaymentRow key={claim.id} claim={claim} direction="sent" />
+                ))}
             {tab === "all" && !hasAnyPayments && (
               <EmptyState
                 title="No payments yet"
@@ -324,6 +394,11 @@ export default function PaymentsPage() {
                 title="No sent payments"
                 description="Payments you make via payment links will appear here."
               />
+            )}
+            {hasAnyPayments && filteredPayments.length === 0 && (
+              <div className="rounded-xl border border-gray-200 bg-gray-50 py-8 px-4 text-center">
+                <p className="text-sm text-gray-600">No payments match your search.</p>
+              </div>
             )}
           </div>
         )}

@@ -118,7 +118,6 @@ export class ClaimCompanionProcessorService {
    */
   async processPendingClaimCompanions(): Promise<ClaimCompanionResult[]> {
     if (this.isProcessing) {
-      this.logger.debug('Already processing claim companions, skipping');
       return [];
     }
 
@@ -126,10 +125,7 @@ export class ClaimCompanionProcessorService {
     const results: ClaimCompanionResult[] = [];
 
     try {
-      this.logger.log('Starting claim companion processing...');
-
       const pendingKeys = await this.redisService.sMembers(CLAIM_PENDING_KEY);
-      this.logger.log(`Found ${pendingKeys.length} pending claim companions`);
 
       for (const redisKey of pendingKeys) {
         const dataStr = await this.redisService.get(redisKey);
@@ -151,8 +147,6 @@ export class ClaimCompanionProcessorService {
           results.push(processResult);
         }
       }
-
-      this.logger.log(`Processed ${results.length} claim companions`);
     } catch (error: any) {
       this.logger.error('Error processing claim companions:', error?.message);
     } finally {
@@ -171,19 +165,15 @@ export class ClaimCompanionProcessorService {
   ): Promise<ClaimCompanionResult | null> {
     const { claimId, companionAddress, companionPrivateKey, recipientAddress, destinationAsset, destinationAmount, status } = data;
 
-    this.logger.debug(`Processing claim ${claimId}, status: ${status}`);
-
     try {
       // Check idempotency
       if (data.finalTxHash && status === 'completed') {
-        this.logger.debug(`Claim ${claimId} already completed`);
         await this.redisService.sRem(CLAIM_PENDING_KEY, redisKey);
         return { claimId, action: 'already_completed', success: true, txHash: data.finalTxHash };
       }
 
       // Check if expired (24h)
       if (Date.now() - data.createdAt > 24 * 60 * 60 * 1000) {
-        this.logger.debug(`Claim ${claimId} expired`);
         await this.updateCompanionData(redisKey, { status: 'failed', error: 'Expired after 24 hours' });
         await this.redisService.sRem(CLAIM_PENDING_KEY, redisKey);
         return { claimId, action: 'expired', success: false, error: 'Expired' };
@@ -191,11 +181,9 @@ export class ClaimCompanionProcessorService {
 
       // Check companion wallet balance
       const balance = await this.getEthBalance(companionAddress);
-      this.logger.debug(`Companion ${companionAddress} balance: ${balance.eth} ETH`);
 
       if (status === 'pending_first_deposit') {
         if (balance.eth >= MIN_ETH_FUNDED) {
-          this.logger.log(`Companion funded with ${balance.eth} ETH`);
           await this.updateCompanionData(redisKey, {
             status: 'first_received',
             amountReceivedETH: balance.eth.toFixed(8),
@@ -209,8 +197,6 @@ export class ClaimCompanionProcessorService {
 
       if (data.status === 'first_received') {
         // Create final intent (ETH → destination token)
-        this.logger.log(`Creating final intent for claim ${claimId}`);
-
         const ethToSend = balance.eth - GAS_RESERVE;
         if (ethToSend <= 0) {
           return { claimId, action: 'insufficient_balance', success: false };
@@ -271,8 +257,6 @@ export class ClaimCompanionProcessorService {
         });
 
         // Send ETH to final intent deposit address
-        this.logger.log(`Sending ${requiredEth} ETH to ${depositAddress}`);
-
         const account = privateKeyToAccount(companionPrivateKey as `0x${string}`);
         const walletClient = createWalletClient({
           account,
@@ -285,8 +269,6 @@ export class ClaimCompanionProcessorService {
             to: depositAddress as `0x${string}`,
             value: parseEther(requiredEth.toFixed(8)),
           });
-
-          this.logger.log(`Transaction sent: ${txHash}`);
 
           await this.updateCompanionData(redisKey, {
             status: 'second_sent',
@@ -303,7 +285,6 @@ export class ClaimCompanionProcessorService {
       }
 
       if (data.status === 'second_sent') {
-        this.logger.log(`Second hop sent, marking claim ${claimId} as completed`);
         await this.updateCompanionData(redisKey, { status: 'completed' });
         await this.redisService.sRem(CLAIM_PENDING_KEY, redisKey);
         return { claimId, action: 'completed', success: true, txHash: data.finalTxHash };

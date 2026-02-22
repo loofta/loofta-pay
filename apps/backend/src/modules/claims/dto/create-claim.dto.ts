@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, MaxLength, IsBoolean } from 'class-validator';
 
 export class TokenSelectionDto {
   @ApiProperty({ description: 'Token symbol', example: 'USDC' })
@@ -32,4 +32,9 @@ export class CreateClaimDto {
   @IsOptional()
   @IsString()
   userId?: string;
+
+  @ApiPropertyOptional({ description: 'When true, payment must use Privacy Cash (private payment)' })
+  @IsOptional()
+  @IsBoolean()
+  isPrivate?: boolean;
 }

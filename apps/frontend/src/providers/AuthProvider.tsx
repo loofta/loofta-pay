@@ -24,8 +24,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		<PrivyProvider
 			appId={appId}
 			config={{
-				// Email only for login/create account
-				loginMethods: ["email"],
+				// Email and Twitter for login and linking; encourage two methods for recovery.
+				// If you see "Login with Twitter not allowed", enable Twitter in the Privy Dashboard:
+				// https://dashboard.privy.io → your app → Login Methods → Socials → enable Twitter/X.
+				loginMethods: ["email", "twitter"],
 				embeddedWallets: {
 					// Don't create EVM wallets - only Solana
 					ethereum: {
@@ -48,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				// Detect external Solana wallets (e.g. Phantom) for "Pay with wallet" and connection flows.
 				externalWallets: {
 					solana: {
-						connectors: toSolanaWalletConnectors(),
+						connectors: toSolanaWalletConnectors({ shouldAutoConnect: false }),
 					},
 				},
 				appearance: {
@@ -56,6 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 					logo: "/loofta.svg",
 					accentColor: "#FF0F00",
 					showWalletLoginFirst: false,
+					walletChainType: "solana-only",
 				},
 			}}
 		>

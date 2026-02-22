@@ -172,6 +172,30 @@ export class UsersController {
   }
 
   /**
+   * Get user by email (for Send flow: resolve email to username)
+   */
+  @Get('by-email')
+  @ApiOperation({ summary: 'Get user by email (returns username for /link redirect)' })
+  @ApiQuery({ name: 'email', description: 'User email' })
+  @ApiResponse({ status: 200, description: 'User info (no wallet)' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async findByEmail(@Query('email') email: string) {
+    const user = await this.usersService.findByEmail(email);
+    return { user };
+  }
+
+  /**
+   * Search usernames by prefix (for Send autocomplete)
+   */
+  @Get('search')
+  @ApiOperation({ summary: 'Search usernames by prefix' })
+  @ApiQuery({ name: 'q', description: 'Search query (min 2 chars)' })
+  @ApiResponse({ status: 200, description: 'List of matching usernames' })
+  async searchUsernames(@Query('q') q: string) {
+    return this.usersService.searchUsernames(q || '', 10);
+  }
+
+  /**
    * Debug endpoint to list all usernames (remove in production)
    */
   @Get('debug/list-usernames')

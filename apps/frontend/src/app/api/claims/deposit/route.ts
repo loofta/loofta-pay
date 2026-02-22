@@ -337,14 +337,43 @@ export async function POST(request: Request) {
     console.log("[claims/deposit]   Same chain:", sameChain);
     
     // Validate recipient address format based on destination chain
-    const recipientAddress = claim.recipient_address;
+    let recipientAddress = (claim.recipient_address || "").trim();
+    // For cross-chain to Solana: use unique claim burner (like Privacy Cash / send-payment)
+    const isDestSolana = destChain === "sol" || destChain === "solana";
+    let claimBurner = (claim.claim_burner_address || "").trim();
+    if (isDestSolana && (!recipientAddress || recipientAddress.startsWith("PENDING_"))) {
+      if (claimBurner) {
+        recipientAddress = claimBurner;
+        console.log("[claims/deposit] Using claim unique burner as quote recipient for pending Solana claim");
+      } else {
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+        try {
+          const r = await fetch(`${backendUrl}/claims/${claimId}`);
+          if (r.ok) {
+            const data = await r.json();
+            const backendBurner = (data?.claim?.claim_burner_address || "").trim();
+            if (backendBurner) {
+              recipientAddress = backendBurner;
+              claimBurner = backendBurner;
+              console.log("[claims/deposit] Using claim unique burner from backend for pending Solana claim");
+            }
+          }
+        } catch (e) {
+          console.warn("[claims/deposit] Failed to fetch claim from backend:", (e as Error)?.message);
+        }
+      }
+    }
     if (isNonEvmDestination) {
       if (destChain === 'sol' || destChain === 'solana') {
         // Solana addresses are Base58, typically 44 characters
         const isSolanaFormat = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(recipientAddress);
-        console.log("[claims/deposit] Solana recipient validation:", { recipientAddress, isSolanaFormat, length: recipientAddress?.length });
-        if (!isSolanaFormat) {
-          console.error("[claims/deposit] Invalid Solana address format!");
+        console.log("[claims/deposit] Solana recipient validation:", { recipientAddress: recipientAddress || "(empty)", isSolanaFormat, length: recipientAddress?.length });
+        if (!isSolanaFormat || !recipientAddress) {
+          console.error("[claims/deposit] Invalid or missing Solana recipient (pending claim).");
+          return NextResponse.json({
+            error: "This payment link is for someone who hasn’t signed up yet. They need to open the link and claim the payment first — then you can complete the payment.",
+            code: "MISSING_RECIPIENT",
+          }, { status: 400 });
         }
         
         // Check if direct route might not work (non-ETH mainnet to Solana)
@@ -360,49 +389,41 @@ export async function POST(request: Request) {
     }
     
     // Build request based on deposit mode
-    // Note: Using EXACT_INPUT is more universally supported than EXACT_OUTPUT
-    // We'll calculate the input amount based on prices and add a buffer
+    // EXACT_OUTPUT everywhere so recipient gets the full claim amount (fees on top; sender pays more if needed).
     const req: QuoteRequest = useIntentsMode ? {
-      // INTENTS mode - use EXACT_INPUT like near-intents does
+      // INTENTS mode - EXACT_OUTPUT so recipient gets exact amount
       dry: false,
-      swapType: "EXACT_INPUT" as any,
+      swapType: "EXACT_OUTPUT" as any,
       slippageTolerance: 100,
       originAsset: fromToken.tokenId,
       depositType: "INTENTS" as any,
       destinationAsset,
-      amount: amountInAtomic,
+      amount: amountOutAtomic,
       refundTo: userAddress || finalRefundAddress,
       refundType: "INTENTS" as any,
-      recipient: claim.recipient_address,
+      recipient: recipientAddress,
       recipientType: "INTENTS" as any,
       deadline: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
       quoteWaitingTimeMs: 3000,
       ...(userAddress ? { authMethod: "evm", userAddress } : {}),
     } as any : {
-      // Regular mode - use EXACT_INPUT (more universally supported)
-      // amountInAtomic is calculated with a buffer to ensure enough output
+      // Regular mode - EXACT_OUTPUT so recipient gets full claim amount (fees on top)
       dry: false,
-      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      swapType: QuoteRequest.swapType.EXACT_OUTPUT,
       slippageTolerance: 100,
       originAsset: fromToken.tokenId,
-      // depositType: always ORIGIN_CHAIN when depositing from external chain
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
-      // Use input amount (with buffer) instead of output amount
-      amount: amountInAtomic,
-      // refundTo: treasury address on origin chain
+      amount: amountOutAtomic,
       refundTo: finalRefundAddress,
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
-      // recipient: the actual destination address
-      recipient: claim.recipient_address,
-      // recipientType: DESTINATION_CHAIN for withdrawing to external chain
-      // Note: This works for both EVM and non-EVM destinations per NEAR Intents docs
+      recipient: recipientAddress,
       recipientType: sameChain 
         ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN 
         : QuoteRequest.recipientType.DESTINATION_CHAIN,
       deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
-      quoteWaitingTimeMs: 5000, // Increased to 5s for better quote response
-      referral: orgReferral || "loofta", // Use orgReferral if provided, otherwise default to "loofta"
+      quoteWaitingTimeMs: 5000,
+      referral: orgReferral || "loofta",
     } as any;
 
     // Debug log (visible in server logs)
@@ -462,7 +483,7 @@ export async function POST(request: Request) {
               fromToken,
               destinationAsset,
               destinationAmount: amountOutAtomic,
-              recipientAddress: claim.recipient_address,
+              recipientAddress,
               amountUsd: Number(claim.amount || 0),
             }),
           });

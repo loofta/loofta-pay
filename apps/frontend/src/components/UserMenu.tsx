@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { usePrivy, useWallets, useLinkAccount } from "@privy-io/react-auth";
 import { useExportWallet } from "@privy-io/react-auth/solana";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -22,6 +22,21 @@ import { Label } from "@/components/ui/label";
 import { Settings } from "lucide-react";
 import { PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
 
+/** Privy uses type "twitter_oauth" for Twitter (not "twitter" or "x"). */
+const TWITTER_TYPES = ["twitter_oauth", "twitter", "x"] as const;
+
+/** Twitter/X handle from Privy linked accounts (username || name || subject). */
+function getTwitterUsername(linkedAccounts: Array<{ type?: string; username?: string; name?: string; subject?: string }> | undefined): string | null {
+  const tw = (linkedAccounts || []).find((a) => a.type && TWITTER_TYPES.includes(a.type as any));
+  if (!tw) return null;
+  const raw = (tw as { username?: string; name?: string; subject?: string }).username
+    || (tw as { name?: string }).name
+    || (tw as { subject?: string }).subject
+    || "";
+  const s = String(raw).replace(/^@/, "").toLowerCase().trim();
+  return s.length >= 3 ? s : null;
+}
+
 interface UserMenuProps {
   username: string | null;
   email: string | undefined;
@@ -34,6 +49,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const storeEmail = useAuthStore((s) => s.email);
   const storeUsername = useAuthStore((s) => s.username ?? null);
   const setAuth = useAuthStore((s) => s.setAuth);
+  const setUsername = useAuthStore((s) => s.setUsername);
 
   // Use props if available, otherwise fallback to store
   const username = usernameProp ?? storeUsername;
@@ -78,11 +94,39 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
+  const [updatingToTwitter, setUpdatingToTwitter] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
+  const { linkTwitter, linkEmail } = useLinkAccount({
+    onSuccess: () => {
+      toast({ title: "Account linked", description: "Sign-in method added successfully." });
+    },
+    onError: (err: unknown) => {
+      const msg = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : String(err);
+      if (/already been linked|already linked|linked to another user/i.test(msg)) {
+        toast({
+          variant: "destructive",
+          title: "Email already in use",
+          description: "This email is linked to another account. Sign in with that email to use it.",
+        });
+      } else {
+        toast({ variant: "destructive", title: "Could not link", description: msg || "Try again." });
+      }
+    },
+  });
   const { exportWallet } = useExportWallet();
   const { wallets } = useWallets();
   const { toast } = useToast();
+
+  const linkedAccounts = (privyUser?.linkedAccounts || []) as Array<{ type?: string; username?: string; name?: string; address?: string; subject?: string }>;
+  const hasTwitter = linkedAccounts.some((a) => a.type && TWITTER_TYPES.includes(a.type as any));
+  const hasEmail = linkedAccounts.some((a) => a.type === "email");
+  const twitterHandle = useMemo(() => getTwitterUsername(linkedAccounts), [linkedAccounts]);
+  const linkedEmailAddress = useMemo(() => {
+    const acc = linkedAccounts.find((a) => a.type === "email");
+    return acc && "address" in acc ? (acc as { address: string }).address : null;
+  }, [linkedAccounts]);
+  const canUpdateToTwitter = hasTwitter && twitterHandle && username !== twitterHandle;
 
   // Get Solana wallet address from Privy
   // Use linkedAccounts - these are wallets tied to user (what shows in Privy dashboard)
@@ -431,32 +475,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               </div>
             )}
 
-            {/* Payment history */}
-            <div className="mb-2">
-              <Link
-                href="/payments"
-                onClick={() => setIsOpen(false)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${isDarkPage
-                  ? "text-gray-300 hover:bg-gray-800"
-                  : "text-gray-700 hover:bg-gray-100"
-                  }`}
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="12" y1="1" x2="12" y2="23"></line>
-                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-                </svg>
-                Payment history
-              </Link>
-            </div>
+
 
             {/* Settings - opens modal with wallet address & export private keys */}
             <div className="mb-2">
@@ -544,11 +563,11 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.9, opacity: 0 }}
-                className="bg-white rounded-[24px] w-full max-w-md shadow-2xl overflow-hidden"
+                className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden"
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Content */}
-                <div className="p-8">
+                <div className="p-8 text-white">
                   {/* Icon */}
                   <motion.div
                     initial={{ scale: 0 }}
@@ -557,9 +576,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     className="mb-6 flex justify-center"
                   >
                     <div
-                      className="w-24 h-24 rounded-full flex items-center justify-center mx-auto"
+                      className="w-24 h-24 rounded-full flex items-center justify-center mx-auto bg-white/10"
                       style={{
-                        background: "linear-gradient(135deg, rgba(255,15,0,0.15) 0%, rgba(234,179,8,0.15) 100%)",
+                        background: "linear-gradient(135deg, rgba(255,15,0,0.2) 0%, rgba(234,179,8,0.2) 100%)",
                       }}
                     >
                       <motion.div
@@ -579,24 +598,22 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     transition={{ delay: 0.1 }}
                     className="text-center mb-6"
                   >
-                    <h2 className="text-2xl font-bold text-gray-900 mb-2">
+                    <h2 className="text-2xl font-bold text-white mb-2">
                       Start receiving money now
                     </h2>
-                    <p className="text-base text-gray-600">
+                    <p className="text-base text-slate-400">
                       Share your payment link to receive payments
                     </p>
                   </motion.div>
-
-
 
                   {/* Payment Link Display */}
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.2 }}
-                    className="mb-6 p-4 rounded-xl bg-gray-50 border border-gray-200"
+                    className="mb-6 p-4 rounded-xl bg-white/5 border border-white/10"
                   >
-                    <p className="text-sm font-medium mb-2 text-gray-500">
+                    <p className="text-sm font-medium mb-2 text-slate-400">
                       Your payment link
                     </p>
                     <div className="flex items-center gap-2">
@@ -604,7 +621,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         href={getPaymentLink() || ""}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex-1 text-sm font-mono truncate hover:underline text-orange-600"
+                        className="flex-1 text-sm font-mono truncate hover:underline text-orange-400"
                         onClick={(e) => e.stopPropagation()}
                       >
                         {getPaymentLink()?.replace(/^https?:\/\//, "") || ""}
@@ -614,7 +631,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           e.stopPropagation();
                           copyPaymentLink();
                         }}
-                        className={`p-2 rounded hover:bg-gray-200 transition-colors flex-shrink-0 ${linkCopied ? "bg-green-100" : ""}`}
+                        className={`p-2 rounded-lg hover:bg-white/10 transition-colors flex-shrink-0 ${linkCopied ? "text-green-400" : "text-slate-400"}`}
                         title={linkCopied ? "Copied!" : "Copy link"}
                       >
                         {linkCopied ? (
@@ -625,7 +642,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                             fill="none"
                             stroke="currentColor"
                             strokeWidth="2"
-                            className="text-green-500"
                           >
                             <polyline points="20 6 9 17 4 12"></polyline>
                           </svg>
@@ -637,7 +653,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                             fill="none"
                             stroke="currentColor"
                             strokeWidth="2"
-                            className="text-gray-500"
                           >
                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -652,19 +667,19 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.15 }}
-                    className="mb-6 p-4 rounded-xl border bg-gray-50 border-gray-200 opacity-90"
+                    className="mb-6 p-4 rounded-xl border border-white/10 bg-white/5"
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-base font-semibold text-gray-900">
+                        <span className="text-base font-semibold text-white">
                           🔒 Require Private Payments Only
                         </span>
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
                           Coming soon
                         </span>
                       </div>
                       {loadingPreferences && !PRIVATE_PAYMENT_COMING_SOON ? (
-                        <div className="h-6 w-11 rounded-full bg-gray-200 animate-pulse" />
+                        <div className="h-6 w-11 rounded-full bg-white/10 animate-pulse" />
                       ) : (
                         <Switch
                           checked={PRIVATE_PAYMENT_COMING_SOON ? false : requirePrivatePayments}
@@ -675,7 +690,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         />
                       )}
                     </div>
-                    <p className="text-sm text-gray-600 mt-3 w-full block">
+                    <p className="text-sm text-slate-400 mt-3 w-full block">
                       When available, you can require payments to your link to use private transfer.
                     </p>
                   </motion.div>
@@ -695,12 +710,12 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         e.stopPropagation();
                         shareToTelegram();
                       }}
-                      className="flex flex-col items-center gap-2 p-4 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+                      className="flex flex-col items-center gap-2 p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-white"
                     >
-                      <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="text-gray-600">
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="text-slate-300">
                         <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.446 1.394c-.14.18-.357.295-.6.295-.002 0-.003 0-.005 0l.213-3.054 5.56-5.022c.24-.213-.054-.334-.373-.12l-6.869 4.326-2.96-.924c-.64-.203-.658-.64.135-.954l11.566-4.458c.538-.196 1.006.128.832.941z" />
                       </svg>
-                      <span className="text-xs font-medium text-gray-700">
+                      <span className="text-xs font-medium text-slate-300">
                         Telegram
                       </span>
                     </motion.button>
@@ -713,12 +728,12 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         e.stopPropagation();
                         shareToWhatsApp();
                       }}
-                      className="flex flex-col items-center gap-2 p-4 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+                      className="flex flex-col items-center gap-2 p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-white"
                     >
-                      <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="text-gray-600">
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="text-slate-300">
                         <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z" />
                       </svg>
-                      <span className="text-xs font-medium text-gray-700">
+                      <span className="text-xs font-medium text-slate-300">
                         WhatsApp
                       </span>
                     </motion.button>
@@ -731,13 +746,13 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         e.stopPropagation();
                         shareToEmail();
                       }}
-                      className="flex flex-col items-center gap-2 p-4 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+                      className="flex flex-col items-center gap-2 p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-white"
                     >
-                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600">
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-300">
                         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
                         <polyline points="22,6 12,13 2,6"></polyline>
                       </svg>
-                      <span className="text-xs font-medium text-gray-700">
+                      <span className="text-xs font-medium text-slate-300">
                         Email
                       </span>
                     </motion.button>
@@ -754,7 +769,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         e.stopPropagation();
                         copyPaymentLink();
                       }}
-                      className="w-full py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 hover:scale-105"
+                      className="w-full py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 hover:scale-[1.02]"
                       style={{ background: "linear-gradient(to right, #FF0F00, #EAB308)" }}
                     >
                       {linkCopied ? (
@@ -802,27 +817,129 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         return null;
       })()}
 
-      {/* Settings Modal - wallet address, export private keys, etc. */}
+      {/* Settings Modal - dark, big title like Share modal */}
       <Dialog open={showSettingsModal} onOpenChange={setShowSettingsModal}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Settings className="w-5 h-5" />
-              Settings
-            </DialogTitle>
-            <DialogDescription>
-              Wallet address and security options.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
+        <DialogContent className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 text-white [&>button]:text-white/70 [&>button]:hover:text-white">
+          {/* Big title like Share modal */}
+          <div className="text-center mb-6">
+            <div className="mb-3 flex justify-center">
+              <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center">
+                <Settings className="w-6 h-6 text-white" />
+              </div>
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-1">Settings</h2>
+            <p className="text-sm text-gray-400">Wallet, sign-in methods, and security.</p>
+          </div>
+
+          <div className="space-y-4 py-0">
+            {/* Sign-in methods - show connected first, then Add buttons */}
+            <div>
+              <Label className="text-sm font-medium mb-2 block text-gray-300">Sign-in methods</Label>
+              {/* Always show what's already connected */}
+              {(hasEmail || hasTwitter) && (
+                <div className="mb-3 p-3 rounded-xl bg-white/5 border border-white/10 space-y-2">
+                  <p className="text-xs font-medium text-gray-400 mb-1.5">Connected</p>
+                  {hasEmail && linkedEmailAddress && (
+                    <div className="flex items-center gap-2 text-sm text-white/90">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-gray-400">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                        <polyline points="22,6 12,13 2,6"></polyline>
+                      </svg>
+                      <span className="truncate">{linkedEmailAddress}</span>
+                    </div>
+                  )}
+                  {hasTwitter && twitterHandle && (
+                    <div className="flex items-center gap-2 text-sm text-white/90">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="shrink-0 text-gray-400">
+                        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                      </svg>
+                      <span>@{twitterHandle}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              <p className="text-xs text-gray-400 mb-3">
+                Add a second method so you can recover your account.
+              </p>
+              <div className="space-y-1">
+                {!hasTwitter && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSettingsModal(false);
+                      linkTwitter();
+                    }}
+                    title="You'll be redirected to Twitter to login"
+                    className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-3 text-orange-400 hover:bg-orange-400/10"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                    </svg>
+                    Add Twitter
+                  </button>
+                )}
+                {!hasEmail && (
+                  <button
+                    type="button"
+                    onClick={() => linkEmail()}
+                    className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-3 text-gray-300 hover:bg-white/10 hover:text-white"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                      <polyline points="22,6 12,13 2,6"></polyline>
+                    </svg>
+                    Add email
+                  </button>
+                )}
+              </div>
+              {canUpdateToTwitter && twitterHandle && (
+                <div className="mt-3 p-3 rounded-xl bg-white/5 border border-white/10">
+                  <p className="text-xs font-medium text-gray-300 mb-1">Payment link</p>
+                  <p className="text-xs text-gray-400 mb-2">
+                    Use your Twitter as your payment link: @{twitterHandle}
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="rounded-xl bg-white/10 text-white border-0 hover:bg-white/20"
+                    disabled={updatingToTwitter || !privyUser?.id}
+                    onClick={async () => {
+                      if (!privyUser?.id || !twitterHandle) return;
+                      setUpdatingToTwitter(true);
+                      try {
+                        const res = await fetch("/api/users/setup-username", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ privyUserId: privyUser.id, username: twitterHandle }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) {
+                          toast({ variant: "destructive", title: "Update failed", description: data.error || "Try again." });
+                          return;
+                        }
+                        const newUsername = data.user?.username ?? twitterHandle;
+                        setUsername(newUsername);
+                        setAuth({ authenticated: true, email: storeEmail, username: newUsername });
+                        toast({ title: "Payment link updated", description: `Your link is now @${newUsername}` });
+                      } catch (e) {
+                        toast({ variant: "destructive", title: "Update failed", description: "Try again." });
+                      } finally {
+                        setUpdatingToTwitter(false);
+                      }
+                    }}
+                  >
+                    {updatingToTwitter ? "Updating…" : `Use @${twitterHandle}`}
+                  </Button>
+                </div>
+              )}
+            </div>
             {walletAddress ? (
               <>
-                {/* Wallet Address */}
                 <div>
-                  <Label className="text-sm font-medium mb-2 block">Wallet Address</Label>
-                  <div className="flex items-center gap-2 p-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
+                  <Label className="text-sm font-medium mb-2 block text-gray-300">Wallet Address</Label>
+                  <div className="flex items-center gap-2 p-3 rounded-xl bg-white/5 border border-white/10">
                     <p
-                      className="flex-1 text-sm font-mono break-all cursor-pointer hover:opacity-80"
+                      className="flex-1 text-sm font-mono break-all cursor-pointer text-white/90 hover:opacity-80"
                       onClick={() => {
                         setShowFullAddress(!showFullAddress);
                         if (!showFullAddress) copyToClipboard(walletAddress, false);
@@ -833,15 +950,15 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     </p>
                     <button
                       onClick={() => copyToClipboard(walletAddress, false)}
-                      className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0"
+                      className="p-2 rounded-lg hover:bg-white/10 shrink-0 text-gray-400 hover:text-white"
                       title={copied ? "Copied!" : "Copy"}
                     >
                       {copied ? (
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-500">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-400">
                           <polyline points="20 6 9 17 4 12"></polyline>
                         </svg>
                       ) : (
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                         </svg>
@@ -851,14 +968,13 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   <p className="text-xs text-gray-500 mt-1">{showFullAddress ? "Click to show shortened" : "Click address to copy full"}</p>
                 </div>
 
-                {/* Wallet actions */}
                 <div className="space-y-1">
                   <button
                     onClick={() => {
                       setShowSettingsModal(false);
                       window.open(`https://solscan.io/account/${walletAddress}`, '_blank');
                     }}
-                    className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                    className="w-full text-left px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
@@ -872,7 +988,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       setShowSettingsModal(false);
                       setShowWithdrawModal(true);
                     }}
-                    className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                    className="w-full text-left px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -911,7 +1027,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         });
                       }
                     }}
-                    className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                    className="w-full text-left px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -925,9 +1041,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             ) : (
               <div className="py-4 text-center">
                 {!privyReady ? (
-                  <p className="text-sm text-gray-500">Loading wallet...</p>
+                  <p className="text-sm text-gray-400">Loading wallet...</p>
                 ) : (
-                  <p className="text-sm text-gray-500">Wallet will be created automatically when needed.</p>
+                  <p className="text-sm text-gray-400">Wallet will be created automatically when needed.</p>
                 )}
               </div>
             )}

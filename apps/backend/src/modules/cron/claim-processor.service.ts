@@ -45,7 +45,6 @@ export class ClaimProcessorService {
   async processPendingClaims(): Promise<ProcessingResult[]> {
     // Prevent concurrent processing
     if (this.isProcessing) {
-      this.logger.debug('Already processing claims, skipping');
       return [];
     }
 
@@ -53,11 +52,8 @@ export class ClaimProcessorService {
     const results: ProcessingResult[] = [];
 
     try {
-      this.logger.log('Starting claim processing...');
-
       // Get pending intents
       const pendingIntents = await this.claimsService.getPendingIntents();
-      this.logger.log(`Found ${pendingIntents.length} pending intents`);
 
       for (const intent of pendingIntents) {
         // Use distributed lock if Redis is available
@@ -73,8 +69,6 @@ export class ClaimProcessorService {
           results.push(processResult);
         }
       }
-
-      this.logger.log(`Processed ${results.length} intents`);
     } catch (error: any) {
       this.logger.error('Error processing claims:', error?.message);
     } finally {
@@ -119,12 +113,9 @@ export class ClaimProcessorService {
     const { id: intentId, claim_id: claimId, deposit_address: depositAddress, status } = intent;
 
     try {
-      this.logger.debug(`Processing intent ${intentId} for claim ${claimId}`);
-
       // Skip expired or old intents
       const skipCheck = this.shouldSkipIntent(intent);
       if (skipCheck.skip) {
-        this.logger.debug(`Skipping intent ${intentId}: ${skipCheck.reason}`);
         return {
           claimId,
           intentId,
@@ -147,7 +138,6 @@ export class ClaimProcessorService {
 
       // Check status from Near Intents
       const statusResult = await this.statusService.getNearIntentsStatus(depositAddress);
-      this.logger.debug(`Intent ${intentId} status: ${statusResult.status}`);
 
       // Update intent status if changed
       if (statusResult.status !== status) {
@@ -163,7 +153,6 @@ export class ClaimProcessorService {
         // embedded wallet; do NOT set SUCCESS until user completes Privacy Cash in the UI.
         const claim = await this.claimsService.findOne(claimId);
         if (claim.is_private === true) {
-          this.logger.log(`[ClaimProcessor] Claim ${claimId} is private – set PRIVATE_TRANSFER_PENDING (wait for Privacy Cash)`);
           await this.claimsService.updateStatus(claimId, 'PRIVATE_TRANSFER_PENDING');
           return {
             claimId,
@@ -172,7 +161,6 @@ export class ClaimProcessorService {
             success: true,
           };
         }
-        this.logger.log(`[ClaimProcessor] Claim ${claimId} completed`);
         await this.claimsService.updateStatus(claimId, 'SUCCESS');
         return {
           claimId,

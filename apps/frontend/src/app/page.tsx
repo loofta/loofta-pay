@@ -1,624 +1,465 @@
 'use client'
 
+import { useState, useEffect, useRef } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import Image from "next/image";
-import Lottie, { LottieRefCurrentProps } from "lottie-react";
-import { motion, AnimatePresence, useScroll, useTransform, useInView } from "framer-motion";
-import { Suspense, useState, useRef, useEffect, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { useAuth } from "@/hooks/useAuth";
+import { usePrivy } from "@privy-io/react-auth";
+import { useAuthStore } from "@/store/auth";
 import { Button } from "@/components/ui/button";
-import Spline from "@splinetool/react-spline";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { SendFlowInApp } from "@/components/app/SendFlowInApp";
+import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
+import { motion, AnimatePresence } from "framer-motion";
 
-// Images to preload
-const PRELOAD_IMAGES = [
-  '/loofta.svg',
-  '/loofta_white.svg',
-  '/bg_section.png',
-  '/bg_footer.png',
-  '/images/icons/share-icon.png',
-  '/images/icons/target-icon.png',
-  '/images/icons/mouse-icon.png',
-  '/images/icons/shield-icon.png',
-];
+const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
+  () => import("@/app/claim/ClaimPageContent").then((mod) => ({ default: mod.ClaimPageContent })),
+  { ssr: false }
+);
+
+const SEND_FEE_SOL = "0.0015";
+const HOME_TAB_KEY = "loofta.home.tab";
 
 export default function Home() {
-  const [openFaq, setOpenFaq] = useState<number | null>(0);
-  const [isClient, setIsClient] = useState(false);
-  const ctaRef = useRef<HTMLDivElement>(null);
-  const splineLoaded = useRef(false);
-
-  // Lottie ref (only hero needs ref for looping)
-  const heroLottieRef = useRef<LottieRefCurrentProps>(null);
-
-  // Container refs for scroll detection
-  const heroAnimationRef = useRef<HTMLDivElement>(null);
-  const cardsAnimationRef = useRef<HTMLDivElement>(null);
-  const howItWorksAnimationRef = useRef<HTMLDivElement>(null);
-
-  // In-view detection - hero needs to load immediately (above fold)
-  const isHeroInView = useInView(heroAnimationRef, { once: true, margin: "0px" });
-  // Below-fold animations load earlier to preload
-  const isCardsInView = useInView(cardsAnimationRef, { once: true, margin: "200px" });
-  const isHowItWorksInView = useInView(howItWorksAnimationRef, { once: true, margin: "200px" });
-
-  // Lazy load animation data
-  const [heroAnimationData, setHeroAnimationData] = useState<object | null>(null);
-  const [cardsAnimationData, setCardsAnimationData] = useState<object | null>(null);
-  const [howItWorksAnimationData, setHowItWorksAnimationData] = useState<object | null>(null);
-
-  // Mark as client-side only to prevent hydration mismatch
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
-
-  // Optimized: Load hero animation immediately but don't block page render
-  useEffect(() => {
-    // Load hero animation without blocking
-    import("../../public/jitter/paymentflow.json").then((mod) => {
-      setHeroAnimationData(mod.default);
-    }).catch(() => {
-      // Silently fail - animation is not critical
-    });
-
-    // Preload images in background (non-blocking)
-    PRELOAD_IMAGES.forEach((src) => {
-      const img = new window.Image();
-      img.src = src;
-    });
-  }, []);
-
-  // Spline loaded callback (for future use)
-  const handleSplineLoad = useCallback(() => {
-    splineLoaded.current = true;
-  }, []);
-
-  // Load cards animation when approaching viewport - use requestIdleCallback for better INP
-  useEffect(() => {
-    if (isCardsInView && !cardsAnimationData) {
-      const loadAnimation = () => {
-        import("../../public/jitter/cards_home.json").then((mod) => {
-          setCardsAnimationData(mod.default);
-        }).catch(() => {
-          // Silently fail
-        });
-      };
-
-      if ('requestIdleCallback' in window) {
-        requestIdleCallback(loadAnimation, { timeout: 2000 });
-      } else {
-        setTimeout(loadAnimation, 100);
-      }
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const { authenticated } = useAuth();
+  const username = useAuthStore((s) => s.username ?? null);
+  const { login: privyLogin } = usePrivy();
+  const [activeTab, setActiveTabState] = useState<"send" | "receive">(() => {
+    const fromUrl = searchParams.get("tab") === "receive" ? "receive" : null;
+    if (fromUrl) return fromUrl;
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem(HOME_TAB_KEY);
+      if (stored === "send" || stored === "receive") return stored;
     }
-  }, [isCardsInView, cardsAnimationData]);
-
-  // Load how it works animation when approaching viewport - use requestIdleCallback for better INP
-  useEffect(() => {
-    if (isHowItWorksInView && !howItWorksAnimationData) {
-      const loadAnimation = () => {
-        import("../../public/jitter/howitworks.json").then((mod) => {
-          setHowItWorksAnimationData(mod.default);
-        }).catch(() => {
-          // Silently fail
-        });
-      };
-
-      if ('requestIdleCallback' in window) {
-        requestIdleCallback(loadAnimation, { timeout: 2000 });
-      } else {
-        setTimeout(loadAnimation, 100);
-      }
-    }
-  }, [isHowItWorksInView, howItWorksAnimationData]);
-
-  // Start hero animation when data loaded and in view - defer for better INP
-  useEffect(() => {
-    if (isHeroInView && heroAnimationData && heroLottieRef.current) {
-      // Defer animation start to avoid blocking main thread
-      const startAnimation = () => {
-        if (heroLottieRef.current) {
-          heroLottieRef.current.play();
-        }
-      };
-
-      if ('requestIdleCallback' in window) {
-        requestIdleCallback(startAnimation, { timeout: 1000 });
-      } else {
-        setTimeout(startAnimation, 50);
-      }
-    }
-  }, [isHeroInView, heroAnimationData]);
-
-
-  const handleHeroAnimationComplete = () => {
-    setTimeout(() => {
-      heroLottieRef.current?.goToAndPlay(0);
-    }, 2000); // 2 second pause before looping
-  };
-
-  const { scrollYProgress } = useScroll({
-    target: ctaRef,
-    offset: ["start end", "end start"]
+    return "send";
   });
 
-  const bgY = useTransform(scrollYProgress, [0, 1], ["0%", "30%"]);
+  useEffect(() => {
+    if (searchParams.get("tab") === "receive") setActiveTabState("receive");
+  }, [searchParams]);
+
+  // When ?to=username (e.g. redirect from /link/@username), show Send tab and pay-to-user form
+  const toParam = searchParams.get("to");
+  useEffect(() => {
+    if (!toParam) return;
+    const clean = toParam.replace(/^@/, "").trim().toLowerCase();
+    if (!clean) return;
+    setActiveTabState("send");
+    setRecipient(clean.startsWith("@") ? clean : `@${clean}`);
+    setSelectedRecipient(clean);
+    setSendStep(2);
+    const amt = searchParams.get("amount");
+    if (amt != null && amt !== "" && !isNaN(Number(amt)) && Number(amt) >= 0) setAmount(amt);
+  }, [toParam, searchParams]);
+
+  // Open create-payment-link card when ?create=1 (e.g. redirect from /claim)
+  useEffect(() => {
+    if (searchParams.get("create") === "1") {
+      setActiveTabState("receive");
+      setShowClaimOverlay(true);
+    }
+  }, [searchParams]);
+
+  const setActiveTab = (tab: "send" | "receive") => {
+    setActiveTabState(tab);
+    if (typeof window !== "undefined") localStorage.setItem(HOME_TAB_KEY, tab);
+  };
+  const [recipient, setRecipient] = useState("");
+  const [amount, setAmount] = useState("");
+  const [selectedRecipient, setSelectedRecipient] = useState<string | null>(null);
+  const [sendStep, setSendStep] = useState<1 | 2 | 3>(1);
+  const [claimId, setClaimId] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [dropdownClosed, setDropdownClosed] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [showClaimOverlay, setShowClaimOverlay] = useState(false);
+  const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const searchCacheRef = useRef<Map<string, { usernames: string[]; ts: number }>>(new Map());
+  const SEARCH_CACHE_TTL_MS = 2 * 60 * 1000; // 2 min
+
+  const searchQuery = recipient.replace(/^@/, "").trim().toLowerCase();
+  const showDropdown = false; // Autocomplete/suggestions disabled for now
 
   const faqItems = [
-    {
-      question: "Do I need to connect my wallet to pay?",
-      answer: " No. You can pay through a deposit wallet address we generate for your payment, and Loofta Pay handles the routing automatically.",
-    },
-    {
-      question: "Can I receive payments privately?",
-      answer: "Yes. You can settle directly in Zcash using shielded or transparent addresses. More private routes (including ETH private pools) are coming soon.",
-    },
-    {
-      question: "What chains  do you support?",
-      answer: "All chains supported by NEAR Intents: EVM Chains (Arbitrum, Aurora, Base, Bera, BNB, Ethereum, Gnosis, Polygon, XLayer, Monad), Bitcoin, Cardano, Solana, MONAD, Zcash, Doge, SUI, Stellar, Tron, XRP, TON, Litecoin. More chains coming soon."
-    },
-    {
-      question: "What are the fees?",
-      answer: "Cross-chain: near-zero (0.0001%). Same-chain via Biconomy: free during beta. A small fee will be added later for private routes and business checkout.",
-    },
-    {
-      question: "Can businesses use Loofta Pay?",
-      answer: "Yes. A checkout SDK and branded checkout are available so businesses can accept multi-chain payments with a single integration.",
-    },
+    { question: "What is the network fee?", answer: "A small network fee is applied to cover on-chain transaction costs. For private payments we use Privacy Cash; we are migrating to a cheaper SDK to keep fees low." },
+    { question: "What is a burner wallet?", answer: "A burner wallet is a temporary deposit address we generate for your payment. You send funds to this address and Loofta Pay routes them to the recipient. You don't need to connect a wallet to pay—just send to the deposit address." },
+    { question: "How do private payments work?", answer: "Private payments use Privacy Cash so the transfer is shielded. We are migrating to a cheaper SDK to reduce costs while keeping the same privacy guarantees." },
+    { question: "Can I send to someone before they have an account?", answer: "Yes. You can send to a Twitter/X username or email. They'll get a link to sign up and claim the payment. Once they log in with that identity, they can claim the funds." },
+    { question: "APY on received amount & auto-compound?", answer: "We're building APY in USD on your received balance, with every claimed payment auto-compounding. Coming soon." },
+    { question: "Points system", answer: "A points system is coming soon. You'll earn points for receiving and for sending both private and standard payments." },
   ];
 
-  return (
-    <>
-      {/* Removed full page loader - it was blocking LCP. Content renders immediately. */}
+  // Exact email only: no partial match to avoid linking/leaking users
+  const isExactEmail = (q: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q);
 
-      <div className="bg-gradient-to-b from-white to-gray-50">
-        {/* Hero Section */}
-        <div className="h-auto md:h-screen relative overflow-hidden">
-          {/* Background pulses (kept for visual continuity) */}
-          <div className="absolute inset-0 overflow-hidden">
-            <div className="absolute top-0 left-1/4 w-96 h-96 bg-orange-100/50 rounded-full blur-3xl animate-pulse"></div>
-            {/* Hide this red blob on md+ where Spline takes over */}
-            <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-red-100/50 rounded-full blur-3xl animate-pulse delay-700 md:hidden"></div>
-            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-orange-50/50 rounded-full blur-3xl animate-pulse delay-1000"></div>
-            {/* Spline 3D abstract animation on the right side - Defer loading for better INP */}
-            <div
-              className="spline-wrap pointer-events-none hidden md:block absolute top-0 right-[-2vw] w-[65vw] max-w-[1400px] h-auto md:h-full z-0"
-              style={{
-                WebkitMaskImage: 'linear-gradient(to left, black 78%, transparent 98%)',
-                maskImage: 'linear-gradient(to left, black 78%, transparent 98%)',
-                minHeight: '100vh', // Prevent CLS
-              }}
-            >
-              {/* Defer Spline loading until after page is interactive - client-side only to prevent hydration error */}
-              {isClient ? (
-                <Suspense fallback={<div className="w-full h-full" style={{ minHeight: '100vh' }} />}>
-                  <Spline
-                    scene="/spline/reeded_liquid_glass_prism_hero_section_concept_copy.spline"
-                    onLoad={handleSplineLoad}
-                  />
-                </Suspense>
-              ) : (
-                <div className="w-full h-full" style={{ minHeight: '100vh' }} />
-              )}
-            </div>
+  useEffect(() => {
+    if (searchQuery.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    const cached = searchCacheRef.current.get(searchQuery);
+    if (cached && Date.now() - cached.ts < SEARCH_CACHE_TTL_MS) {
+      setSuggestions(cached.usernames);
+      return;
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      const cachedAgain = searchCacheRef.current.get(searchQuery);
+      if (cachedAgain && Date.now() - cachedAgain.ts < SEARCH_CACHE_TTL_MS) {
+        setSuggestions(cachedAgain.usernames);
+        return;
+      }
+      setLoadingSuggestions(true);
+      try {
+        if (isExactEmail(searchQuery)) {
+          // Only resolve by exact email – no partial email search (privacy)
+          const r = await fetch(`/api/users/resolve-recipient?q=${encodeURIComponent(searchQuery)}`);
+          const data = await r.json();
+          const list = data?.username ? [data.username] : [];
+          setSuggestions(list);
+          searchCacheRef.current.set(searchQuery, { usernames: list, ts: Date.now() });
+        } else {
+          const r = await fetch(`/api/users/search-usernames?q=${encodeURIComponent(searchQuery)}`);
+          const data = await r.json();
+          const list = data.usernames || [];
+          setSuggestions(list);
+          searchCacheRef.current.set(searchQuery, { usernames: list, ts: Date.now() });
+        }
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setLoadingSuggestions(false);
+      }
+    }, 100);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [recipient]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setDropdownClosed(true);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleSendContinue = async () => {
+    const trimmed = recipient.replace(/^@/, "").trim();
+    if (!trimmed) return;
+    let resolvedUsername = trimmed.toLowerCase();
+    if (trimmed.includes("@")) {
+      try {
+        const r = await fetch(`/api/users/resolve-recipient?q=${encodeURIComponent(trimmed)}`);
+        const data = await r.json();
+        if (data?.username) resolvedUsername = data.username;
+      } catch {
+        // keep
+      }
+    }
+    setSelectedRecipient(resolvedUsername);
+    setSendStep(2);
+  };
+
+  return (
+    <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
+      <div className="max-w-lg mx-auto px-4 py-6">
+        {/* Header + tab content: min one screen so FAQ is below the fold */}
+        <div className="min-h-[calc(100vh-var(--header-h,0px))]">
+          <SendReceiveTabs activeTab={activeTab} onTabChange={(tab) => setActiveTab(tab)} />
+
+          {/* Cool info area */}
+          <div className="rounded-2xl bg-gradient-to-r from-amber-500/10 to-red-500/10 border border-white/10 px-4 py-3 mb-6">
+            <p className="text-sm text-slate-300">
+              💳 USDC on Solana = no extra Loofta fee. Private payments use Privacy Cash (fee on receive).
+            </p>
           </div>
 
-          <div className="max-w-7xl mx-auto px-4 h-full flex items-start pb-10 relative z-10">
-            {/* Hero (Figma-aligned) - Removed motion wrapper for faster LCP */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-start w-full">
-              <div className="order-1 pt-12 md:pt-24  md:order-1">
-                <div
-                  className="uppercase tracking-[0.14em] text-[12px] md:text-xs font-semibold"
-                  style={{
-                    backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)',
-                    WebkitBackgroundClip: 'text',
-                    backgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                    color: 'transparent',
+          {activeTab === "send" && (
+            <>
+              {sendStep === 3 && claimId ? (
+                <div className="space-y-4 rounded-2xl border border-white/10 bg-white/5 p-6 text-white">
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClaimId(null);
+                        setSelectedRecipient(null);
+                        setSendStep(1);
+                      }}
+                      className="text-slate-400 hover:text-white text-sm font-medium"
+                    >
+                      ← New payment
+                    </button>
+                  </div>
+                  <p className="text-slate-200 mb-4">Payment link created. Share it or open it to view status.</p>
+                  <Link
+                    href={`/c/${claimId}`}
+                    className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90"
+                  >
+                    View payment
+                  </Link>
+                </div>
+              ) : selectedRecipient ? (
+                <SendFlowInApp
+                  recipientUsername={selectedRecipient}
+                  initialAmount={amount}
+                  onBack={() => {
+                    setSelectedRecipient(null);
+                    setSendStep(1);
                   }}
-                >
-                  multi‑chain • private • non‑custodial • no swaps required
-                </div>
-                {/* Critical LCP element - render immediately without animation wrapper */}
-                <h1 className="mt-2 text-4xl md:text-6xl lg:text-7xl font-medium leading-[1.05] text-slate-900">
-                  Pay & request <br className="hidden md:block" />
-                  crypto <span className="font-bold">privately.</span>
-                </h1>
-                <p className="mt-12 text-xl md:text-2xl text-slate-900/90 max-w-xl">
-                  Your payer uses whatever they want.<br className="hidden md:block" />
-                  <span className="font-semibold">You always receive exactly what you asked for.</span>
-                </p>
-                <div className="mt-6 flex flex-col sm:flex-row pb-24 items-center gap-4">
-                  <Link
-                    href="/claim"
-                    prefetch={true}
-                    className="rounded-[21px] px-6 sm:px-12 py-2.5 text-base font-medium text-white border-0 shadow-md hover:scale-[1.02] transition-transform inline-flex items-center justify-center text-center w-full sm:w-auto"
-                    style={{ background: 'linear-gradient(to right, #FF1301, #EAB308)' }}
-                  >
-                    Create a payment
-                  </Link>
-                  <Link
-                    href="https://loofta.gitbook.io/docs"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-[21px] px-6 sm:px-12 py-2.5 text-base font-medium border-2 border-slate-300 bg-white text-slate-900 shadow-md hover:scale-[1.02] transition-transform hover:bg-slate-50 inline-flex items-center justify-center text-center w-full sm:w-auto"
-                  >
-                    Learn more
-                  </Link>
-                </div>
-              </div>
-              <div ref={heroAnimationRef} className="order-2 md:order-2 relative h-auto md:h-full overflow-visible z-10 flex items-end justify-end">
-                {/* Reserve space for animation to prevent CLS */}
-                <div className="w-[379px] h-[418px] flex items-center justify-center">
-                  {heroAnimationData ? (
-                    <Lottie
-                      lottieRef={heroLottieRef}
-                      animationData={heroAnimationData}
-                      loop={false}
-                      autoplay={false}
-                      onComplete={handleHeroAnimationComplete}
-                      className="w-[379px] h-[418px]"
-                    />
-                  ) : (
-                    <div className="w-[379px] h-[418px]" />
+                  onClaimCreated={(id) => {
+                    router.push(`/c/${id}`);
+                  }}
+                />
+              ) : (
+                <>
+                  {!authenticated && (
+                    <div className="rounded-2xl bg-amber-500/10 border border-amber-500/20 px-4 py-3 mb-6">
+                      <p className="text-sm text-amber-200">
+                        Log in to keep track of this payment and reclaim your money if needed.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => privyLogin({ loginMethods: ["email"], disableSignup: false })}
+                        className="inline-block mt-2 text-sm font-medium text-amber-400 hover:text-amber-300"
+                      >
+                        Sign in →
+                      </button>
+                    </div>
                   )}
-                </div>
-              </div>
-            </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+                    <div ref={wrapperRef} className="relative">
+                      <Label className="text-slate-400 text-base">Send to</Label>
+                      <p className="text-sm text-slate-500 mt-0.5 mb-1.5">
+                        Loofta or Twitter username, or exact email – they claim by signing in with that account.
+                      </p>
+                      <p className="text-sm text-slate-500 mb-1.5">
+                        @ is optional (e.g. <span className="text-slate-400">alice</span> or <span className="text-slate-400">@alice</span> both work).
+                      </p>
+                      <Input
+                        type="text"
+                        name="send-to-recipient"
+                        placeholder="e.g. alice or name@example.com"
+                        value={recipient}
+                        onChange={(e) => {
+                          setRecipient(e.target.value);
+                          setDropdownClosed(false);
+                        }}
+                        onFocus={() => setDropdownClosed(false)}
+                        autoComplete="off"
+                        className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500"
+                      />
+                      {showDropdown && (
+                        <ul className="absolute z-50 top-full left-0 right-0 mt-1 rounded-xl border border-white/10 bg-[#1a1a1f] py-1 shadow-lg max-h-48 overflow-auto">
+                          {loadingSuggestions ? (
+                            <li className="px-3 py-2 text-slate-400 text-sm">Searching…</li>
+                          ) : suggestions.length > 0 ? (
+                            suggestions.map((u) => (
+                              <li key={u}>
+                                <button
+                                  type="button"
+                                  className="w-full text-left px-3 py-2 text-white hover:bg-white/10 text-sm"
+                                  onClick={() => {
+                                    setRecipient(u);
+                                    setDropdownClosed(true);
+                                  }}
+                                >
+                                  <span>@{u}</span>
+                                  {suggestions.length === 1 && isExactEmail(searchQuery) && (
+                                    <span className="text-slate-500 text-sm ml-1">(from email)</span>
+                                  )}
+                                </button>
+                              </li>
+                            ))
+                          ) : (
+                            <li className="px-3 py-2 text-slate-500 text-sm">No users found</li>
+                          )}
+                        </ul>
+                      )}
+                    </div>
+                    <div>
+                      <Label className="text-slate-400 text-base">Amount (USD)</Label>
+                      <Input
+                        type="number"
+                        placeholder="0.00"
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        min="0"
+                        step="0.01"
+                        className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500 text-lg"
+                      />
+                    </div>
+                    <div className="rounded-xl bg-white/5 px-3 py-2">
+                      <p className="text-sm text-slate-400">
+                        Network fee: <span className="text-slate-300 font-medium">{SEND_FEE_SOL} SOL</span> per send (covers claim processing).
+                      </p>
+                    </div>
+                    <Button
+                      onClick={handleSendContinue}
+                      disabled={!recipient.trim()}
+                      className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                    >
+                      Continue
+                    </Button>
+                  </div>
+                </>
+              )}
+            </>
+          )}
 
+          {activeTab === "receive" && (
+            <div className="space-y-4">
+              {showClaimOverlay ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowClaimOverlay(false)}
+                    className="flex items-center gap-2 text-slate-300 hover:text-white text-sm font-medium"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M19 12H5M12 19l-7-7 7-7" />
+                    </svg>
+                    Back to receive
+                  </button>
+                  <ClaimPageContent embedInApp />
+                </>
+              ) : (
+                <>
+                  {/* Share your personal link */}
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+                    <p className="text-slate-300 text-sm font-medium">Share your personal link</p>
+                    {authenticated && username ? (
+                      <>
+                        <p className="text-slate-400 text-sm">
+                          Anyone can pay you by opening this link. You receive in your preferred token and chain.
+                        </p>
+                        <div className="flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5">
+                          <span className="flex-1 text-sm font-mono text-white truncate">
+                            {typeof window !== "undefined" ? `${window.location.origin}/link/@${username}` : `/link/@${username}`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const link = typeof window !== "undefined" ? `${window.location.origin}/link/@${username}` : "";
+                              navigator.clipboard.writeText(link);
+                              setLinkCopied(true);
+                              setTimeout(() => setLinkCopied(false), 2000);
+                            }}
+                            className="shrink-0 px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 hover:text-white hover:bg-white/15 text-sm font-medium transition-colors"
+                          >
+                            {linkCopied ? "Copied" : "Copy"}
+                          </button>
+                        </div>
+                        <Button
+                          variant="receiveSignIn"
+                          className="w-full h-12 rounded-xl"
+                          onClick={() => useAuthStore.getState().setOpenShareModal(true)}
+                        >
+                          Share & settings
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-slate-400 text-sm">
+                          Sign in to get your own payment link. Add Twitter later to get a unique @username.
+                        </p>
+                        <Button
+                          type="button"
+                          variant="receiveSignIn"
+                          onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}
+                          className="w-full h-12 rounded-xl"
+                        >
+                          Sign in to get your payment link
+                        </Button>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Create new payment link */}
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+                    <p className="text-slate-300 text-sm font-medium">Create new payment link</p>
+                    <p className="text-slate-400 text-sm">
+                      Create a one-off payment request. You choose amount, token, and chain. No account required to create.
+                    </p>
+                    <Button
+                      type="button"
+                      onClick={() => setShowClaimOverlay(true)}
+                      className="w-full h-11 rounded-xl text-base font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 border-0"
+                    >
+                      Create new payment link
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* FAQ — below the fold, above footer (same styling as /about), wider than main column */}
+      <section className="md:pb-16 px-4 pb-24">
+        <div className="max-w-xl mx-auto">
+          <h2 className="text-3xl md:text-4xl font-medium font-sans text-white text-center mb-8 md:mb-10">
+            Frequently asked<br />questions
+          </h2>
+          <div className="flex flex-col gap-4">
+            {faqItems.map((item, index) => (
+              <div
+                key={index}
+                className="rounded-[20px] bg-[#F6F6F8] overflow-hidden"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    requestAnimationFrame(() => {
+                      setOpenFaq(openFaq === index ? null : index);
+                    });
+                  }}
+                  className="w-full px-6 py-5 flex items-center justify-between text-left"
+                >
+                  <span className="text-lg md:text-xl font-semibold font-sans text-slate-900">
+                    {item.question}
+                  </span>
+                  <motion.span
+                    className="text-4xl text-slate-900 shrink-0 ml-4"
+                    animate={{ rotate: openFaq === index ? 45 : 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    +
+                  </motion.span>
+                </button>
+                <AnimatePresence initial={false}>
+                  {openFaq === index && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.3, ease: "easeInOut" }}
+                      className="overflow-hidden"
+                    >
+                      <div className="px-6 pb-5">
+                        <p className="text-lg text-slate-500">
+                          {item.answer}
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            ))}
           </div>
         </div>
-
-        {/* Section — Dark features block (Figma) */}
-        <section className="mt-0 md:mt-0 bg-[#18181F] relative">
-          {/* Background image with low opacity - parallax */}
-          <div
-            className="absolute inset-0 opacity-10 pointer-events-none"
-            style={{
-              backgroundImage: 'url(/bg_section.png)',
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-              backgroundAttachment: 'fixed',
-            }}
-          />
-          <div className="max-w-7xl mx-auto px-4 md:px-8 py-20 md:py-28 relative z-10">
-            <div className="text-center">
-              <h2 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight">
-                The modern way <br className="hidden md:block" />
-                <span
-                  style={{
-                    backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)',
-                    WebkitBackgroundClip: 'text',
-                    backgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                    color: 'transparent',
-                  }}
-                >
-                  to get paid in crypto.
-                </span>
-              </h2>
-              <p className="mt-3 text-lg text-white/70">
-                Loofta removes all the friction of multi‑chain payments, for you and your users.
-              </p>
-            </div>
-            {/* Desktop: Lottie animation */}
-            <div ref={cardsAnimationRef} className="mt-12 md:mt-16 hidden md:flex justify-center" style={{ minHeight: '400px', height: '400px' }}>
-              {cardsAnimationData ? (
-                <Lottie
-                  animationData={cardsAnimationData}
-                  loop={false}
-                  autoplay={true}
-                  className="w-full max-w-4xl"
-                />
-              ) : (
-                <div className="w-full max-w-4xl h-[400px]" />
-              )}
-            </div>
-
-            {/* Mobile: Cards grid */}
-            <div className="mt-12 md:hidden w-full grid grid-cols-1 gap-6">
-              {[
-                {
-                  icon: "/images/icons/share-icon.png",
-                  width: 74,
-                  height: 74,
-                  title: "Any chain. Any token. Zero hassle.",
-                  desc: "Accept payments from any blockchain: no bridges, no swaps, nothing to explain.",
-                },
-                {
-                  icon: "/images/icons/target-icon.png",
-                  width: 70,
-                  height: 70,
-                  title: "Always receive the exact asset you chose.",
-                  desc: "Your payer sends whatever they want. You receive exactly what you configured.",
-                },
-                {
-                  icon: "/images/icons/mouse-icon.png",
-                  width: 64,
-                  height: 64,
-                  title: "A one‑click flow anyone can complete.",
-                  desc: "No wallet requirements. No chain confusion. No technical steps.",
-                },
-                {
-                  icon: "/images/icons/shield-icon.png",
-                  width: 64,
-                  height: 64,
-                  title: "The payer → receiver trail stays private.",
-                  desc: "Accept payments from any blockchain: no bridges, no swaps, nothing to explain.",
-                },
-              ].map((f, index) => (
-                <motion.div
-                  key={f.title}
-                  initial={{ opacity: 0, y: 40 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: "-50px" }}
-                  transition={{ duration: 0.5, delay: index * 0.15 }}
-                  className="rounded-[20px] bg-[#1D1D25] border border-white/5 p-6 text-white flex items-start gap-4"
-                >
-                  <div className="shrink-0">
-                    <Image
-                      src={f.icon}
-                      alt=""
-                      width={f.width ?? 64}
-                      height={f.height ?? 64}
-                      loading="lazy"
-                    />
-                  </div>
-                  <div className="flex flex-col">
-                    <div className="text-xl font-semibold leading-tight">{f.title}</div>
-                    <div className="mt-2 text-lg text-white/60 leading-relaxed">{f.desc}</div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Section — How it works */}
-        <section className="bg-white py-20 md:py-28">
-          <div className="max-w-7xl mx-auto px-4 md:px-8">
-            <h2 className="text-5xl md:text-6xl font-medium font-sans text-slate-900 text-center mb-12 md:mb-16">
-              How it works
-            </h2>
-            {/* Desktop: Lottie animation */}
-            <div ref={howItWorksAnimationRef} className="hidden md:flex justify-center" style={{ minHeight: '300px', height: '300px' }}>
-              {howItWorksAnimationData ? (
-                <Lottie
-                  animationData={howItWorksAnimationData}
-                  loop={false}
-                  autoplay={true}
-                  className="w-full max-w-5xl"
-                />
-              ) : (
-                <div className="w-full max-w-5xl h-[300px]" />
-              )}
-            </div>
-
-            {/* Mobile: Cards grid with scroll animation */}
-            <div className="grid grid-cols-1 gap-6 md:hidden">
-              {[
-                {
-                  number: "1.",
-                  title: "Create a Request",
-                  desc: "Choose amount, network, privacy.",
-                },
-                {
-                  number: "2.",
-                  title: "Share a Link",
-                  desc: "Send it anywhere — DM, email, chat.",
-                },
-                {
-                  number: "3.",
-                  title: "Get Paid",
-                  desc: "Payer choose payout method, privacy settings, and pay.",
-                },
-              ].map((step, index) => (
-                <motion.div
-                  key={step.number}
-                  initial={{ opacity: 0, y: 40 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: "-50px" }}
-                  transition={{ duration: 0.5, delay: index * 0.15 }}
-                  className="rounded-[20px] bg-[#F6F6F8] p-8 shadow-[0px_4px_20px_0px_rgba(15,23,42,0.08)]"
-                >
-                  <div
-                    className="text-6xl font-bold mb-4"
-                    style={{
-                      backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)',
-                      WebkitBackgroundClip: 'text',
-                      backgroundClip: 'text',
-                      WebkitTextFillColor: 'transparent',
-                      color: 'transparent',
-                    }}
-                  >
-                    {step.number}
-                  </div>
-                  <div className="text-xl font-semibold font-sans text-slate-900 mb-2">
-                    {step.title}
-                  </div>
-                  <div className="text-lg text-slate-500">
-                    {step.desc}
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Section — FAQ */}
-        <section className="bg-white py-20 md:py-28">
-          <div className="max-w-4xl mx-auto px-4 md:px-8">
-            <h2 className="text-5xl md:text-6xl font-medium font-sans text-slate-900 text-center mb-12 md:mb-16">
-              Frequently asked<br />questions
-            </h2>
-            <div className="flex flex-col gap-4">
-              {faqItems.map((item, index) => (
-                <div
-                  key={index}
-                  className="rounded-[20px] bg-[#F6F6F8] overflow-hidden"
-                  style={{ minHeight: index === 0 ? 'auto' : undefined }}
-                >
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault();
-                      // Use requestAnimationFrame for better INP
-                      requestAnimationFrame(() => {
-                        setOpenFaq(openFaq === index ? null : index);
-                      });
-                    }}
-                    className="w-full px-6 py-5 flex items-center justify-between text-left"
-                  >
-                    <span className="text-lg md:text-xl font-semibold font-sans text-slate-900">
-                      {item.question}
-                    </span>
-                    <motion.span
-                      className="text-4xl text-slate-900 shrink-0 ml-4"
-                      animate={{ rotate: openFaq === index ? 45 : 0 }}
-                      transition={{ duration: 0.2 }}
-                    >
-                      +
-                    </motion.span>
-                  </button>
-                  <AnimatePresence initial={false}>
-                    {openFaq === index && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.3, ease: "easeInOut" }}
-                        className="overflow-hidden"
-                      >
-                        <div className="px-6 pb-5">
-                          <p className="text-lg  text-slate-500">
-                            {item.answer}
-                          </p>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* CTA Section */}
-        <section ref={ctaRef} className="relative z-10 px-4 md:px-8 mb-[-80px]">
-          <div className="max-w-5xl rounded-[40px] mx-auto overflow-hidden" style={{ minHeight: '280px' }}>
-            <motion.div
-              className="rounded-[40px] bg-cover bg-opacity-2"
-              style={{
-                backgroundImage: 'url(/bg_footer.png)',
-                backgroundColor: 'rgba(255, 255, 255, 0.5)',
-                backgroundBlendMode: 'lighten',
-                backgroundPosition: 'center',
-                backgroundPositionY: '60%',
-                minHeight: '280px',
-              }}
-            >
-              <div
-                className="rounded-[40px]"
-                style={{
-                  backgroundImage: 'linear-gradient(to right, rgba(255,19,1,0.85), rgba(234,179,8,0.85))',
-                  minHeight: '280px',
-                }}
-              >
-                <div className="flex flex-col items-center py-12 md:py-18 px-8 md:px-16 text-center" style={{ minHeight: '280px' }}>
-                  <h2 className="text-3xl md:text-6xl font-medium font-sans text-white leading-tight">
-                    Ready to get paid<br />
-                    privately?
-                  </h2>
-                  <p className="mt-6 text-lg md:text-xl text-white max-w-xl">
-                    Your payer uses whatever they want.<br />
-                    <span className="font-medium">You always receive exactly what you asked for.</span>
-                  </p>
-                  <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
-                    <Link
-                      href="/claim"
-                      className="rounded-full px-8 py-4 text-base font-semibold bg-[#0F172A] text-white hover:opacity-90 transition-colors"
-                    >
-                      Create a payment link
-                    </Link>
-                    <a
-                      href="https://t.me/loofta"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-full px-8 py-4 text-base font-semibold bg-white text-red-500 hover:bg-gray-50 transition-colors"
-                    >
-                      Chat on Telegram
-                    </a>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        </section>
-
-        {/* Footer */}
-        <footer className="bg-[#18181F] pt-32 md:pt-40 pb-12">
-          <div className="max-w-7xl mx-auto px-4 md:px-8">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-8 md:gap-12">
-              {/* Logo */}
-              <div className="col-span-2 md:col-span-1">
-                <Image
-                  src="/loofta_white.svg"
-                  alt="Loofta"
-                  width={140}
-                  height={40}
-                  className="h-10 w-auto"
-                />
-              </div>
-
-              {/* Products */}
-              <div>
-                <h4 className="text-white font-semibold mb-4">Products</h4>
-                <ul className="space-y-2">
-                  <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Cross-chain swap</a></li>
-                  <li><a href="/claim" className="text-slate-400 hover:text-white transition-colors">Payment request</a></li>
-                </ul>
-              </div>
-
-              {/* Socials */}
-              <div>
-                <h4 className="text-white font-semibold mb-4">Socials</h4>
-                <ul className="space-y-2">
-                  <li><a href="https://medium.com/@looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Medium</a></li>
-                  <li><a href="https://twitter.com/looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Twitter</a></li>
-                  <li><a href="https://t.me/looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Telegram</a></li>
-                </ul>
-              </div>
-
-              {/* Documentation */}
-              <div>
-                <h4 className="text-white font-semibold mb-4">Documentation</h4>
-                <ul className="space-y-2">
-                  <li><a href="https://loofta.gitbook.io/docs" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Github</a></li>
-                </ul>
-              </div>
-
-              {/* Routes */}
-              <div>
-                <h4 className="text-white font-semibold mb-4">Routes</h4>
-                <ul className="space-y-2">
-                  <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Bridge to Solana</a></li>
-                  <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Bridge to Bitcoin</a></li>
-                  <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Bridge to Ethereum</a></li>
-                </ul>
-              </div>
-            </div>
-
-            {/* Copyright */}
-            <div className="mt-12 pt-6 border-t border-gray-800">
-              <p className="text-slate-500 text-sm text-center">
-                © {new Date().getFullYear()} Loofta. All rights reserved.
-              </p>
-            </div>
-          </div>
-        </footer>
-
-        {/* Hide Spline watermark (visual only) */}
-        <style jsx global>{`
-        .spline-wrap a[href*="spline.design"] { display: none !important; }
-      `}</style>
-      </div>
-    </>
+      </section>
+    </div>
   );
 }
-

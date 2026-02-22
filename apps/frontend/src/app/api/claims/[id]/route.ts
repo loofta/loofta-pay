@@ -4,27 +4,57 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { extractChainsFromAssets } from "@/lib/assetUtils";
 
+const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
+const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
+
 export async function GET(_: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     const supabase = getSupabaseAdmin();
     
-    const { data: claim, error: claimError } = await supabase
+    const { data: rawClaim, error: claimError } = await supabase
       .from("claims")
-      .select("id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description")
+      .select("id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, recipient_username, claim_burner_address, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description")
       .eq("id", params.id)
       .single();
     
     if (claimError) return NextResponse.json({ error: claimError.message }, { status: 404 });
-    
+
+    const claimStatus = String((rawClaim as { status?: string })?.status || "").toUpperCase();
+    if (claimStatus === "DELETED") {
+      return NextResponse.json({ error: "This payment doesn't exist." }, { status: 404 });
+    }
+
     let creator_username: string | null = null;
-    if (claim?.created_by && typeof claim.created_by === 'string' && claim.created_by.includes('did:privy:')) {
+    if (rawClaim?.created_by && typeof rawClaim.created_by === 'string' && rawClaim.created_by.includes('did:privy:')) {
       const { data: appUser } = await supabase
         .from("app_users")
         .select("username")
-        .eq("privy_user_id", claim.created_by)
+        .eq("privy_user_id", rawClaim.created_by)
         .maybeSingle();
       creator_username = appUser?.username ?? null;
+    }
+    
+    // Mask pending claims like backend: expose recipient_pending_* and claim_burner_address so payers can pay to burner
+    const ra = (rawClaim?.recipient_address ?? "").trim();
+    const claim: Record<string, unknown> = {
+      ...rawClaim,
+      creator_username: creator_username ?? null,
+    };
+    if (ra.startsWith(PENDING_EMAIL_PREFIX)) {
+      (claim as Record<string, unknown>).recipient_address = undefined;
+      (claim as Record<string, unknown>).recipient_pending_email = true;
+      // Ensure burner is always present for payers (explicit so it cannot be dropped)
+      const burner = (rawClaim as { claim_burner_address?: string | null })?.claim_burner_address;
+      if (burner) (claim as Record<string, unknown>).claim_burner_address = burner;
+      console.log("[api/claims GET] Pending-email claim:", params.id, "claim_burner_address:", !!burner);
+    } else if (ra.startsWith(PENDING_USERNAME_PREFIX)) {
+      (claim as Record<string, unknown>).recipient_address = undefined;
+      (claim as Record<string, unknown>).recipient_pending_username = true;
+      (claim as Record<string, unknown>).recipient_pending_username_value = ra.slice(PENDING_USERNAME_PREFIX.length).trim();
+      const burner = (rawClaim as { claim_burner_address?: string | null })?.claim_burner_address;
+      if (burner) (claim as Record<string, unknown>).claim_burner_address = burner;
+      console.log("[api/claims GET] Pending-username claim:", params.id, "claim_burner_address:", !!burner);
     }
     
     // Also get latest intent data (for hydration)
@@ -37,10 +67,7 @@ export async function GET(_: Request, props: { params: Promise<{ id: string }> }
       .maybeSingle();
     
     return NextResponse.json({ 
-      claim: {
-        ...claim,
-        creator_username: creator_username ?? null,
-      },
+      claim,
       latestIntent: intent ? {
         depositAddress: intent.deposit_address || null,
         memo: intent.memo ?? null,
@@ -60,6 +87,7 @@ export async function GET(_: Request, props: { params: Promise<{ id: string }> }
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const claimId = params.id;
+  const userId = request.headers.get("x-privy-user-id") ?? undefined;
   console.log("[claims/PATCH] Updating claim:", claimId);
   
   try {
@@ -164,11 +192,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       }
     }
     
-    // First check if claim exists
+    // First check if claim exists and optionally backfill created_by for history
     console.log("[claims/PATCH] Checking if claim exists:", claimId);
     const { data: existingClaim, error: checkError } = await supabase
       .from("claims")
-      .select("id, status")
+      .select("id, status, created_by")
       .eq("id", claimId)
       .maybeSingle();
     
@@ -177,6 +205,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     if (checkError) {
       console.error("[claims/PATCH] Error checking claim:", checkError);
       return NextResponse.json({ error: checkError.message }, { status: 500 });
+    }
+    
+    // When marking SUCCESS, backfill created_by if missing so the payment shows in history
+    if (status === "SUCCESS" && userId && existingClaim && !(existingClaim as { created_by?: string | null }).created_by) {
+      updateData.created_by = userId;
     }
     
     if (!existingClaim) {
@@ -274,4 +307,51 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
   }
 }
 
+const DELETABLE_STATUSES = ["OPEN", "PENDING_DEPOSIT"];
 
+export async function DELETE(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
+  const claimId = params.id;
+  const userId = request.headers.get("x-privy-user-id");
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data: claim, error: fetchError } = await supabase
+      .from("claims")
+      .select("id, status, created_by")
+      .eq("id", claimId)
+      .maybeSingle();
+
+    if (fetchError || !claim) {
+      return NextResponse.json({ error: "Claim not found" }, { status: 404 });
+    }
+    const status = String((claim as { status?: string }).status || "").toUpperCase();
+    const createdBy = (claim as { created_by?: string | null }).created_by;
+    if (createdBy !== userId) {
+      return NextResponse.json({ error: "Only the creator can delete this claim" }, { status: 403 });
+    }
+    if (!DELETABLE_STATUSES.includes(status)) {
+      return NextResponse.json(
+        { error: "Only open or pending claims can be deleted" },
+        { status: 400 }
+      );
+    }
+
+    const { error: updateError } = await supabase
+      .from("claims")
+      .update({ status: "DELETED" })
+      .eq("id", claimId);
+
+    if (updateError) {
+      console.error("[claims/DELETE] Update error:", updateError);
+      return NextResponse.json({ error: updateError.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true }, { status: 200 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to delete claim";
+    console.error("[claims/DELETE]", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

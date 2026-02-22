@@ -4,11 +4,13 @@ import {
   Post,
   Body,
   Param,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
   BadRequestException,
   ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -21,7 +23,7 @@ import { AuthGuard } from '@/common/guards';
 import { ClaimsService } from './claims.service';
 import { DepositService, DepositResult } from './deposit.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
-import { CreateClaimDto, CreateClaimFromUsernameDto, RequestDepositDto } from './dto';
+import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto, RequestDepositDto } from './dto';
 import { Claim, ClaimIntent } from './entities/claim.entity';
 
 @ApiTags('claims')
@@ -71,11 +73,32 @@ export class ClaimsController {
     },
   })
   @ApiResponse({ status: 400, description: 'Invalid input' })
-  @ApiResponse({ status: 404, description: 'User not found or no wallet' })
   async createFromUsername(
     @Body() createDto: CreateClaimFromUsernameDto,
   ): Promise<{ id: string; link: string }> {
     return this.claimsService.createFromUsername(createDto);
+  }
+
+  /**
+   * Create a claim from email. If user exists, use their wallet; otherwise they claim by signing in with this email later.
+   */
+  @Post('create-from-email')
+  @ApiOperation({ summary: 'Create claim from email (recipient may not have an account yet)' })
+  @ApiResponse({
+    status: 201,
+    description: 'Claim created',
+    schema: {
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        link: { type: 'string', format: 'uri' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input' })
+  async createFromEmail(
+    @Body() createDto: CreateClaimFromEmailDto,
+  ): Promise<{ id: string; link: string }> {
+    return this.claimsService.createFromEmail(createDto);
   }
 
   /**
@@ -91,6 +114,87 @@ export class ClaimsController {
   })
   getSolanaFeePayer(): { feePayerAddress: string | null } {
     return { feePayerAddress: this.solanaSponsor.getFeePayerAddress() };
+  }
+
+  /**
+   * Check if the authenticated user is the recipient of this claim (for "Received" / "Claim" view on claim page)
+   */
+  @Get(':id/recipient-check')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Check if current user is the recipient of the claim' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Whether the current user is the recipient', schema: { properties: { isRecipient: { type: 'boolean' } } } })
+  async recipientCheck(
+    @Param('id') id: string,
+    @Req() req: { user?: { id: string } },
+  ): Promise<{ isRecipient: boolean }> {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) return { isRecipient: false };
+    return this.claimsService.checkIsRecipient(id, privyUserId);
+  }
+
+  /**
+   * Claim a pending payment (PENDING_EMAIL / PENDING_USERNAME) as the logged-in recipient.
+   * Updates the claim's recipient to your Solana wallet so the payer can complete the deposit.
+   */
+  @Post(':id/claim')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Claim a pending payment as the recipient' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Claimed', schema: { properties: { claimed: { type: 'boolean' } } } })
+  @ApiResponse({ status: 400, description: 'Not pending or already claimed' })
+  @ApiResponse({ status: 403, description: 'Not the intended recipient' })
+  async claimAsRecipient(
+    @Param('id') id: string,
+    @Req() req: { user?: { id: string } },
+  ): Promise<{ claimed: boolean }> {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) throw new UnauthorizedException('Login required to claim.');
+    return this.claimsService.claimAsRecipient(id, privyUserId);
+  }
+
+  /**
+   * Check if the creator can reclaim (cancel and sweep). Only true when status is not CANCELLED
+   * and the burner has a non-zero USDC balance.
+   */
+  @Get(':id/reclaim-eligibility')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Check if creator can reclaim (status not cancelled and burner has balance)' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Eligibility', schema: { properties: { canReclaim: { type: 'boolean' } } } })
+  @ApiResponse({ status: 403, description: 'Not the creator' })
+  async getReclaimEligibility(
+    @Param('id') id: string,
+    @Req() req: { user?: { id: string } },
+  ): Promise<{ canReclaim: boolean }> {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) throw new UnauthorizedException('Login required.');
+    return this.claimsService.getReclaimEligibility(id, privyUserId);
+  }
+
+  /**
+   * Reclaim (cancel) a payment as the creator. Sets claim to CANCELLED.
+   * If the claim has a burner with USDC, sweeps it to the creator's Loofta wallet.
+   */
+  @Post(':id/reclaim')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Reclaim (cancel) payment as creator; funds go to your Loofta wallet' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Cancelled', schema: { properties: { cancelled: { type: 'boolean' } } } })
+  @ApiResponse({ status: 403, description: 'Not the creator' })
+  async reclaim(
+    @Param('id') id: string,
+    @Req() req: { user?: { id: string } },
+  ): Promise<{ cancelled: boolean }> {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) throw new UnauthorizedException('Login required to reclaim.');
+    return this.claimsService.reclaimByCreator(id, privyUserId);
   }
 
   /**
@@ -171,12 +275,15 @@ export class ClaimsController {
   async updateStatus(
     @Param('id') id: string,
     @Body() body: { status: string; txHash?: string; paidWith?: string; isPrivate?: boolean },
+    @Req() req?: { headers?: { [k: string]: string | string[] | undefined } },
   ): Promise<Claim> {
+    const userId = req?.headers?.['x-privy-user-id'];
+    const createdByUserId = typeof userId === 'string' ? userId : Array.isArray(userId) ? userId[0] : undefined;
     return this.claimsService.updateStatus(id, body.status as any, {
       txHash: body.txHash,
       paidWith: body.paidWith,
       isPrivate: body.isPrivate,
-    });
+    }, createdByUserId);
   }
 
   /**

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
+import { join } from 'path';
 
 // Core modules
 import { DatabaseModule } from './database/database.module';
@@ -17,13 +18,20 @@ import { CronModule } from './modules/cron/cron.module';
 import { HealthModule } from './modules/health/health.module';
 import { PayrollModule } from './modules/payroll/payroll.module';
 import { UsersModule } from './modules/users/users.module';
+import { SendPaymentModule } from './modules/send-payment/send-payment.module';
 
 @Module({
   imports: [
     // Configuration
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: ['.env.local', '.env'],
+      // Resolve from backend app root so env is found regardless of process cwd (e.g. when started from monorepo root)
+      envFilePath: [
+        join(__dirname, '..', '.env.local'),
+        join(__dirname, '..', '.env'),
+        '.env.local',
+        '.env',
+      ],
     }),
 
     // Rate limiting
@@ -62,6 +70,7 @@ import { UsersModule } from './modules/users/users.module';
     CronModule,
     PayrollModule,
     UsersModule,
+    SendPaymentModule,
   ],
 })
 export class AppModule {}
