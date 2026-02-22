@@ -2346,22 +2346,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   {requiresPrivate || isPrivateMode ? (
                     /* Private mode (required or optional) - Show USDC on SOL as best option, but allow other tokens */
                     <>
-                      {/* Best option: Pay USDC on SOL (FREE) - pay now with Phantom or Loofta balance */}
+                      {/* Best option: Pay USDC on SOL (FREE) - select only; Phantom opens when user clicks "Use wallet" */}
                       {usdcSolanaToken && (
                         <div className="mb-4">
                           <button
                             type="button"
-                            onClick={async () => {
-                              const phantom = getPhantomProvider();
-                              if (phantom) {
-                                try {
-                                  await phantom.connect();
-                                } catch (e) {
-                                  // User cancelled or Phantom not available
-                                }
-                              }
-                              setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
-                            }}
+                            onClick={() => setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain })}
                             className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
                               ? 'border-green-400 bg-green-100'
                               : 'border-gray-300 bg-white hover:bg-gray-50'
@@ -2496,16 +2486,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   <span className="text-gray-600">Amount to recipient</span>
                                   <span className="font-semibold text-gray-900">${requestedAmount.toFixed(2)}</span>
                                 </div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Network fee (USDC)</span>
-                                  <span className="text-gray-700">${NETWORK_FEE_USD.toFixed(2)}</span>
-                                </div>
                                 <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                                   <span className="font-medium text-gray-900">Total to pay (USDC)</span>
                                   <span className="font-semibold text-lg text-gray-900">${totalWithNetworkFee.toFixed(2)}</span>
                                 </div>
                                 <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
-                                  Fees (0.35% + $0.74) will be deducted from the recipient when they withdraw. Network fee sent in USDC and converted to SOL on burner.
+                                  Fees (0.35% + $0.74) will be deducted from the recipient when they withdraw.
                                 </div>
                               </div>
                             </div>
@@ -2537,16 +2523,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   <span className="text-gray-600">Rent fee</span>
                                   <span className="text-gray-700">${rentFeeAmount.toFixed(6)}</span>
                                 </div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Network fee (USDC)</span>
-                                  <span className="text-gray-700">${NETWORK_FEE_USD.toFixed(2)}</span>
-                                </div>
                                 <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                                   <span className="font-medium text-gray-900">Total to pay (USDC)</span>
                                   <span className="font-semibold text-lg text-gray-900">${totalToPay.toFixed(2)}</span>
                                 </div>
                                 <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
-                                  Privacy Cash fees above. Network fee sent in USDC and converted to SOL on burner for processing.
+                                  Privacy Cash fees above.
                                 </div>
                               </div>
                             </div>
@@ -2560,22 +2542,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   ) : (
                     /* Standard mode - Show USDC on SOL (FREE) option first, then token selector */
                     <>
-                      {/* Best option: Pay USDC on SOL (FREE) - pay now with Phantom or Loofta balance */}
+                      {/* Best option: Pay USDC on SOL (FREE) - select only; Phantom opens when user clicks "Use wallet" */}
                       {usdcSolanaToken && (
                         <div className="mb-4">
                           <button
                             type="button"
-                            onClick={async () => {
-                              const phantom = getPhantomProvider();
-                              if (phantom) {
-                                try {
-                                  await phantom.connect();
-                                } catch (e) {
-                                  // User cancelled or Phantom not available
-                                }
-                              }
-                              setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
-                            }}
+                            onClick={() => setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain })}
                             className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
                               ? 'border-green-400 bg-green-100'
                               : 'border-gray-300 bg-white hover:bg-gray-50'
@@ -2690,16 +2662,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               <span className="text-gray-600">Amount to recipient</span>
                               <span className="font-semibold text-gray-900">${(parseFloat(claim?.amount || "0") || 0).toFixed(2)}</span>
                             </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-gray-600">Network fee (USDC)</span>
-                              <span className="text-gray-700">${NETWORK_FEE_USD.toFixed(2)}</span>
-                            </div>
                             <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                               <span className="font-medium text-gray-900">Total to pay (USDC)</span>
                               <span className="font-semibold text-lg text-gray-900">${((parseFloat(claim?.amount || "0") || 0) + NETWORK_FEE_USD).toFixed(2)}</span>
-                            </div>
-                            <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
-                              Network fee sent in USDC and converted to SOL on burner for processing.
                             </div>
                           </div>
                         </div>
