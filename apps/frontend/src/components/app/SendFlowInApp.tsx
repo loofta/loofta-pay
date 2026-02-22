@@ -189,12 +189,6 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
         />
       </div>
 
-      <div className="rounded-xl bg-white/5 px-3 py-2">
-        <p className="text-xs text-slate-400">
-          Network fee: 0.0015 SOL per send. {requirePrivate && "Private payment fee applies."}
-        </p>
-      </div>
-
       <Button
         onClick={handleCreate}
         disabled={preparing || !amount || Number(amount) < (requirePrivate ? 3 : 0.01)}
