@@ -19,6 +19,7 @@ export type PaymentHistoryClaim = {
   created_at: string;
   paid_at: string | null;
   recipient_address: string;
+  recipient_username?: string | null;
   creator_email: string | null;
   creator_username?: string | null;
   created_by: string | null;
