@@ -2503,15 +2503,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           );
                         }
 
-                        // Optional private payment - payer covers fees (only for USDC)
+                        // Optional private payment - payer covers (payment FREE)
                         if (isUSDCSelected && !requiresPrivate) {
-                          const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-                          const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
-                          const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
-                          const withdrawalFee = withdrawalAmountNeeded * feeRate;
-                          const rentFeeAmount = rentFee;
-                          const totalToPay = withdrawalAmountNeeded + NETWORK_FEE_USD;
-
                           return (
                             <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                               <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
@@ -2521,16 +2514,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   <span className="font-semibold text-gray-900">${requestedAmount.toFixed(2)}</span>
                                 </div>
                                 <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Withdrawal fee (0.35%)</span>
-                                  <span className="text-gray-700">${withdrawalFee.toFixed(6)}</span>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Rent fee</span>
-                                  <span className="text-gray-700">${rentFeeAmount.toFixed(6)}</span>
+                                  <span className="text-gray-600">Fee</span>
+                                  <span className="font-medium text-green-600">FREE</span>
                                 </div>
                                 <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                                   <span className="font-medium text-gray-900">Total to pay (USDC)</span>
-                                  <span className="font-semibold text-lg text-gray-900">${totalToPay.toFixed(2)}</span>
+                                  <span className="font-semibold text-lg text-gray-900">${requestedAmount.toFixed(2)}</span>
                                 </div>
                               </div>
                             </div>
@@ -2664,9 +2653,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               <span className="text-gray-600">Amount to recipient</span>
                               <span className="font-semibold text-gray-900">${(parseFloat(claim?.amount || "0") || 0).toFixed(2)}</span>
                             </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-600">Fee</span>
+                              <span className="font-medium text-green-600">FREE</span>
+                            </div>
                             <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                               <span className="font-medium text-gray-900">Total to pay (USDC)</span>
-                              <span className="font-semibold text-lg text-gray-900">${((parseFloat(claim?.amount || "0") || 0) + NETWORK_FEE_USD).toFixed(2)}</span>
+                              <span className="font-semibold text-lg text-gray-900">${(parseFloat(claim?.amount || "0") || 0).toFixed(2)}</span>
                             </div>
                           </div>
                         </div>
