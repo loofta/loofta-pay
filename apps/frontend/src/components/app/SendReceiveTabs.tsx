@@ -23,7 +23,7 @@ function IconBubble({
 }) {
     return (
         <span className="relative shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-full">
-      {/* fond */}
+            {/* bg */}
             <span
                 aria-hidden="true"
                 className={[
@@ -68,7 +68,7 @@ export function SendReceiveTabs({ activeTab, onTabChange, visualOnly }: SendRece
     const tabTextClass = (tab: Tab) =>
         [
             "relative z-10",
-            "transition-colors duration-300",
+            "transition-colors duration-300 font-sans font-medium text-lg",
             activeTab === tab ? "text-slate-100" : "text-slate-400 group-hover:text-slate-200",
         ].join(" ");
 
