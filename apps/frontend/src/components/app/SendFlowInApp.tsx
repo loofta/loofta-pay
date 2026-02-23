@@ -141,7 +141,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-slate-300 text-sm font-medium">
+        <p className="text-slate-300 text-xl font-sans font-medium ">
           {isEmail ? recipientUsername.trim() : `Pay @${recipientUsername.replace(/^@/, "")}`}
         </p>
         <button
@@ -153,12 +153,12 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
         </button>
       </div>
       {isEmail && (
-        <p className="text-slate-400 text-sm">
+        <p className="text-slate-400 text-md">
           They&apos;ll claim by signing in with this email (account not required yet).
         </p>
       )}
       {!isEmail && usernameNotOnLoofta && (
-        <p className="text-slate-400 text-sm">
+        <p className="text-slate-400 text-md">
           This user isn&apos;t on Loofta yet. You can still create a link; they can claim it when they sign up with this username.
         </p>
       )}
@@ -192,7 +192,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
       <Button
         onClick={handleCreate}
         disabled={preparing || !amount || Number(amount) < (requirePrivate ? 3 : 0.01)}
-        className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+        className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r text-lg from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
       >
         {preparing ? "Creating…" : onClaimCreated ? "Continue to pay" : "Create payment link"}
       </Button>

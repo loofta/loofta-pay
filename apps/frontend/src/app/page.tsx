@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { SendFlowInApp } from "@/components/app/SendFlowInApp";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { motion, AnimatePresence } from "framer-motion";
+import {AtSign, LinkIcon, Mail, PlusIcon, ShareIcon} from "lucide-react";
 
 const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
   () => import("@/app/claim/ClaimPageContent").then((mod) => ({ default: mod.ClaimPageContent })),
@@ -69,6 +70,8 @@ export default function Home() {
   };
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
+  const [editingAmount, setEditingAmount] = useState(false);
+  const amountRef = useRef<HTMLInputElement>(null);
   const [selectedRecipient, setSelectedRecipient] = useState<string | null>(null);
   const [sendStep, setSendStep] = useState<1 | 2 | 3>(1);
   const [claimId, setClaimId] = useState<string | null>(null);
@@ -85,6 +88,58 @@ export default function Home() {
 
   const searchQuery = recipient.replace(/^@/, "").trim().toLowerCase();
   const showDropdown = false; // Autocomplete/suggestions disabled for now
+    // --- Amount hero sizing (copied from ClaimPageContent style) ---
+    const mirrorRef = useRef<HTMLSpanElement | null>(null);
+    const [amountInputWidthPx, setAmountInputWidthPx] = useState<number>(0);
+
+    function sanitizeNumberInput(v: string, maxDecimals: number = 9) {
+        let s = String(v || "").replace(/,/g, ".");
+        s = s.replace(/[^0-9.]/g, "");
+        const parts = s.split(".");
+        if (parts.length > 2) {
+            s = parts[0] + "." + parts.slice(1).join("");
+        }
+        const p = s.split(".");
+        if (p.length === 2) {
+            const int = p[0] || "";
+            const dec = (p[1] || "").slice(0, Math.max(0, maxDecimals));
+            return dec.length > 0 ? `${int}.${dec}` : int;
+        }
+        return p[0] || "";
+    }
+
+    function onChangeAmount(v: string) {
+        setAmount(sanitizeNumberInput(v, 9));
+    }
+
+    const displayAmount = (amount && amount.length > 0) ? amount : "0";
+
+    // count only digits for sizing (ignore dot)
+    const totalDigitsCount = (() => {
+        const onlyDigits = String(amount || "").replace(/[^0-9]/g, "");
+        return onlyDigits.length || 1;
+    })();
+
+    function computeFontPx(digits: number) {
+        const maxPx = 72; // tweak: slightly smaller than claim page for your card
+        const minPx = 28;
+        const startDigits = 5;
+        const stepPerDigit = 7;
+        const delta = Math.max(0, digits - startDigits) * stepPerDigit;
+        return Math.max(minPx, maxPx - delta);
+    }
+
+    const amountFontPx = computeFontPx(totalDigitsCount);
+    const suffixFontPx = Math.max(18, Math.round(amountFontPx * 0.62));
+    const amountGapPx = 8;
+    const looksLikeEmail = recipient.includes("@") && recipient.includes(".");
+
+    useEffect(() => {
+        const el = mirrorRef.current;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        setAmountInputWidthPx(Math.ceil(rect.width));
+    }, [displayAmount, amountFontPx]);
 
   const faqItems = [
     { question: "What is the network fee?", answer: "A small network fee is applied to cover on-chain transaction costs. For private payments we use Privacy Cash; we are migrating to a cheaper SDK to keep fees low." },
@@ -176,13 +231,6 @@ export default function Home() {
         <div className="min-h-[calc(100vh-var(--header-h,0px))]">
           <SendReceiveTabs activeTab={activeTab} onTabChange={(tab) => setActiveTab(tab)} />
 
-          {/* Cool info area */}
-          <div className="rounded-2xl bg-gradient-to-r from-amber-500/10 to-red-500/10 border border-white/10 px-4 py-3 mb-6">
-            <p className="text-sm text-slate-300">
-              💳 USDC on Solana = no extra Loofta fee. Private payments use Privacy Cash (fee on receive).
-            </p>
-          </div>
-
           {activeTab === "send" && (
             <>
               {sendStep === 3 && claimId ? (
@@ -195,7 +243,7 @@ export default function Home() {
                         setSelectedRecipient(null);
                         setSendStep(1);
                       }}
-                      className="text-slate-400 hover:text-white text-sm font-medium"
+                      className="text-slate-300 hover:text-white text-sm font-medium"
                     >
                       ← New payment
                     </button>
@@ -222,86 +270,112 @@ export default function Home() {
                 />
               ) : (
                 <>
-                  {!authenticated && (
-                    <div className="rounded-2xl bg-amber-500/10 border border-amber-500/20 px-4 py-3 mb-6">
-                      <p className="text-sm text-amber-200">
-                        Log in to keep track of this payment and reclaim your money if needed.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => privyLogin({ loginMethods: ["email"], disableSignup: false })}
-                        className="inline-block mt-2 text-sm font-medium text-amber-400 hover:text-amber-300"
-                      >
-                        Sign in →
-                      </button>
-                    </div>
-                  )}
+                    {!authenticated && (
+                        <div className="rounded-2xl bg-gradient-to-r from-amber-500/10 to-red-500/10 border border-white/10 px-4 py-3 mb-6">
+                            <p className="text-sm text-slate-300">
+                                Log in to keep track of this payment and reclaim your money if needed.
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => privyLogin({ loginMethods: ["email"], disableSignup: false })}
+                                className="inline-block mt-2 text-sm font-medium text-amber-400 hover:text-amber-300"
+                            >
+                                Sign in →
+                            </button>
+                        </div>
+                    )}
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
                     <div ref={wrapperRef} className="relative">
-                      <Label className="text-slate-400 text-base">Send to</Label>
-                      <p className="text-sm text-slate-500 mt-0.5 mb-1.5">
-                        Loofta or Twitter username, or exact email – they claim by signing in with that account.
-                      </p>
-                      <p className="text-sm text-slate-500 mb-1.5">
-                        @ is optional (e.g. <span className="text-slate-400">alice</span> or <span className="text-slate-400">@alice</span> both work).
-                      </p>
-                      <Input
-                        type="text"
-                        name="send-to-recipient"
-                        placeholder="e.g. alice or name@example.com"
-                        value={recipient}
-                        onChange={(e) => {
-                          setRecipient(e.target.value);
-                          setDropdownClosed(false);
-                        }}
-                        onFocus={() => setDropdownClosed(false)}
-                        autoComplete="off"
-                        className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500"
-                      />
-                      {showDropdown && (
-                        <ul className="absolute z-50 top-full left-0 right-0 mt-1 rounded-xl border border-white/10 bg-[#1a1a1f] py-1 shadow-lg max-h-48 overflow-auto">
-                          {loadingSuggestions ? (
-                            <li className="px-3 py-2 text-slate-400 text-sm">Searching…</li>
-                          ) : suggestions.length > 0 ? (
-                            suggestions.map((u) => (
-                              <li key={u}>
-                                <button
-                                  type="button"
-                                  className="w-full text-left px-3 py-2 text-white hover:bg-white/10 text-sm"
-                                  onClick={() => {
-                                    setRecipient(u);
-                                    setDropdownClosed(true);
-                                  }}
-                                >
-                                  <span>@{u}</span>
-                                  {suggestions.length === 1 && isExactEmail(searchQuery) && (
-                                    <span className="text-slate-500 text-sm ml-1">(from email)</span>
-                                  )}
-                                </button>
-                              </li>
-                            ))
-                          ) : (
-                            <li className="px-3 py-2 text-slate-500 text-sm">No users found</li>
-                          )}
-                        </ul>
-                      )}
+                      <Label className="text-slate-300 text-xl font-sans font-medium mb-5">Send</Label>
+
+                        <div className="rounded-2xl mt-3 mb-6">
+                            <span
+                                ref={mirrorRef}
+                                aria-hidden="true"
+                                className="invisible absolute -z-50 font-sans font-medium tracking-tight tabular-nums"
+                                style={{ fontSize: `${amountFontPx}px`, lineHeight: 1.05 }}
+                            >
+                                {displayAmount}
+                              </span>
+
+                            <div className="flex flex-col">
+                                <div className="flex items-baseline tabular-nums">
+                                    <input
+                                        inputMode="decimal"
+                                        value={amount}
+                                        onChange={(e) => onChangeAmount(e.target.value)}
+                                        placeholder="0"
+                                        className={[
+                                            "text-white placeholder:text-slate-600",
+                                            "font-semibold font-sans tracking-tight tabular-nums",
+                                            "border-0 bg-transparent outline-none p-0 m-0 text-center",
+                                        ].join(" ")}
+                                        style={{
+                                            fontSize: `${amountFontPx}px`,
+                                            lineHeight: 1.05,
+                                            width: `${amountInputWidthPx + amountGapPx}px`,
+                                        }}
+                                        aria-label="Amount in USD"
+                                    />
+                                    <span
+                                        className="font-semibold font-sans text-slate-500 ml-1"
+                                        style={{ fontSize: `${suffixFontPx}px`, lineHeight: 1.05 }}
+                                    >
+                                    USD
+                                  </span>
+                                </div>
+                            </div>
+                        </div>
+                        <Label className="text-slate-300 text-xl font-sans font-medium">To</Label>
+                        <div className="relative mt-3">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                            {looksLikeEmail ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
+                          </span>
+                            <Input
+                                type="text"
+                                name="send-to-recipient"
+                                placeholder="Loofta, Twitter username, exact email"
+                                value={recipient}
+                                onChange={(e) => setRecipient(e.target.value)}
+                                autoComplete="off"
+                                className="h-12 pl-10 mb-2 bg-white/5 border-white/10 text-white text-md placeholder:text-slate-500"
+                                style={{
+                                    fontSize: `20px`,
+                                }}
+                            />
+                        </div>
+                        {showDropdown && (
+                            <ul className="absolute z-50 top-full left-0 right-0 mt-1 rounded-xl border border-white/10 bg-[#1a1a1f] py-1 shadow-lg max-h-48 overflow-auto">
+                                {loadingSuggestions ? (
+                                    <li className="px-3 py-2 text-slate-300 text-sm">Searching…</li>
+                                ) : suggestions.length > 0 ? (
+                                    suggestions.map((u) => (
+                                        <li key={u}>
+                                            <button
+                                                type="button"
+                                                className="w-full text-left px-3 py-2 text-white hover:bg-white/10 text-sm"
+                                                onClick={() => {
+                                                    setRecipient(u);
+                                                    setDropdownClosed(true);
+                                                }}
+                                            >
+                                                <span>@{u}</span>
+                                                {suggestions.length === 1 && isExactEmail(searchQuery) && (
+                                                    <span className="text-slate-400 text-sm ml-1">(from email)</span>
+                                                )}
+                                            </button>
+                                        </li>
+                                    ))
+                                ) : (
+                                    <li className="px-3 py-2 text-slate-400 text-sm">No users found</li>
+                                )}
+                            </ul>
+                        )}
                     </div>
-                    <div>
-                      <Label className="text-slate-400 text-base">Amount (USD)</Label>
-                      <Input
-                        type="number"
-                        placeholder="0.00"
-                        value={amount}
-                        onChange={(e) => setAmount(e.target.value)}
-                        min="0"
-                        step="0.01"
-                        className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500 text-lg"
-                      />
-                    </div>
-                    <Button
+                      <Button
                       onClick={handleSendContinue}
                       disabled={!recipient.trim()}
-                      className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                      className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
                     >
                       Continue
                     </Button>
@@ -331,10 +405,13 @@ export default function Home() {
                 <>
                   {/* Share your personal link */}
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
-                    <p className="text-slate-300 text-sm font-medium">Share your personal link</p>
+                    <p className="text-slate-300 text-xl font-medium flex gap-3 font-sans items-center">
+                        <LinkIcon className={"text-orange-400 w-4 h-4"}/>
+                        Share your personal link
+                    </p>
                     {authenticated && username ? (
                       <>
-                        <p className="text-slate-400 text-sm">
+                        <p className="text-slate-300 text-sm">
                           Anyone can pay you by opening this link. You receive in your preferred token and chain.
                         </p>
                         <div className="flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5">
@@ -364,14 +441,14 @@ export default function Home() {
                       </>
                     ) : (
                       <>
-                        <p className="text-slate-400 text-sm">
+                        <p className="text-slate-300 text-sm">
                           Sign in to get your own payment link. Add Twitter later to get a unique @username.
                         </p>
                         <Button
                           type="button"
                           variant="receiveSignIn"
                           onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}
-                          className="w-full h-12 rounded-xl"
+                          className="w-full h-12 rounded-xl font-semibold"
                         >
                           Sign in to get your payment link
                         </Button>
@@ -381,8 +458,11 @@ export default function Home() {
 
                   {/* Create new payment link */}
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
-                    <p className="text-slate-300 text-sm font-medium">Create new payment link</p>
-                    <p className="text-slate-400 text-sm">
+                      <p className="text-slate-300 text-xl flex gap-3 font-sans font-medium items-center">
+                        <PlusIcon className={"text-orange-400 w-4 h-4"}/>
+                        Create new payment link
+                      </p>
+                    <p className="text-slate-300 text-sm">
                       Create a one-off payment request. You choose amount, token, and chain. No account required to create.
                     </p>
                     <Button
@@ -410,7 +490,7 @@ export default function Home() {
             {faqItems.map((item, index) => (
               <div
                 key={index}
-                className="rounded-[20px] bg-[#F6F6F8] overflow-hidden"
+                className="rounded-[20px] border border-white/10 bg-white/5 overflow-hidden"
               >
                 <button
                   type="button"
@@ -421,11 +501,11 @@ export default function Home() {
                   }}
                   className="w-full px-6 py-5 flex items-center justify-between text-left"
                 >
-                  <span className="text-lg md:text-xl font-semibold font-sans text-slate-900">
+                  <span className="text-lg md:text-xl font-semibold font-sans text-slate-200">
                     {item.question}
                   </span>
                   <motion.span
-                    className="text-4xl text-slate-900 shrink-0 ml-4"
+                    className="text-4xl text-orange-500 shrink-0 ml-4"
                     animate={{ rotate: openFaq === index ? 45 : 0 }}
                     transition={{ duration: 0.2 }}
                   >
@@ -442,7 +522,7 @@ export default function Home() {
                       className="overflow-hidden"
                     >
                       <div className="px-6 pb-5">
-                        <p className="text-lg text-slate-500">
+                        <p className="text-lg text-slate-400">
                           {item.answer}
                         </p>
                       </div>
