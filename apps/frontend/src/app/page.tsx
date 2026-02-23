@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { SendFlowInApp } from "@/components/app/SendFlowInApp";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { motion, AnimatePresence } from "framer-motion";
-import {AtSign, LinkIcon, Mail, PlusIcon, ShareIcon} from "lucide-react";
+import {AtSign, LinkIcon, Mail, PlusIcon} from "lucide-react";
 
 const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
   () => import("@/app/claim/ClaimPageContent").then((mod) => ({ default: mod.ClaimPageContent })),
@@ -229,7 +229,10 @@ export default function Home() {
       <div className="max-w-lg mx-auto px-4 py-6">
         {/* Header + tab content: min one screen so FAQ is below the fold */}
         <div className="min-h-[calc(100vh-var(--header-h,0px))]">
-          <SendReceiveTabs activeTab={activeTab} onTabChange={(tab) => setActiveTab(tab)} />
+
+            <div className="hidden md:block">
+                <SendReceiveTabs activeTab={activeTab} onTabChange={(tab) => setActiveTab(tab)} />
+            </div>
 
           {activeTab === "send" && (
             <>
