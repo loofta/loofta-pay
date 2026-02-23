@@ -719,12 +719,17 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // - For non-EVM same-chain: only show the destination token (same token required)
   // - For cross-chain: show all tokens
   const filteredTokens = useMemo(() => {
-    if (!destToken?.chain || !destToken?.symbol) return tokens;
+    // Exclude Solana/Sol network from payment token options
+    const noSolana = (t: { chain?: string }) => {
+      const c = String(t.chain || "").toLowerCase();
+      return c !== "solana" && c !== "sol";
+    };
+    if (!destToken?.chain || !destToken?.symbol) return tokens.filter(noSolana);
 
     const destChainLower = String(destToken.chain).toLowerCase();
     const isNonEvmDest = ['sol', 'solana', 'btc', 'bitcoin', 'zec', 'zcash', 'xrp', 'xlm', 'ton', 'sui'].includes(destChainLower);
 
-    return tokens.map(t => {
+    return tokens.filter(noSolana).map(t => {
       const tokenChainLower = String(t.chain || "").toLowerCase();
       const isSameChain = tokenChainLower === destChainLower;
 
@@ -2344,59 +2349,17 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   <div className="text-base font-medium text-gray-700 mb-2">Pay with</div>
 
                   {requiresPrivate || isPrivateMode ? (
-                    /* Private mode (required or optional) - Show USDC on SOL as best option, but allow other tokens */
+                    /* Private mode - token selector only (no Solana) */
                     <>
-                      {/* Best option: Pay USDC on SOL (FREE) - select only; Phantom opens when user clicks "Use wallet" */}
-                      {usdcSolanaToken && (
-                        <div className="mb-4">
-                          <button
-                            type="button"
-                            onClick={() => setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain })}
-                            className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
-                              ? 'border-green-400 bg-green-100'
-                              : 'border-gray-300 bg-white hover:bg-gray-50'
-                              }`}
-                          >
-                            <TokenIcon token={usdcSolanaToken} chain="solana" size={32} />
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className={cn(
-                                  "text-lg font-semibold",
-                                  selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-900" : "text-gray-900"
-                                )}>Pay USDC on Solana</span>
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
-                                  FREE
-                                </span>
-
-                              </div>
-                              <div className={cn(
-                                "text-sm mt-0.5",
-                                selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-800" : "text-slate-200"
-                              )}>
-                                Pay now with Phantom or your Loofta balance
-                              </div>
-                            </div>
-                            {selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain && (
-                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-600">
-                                <path d="M20 6L9 17l-5-5" />
-                              </svg>
-                            )}
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Divider - two line segments so line never strikes through text */}
                       <div className="flex items-center gap-3 mb-4">
                         <div className="flex-1 h-px bg-white/20" />
-                        <span className="text-sm text-slate-400 shrink-0">or choose another token</span>
+                        <span className="text-sm text-slate-400 shrink-0">Choose token</span>
                         <div className="flex-1 h-px bg-white/20" />
                       </div>
-
-                      {/* Token selector - hide Solana for private flow */}
-                      <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
+                      <div className={`relative ${selectedFrom ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
                         <TokenCombobox
                           tokens={filteredTokens as any}
-                          value={fromSel}
+                          value={fromSel && fromSel.chain !== 'solana' && fromSel.chain !== 'sol' ? fromSel : undefined}
                           onChange={(sel) => {
                             // Check if token is unsupported
                             const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
@@ -2412,15 +2375,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           }}
                           placeholder="Select token to pay with"
                           onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                          hideChains={['solana', 'sol']}
                           className={embedInApp
-                            ? `bg-white/10 text-white border border-white/20 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors hover:bg-white/15 placeholder:text-slate-400 ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400/50 ring-offset-2 ring-offset-[#0f0f12]' : ''}`
-                            : `bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'border-emerald-400 hover:bg-emerald-50' : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'}`
+                            ? `bg-white/10 text-white border border-white/20 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors hover:bg-white/15 placeholder:text-slate-400 ${selectedFrom ? 'ring-2 ring-emerald-400/50 ring-offset-2 ring-offset-[#0f0f12]' : ''}`
+                            : `bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom ? 'border-emerald-400 hover:bg-emerald-50' : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'}`
                           }
                         />
                       </div>
-                      {/* Selected Token Display - Show when a token is selected */}
-                      {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? (
+                      {selectedFrom ? (
                         <motion.div
                           initial={{ opacity: 0, y: -10 }}
                           animate={{ opacity: 1, y: 0 }}
@@ -2457,143 +2418,29 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               </div>
                               <ArrowRight className="w-5 h-5 text-emerald-600" />
                             </div>
+                            <p className="text-xs text-emerald-600 mt-2 font-medium">FREE – no fee</p>
                           </div>
                         </motion.div>
-                      ) : selectedFrom && selectedFrom.symbol === usdcSolanaToken?.symbol && selectedFrom.chain === usdcSolanaToken?.chain ? (
-                        PRIVATE_PAYMENT_COMING_SOON ? (
-                          <div className="mt-2 text-sm text-amber-700">
-                            Private payments coming soon
-                          </div>
-                        ) : null
                       ) : null}
-                      {PRIVATE_PAYMENT_COMING_SOON && selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) && (
+                      {PRIVATE_PAYMENT_COMING_SOON && selectedFrom && (
                         <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
                           <span className="font-medium">Private payment:</span> Coming soon.
                         </div>
                       )}
-                      {(() => {
-                        const requestedAmount = parseFloat(claim?.amount || "0");
-                        const isUSDCSelected = selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain;
-
-                        // If requiresPrivate is true, recipient pays fees - payer pays amount + network fee in USDC
-                        if (requiresPrivate && isUSDCSelected) {
-                          const totalWithNetworkFee = requestedAmount + NETWORK_FEE_USD;
-                          return (
-                            <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                              <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
-                              <div className="space-y-1.5 text-sm">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Amount to recipient</span>
-                                  <span className="font-semibold text-gray-900">${requestedAmount.toFixed(2)}</span>
-                                </div>
-                                <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
-                                  <span className="font-medium text-gray-900">Total to pay (USDC)</span>
-                                  <span className="font-semibold text-lg text-gray-900">${totalWithNetworkFee.toFixed(2)}</span>
-                                </div>
-                                <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
-                                  Fees (0.35% + $0.74) will be deducted from the recipient when they withdraw.
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        }
-
-                        // Optional private payment - payer covers fees (only for USDC)
-                        if (isUSDCSelected && !requiresPrivate) {
-                          const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-                          const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
-                          const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
-                          const withdrawalFee = withdrawalAmountNeeded * feeRate;
-                          const rentFeeAmount = rentFee;
-                          const totalToPay = withdrawalAmountNeeded + NETWORK_FEE_USD;
-
-                          return (
-                            <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                              <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
-                              <div className="space-y-1.5 text-sm">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Recipient receives</span>
-                                  <span className="font-semibold text-gray-900">${requestedAmount.toFixed(2)}</span>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Withdrawal fee (0.35%)</span>
-                                  <span className="text-gray-700">${withdrawalFee.toFixed(6)}</span>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Rent fee</span>
-                                  <span className="text-gray-700">${rentFeeAmount.toFixed(6)}</span>
-                                </div>
-                                <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
-                                  <span className="font-medium text-gray-900">Total to pay (USDC)</span>
-                                  <span className="font-semibold text-lg text-gray-900">${totalToPay.toFixed(2)}</span>
-                                </div>
-                                <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
-                                  Privacy Cash fees above.
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        }
-
-                        // For other tokens in private mode, show estimated amount only
-                        return null;
-                      })()}
                     </>
                   ) : (
-                    /* Standard mode - Show USDC on SOL (FREE) option first, then token selector */
+                    /* Standard mode - token selector only (no Solana) */
                     <>
-                      {/* Best option: Pay USDC on SOL (FREE) - select only; Phantom opens when user clicks "Use wallet" */}
-                      {usdcSolanaToken && (
-                        <div className="mb-4">
-                          <button
-                            type="button"
-                            onClick={() => setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain })}
-                            className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
-                              ? 'border-green-400 bg-green-100'
-                              : 'border-gray-300 bg-white hover:bg-gray-50'
-                              }`}
-                          >
-                            <TokenIcon token={usdcSolanaToken} chain="solana" size={32} />
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className={cn(
-                                  "text-lg font-semibold",
-                                  selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-900" : "text-gray-900"
-                                )}>Pay USDC on Solana</span>
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
-                                  FREE
-                                </span>
-                              </div>
-                              <div className={cn(
-                                "text-sm mt-0.5",
-                                selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-800" : "text-slate-200"
-                              )}>
-                                Pay now with Phantom or your Loofta balance
-                              </div>
-                            </div>
-                            {selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain && (
-                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-600">
-                                <path d="M20 6L9 17l-5-5" />
-                              </svg>
-                            )}
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Divider - two line segments so line never strikes through text */}
                       <div className="flex items-center gap-3 mb-4">
                         <div className="flex-1 h-px bg-white/20" />
-                        <span className="text-sm text-slate-400 shrink-0">or choose token</span>
+                        <span className="text-sm text-slate-400 shrink-0">Choose token</span>
                         <div className="flex-1 h-px bg-white/20" />
                       </div>
-
-                      {/* Token selector - hide Solana for private flow */}
-                      <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
+                      <div className={`relative ${selectedFrom ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
                         <TokenCombobox
                           tokens={filteredTokens as any}
-                          value={fromSel}
+                          value={fromSel && fromSel.chain !== 'solana' && fromSel.chain !== 'sol' ? fromSel : undefined}
                           onChange={(sel) => {
-                            // Check if token is unsupported
                             const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
                             if (selected?._unsupported) {
                               toast({
@@ -2607,15 +2454,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           }}
                           placeholder="Select token to pay with"
                           onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                          hideChains={['solana', 'sol']}
                           className={embedInApp
-                            ? `bg-white/10 text-white border border-white/20 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors hover:bg-white/15 placeholder:text-slate-400 ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400/50 ring-offset-2 ring-offset-[#0f0f12]' : ''}`
-                            : `bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'border-emerald-400 hover:bg-emerald-50' : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'}`
+                            ? `bg-white/10 text-white border border-white/20 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors hover:bg-white/15 placeholder:text-slate-400 ${selectedFrom ? 'ring-2 ring-emerald-400/50 ring-offset-2 ring-offset-[#0f0f12]' : ''}`
+                            : `bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom ? 'border-emerald-400 hover:bg-emerald-50' : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'}`
                           }
                         />
                       </div>
-                      {/* Selected Token Display - Show when a token is selected */}
-                      {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? (
+                      {selectedFrom ? (
                         <motion.div
                           initial={{ opacity: 0, y: -10 }}
                           animate={{ opacity: 1, y: 0 }}
@@ -2652,28 +2497,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               </div>
                               <ArrowRight className="w-5 h-5 text-emerald-600" />
                             </div>
+                            <p className="text-xs text-emerald-600 mt-2 font-medium">FREE – no fee</p>
                           </div>
                         </motion.div>
-                      ) : selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain ? (
-                        <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                          <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
-                          <div className="space-y-1.5 text-sm">
-                            <div className="flex items-center justify-between">
-                              <span className="text-gray-600">Amount to recipient</span>
-                              <span className="font-semibold text-gray-900">${(parseFloat(claim?.amount || "0") || 0).toFixed(2)}</span>
-                            </div>
-                            <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
-                              <span className="font-medium text-gray-900">Total to pay (USDC)</span>
-                              <span className="font-semibold text-lg text-gray-900">${((parseFloat(claim?.amount || "0") || 0) + NETWORK_FEE_USD).toFixed(2)}</span>
-                            </div>
-                          </div>
-                        </div>
                       ) : null}
                     </>
                   )}
 
-                  {/* Refund Address Input - Show when a token is selected (not USDC on Solana) */}
-                  {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) && (
+                  {/* Refund Address - when a token is selected */}
+                  {selectedFrom && (
                     <div className="mt-4 space-y-2">
                       <Label htmlFor="refundAddress" className="text-sm font-medium text-gray-700">
                         Refund Address ({selectedFrom.chain.toUpperCase()})
@@ -2930,6 +2762,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                     </svg>
                                   </button>
                                 </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600">Payment</span>
+                                <span className="text-emerald-600 font-medium">FREE – no fee</span>
                               </div>
                               <div className="flex items-center justify-between">
                                 <span className="text-gray-600">Deposit address</span>
