@@ -724,7 +724,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     const destChainLower = String(destToken.chain).toLowerCase();
     const isNonEvmDest = ['sol', 'solana', 'btc', 'bitcoin', 'zec', 'zcash', 'xrp', 'xlm', 'ton', 'sui'].includes(destChainLower);
 
-    return tokens.map(t => {
+    const mapped = tokens.map(t => {
       const tokenChainLower = String(t.chain || "").toLowerCase();
       const isSameChain = tokenChainLower === destChainLower;
 
@@ -747,6 +747,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       }
 
       return t;
+    });
+    // Exclude Solana/SOL from token combobox options only (USDC on Solana remains as the card option)
+    return mapped.filter(t => {
+      const c = String(t.chain || "").toLowerCase();
+      return c !== "sol" && c !== "solana";
     });
   }, [tokens, destToken, destChainSupportsSwap, supportedSwapTokens]);
 
@@ -2475,9 +2480,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         const requestedAmount = parseFloat(claim?.amount || "0");
                         const isUSDCSelected = selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain;
 
-                        // If requiresPrivate is true, recipient pays fees - payer pays amount + network fee in USDC
+                        // If requiresPrivate is true, recipient pays fees - payer pays amount (payment FREE)
                         if (requiresPrivate && isUSDCSelected) {
-                          const totalWithNetworkFee = requestedAmount + NETWORK_FEE_USD;
                           return (
                             <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                               <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
@@ -2486,9 +2490,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   <span className="text-gray-600">Amount to recipient</span>
                                   <span className="font-semibold text-gray-900">${requestedAmount.toFixed(2)}</span>
                                 </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-gray-600">Fee</span>
+                                  <span className="font-medium text-green-600">FREE</span>
+                                </div>
                                 <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                                   <span className="font-medium text-gray-900">Total to pay (USDC)</span>
-                                  <span className="font-semibold text-lg text-gray-900">${totalWithNetworkFee.toFixed(2)}</span>
+                                  <span className="font-semibold text-lg text-gray-900">${requestedAmount.toFixed(2)}</span>
                                 </div>
                               </div>
                             </div>
@@ -2523,9 +2531,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                 <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                                   <span className="font-medium text-gray-900">Total to pay (USDC)</span>
                                   <span className="font-semibold text-lg text-gray-900">${totalToPay.toFixed(2)}</span>
-                                </div>
-                                <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-200">
-                                  Privacy Cash fees above.
                                 </div>
                               </div>
                             </div>
