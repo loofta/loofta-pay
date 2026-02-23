@@ -2025,9 +2025,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <p className="text-gray-600 text-base mb-4">
                   ${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay. When they do, it&apos;ll show up here and in your Loofta account.
                 </p>
-                <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900">
-                  ← Back to Send
-                </Link>
               </div>
             ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
               <ClaimPageSenderShareView
@@ -2339,7 +2336,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                     </svg>
                     <span className="font-medium">
-                      {PRIVATE_PAYMENT_COMING_SOON ? "Private payment only — coming soon" : "Private payment only"}
+                      {PRIVATE_PAYMENT_COMING_SOON ? "Private payment — coming soon" : "Private payment only"}
                     </span>
                   </div>
                 )}
@@ -2471,11 +2468,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           </div>
                         ) : null
                       ) : null}
-                      {PRIVATE_PAYMENT_COMING_SOON && selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) && (
-                        <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
-                          <span className="font-medium">Private payment:</span> Coming soon.
-                        </div>
-                      )}
+
                       {(() => {
                         const requestedAmount = parseFloat(claim?.amount || "0");
                         const isUSDCSelected = selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain;
