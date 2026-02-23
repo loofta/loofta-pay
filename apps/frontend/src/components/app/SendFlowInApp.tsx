@@ -59,6 +59,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
     fetchUserByUsername(recipientUsername)
       .then((data) => {
         if (!cancelled) {
+          setUsernameNotOnLoofta(false);
           setRequirePrivate(!!data?.user?.requirePrivatePayments);
           if (initialAmount) setAmount(initialAmount);
         }
