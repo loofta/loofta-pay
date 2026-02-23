@@ -121,10 +121,11 @@ export class UsersService {
     
     this.logger.debug(`Looking up user with username: "${cleanUsername}"`);
 
-    // Use maybeSingle() instead of single() to handle 0 rows gracefully
+    // Use maybeSingle() instead of single() to handle 0 rows gracefully.
+    // ilike for case-insensitive exact match (DB may store "Lisa" while we query "lisa").
     const { data: user, error } = await this.supabaseService.appUsers
       .select('id, privy_user_id, email, username, require_private_payments')
-      .eq('username', cleanUsername)
+      .ilike('username', cleanUsername)
       .maybeSingle();
 
     if (error) {
