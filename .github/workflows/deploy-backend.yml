@@ -22,15 +22,12 @@ jobs:
       image: ghcr.io/railwayapp/cli:latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      # Use secret if set; otherwise "backend" (set RAILWAY_SERVICE_ID in repo secrets if your service has another name/ID)
+      RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID || 'backend' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Deploy to Railway
-        run: |
-          SERVICE="${{ secrets.RAILWAY_SERVICE_ID }}"
-          if [ -z "$SERVICE" ]; then
-            SERVICE="backend"
-          fi
-          railway up --service "$SERVICE" --detach
+        run: railway up --service "$RAILWAY_SERVICE_ID" --detach
         working-directory: apps/backend

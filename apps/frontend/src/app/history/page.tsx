@@ -94,6 +94,14 @@ function stripGifUrlsFromMessage(desc: string): string | null {
   return textOnly || null;
 }
 
+/** Extract first GIF URL from description (for showing in list). */
+function extractGifUrl(desc: string): string | null {
+  const trimmed = (desc || "").trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(GIF_URL_REGEX);
+  return match ? match[0] : null;
+}
+
 async function fetchPaymentHistory(userId: string): Promise<{ sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[] }> {
   const r = await fetch("/api/payments/history", {
     headers: { "x-privy-user-id": userId },
@@ -258,6 +266,8 @@ export default function HistoryPage() {
                     const amount = parseFloat(claim.amount || "0");
                     const senderOrPayee = type === "sent" ? getPayeeDisplay(claim) : getSenderDisplay(claim);
                     const message = stripGifUrlsFromMessage(claim.description || "");
+                    const gifUrl = type === "received" ? extractGifUrl(claim.description || "") : null;
+                    const showMessageOrGif = (type === "received" && (message || gifUrl)) || (type === "sent" && message);
                     return (
                       <li key={`${type}-${claim.id}`}>
                         <Link
@@ -275,9 +285,18 @@ export default function HistoryPage() {
                           <div className="mt-1.5 text-sm font-medium text-slate-300">
                             {type === "sent" ? "To " : "From "}{senderOrPayee}
                           </div>
-                          {message && (
-                            <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10">
-                              <p className="text-sm text-slate-300 line-clamp-2 italic">"{message}"</p>
+                          {showMessageOrGif && (
+                            <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 space-y-2">
+                              {type === "received" && gifUrl && (
+                                <img
+                                  src={gifUrl}
+                                  alt=""
+                                  className="rounded-lg w-full max-h-32 object-cover object-center"
+                                />
+                              )}
+                              {message && (
+                                <p className="text-sm text-slate-300 line-clamp-2 italic">"{message}"</p>
+                              )}
                             </div>
                           )}
                           <div className="flex items-center justify-between gap-2 mt-1">
