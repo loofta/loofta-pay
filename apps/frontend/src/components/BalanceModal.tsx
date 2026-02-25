@@ -27,6 +27,7 @@ import type { NearToken } from "@/services/nearIntents";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { addWithdrawal, getWithdrawalHistory, type WithdrawalHistoryItem } from "@/lib/withdrawalHistory";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
+import { cn } from "@/lib/utils";
 import { ExternalLink } from "lucide-react";
 
 const SOLANA_RPC_URL =
@@ -90,10 +91,18 @@ export function BalanceModal({
     [tokens]
   );
 
+  // Withdraw options: only USDC on Solana (free) + other tokens (no other Solana tokens)
+  const withdrawTokens = useMemo(() => {
+    const solanaLower = (c: string | undefined) => (c || "").toLowerCase() === "solana" || (c || "").toLowerCase() === "sol";
+    const usdcSol = usdcSolanaToken ? [usdcSolanaToken] : [];
+    const otherChains = tokens.filter((t) => !solanaLower(t.chain));
+    return [...usdcSol, ...otherChains];
+  }, [tokens, usdcSolanaToken]);
+
   // Default to USDC/Solana when token list loads
   const selectedFrom = useMemo(
-    () => findTokenBySelection(tokens, fromSel ?? (usdcSolanaToken ? { symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain } : undefined)),
-    [tokens, fromSel, usdcSolanaToken]
+    () => findTokenBySelection(withdrawTokens, fromSel ?? (usdcSolanaToken ? { symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain } : undefined)),
+    [withdrawTokens, fromSel, usdcSolanaToken]
   );
 
   const effectiveToken = selectedFrom || usdcSolanaToken;
@@ -287,11 +296,17 @@ export function BalanceModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className={contentCls}>
-        <DialogHeader>
-          <DialogTitle className={dark ? "text-white" : undefined}>Balance & Withdraw</DialogTitle>
-          <DialogDescription className={dark ? "text-slate-400" : undefined}>
-            View your balance and withdraw to any Solana wallet.
+      <DialogContent
+        className={cn(
+          contentCls,
+          "left-0 right-0 top-0 translate-x-0 translate-y-0 h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-4 gap-4 overflow-y-auto",
+          "sm:left-1/2 sm:right-auto sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-md sm:rounded-lg sm:border sm:p-6"
+        )}
+      >
+        <DialogHeader className="pb-1">
+          <DialogTitle className={dark ? "text-white text-lg sm:text-xl" : undefined}>Balance & Withdraw</DialogTitle>
+          <DialogDescription className={dark ? "text-slate-400 text-sm" : undefined}>
+            USDC on Solana = free withdrawal. Other tokens via bridge.
           </DialogDescription>
         </DialogHeader>
 
@@ -317,7 +332,7 @@ export function BalanceModal({
         </div>
 
         {tab === "history" ? (
-          <div className="py-2 max-h-[60vh] overflow-y-auto">
+          <div className="py-2 min-h-0 overflow-y-auto sm:max-h-[60vh]">
             {recentWithdrawals.length === 0 ? (
               <p className={`text-sm text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent withdrawals.</p>
             ) : (
@@ -391,23 +406,23 @@ export function BalanceModal({
             )}
           </div>
 
-          {/* Token/network selector for withdraw */}
+          {/* Token/network selector: USDC on Solana (free) or other tokens only (no other Solana) */}
           <div>
             <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-300" : "text-gray-700"}`}>
-              Withdraw with
+              Withdraw to
             </Label>
             <TokenCombobox
-              tokens={tokens}
+              tokens={withdrawTokens}
               value={fromSel ?? (usdcSolanaToken ? { symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain } : undefined)}
               onChange={setFromSel}
-              placeholder="Select token to receive"
+              placeholder="USDC on Solana (free) or other token"
               className={dark ? "w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white text-center placeholder:text-slate-400" : "w-full h-12 rounded-xl border-2 border-gray-200 bg-white text-center"}
               defaultShowAllChains
             />
-            <p className={`text-xs mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+            <p className={`text-xs mt-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
               {isUSDCOnSolana
-                ? "Withdraw to any Solana wallet. Fees are sponsored."
-                : `Withdraw to ${effectiveToken?.symbol} on ${effectiveToken?.chain} via Near Intents. Enter destination address on ${effectiveToken?.chain}.`}
+                ? "USDC on Solana — free withdrawal to any Solana wallet."
+                : `Other tokens: USDC is bridged to ${effectiveToken?.symbol} on ${effectiveToken?.chain}. Enter ${effectiveToken?.chain} address.`}
             </p>
           </div>
 
