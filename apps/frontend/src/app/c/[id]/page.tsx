@@ -46,7 +46,7 @@ import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction, useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
-import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES, PRIVATE_PAYMENT_COMING_SOON, NETWORK_FEE_USD } from "@/services/privacyCash";
+import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES, PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
 import { Connection, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -1139,14 +1139,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       return;
     }
 
-    // Total USDC to send: recipient amount + network fee (sent in USDC, converted to SOL on burner)
+    // Total USDC to send: recipient amount only (no processing fee)
     const amountUSD = requiresPrivate
-      ? requestedAmount + NETWORK_FEE_USD
+      ? requestedAmount
       : (() => {
         const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
         const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
         const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
-        return withdrawalAmountNeeded + NETWORK_FEE_USD;
+        return withdrawalAmountNeeded;
       })();
 
     console.log("[PrivateTransfer] Starting", { claimId: claim.id, amountUSD, recipient: recipient.slice(0, 8) + "…" });
@@ -1251,14 +1251,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // Note: Privy’s confirm modal shows the wallet’s SOL balance (for gas), not USDC — so you may see "$0.00" there even when you have USDC; gas sponsorship covers fees.
   const claimAmountUSD = (() => {
     const base = parseFloat(claim?.amount || "0") || 0;
-    if (requiresPrivate) return base + NETWORK_FEE_USD;
+    if (requiresPrivate) return base;
     if (isPrivateMode) {
       const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
       const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
       const withdrawalAmountNeeded = (base + rentFee) / (1 - feeRate);
-      return withdrawalAmountNeeded + NETWORK_FEE_USD;
+      return withdrawalAmountNeeded;
     }
-    return base + NETWORK_FEE_USD;
+    return base;
   })();
   const looftaBalanceUSD = solanaPayment.balanceUSD;
   const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(claimAmountUSD);
@@ -1276,17 +1276,17 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
       return;
     }
-    // Same amount logic as Pay with Loofta: base + network fee (or private fees when required)
+    // Amount to send: base only (no processing fee)
     const amountUSD = requiresPrivate
-      ? baseAmount + NETWORK_FEE_USD
+      ? baseAmount
       : isPrivateMode
         ? (() => {
           const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
           const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
           const withdrawalAmountNeeded = (baseAmount + rentFee) / (1 - feeRate);
-          return withdrawalAmountNeeded + NETWORK_FEE_USD;
+          return withdrawalAmountNeeded;
         })()
-        : baseAmount + NETWORK_FEE_USD;
+        : baseAmount;
     const phantom = getPhantomProvider();
     if (!phantom) {
       toast({ variant: "destructive", title: "Phantom not found", description: "Install the Phantom extension to pay with wallet." });
@@ -1406,17 +1406,17 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
       return;
     }
-    // When paying privately: total includes Privacy Cash fees (if payer covers) + network fee in USDC (converted to SOL on burner)
+    // Amount to send: base only (no processing fee)
     const amountUSD = requiresPrivate
-      ? baseAmount + NETWORK_FEE_USD
+      ? baseAmount
       : isPrivateMode
         ? (() => {
           const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
           const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
           const withdrawalAmountNeeded = (baseAmount + rentFee) / (1 - feeRate);
-          return withdrawalAmountNeeded + NETWORK_FEE_USD;
+          return withdrawalAmountNeeded;
         })()
-        : baseAmount + NETWORK_FEE_USD;
+        : baseAmount;
     const senderAddress = solanaPayment.senderAddress;
     if (!senderAddress) {
       toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta Solana wallet was not found. Try logging in again." });
