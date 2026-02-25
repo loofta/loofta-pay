@@ -7,9 +7,11 @@ type AuthState = {
 	email?: string;
 	username?: string | null;
 	openShareModal: boolean;
+	openSettingsModal: boolean;
 	setAuth: (v: { authenticated: boolean; userId?: string; email?: string; username?: string | null }) => void;
 	setUsername: (username: string | null) => void;
 	setOpenShareModal: (open: boolean) => void;
+	setOpenSettingsModal: (open: boolean) => void;
 };
 
 // SSR-safe storage: only use localStorage on client so Next.js build/SSR doesn't break
@@ -32,6 +34,7 @@ export const useAuthStore = create<AuthState>()(
 			email: undefined,
 			username: undefined,
 			openShareModal: false,
+			openSettingsModal: false,
 			setAuth: (v) =>
 				set((state) => {
 					const authenticated = !!v.authenticated;
@@ -55,6 +58,7 @@ export const useAuthStore = create<AuthState>()(
 				}),
 			setUsername: (username) => set({ username }),
 			setOpenShareModal: (open) => set({ openShareModal: open }),
+			setOpenSettingsModal: (open) => set({ openSettingsModal: open }),
 		}),
 		{
 			name: "loofta.auth.v1",
