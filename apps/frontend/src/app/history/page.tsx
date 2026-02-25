@@ -260,30 +260,6 @@ export default function HistoryPage() {
           ) : (
             <>
                 <div className="grid grid-cols-2 gap-3 mb-6">
-                    {/* RECEIVED */}
-                    <button
-                        type="button"
-                        onClick={() => setTypeFilter((prev) => (prev === "received" ? "all" : "received"))}
-                        className={[
-                            "rounded-2xl border p-4 text-left transition-colors hover:bg-white/10",
-                            typeFilter === "received"
-                                ? "bg-emerald-500/10 border-emerald-400/30 ring-2 ring-emerald-400/30"
-                                : "bg-emerald-500/5 border-emerald-500/20",
-                        ].join(" ")}
-                    >
-                        <div className="flex items-center gap-2">
-                            <IconBubble active={typeFilter === "received"} variant="received">
-                                <ArrowDown />
-                            </IconBubble>
-                            <p className="text-slate-300 text-xs font-medium uppercase tracking-wide">
-                                Amount received
-                            </p>
-                        </div>
-                        <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">
-                            ${totalReceived.toFixed(2)}
-                        </p>
-                    </button>
-
                     {/* SENT */}
                     <button
                         type="button"
@@ -305,6 +281,29 @@ export default function HistoryPage() {
                         </div>
                         <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">
                             ${totalSent.toFixed(2)}
+                        </p>
+                    </button>
+                    {/* RECEIVED */}
+                    <button
+                        type="button"
+                        onClick={() => setTypeFilter((prev) => (prev === "received" ? "all" : "received"))}
+                        className={[
+                            "rounded-2xl border p-4 text-left transition-colors hover:bg-white/10",
+                            typeFilter === "received"
+                                ? "bg-emerald-500/10 border-emerald-400/30 ring-2 ring-emerald-400/30"
+                                : "bg-emerald-500/5 border-emerald-500/20",
+                        ].join(" ")}
+                    >
+                        <div className="flex items-center gap-2">
+                            <IconBubble active={typeFilter === "received"} variant="received">
+                                <ArrowDown />
+                            </IconBubble>
+                            <p className="text-slate-300 text-xs font-medium uppercase tracking-wide">
+                                Amount received
+                            </p>
+                        </div>
+                        <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">
+                            ${totalReceived.toFixed(2)}
                         </p>
                     </button>
                 </div>
