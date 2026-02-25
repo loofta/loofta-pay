@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
@@ -147,6 +147,19 @@ export default function HistoryPage() {
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | "sent" | "received">("all");
+  const cardsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (typeFilter === "all") return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (cardsRef.current && !cardsRef.current.contains(e.target as Node)) {
+        setTypeFilter("all");
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [typeFilter]);
 
   const allPayments: { claim: PaymentHistoryClaim; type: "sent" | "received" }[] = useMemo(() => {
     const list = [
@@ -157,14 +170,18 @@ export default function HistoryPage() {
   }, [sent, received]);
 
   const filteredPayments = useMemo(() => {
+    let list = allPayments;
+    if (typeFilter !== "all") {
+      list = list.filter(({ type }) => type === typeFilter);
+    }
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return allPayments;
-    return allPayments.filter(({ claim, type }) => {
+    if (!q) return list;
+    return list.filter(({ claim, type }) => {
       const senderOrPayee = type === "sent" ? getPayeeDisplay(claim) : getSenderDisplay(claim);
       const message = (claim.description || "").toLowerCase();
       return senderOrPayee.toLowerCase().includes(q) || message.includes(q);
     });
-  }, [allPayments, searchQuery]);
+  }, [allPayments, searchQuery, typeFilter]);
 
   if (!authenticated) {
     return (
@@ -208,15 +225,31 @@ export default function HistoryPage() {
             <p className="text-red-400 text-sm">{error}</p>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="rounded-xl bg-white/5 border border-white/10 p-4">
+              <div ref={cardsRef} className="grid grid-cols-2 gap-4 mb-6">
+                <button
+                  type="button"
+                  onClick={() => setTypeFilter((prev) => (prev === "sent" ? "all" : "sent"))}
+                  className={`rounded-xl border p-4 text-left transition-colors hover:bg-white/10 ${
+                    typeFilter === "sent"
+                      ? "bg-amber-500/10 border-amber-400/30 ring-2 ring-amber-400/30"
+                      : "bg-white/5 border-white/10"
+                  }`}
+                >
                   <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">Amount sent</p>
                   <p className="text-xl font-bold text-white mt-1">${totalSent.toFixed(2)}</p>
-                </div>
-                <div className="rounded-xl bg-white/5 border border-white/10 p-4">
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTypeFilter((prev) => (prev === "received" ? "all" : "received"))}
+                  className={`rounded-xl border p-4 text-left transition-colors hover:bg-white/10 ${
+                    typeFilter === "received"
+                      ? "bg-emerald-500/10 border-emerald-400/30 ring-2 ring-emerald-400/30"
+                      : "bg-white/5 border-white/10"
+                  }`}
+                >
                   <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">Amount received</p>
                   <p className="text-xl font-bold text-white mt-1">${totalReceived.toFixed(2)}</p>
-                </div>
+                </button>
               </div>
 
               <div className="flex items-center justify-between gap-2 mb-2">
