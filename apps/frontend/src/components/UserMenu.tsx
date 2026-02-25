@@ -57,6 +57,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
 
   const openShareModalFromStore = useAuthStore((s) => s.openShareModal);
   const setOpenShareModal = useAuthStore((s) => s.setOpenShareModal);
+  const openSettingsModalFromStore = useAuthStore((s) => s.openSettingsModal);
+  const setOpenSettingsModal = useAuthStore((s) => s.setOpenSettingsModal);
 
   // Sync props to store to ensure persistence
   useEffect(() => {
@@ -69,13 +71,21 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     }
   }, [emailProp, usernameProp, storeEmail, storeUsername, setAuth]);
 
-  // Open share modal when requested from elsewhere (e.g. payments page)
+  // Open share modal when requested from elsewhere (e.g. payments page, settings page)
   useEffect(() => {
     if (openShareModalFromStore) {
       setShowShareModal(true);
       setOpenShareModal(false);
     }
   }, [openShareModalFromStore, setOpenShareModal]);
+
+  // Open settings modal when requested from elsewhere (e.g. settings page / Profile tab)
+  useEffect(() => {
+    if (openSettingsModalFromStore) {
+      setShowSettingsModal(true);
+      setOpenSettingsModal(false);
+    }
+  }, [openSettingsModalFromStore, setOpenSettingsModal]);
 
   const [isOpen, setIsOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
@@ -672,26 +682,16 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-base font-semibold text-white">
-                          🔒 Require Private Payments Only
+                          🔒 Private Payments
                         </span>
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
                           Coming soon
                         </span>
                       </div>
-                      {loadingPreferences && !PRIVATE_PAYMENT_COMING_SOON ? (
-                        <div className="h-6 w-11 rounded-full bg-white/10 animate-pulse" />
-                      ) : (
-                        <Switch
-                          checked={PRIVATE_PAYMENT_COMING_SOON ? false : requirePrivatePayments}
-                          onCheckedChange={PRIVATE_PAYMENT_COMING_SOON ? undefined : handleTogglePrivatePayments}
-                          disabled={PRIVATE_PAYMENT_COMING_SOON || updatingPreferences}
-                          className="data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
-                          aria-label={PRIVATE_PAYMENT_COMING_SOON ? "Private payments — coming soon" : "Require private payments only"}
-                        />
-                      )}
+
                     </div>
                     <p className="text-sm text-slate-400 mt-3 w-full block">
-                      When available, you can require payments to your link to use private transfer.
+                      When available, all payments to your link wi use Magicblock Private Ephemeral Rollup for privacy.
                     </p>
                   </motion.div>
 

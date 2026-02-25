@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
@@ -95,6 +95,14 @@ function stripGifUrlsFromMessage(desc: string): string | null {
   return textOnly || null;
 }
 
+/** Extract first GIF URL from description (for showing in list). */
+function extractGifUrl(desc: string): string | null {
+  const trimmed = (desc || "").trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(GIF_URL_REGEX);
+  return match ? match[0] : null;
+}
+
 async function fetchPaymentHistory(userId: string): Promise<{ sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[] }> {
   const r = await fetch("/api/payments/history", {
     headers: { "x-privy-user-id": userId },
@@ -173,6 +181,19 @@ export default function HistoryPage() {
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | "sent" | "received">("all");
+  const cardsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (typeFilter === "all") return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (cardsRef.current && !cardsRef.current.contains(e.target as Node)) {
+        setTypeFilter("all");
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [typeFilter]);
 
   const allPayments: { claim: PaymentHistoryClaim; type: "sent" | "received" }[] = useMemo(() => {
     const list = [
@@ -183,14 +204,18 @@ export default function HistoryPage() {
   }, [sent, received]);
 
   const filteredPayments = useMemo(() => {
+    let list = allPayments;
+    if (typeFilter !== "all") {
+      list = list.filter(({ type }) => type === typeFilter);
+    }
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return allPayments;
-    return allPayments.filter(({ claim, type }) => {
+    if (!q) return list;
+    return list.filter(({ claim, type }) => {
       const senderOrPayee = type === "sent" ? getPayeeDisplay(claim) : getSenderDisplay(claim);
       const message = (claim.description || "").toLowerCase();
       return senderOrPayee.toLowerCase().includes(q) || message.includes(q);
     });
-  }, [allPayments, searchQuery]);
+  }, [allPayments, searchQuery, typeFilter]);
 
   if (!authenticated) {
     return (
@@ -235,26 +260,53 @@ export default function HistoryPage() {
           ) : (
             <>
                 <div className="grid grid-cols-2 gap-3 mb-6">
-
-                    <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                    {/* RECEIVED */}
+                    <button
+                        type="button"
+                        onClick={() => setTypeFilter((prev) => (prev === "received" ? "all" : "received"))}
+                        className={[
+                            "rounded-2xl border p-4 text-left transition-colors hover:bg-white/10",
+                            typeFilter === "received"
+                                ? "bg-emerald-500/10 border-emerald-400/30 ring-2 ring-emerald-400/30"
+                                : "bg-emerald-500/5 border-emerald-500/20",
+                        ].join(" ")}
+                    >
                         <div className="flex items-center gap-2">
-                            <IconBubble active={false} variant="received">
+                            <IconBubble active={typeFilter === "received"} variant="received">
                                 <ArrowDown />
                             </IconBubble>
-                            <p className="text-slate-300 text-xs font-medium uppercase tracking-wide">Amount received</p>
+                            <p className="text-slate-300 text-xs font-medium uppercase tracking-wide">
+                                Amount received
+                            </p>
                         </div>
-                        <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">${totalReceived.toFixed(2)}</p>
-                    </div>
-                    <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
+                        <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">
+                            ${totalReceived.toFixed(2)}
+                        </p>
+                    </button>
+
+                    {/* SENT */}
+                    <button
+                        type="button"
+                        onClick={() => setTypeFilter((prev) => (prev === "sent" ? "all" : "sent"))}
+                        className={[
+                            "rounded-2xl border p-4 text-left transition-colors hover:bg-white/10",
+                            typeFilter === "sent"
+                                ? "bg-amber-500/10 border-amber-400/30 ring-2 ring-amber-400/30"
+                                : "bg-amber-500/5 border-amber-500/20",
+                        ].join(" ")}
+                    >
                         <div className="flex items-center gap-2">
-                            <IconBubble active={false} variant="sent">
+                            <IconBubble active={typeFilter === "sent"} variant="sent">
                                 <ArrowUp />
                             </IconBubble>
-                            <p className="text-slate-300 text-xs font-medium uppercase tracking-wide">Amount sent</p>
+                            <p className="text-slate-300 text-xs font-medium uppercase tracking-wide">
+                                Amount sent
+                            </p>
                         </div>
-                        <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">${totalSent.toFixed(2)}</p>
-                    </div>
-
+                        <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">
+                            ${totalSent.toFixed(2)}
+                        </p>
+                    </button>
                 </div>
 
 
@@ -308,6 +360,8 @@ export default function HistoryPage() {
                     const amount = parseFloat(claim.amount || "0");
                     const senderOrPayee = type === "sent" ? getPayeeDisplay(claim) : getSenderDisplay(claim);
                     const message = stripGifUrlsFromMessage(claim.description || "");
+                    const gifUrl = type === "received" ? extractGifUrl(claim.description || "") : null;
+                    const showMessageOrGif = (type === "received" && (message || gifUrl)) || (type === "sent" && message);
                     return (
                       <li key={`${type}-${claim.id}`}>
                         <Link
@@ -325,9 +379,18 @@ export default function HistoryPage() {
                           <div className="mt-1.5 text-sm font-medium text-slate-300">
                             {type === "sent" ? "To " : "From "}{senderOrPayee}
                           </div>
-                          {message && (
-                            <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10">
-                              <p className="text-sm text-slate-300 line-clamp-2 italic">"{message}"</p>
+                          {showMessageOrGif && (
+                            <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 space-y-2">
+                              {type === "received" && gifUrl && (
+                                <img
+                                  src={gifUrl}
+                                  alt=""
+                                  className="rounded-lg w-full max-h-32 object-cover object-center"
+                                />
+                              )}
+                              {message && (
+                                <p className="text-sm text-slate-300 line-clamp-2 italic">"{message}"</p>
+                              )}
                             </div>
                           )}
                           <div className="flex items-center justify-between gap-2 mt-2">
