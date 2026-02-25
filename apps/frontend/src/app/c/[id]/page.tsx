@@ -1474,8 +1474,25 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         return msg.includes("blockhash") || msg.includes("block hash");
       };
 
+      /** Don't retry on user rejection or clear validation errors. */
+      const isNonRetryableError = (err: unknown) => {
+        const e = err as { message?: string; code?: number };
+        const msg = String(e?.message ?? "").toLowerCase();
+        return (
+          msg.includes("rejected") ||
+          msg.includes("denied") ||
+          msg.includes("user denied") ||
+          msg.includes("invalid address") ||
+          msg.includes("insufficient")
+        );
+      };
+
+      const MAX_SEND_ATTEMPTS = 3;
+      const RETRY_DELAY_MS = 1000;
       let rawResult: { signature?: Uint8Array } | { signature?: Uint8Array }[] | null = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
+      let lastError: unknown = null;
+
+      for (let attempt = 0; attempt < MAX_SEND_ATTEMPTS; attempt++) {
         const { blockhash } = await connection.getLatestBlockhash("confirmed");
         const message = new TransactionMessage({
           payerKey: sender,
@@ -1494,13 +1511,18 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               skipPreflight: true,
             } as Parameters<typeof signAndSendTransaction>[0]["options"],
           });
+          lastError = null;
           break;
         } catch (sendErr: unknown) {
-          if (attempt === 0 && isBlockhashError(sendErr)) {
-            console.warn("[PayWithLoofta] Blockhash expired, retrying with fresh blockhash...");
-            continue;
+          lastError = sendErr;
+          if (isNonRetryableError(sendErr)) {
+            console.warn("[PayWithLoofta] Non-retryable error:", sendErr);
+            throw sendErr;
           }
-          throw sendErr;
+          const isLast = attempt === MAX_SEND_ATTEMPTS - 1;
+          if (isLast) throw sendErr;
+          console.warn("[PayWithLoofta] Attempt", attempt + 1, "failed, retrying with fresh blockhash...", sendErr);
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
         }
       }
       const result = Array.isArray(rawResult) ? rawResult[0] : rawResult;
