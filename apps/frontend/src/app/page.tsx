@@ -287,7 +287,7 @@ export default function Home() {
                             </button>
                         </div>
                     )}
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
                     <div ref={wrapperRef} className="relative">
                       <Label className="text-slate-300 text-xl font-sans font-medium mb-5">Send</Label>
 
@@ -341,7 +341,7 @@ export default function Home() {
                                 value={recipient}
                                 onChange={(e) => setRecipient(e.target.value)}
                                 autoComplete="off"
-                                className="h-12 pl-10 mb-2 bg-white/5 border-white/10 text-white text-md placeholder:text-slate-500"
+                                className="h-12 pl-10 mb-2 bg-white/5 border-white/10 text-white text-md placeholder:text-slate-500 placeholder:text-sm"
                                 style={{
                                     fontSize: `20px`,
                                 }}
@@ -374,6 +374,9 @@ export default function Home() {
                                 )}
                             </ul>
                         )}
+                        <p className="text-sm text-slate-400 mt-0.5 mb-1.5">
+                            Loofta or Twitter username, or exact email – they claim by signing in with that account.
+                        </p>
                     </div>
                       <Button
                       onClick={handleSendContinue}
@@ -407,7 +410,7 @@ export default function Home() {
               ) : (
                 <>
                   {/* Share your personal link */}
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
                     <p className="text-slate-300 text-xl font-medium flex gap-3 font-sans items-center">
                         <LinkIcon className={"text-orange-400 w-4 h-4"}/>
                         Share your personal link
@@ -460,7 +463,7 @@ export default function Home() {
                   </div>
 
                   {/* Create new payment link */}
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
                       <p className="text-slate-300 text-xl flex gap-3 font-sans font-medium items-center">
                         <PlusIcon className={"text-orange-400 w-4 h-4"}/>
                         Create new payment link
