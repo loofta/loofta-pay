@@ -547,7 +547,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
 
             {/* Right column - card */}
             <div className={`w-full ${embedInApp ? '' : (createdLink ? 'md:w-[480px]' : 'md:w-[420px]')} transition-all`}>
-              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#0f0f12] p-6 px-12 text-white shadow-2xl [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30 [&_.border-gray-300]:!border-white/20">
+              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 text-white shadow-2xl [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10  [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30 [&_.border-gray-300]:!border-white/20">
                 {showConfetti ? <ConfettiCanvas /> : null}
                 {creating ? (
                   <div className="flex flex-col items-center justify-center py-16">
@@ -674,10 +674,10 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                           value={amount}
                           onChange={(e) => onChangeAmount(e.target.value)}
                           placeholder="0"
-                          className="text-gray-900 placeholder:text-gray-300 font-semibold tracking-tight border-0 bg-transparent outline-none tabular-nums p-0 m-0"
-                          style={{ fontSize: `${amountFontPx}px`, lineHeight: 1.1, width: `${inputWidthPx + amountGapPx}px` }}
+                          className="text-gray-900 placeholder:text-gray-300 font-semibold font-sans tracking-tight border-0 bg-transparent outline-none tabular-nums p-0 m-0"
+                          style={{ fontSize: `${amountFontPx}px`, lineHeight: 1.1, width: `${inputWidthPx + amountGapPx}px`, backgroundColor: 'transparent !important' }}
                         />
-                        <span className="font-semibold text-gray-400" style={{ fontSize: `${suffixFontPx}px`, lineHeight: 1.1 }}>
+                        <span className="font-semibold font-sans text-slate-500 ml-1" style={{ fontSize: `${suffixFontPx}px`, lineHeight: 1.1 }}>
                           USD
                         </span>
                       </div>
@@ -775,7 +775,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                                   if (['tron', 'trx'].includes(chain)) return 'T...';
                                   return '0x...';
                                 })()}
-                                className="h-12 text-gray-900 placeholder:text-gray-400 border-gray-200 focus:border-orange-400"
+                                className="h-12 text-gray-900 placeholder:text-gray-400 border-gray-200 focus:border-orange-400 bg-white/5 border border-white/10"
                                 autoCapitalize="none"
                                 autoCorrect="off"
                                 spellCheck={false}
@@ -823,7 +823,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                               if (['tron', 'trx'].includes(chain)) return 'T...';
                               return '0x...';
                             })()}
-                            className="h-12 text-gray-900 placeholder:text-gray-400 border-gray-200 focus:border-orange-400"
+                            className="h-12 text-gray-900 placeholder:text-gray-400 border-gray-200 bg-white/5 border-white/10 focus:border-orange-400"
                             autoCapitalize="none"
                             autoCorrect="off"
                             spellCheck={false}

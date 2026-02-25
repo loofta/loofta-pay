@@ -59,6 +59,7 @@ import { USDC_MINT } from "@/services/solanaBalance";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
 import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
+import {PaymentHistoryClaim} from "@/app/history/page";
 
 /** When embedInApp: only the pay content in a dark card (no tabs, no full page). When false: full page with SendReceiveTabs and white card. */
 function ClaimPayLayout({
@@ -91,7 +92,9 @@ function ClaimPayLayout({
   return (
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
       <div className="max-w-lg mx-auto px-4 py-6 pb-24">
-        <SendReceiveTabs activeTab="send" visualOnly />
+          <div className="hidden md:block">
+            <SendReceiveTabs activeTab="send" visualOnly />
+          </div>
         <div className="flex items-center justify-between gap-2 mt-4 mb-4">
           <Link href="/" className="items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
             ← Back to Send
@@ -1687,6 +1690,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     return null;
   }
 
+    function getSenderDisplay(claim: PaymentHistoryClaim): string {
+        if (claim.creator_username) return `@${claim.creator_username}`;
+        if (claim.creator_email) return claim.creator_email;
+        return "Anonymous";
+    }
+
   async function onSubmitTxHash() {
     if (!deposit?.depositAddress) {
       toast({ variant: "destructive", title: "No deposit", description: "Prepare a deposit address first." });
@@ -1932,15 +1941,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         ) : claim ? (
           <>
             {isRecipient && String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
-              <div className="mt-6 py-12">
+              <div className="mt-6 py-6">
                 <div className="text-center mb-6">
                   <div className="mb-4 text-6xl">✅</div>
-                  <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                    Paid – Received to your Loofta account
-                  </h3>
-                  <p className="text-gray-600 text-base mb-4">
-                    ${parseFloat(claim?.amount || "0").toFixed(2)} was sent to you. It’s in your Loofta account.
-                  </p>
+                    <div className={"text-6xl font-sans font-semibold"}>
+                        +  ${parseFloat(claim?.amount || "0").toFixed(2)}
+                    </div>
+                    <div className={"text-xl text-gray-500 mt-3 mb-5"}>
+                        from {getSenderDisplay(claim)}
+                    </div>
                 </div>
                 {claim?.description && (
                   <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
@@ -2207,13 +2216,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               <>
                 {!embedInApp && (
                   <div className="mb-3 flex items-start justify-between">
-                    <div className="text-base font-medium text-gray-700">Payment request</div>
+                    <div className="text-xl font-sans font-medium text-slate-300">Payment request</div>
                     {claim?.created_by ? (
                       <div className="text-sm text-gray-600">
-                        {claim.creator_username ? `@${claim.creator_username}` : 'User'}
+                        @ {claim.creator_username ? `@${claim.creator_username}` : 'User'}
                       </div>
                     ) : (
-                      <div className="text-sm text-gray-500">Anonymous</div>
+                      <div className="text-sm text-gray-500">@ Anonymous</div>
                     )}
                   </div>
                 )}
@@ -2283,9 +2292,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                   </div>
                 )}
-                {!embedInApp && <div className="text-base text-gray-700">Amount requested</div>}
+                {!embedInApp && <div className="text-base mt-2 text-slate-500">Amount requested</div>}
                 <div className={embedInApp ? "mt-2 flex items-baseline justify-between" : "mt-1 flex items-baseline justify-between"}>
-                  <div className="text-3xl md:text-4xl font-semibold text-gray-900 leading-none">
+                  <div className="text-3xl md:text-4xl font-sans font-semibold text-gray-900 leading-none">
                     {destUSD != null ? `$${destUSD.toFixed(2)}` : `—`}
                   </div>
                   <div className="text-base text-gray-500">
@@ -2343,7 +2352,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
                 {/* Pay with section */}
                 <div className="mt-5">
-                  <div className="text-base font-medium text-gray-700 mb-2">Pay with</div>
+                  <div className="text-base font-medium font-sans text-gray-700 mb-2">Pay with</div>
 
                   {requiresPrivate || isPrivateMode ? (
                     /* Private mode (required or optional) - Show USDC on SOL as best option, but allow other tokens */
@@ -2477,19 +2486,19 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         if (requiresPrivate && isUSDCSelected) {
                           return (
                             <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                              <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
+                              <div className="text-md font-medium font-sans text-gray-700 mb-2">Payment breakdown</div>
                               <div className="space-y-1.5 text-sm">
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-600">Amount to recipient</span>
-                                  <span className="font-semibold text-gray-900">${requestedAmount.toFixed(2)}</span>
+                                  <span className="font-semibold font-sans text-gray-900">${requestedAmount.toFixed(2)}</span>
                                 </div>
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-600">Fee</span>
                                   <span className="font-medium text-green-600">FREE</span>
                                 </div>
                                 <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
-                                  <span className="font-medium text-gray-900">Total to pay (USDC)</span>
-                                  <span className="font-semibold text-lg text-gray-900">${requestedAmount.toFixed(2)}</span>
+                                  <span className="font-medium font-sans text-md text-gray-900">Total to pay (USDC)</span>
+                                  <span className="font-semibold font-sans text-lg text-gray-900">${requestedAmount.toFixed(2)}</span>
                                 </div>
                               </div>
                             </div>
@@ -3326,10 +3335,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <div className="mb-6 flex justify-center">
                   <div className="text-6xl mb-4" aria-hidden>💳</div>
                 </div>
-                <h2 className="text-5xl font-semibold text-gray-900 tracking-tight text-center">
+                <h2 className="text-6xl font-semibold font-sans text-gray-900 tracking-tight text-center">
                   {claim?.amount ? `$${claimAmountUSD.toFixed(2)}` : "Pay now"}
                 </h2>
-                <DialogDescription className="pt-2 text-base text-center text-muted-foreground">Choose how you'd like to pay</DialogDescription>
+                <DialogDescription className="pt-2 text-lg text-center text-slate-400">Choose how you'd like to pay</DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3">
                 {!authenticated ? (
@@ -3353,9 +3362,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </button>
 
                     <div className="flex items-center gap-3">
-                      <div className="flex-1 h-px bg-gray-200" />
+                      <div className="flex-1 h-px bg-gray-400" />
                       <span className="text-sm font-medium text-gray-400">or</span>
-                      <div className="flex-1 h-px bg-gray-200" />
+                      <div className="flex-1 h-px bg-gray-400" />
                     </div>
 
                     <button
