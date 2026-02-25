@@ -457,92 +457,92 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
           <div className={embedInApp ? "w-full" : "flex flex-col md:flex-row items-center justify-center gap-16 min-h-[calc(100vh-7rem)]"}>
             {/* Left column - hidden when embedded */}
             {!embedInApp && (
-            <div className="w-full md:w-1/2">
-              {createdLink ? (
-                /* Success state left content */
-                <>
-                  <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
-                    Payment Link <br /><span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Created!</span>
-                  </h1>
-                  <p className="text-gray-100 text-xl mb-8">
-                    Your payment link is ready. Share it anywhere to get paid.
-                  </p>
-                  <button
-                    type="button"
-                    className="mt-8 inline-flex items-center gap-2 rounded-full px-8 py-4 text-base font-semibold text-white hover:opacity-90 transition-opacity"
-                    style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
-                    onClick={() => {
-                      clearLink();
-                      setAmount("");
-                      setRecipient("");
-                    }}
-                  >
-                    Create New Payment
-                  </button>
-                </>
-              ) : isPrivateMode ? (
-                /* Private mode left content */
-                <>
-                  <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
-                    Receive <br /><span className="text-amber-400">Privately</span>
-                  </h1>
-                  <p className="text-gray-100 text-xl mb-8">
-                    Get paid with complete financial privacy using Privacy Cash.
-                  </p>
-                  <ul className="mt-6 space-y-4">
-                    <li className="flex items-start gap-3">
-                      <ShieldIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                      <span className="text-gray-300 text-xl">Amount hidden on-chain</span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                      <LockIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                      <span className="text-gray-300 text-xl">Sender & recipient encrypted</span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                      <EyeOffIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                      <span className="text-gray-300 text-xl">No transaction metadata exposed</span>
-                    </li>
-                  </ul>
-                  <button
-                    type="button"
-                    onClick={() => setShowPrivacyInfo(true)}
-                    className="mt-8 text-amber-400 hover:text-amber-300 text-lg flex items-center gap-2"
-                  >
-                    <InfoIcon className="w-5 h-5" />
-                    How does private payment work?
-                  </button>
-                </>
-              ) : (
-                /* Standard mode left content */
-                <>
-                  <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
-                    Create a new <br /><span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Payment Link</span>
-                  </h1>
-                  <p className="text-gray-100 text-xl mb-8">Joined the thousands who get paid with ANY token they want.</p>
-                  <ul className="mt-6 space-y-4">
-                    <li className="flex items-start gap-3">
-                      <MoneyIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                      <span className="text-gray-300 text-xl">Set your amount</span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                      <ChainIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                      <span className="text-gray-300 text-xl">Pick your preferred chain/token</span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                      <ShareIcon className="mt-0.5 h-6 w-6 text-amber-400" />
-                      <span className="text-gray-300 text-xl">Share the link — they pay with ANY token</span>
-                    </li>
-                  </ul>
+              <div className="w-full md:w-1/2">
+                {createdLink ? (
+                  /* Success state left content */
+                  <>
+                    <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
+                      Payment Link <br /><span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Created!</span>
+                    </h1>
+                    <p className="text-gray-100 text-xl mb-8">
+                      Your payment link is ready. Share it anywhere to get paid.
+                    </p>
+                    <button
+                      type="button"
+                      className="mt-8 inline-flex items-center gap-2 rounded-full px-8 py-4 text-base font-semibold text-white hover:opacity-90 transition-opacity"
+                      style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
+                      onClick={() => {
+                        clearLink();
+                        setAmount("");
+                        setRecipient("");
+                      }}
+                    >
+                      Create New Payment
+                    </button>
+                  </>
+                ) : isPrivateMode ? (
+                  /* Private mode left content */
+                  <>
+                    <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
+                      Receive <br /><span className="text-amber-400">Privately</span>
+                    </h1>
+                    <p className="text-gray-100 text-xl mb-8">
+                      Get paid with complete financial privacy using Privacy Cash.
+                    </p>
+                    <ul className="mt-6 space-y-4">
+                      <li className="flex items-start gap-3">
+                        <ShieldIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                        <span className="text-gray-300 text-xl">Amount hidden on-chain</span>
+                      </li>
+                      <li className="flex items-start gap-3">
+                        <LockIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                        <span className="text-gray-300 text-xl">Sender & recipient encrypted</span>
+                      </li>
+                      <li className="flex items-start gap-3">
+                        <EyeOffIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                        <span className="text-gray-300 text-xl">No transaction metadata exposed</span>
+                      </li>
+                    </ul>
+                    <button
+                      type="button"
+                      onClick={() => setShowPrivacyInfo(true)}
+                      className="mt-8 text-amber-400 hover:text-amber-300 text-lg flex items-center gap-2"
+                    >
+                      <InfoIcon className="w-5 h-5" />
+                      How does private payment work?
+                    </button>
+                  </>
+                ) : (
+                  /* Standard mode left content */
+                  <>
+                    <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
+                      Create a new <br /><span style={{ backgroundImage: 'linear-gradient(to right, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Payment Link</span>
+                    </h1>
+                    <p className="text-gray-100 text-xl mb-8">Joined the thousands who get paid with ANY token they want.</p>
+                    <ul className="mt-6 space-y-4">
+                      <li className="flex items-start gap-3">
+                        <MoneyIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                        <span className="text-gray-300 text-xl">Set your amount</span>
+                      </li>
+                      <li className="flex items-start gap-3">
+                        <ChainIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                        <span className="text-gray-300 text-xl">Pick your preferred chain/token</span>
+                      </li>
+                      <li className="flex items-start gap-3">
+                        <ShareIcon className="mt-0.5 h-6 w-6 text-amber-400" />
+                        <span className="text-gray-300 text-xl">Share the link — they pay with ANY token</span>
+                      </li>
+                    </ul>
 
 
-                  <Button variant="outline" className="mt-8 inline-flex items-center gap-2 rounded-[21px] text-slate-900/90 px-12 py-4 text-base font-medium border-2 shadow-md hover:scale-[1.02] transition-transform"
-                    onClick={handleRequestAccess}
-                  >
-                    Request Access
-                  </Button>
-                </>
-              )}
-            </div>
+                    <Button variant="outline" className="mt-8 inline-flex items-center gap-2 rounded-[21px] text-slate-900/90 px-12 py-4 text-base font-medium border-2 shadow-md hover:scale-[1.02] transition-transform"
+                      onClick={handleRequestAccess}
+                    >
+                      Request Access
+                    </Button>
+                  </>
+                )}
+              </div>
             )}
 
             {/* Right column - card */}
@@ -686,7 +686,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                     {/* Private mode note - same form as standard, payment via Privacy Cash */}
                     {isPrivateMode && (
                       <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-sm text-slate-300">
-                        Payment will be processed via Privacy Cash. You receive in your chosen token below.
+                        Payment will be processed on Magicblock Private Ephemeral Rollup. You receive in your chosen token below.
                       </div>
                     )}
 

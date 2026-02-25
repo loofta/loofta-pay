@@ -46,7 +46,7 @@ import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction, useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
-import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES, PRIVATE_PAYMENT_COMING_SOON, NETWORK_FEE_USD } from "@/services/privacyCash";
+import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES, PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
 import { Connection, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -59,7 +59,7 @@ import { USDC_MINT } from "@/services/solanaBalance";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
 import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
-import {PaymentHistoryClaim} from "@/app/history/page";
+import { PaymentHistoryClaim } from "@/app/history/page";
 
 /** When embedInApp: only the pay content in a dark card (no tabs, no full page). When false: full page with SendReceiveTabs and white card. */
 function ClaimPayLayout({
@@ -92,9 +92,9 @@ function ClaimPayLayout({
   return (
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
       <div className="max-w-lg mx-auto px-4 py-6 pb-24">
-          <div className="hidden md:block">
-            <SendReceiveTabs activeTab="send" visualOnly />
-          </div>
+        <div className="hidden md:block">
+          <SendReceiveTabs activeTab="send" visualOnly />
+        </div>
         <div className="flex items-center justify-between gap-2 mt-4 mb-4">
           <Link href="/" className="items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
             ← Back to Send
@@ -1142,14 +1142,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       return;
     }
 
-    // Total USDC to send: recipient amount + network fee (sent in USDC, converted to SOL on burner)
+    // Total USDC to send: recipient amount only (no processing fee)
     const amountUSD = requiresPrivate
-      ? requestedAmount + NETWORK_FEE_USD
+      ? requestedAmount
       : (() => {
         const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
         const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
         const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
-        return withdrawalAmountNeeded + NETWORK_FEE_USD;
+        return withdrawalAmountNeeded;
       })();
 
     console.log("[PrivateTransfer] Starting", { claimId: claim.id, amountUSD, recipient: recipient.slice(0, 8) + "…" });
@@ -1254,14 +1254,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // Note: Privy’s confirm modal shows the wallet’s SOL balance (for gas), not USDC — so you may see "$0.00" there even when you have USDC; gas sponsorship covers fees.
   const claimAmountUSD = (() => {
     const base = parseFloat(claim?.amount || "0") || 0;
-    if (requiresPrivate) return base + NETWORK_FEE_USD;
+    if (requiresPrivate) return base;
     if (isPrivateMode) {
       const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
       const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
       const withdrawalAmountNeeded = (base + rentFee) / (1 - feeRate);
-      return withdrawalAmountNeeded + NETWORK_FEE_USD;
+      return withdrawalAmountNeeded;
     }
-    return base + NETWORK_FEE_USD;
+    return base;
   })();
   const looftaBalanceUSD = solanaPayment.balanceUSD;
   const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(claimAmountUSD);
@@ -1279,17 +1279,17 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
       return;
     }
-    // Same amount logic as Pay with Loofta: base + network fee (or private fees when required)
+    // Amount to send: base only (no processing fee)
     const amountUSD = requiresPrivate
-      ? baseAmount + NETWORK_FEE_USD
+      ? baseAmount
       : isPrivateMode
         ? (() => {
           const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
           const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
           const withdrawalAmountNeeded = (baseAmount + rentFee) / (1 - feeRate);
-          return withdrawalAmountNeeded + NETWORK_FEE_USD;
+          return withdrawalAmountNeeded;
         })()
-        : baseAmount + NETWORK_FEE_USD;
+        : baseAmount;
     const phantom = getPhantomProvider();
     if (!phantom) {
       toast({ variant: "destructive", title: "Phantom not found", description: "Install the Phantom extension to pay with wallet." });
@@ -1409,17 +1409,17 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
       return;
     }
-    // When paying privately: total includes Privacy Cash fees (if payer covers) + network fee in USDC (converted to SOL on burner)
+    // Amount to send: base only (no processing fee)
     const amountUSD = requiresPrivate
-      ? baseAmount + NETWORK_FEE_USD
+      ? baseAmount
       : isPrivateMode
         ? (() => {
           const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
           const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
           const withdrawalAmountNeeded = (baseAmount + rentFee) / (1 - feeRate);
-          return withdrawalAmountNeeded + NETWORK_FEE_USD;
+          return withdrawalAmountNeeded;
         })()
-        : baseAmount + NETWORK_FEE_USD;
+        : baseAmount;
     const senderAddress = solanaPayment.senderAddress;
     if (!senderAddress) {
       toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta Solana wallet was not found. Try logging in again." });
@@ -1560,7 +1560,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       return;
     }
     privateTransferTriggeredRef.current.add(claim.id);
-    console.log("[Claim] Auto-running Privacy Cash for claim:", claim.id);
+    console.log("[Claim] Auto-running Magicblock for claim:", claim.id);
     onPayPrivatelyRef.current?.();
   }, [status, claim?.id, claim?.is_private]);
 
@@ -1690,11 +1690,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     return null;
   }
 
-    function getSenderDisplay(claim: PaymentHistoryClaim): string {
-        if (claim.creator_username) return `@${claim.creator_username}`;
-        if (claim.creator_email) return claim.creator_email;
-        return "Anonymous";
-    }
+  function getSenderDisplay(claim: PaymentHistoryClaim): string {
+    if (claim.creator_username) return `@${claim.creator_username}`;
+    if (claim.creator_email) return claim.creator_email;
+    return "Anonymous";
+  }
 
   async function onSubmitTxHash() {
     if (!deposit?.depositAddress) {
@@ -1881,7 +1881,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogCancel className="bg-white text-gray-900 border border-white/20 hover:bg-gray-100 hover:text-gray-900">
+                    <AlertDialogCancel className="bg-white !text-gray-900 border border-white/20 hover:bg-gray-100">
                       Cancel
                     </AlertDialogCancel>
                     <AlertDialogAction
@@ -1944,12 +1944,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               <div className="mt-6 py-6">
                 <div className="text-center mb-6">
                   <div className="mb-4 text-6xl">✅</div>
-                    <div className={"text-6xl font-sans font-semibold"}>
-                        +  ${parseFloat(claim?.amount || "0").toFixed(2)}
-                    </div>
-                    <div className={"text-xl text-gray-500 mt-3 mb-5"}>
-                        from {getSenderDisplay(claim)}
-                    </div>
+                  <div className={"text-6xl font-sans font-semibold"}>
+                    +  ${parseFloat(claim?.amount || "0").toFixed(2)}
+                  </div>
+                  <div className={"text-xl text-gray-500 mt-3 mb-5"}>
+                    from {getSenderDisplay(claim)}
+                  </div>
                 </div>
                 {claim?.description && (
                   <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
@@ -2034,9 +2034,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <p className="text-gray-600 text-base mb-4">
                   ${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay. When they do, it&apos;ll show up here and in your Loofta account.
                 </p>
-                <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900">
-                  ← Back to Send
-                </Link>
               </div>
             ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
               <ClaimPageSenderShareView
@@ -2222,7 +2219,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     <div className="text-xl font-sans font-medium text-slate-300">Payment request</div>
                     {claim?.created_by ? (
                       <div className="text-sm text-gray-600">
-                        @ {claim.creator_username ? `@${claim.creator_username}` : 'User'}
+                        {claim.creator_username ? `@${claim.creator_username}` : 'User'}
                       </div>
                     ) : (
                       <div className="text-sm text-gray-500">@ Anonymous</div>
@@ -2336,7 +2333,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     <p className="text-sm text-gray-600 mt-3 w-full block">
                       {PRIVATE_PAYMENT_COMING_SOON
                         ? "When available, payment will be processed through privacy pools for complete privacy."
-                        : "Payment via Privacy Cash for privacy. Funds go to recipient directly or to burner if they have no account."}
+                        : "Payment via MagicBlock Private Ephemeral Rollup for privacy. Funds go to recipient directly or to burner if they have no account."}
                     </p>
                   </div>
                 )}
@@ -2348,7 +2345,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                     </svg>
                     <span className="font-medium">
-                      {PRIVATE_PAYMENT_COMING_SOON ? "Private payment only — coming soon" : "Private payment only"}
+                      {PRIVATE_PAYMENT_COMING_SOON ? "Private payment — coming soon" : "Private payment only"}
                     </span>
                   </div>
                 )}
@@ -2480,11 +2477,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           </div>
                         ) : null
                       ) : null}
-                      {PRIVATE_PAYMENT_COMING_SOON && selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) && (
-                        <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
-                          <span className="font-medium">Private payment:</span> Coming soon.
-                        </div>
-                      )}
+
                       {(() => {
                         const requestedAmount = parseFloat(claim?.amount || "0");
                         const isUSDCSelected = selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain;
