@@ -163,7 +163,9 @@ export default function HistoryPage() {
       <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
         <div className="max-w-lg mx-auto px-4 py-6 pb-24">
           <div className="min-h-[calc(100vh-var(--header-h,0px))]">
-            <SendReceiveTabs activeTab={null} visualOnly />
+              <div className="hidden md:block">
+                <SendReceiveTabs activeTab={null} visualOnly />
+              </div>
             <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
             <h1 className="text-xl font-bold text-white mb-2">Payment history</h1>
             <p className="text-slate-400 mb-4">
@@ -187,8 +189,9 @@ export default function HistoryPage() {
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
       <div className="max-w-lg mx-auto px-4 py-6 pb-24">
         <div className="min-h-[calc(100vh-var(--header-h,0px))]">
-          <SendReceiveTabs activeTab="send" visualOnly />
-
+            <div className="hidden md:block">
+                <SendReceiveTabs activeTab="send" visualOnly />
+            </div>
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-6">
           <h1 className="text-lg font-bold text-white mb-4">Payment history</h1>
           {loading ? (

@@ -545,7 +545,7 @@ export function PaymentStatusTracker({
 
       {/* Status Message - Hidden when used in split mode (shown separately above QR) */}
       <div className="text-center mb-8 hidden">
-        <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+        <h3 className="text-2xl font-medium font-sans text-gray-900 mb-2">
           {statusMessage.title}
         </h3>
         <p className="text-gray-600 text-base">
