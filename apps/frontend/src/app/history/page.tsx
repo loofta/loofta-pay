@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
+import {ArrowDown, ArrowUp} from "lucide-react";
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
@@ -108,6 +109,39 @@ async function fetchPaymentHistory(userId: string): Promise<{ sent: PaymentHisto
 
 const PAYMENT_HISTORY_GC_MS = 5 * 60 * 1000; // 5 min keep in cache
 
+function IconBubble({
+                        active,
+                        variant,
+                        children,
+                    }: {
+    active: boolean;
+    variant: "sent" | "received";
+    children: React.ReactNode;
+}) {
+    const base =
+        "inline-flex h-8 w-8 items-center justify-center rounded-full shrink-0 border transition-colors";
+    const styles = active
+        ? "bg-gradient-to-r from-[#FF4A26] to-[#EAB308] text-white border-white/10"
+        : variant === "received"
+            ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+            : "bg-amber-500/10 text-amber-300 border-amber-500/20";
+
+    return (
+        <span aria-hidden="true" className={`${base} ${styles}`}>
+      <span className="flex items-center justify-center [&>svg]:h-4 [&>svg]:w-4">{children}</span>
+    </span>
+    );
+}
+
+function paymentCardClass(type: "sent" | "received") {
+    // subtle but clear differentiation (premium, not loud)
+    return [
+        "block rounded-2xl border p-3.5 transition-colors",
+        "bg-white/5 border-white/10 hover:bg-white/10",
+        type === "received" ? "bg-emerald-500/5 border-emerald-500/20" : "bg-amber-500/5 border-amber-500/20",
+    ].join(" ");
+}
+
 export default function HistoryPage() {
   const { authenticated, userId } = useAuth();
   const { login: privyLogin } = usePrivy();
@@ -167,7 +201,7 @@ export default function HistoryPage() {
                 <SendReceiveTabs activeTab={null} visualOnly />
               </div>
             <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
-            <h1 className="text-xl font-bold text-white mb-2">Payment history</h1>
+            <h1 className="text-xl font-medium font-sans text-white mb-2">Payment history</h1>
             <p className="text-slate-400 mb-4">
               Log in to see payments you sent and received.
             </p>
@@ -192,26 +226,39 @@ export default function HistoryPage() {
             <div className="hidden md:block">
                 <SendReceiveTabs activeTab="send" visualOnly />
             </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-6">
-          <h1 className="text-lg font-bold text-white mb-4">Payment history</h1>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 mb-6">
+          <h1 className="text-lg font-medium font-sans text-white mb-4">Payment history</h1>
           {loading ? (
             <p className="text-slate-400 text-sm">Loading…</p>
           ) : error ? (
             <p className="text-red-400 text-sm">{error}</p>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="rounded-xl bg-white/5 border border-white/10 p-4">
-                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">Amount sent</p>
-                  <p className="text-xl font-bold text-white mt-1">${totalSent.toFixed(2)}</p>
-                </div>
-                <div className="rounded-xl bg-white/5 border border-white/10 p-4">
-                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">Amount received</p>
-                  <p className="text-xl font-bold text-white mt-1">${totalReceived.toFixed(2)}</p>
-                </div>
-              </div>
+                <div className="grid grid-cols-2 gap-3 mb-6">
 
-              <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                        <div className="flex items-center gap-2">
+                            <IconBubble active={false} variant="received">
+                                <ArrowDown />
+                            </IconBubble>
+                            <p className="text-slate-300 text-xs font-medium uppercase tracking-wide">Amount received</p>
+                        </div>
+                        <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">${totalReceived.toFixed(2)}</p>
+                    </div>
+                    <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
+                        <div className="flex items-center gap-2">
+                            <IconBubble active={false} variant="sent">
+                                <ArrowUp />
+                            </IconBubble>
+                            <p className="text-slate-300 text-xs font-medium uppercase tracking-wide">Amount sent</p>
+                        </div>
+                        <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">${totalSent.toFixed(2)}</p>
+                    </div>
+
+                </div>
+
+
+                <div className="flex items-center justify-between gap-2 mb-2">
                 <p className="text-slate-400 text-sm font-medium">Recent payments</p>
                 <div className="flex items-center gap-1">
                   <button
@@ -271,7 +318,7 @@ export default function HistoryPage() {
                             <span className={`text-sm font-semibold ${type === "sent" ? "text-amber-400" : "text-emerald-400"}`}>
                               {type === "sent" ? "Sent" : "Received"}
                             </span>
-                            <span className="text-white font-semibold">
+                            <span className="text-white font-semibold font-sans">
                               {type === "sent" ? "-" : "+"}${amount.toFixed(2)} {claim.to_symbol}
                             </span>
                           </div>
@@ -283,7 +330,7 @@ export default function HistoryPage() {
                               <p className="text-sm text-slate-300 line-clamp-2 italic">"{message}"</p>
                             </div>
                           )}
-                          <div className="flex items-center justify-between gap-2 mt-1">
+                          <div className="flex items-center justify-between gap-2 mt-2">
                             <span className="text-xs text-slate-500">
                               {new Date(claim.created_at).toLocaleDateString(undefined, {
                                 month: "short",

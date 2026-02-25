@@ -2160,7 +2160,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                 )}
                 <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
-                  <div className="text-base font-medium text-gray-800 mb-2">Payment summary</div>
+                  <div className="text-base font-medium text-slate-200 mb-2">Payment summary</div>
                   <div className="text-base text-gray-700 space-y-1">
                     <div className="flex items-center justify-between">
                       <span className="text-gray-600">Amount requested</span>
@@ -2855,7 +2855,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           />
                         </div>
                         <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
-                          <div className="text-lg font-semibold text-gray-900 mb-2">Payment summary</div>
+                          <div className="text-lg font-semibold text-slate-200 mb-2">Payment summary</div>
                           <div className="text-base text-gray-700 space-y-1">
                             <div className="flex items-center justify-between">
                               <span className="text-gray-600">Amount requested</span>
