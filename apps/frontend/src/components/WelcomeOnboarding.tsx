@@ -447,8 +447,8 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
           {showAddEmailStep && (
             <div className="p-5 space-y-5">
               <div className="text-center">
-                <h2 className="text-lg font-semibold text-white mb-1">Add a second sign-in method</h2>
-                <p className="text-sm text-slate-400">
+                <h2 className="text-xl font-medium font-sans text-white mb-1">Add a second sign-in method</h2>
+                <p className="text-md text-slate-400">
                   Add your email for account recovery and easier sign-in next time.
                 </p>
               </div>
@@ -568,7 +568,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.2 }}
-                    className="text-xl font-bold text-white mb-2"
+                    className="text-2xl font-sans font-medium text-white mb-2"
                   >
                     Welcome to Loofta Pay!
                   </motion.h2>
@@ -576,7 +576,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.3 }}
-                    className="text-sm text-slate-400 mb-1"
+                    className="text-md text-slate-400 mb-1"
                   >
                     Your universal private payment account
                   </motion.p>
@@ -584,7 +584,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.4 }}
-                    className="text-xs text-slate-500"
+                    className="text-sm text-slate-500"
                   >
                     Pay & receive crypto privately
                   </motion.p>
@@ -612,7 +612,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="text-lg font-bold text-white mb-2"
+                    className="text-2xl font-sans font-medium text-white mb-2"
                   >
                     {usernameFromTwitter ? "Your username is your Twitter handle" : "Choose your username"}
                   </motion.h2>
@@ -620,7 +620,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.2 }}
-                    className="text-sm text-slate-400 mb-4"
+                    className="text-md text-slate-400 mb-4"
                   >
                     {usernameFromTwitter
                       ? "Your payment link will use this username. It can't be changed."
@@ -732,7 +732,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="text-lg font-bold text-white mb-4 min-h-[56px] whitespace-pre-line"
+                    className="text-2xl font-sans font-medium text-white mb-4 min-h-[56px] whitespace-pre-line"
                   >
                     {displayText.split("\n").map((line, i) => (
                       <span key={i}>
@@ -761,7 +761,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="text-lg font-bold text-white mb-4 min-h-[56px] whitespace-pre-line"
+                    className="text-2xl font-sans font-medium text-white mb-4 min-h-[56px] whitespace-pre-line"
                   >
                     {displayText.split("\n").map((line, i) => (
                       <span key={i}>
@@ -802,7 +802,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="text-lg font-bold text-white mb-1 text-center"
+                    className="text-2xl font-sans font-medium text-white mb-1 text-center"
                   >
                     Start receiving money now
                   </motion.h2>
@@ -810,7 +810,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.15 }}
-                    className="text-xs text-slate-400 mb-3 text-center"
+                    className="text-sm text-slate-400 mb-3 text-center"
                   >
                     Share your payment link to receive payments
                   </motion.p>
