@@ -129,7 +129,7 @@ function IconBubble({
     const base =
         "inline-flex h-8 w-8 items-center justify-center rounded-full shrink-0 border transition-colors";
     const styles = active
-        ? "bg-gradient-to-r from-[#FF4A26] to-[#EAB308] text-white border-white/10"
+        ? "text-white border-white/10"
         : variant === "received"
             ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
             : "bg-amber-500/10 text-amber-300 border-amber-500/20";
@@ -145,7 +145,7 @@ function paymentCardClass(type: "sent" | "received") {
     // subtle but clear differentiation (premium, not loud)
     return [
         "block rounded-2xl border p-3.5 transition-colors",
-        "bg-white/5 border-white/10 hover:bg-white/10",
+        "bg-white/5 border-white/10",
         type === "received" ? "bg-emerald-500/5 border-emerald-500/20" : "bg-amber-500/5 border-amber-500/20",
     ].join(" ");
 }
