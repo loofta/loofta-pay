@@ -682,7 +682,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-base font-semibold text-white">
-                          🔒 Require Private Payments Only
+                          🔒 Private Payments
                         </span>
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
                           Coming soon
