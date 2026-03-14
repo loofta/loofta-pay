@@ -194,38 +194,43 @@ export class UsersService {
       
       this.logger.debug('Privy user response:', JSON.stringify(privyUser, null, 2));
 
-      // Find Solana embedded wallet in linked accounts
-      // Privy API returns snake_case: linked_accounts
+      // Find Solana wallet in linked accounts — use same logic as frontend Header so balance matches
+      // Privy API returns snake_case: linked_accounts. Header uses type 'wallet' | 'smart_wallet' + base58.
       const linkedAccounts = privyUser?.linked_accounts || privyUser?.linkedAccounts || [];
       this.logger.debug(`Found ${linkedAccounts.length} linked accounts`);
-      
+
+      const isSolanaAddress = (addr: string) => addr && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr);
+
+      // 1) Prefer wallet/smart_wallet with Solana address (same as Header — ensures balance matches)
+      const walletOrSmart = linkedAccounts.find((account: any) => {
+        if (account.type !== 'wallet' && account.type !== 'smart_wallet') return false;
+        return isSolanaAddress(account.address);
+      });
+      if (walletOrSmart?.address) {
+        this.logger.debug(`Using Solana wallet (type=${walletOrSmart.type}): ${walletOrSmart.address.slice(0, 8)}...`);
+        return walletOrSmart.address;
+      }
+
+      // 2) Fallback: solana_embedded_wallet / solana type
+      const embedded = linkedAccounts.find((account: any) =>
+        (account.type === 'solana_embedded_wallet' || account.type === 'solana') && isSolanaAddress(account.address),
+      );
+      if (embedded?.address) {
+        this.logger.debug(`Using Solana embedded wallet: ${embedded.address.slice(0, 8)}...`);
+        return embedded.address;
+      }
+
+      // 3) Fallback: any account with Solana address or chain
       const solanaWallet = linkedAccounts.find((account: any) => {
-        // Check for Solana embedded wallet type
-        if (account.type === 'solana_embedded_wallet' || account.type === 'solana') {
-          return true;
-        }
-        
-        const address = account.address;
-        if (!address) return false;
-
-        // Check if it's a Solana wallet by address format (base58, 32-44 chars)
-        const isSolanaAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
-
-        // Also check chainType/chainId if available
-        const isSolanaChain =
-          account.chain_type === 'solana' ||
-          account.chainType === 'solana' ||
-          account.chain_id === 'solana:mainnet' ||
-          account.chainId === 'solana:mainnet' ||
-          account.chain_id === 'solana:devnet' ||
-          account.chainId === 'solana:devnet' ||
-          account.chain_id?.includes('solana') ||
-          account.chainId?.includes('solana');
-
-        return isSolanaAddress || isSolanaChain;
+        const address = account?.address;
+        if (isSolanaAddress(address)) return true;
+        const chain =
+          account?.chain_type === 'solana' || account?.chainType === 'solana' ||
+          (String(account?.chain_id || account?.chainId || '').toLowerCase().includes('solana'));
+        return !!chain && address;
       });
 
-      if (!solanaWallet) {
+      if (!solanaWallet?.address) {
         throw new NotFoundException('User has no Solana embedded wallet');
       }
 

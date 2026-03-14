@@ -10,6 +10,7 @@ import {
 import { Connection } from "@solana/web3.js";
 import bs58 from "bs58";
 import { buildUSDCTransferTransaction } from "@/services/solanaTransfer";
+import { getSolanaBalanceUSD } from "@/services/solanaBalance";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -19,11 +20,15 @@ const SOLANA_RPC_URL =
     ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
     : "https://api.mainnet-beta.solana.com");
 
+/** Same wallet resolution as Header so balance is consistent. */
 function deriveSolanaEmbeddedAddress(user: { linked_accounts?: Array<{ type?: string; address?: string }>; linkedAccounts?: Array<{ type?: string; address?: string }> } | null): string | null {
   if (!user) return null;
   const linkedAccounts = ((user as any)?.linkedAccounts ?? (user as any)?.linked_accounts ?? []) as Array<{ type?: string; address?: string }>;
   const base58 = (a: { address?: string }) =>
     a?.address && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a.address);
+  // Prefer wallet/smart_wallet (same as Header)
+  const walletOrSmart = linkedAccounts.find((a) => (a.type === "wallet" || a.type === "smart_wallet") && base58(a));
+  if (walletOrSmart?.address) return walletOrSmart.address;
   const embedded = linkedAccounts.find(
     (a) =>
       (a.type === "solana_embedded_wallet" || a.type === "solana") && base58(a)
@@ -60,18 +65,34 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
     queryFn: async () => {
       const token = await getAccessToken?.();
       if (!token || !user?.id) throw new Error("Not authenticated");
-      const r = await fetch(`${BACKEND_URL}/users/me/wallet/balance`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "x-privy-user-id": user.id,
-        },
-      });
-      if (!r.ok) throw new Error("Failed to fetch balance");
-      const json = (await r.json()) as {
-        balanceUSD?: number;
-        walletAddress?: string;
-      };
-      return json;
+      const clientAddress = deriveSolanaEmbeddedAddress(user);
+      let balanceUSD = 0;
+      let walletAddress: string | undefined;
+      try {
+        const r = await fetch(`${BACKEND_URL}/users/me/wallet/balance`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "x-privy-user-id": user.id,
+          },
+        });
+        if (r.ok) {
+          const json = (await r.json()) as { balanceUSD?: number; walletAddress?: string };
+          balanceUSD = json.balanceUSD ?? 0;
+          walletAddress = json.walletAddress;
+        }
+      } catch {
+        // Backend failed, will use client fallback
+      }
+      // If backend returned 0 but we have the same wallet as the header, fetch client-side so modal matches header balance
+      const address = walletAddress || clientAddress;
+      if (address && balanceUSD === 0) {
+        const clientBalance = await getSolanaBalanceUSD(address);
+        if (clientBalance > 0) {
+          balanceUSD = clientBalance;
+          walletAddress = walletAddress ?? address;
+        }
+      }
+      return { balanceUSD, walletAddress: walletAddress ?? address ?? undefined };
     },
     enabled: enabled && authenticated === true && !!getAccessToken && !!user?.id,
   });
