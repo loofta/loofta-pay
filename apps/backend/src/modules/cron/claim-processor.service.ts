@@ -26,13 +26,18 @@ export class ClaimProcessorService {
   ) {}
 
   /**
+   * When not `'true'`, in-process cron and HTTP/manual triggers skip claim processing.
+   */
+  private isAutoProcessClaimsEnabled(): boolean {
+    return this.configService.get<string>('AUTO_PROCESS_CLAIMS', 'true') === 'true';
+  }
+
+  /**
    * Process pending claims every minute
    */
   @Cron(CronExpression.EVERY_MINUTE)
   async handleCron() {
-    // Check if auto-processing is enabled
-    const autoProcess = this.configService.get<string>('AUTO_PROCESS_CLAIMS', 'true');
-    if (autoProcess !== 'true') {
+    if (!this.isAutoProcessClaimsEnabled()) {
       return;
     }
 
@@ -200,13 +205,23 @@ export class ClaimProcessorService {
   }
 
   /**
-   * Manually trigger processing (for API endpoint)
+   * Manually trigger processing (for API endpoint).
+   * Respects AUTO_PROCESS_CLAIMS so HTTP cron cannot bypass the in-process @Cron guard.
    */
-  async triggerProcessing(): Promise<{ processed: number; results: ProcessingResult[] }> {
+  async triggerProcessing(): Promise<{
+    processed: number;
+    results: ProcessingResult[];
+    skipped?: boolean;
+  }> {
+    if (!this.isAutoProcessClaimsEnabled()) {
+      this.logger.debug('triggerProcessing skipped: AUTO_PROCESS_CLAIMS is not true');
+      return { processed: 0, results: [], skipped: true };
+    }
     const results = await this.processPendingClaims();
     return {
       processed: results.length,
       results,
+      skipped: false,
     };
   }
 

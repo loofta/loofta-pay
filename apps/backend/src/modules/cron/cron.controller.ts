@@ -27,9 +27,10 @@ export class CronController {
     success: boolean;
     processed: number;
     results: ProcessingResult[];
+    skipped?: boolean;
   }> {
-    const { processed, results } = await this.claimProcessorService.triggerProcessing();
-    return { success: true, processed, results };
+    const { processed, results, skipped } = await this.claimProcessorService.triggerProcessing();
+    return { success: true, processed, results, skipped };
   }
 
   /**
@@ -94,7 +95,7 @@ export class CronController {
   async processAll(): Promise<{
     success: boolean;
     timestamp: string;
-    intents: { processed: number; results: ProcessingResult[] };
+    intents: { processed: number; results: ProcessingResult[]; skipped?: boolean };
     lottery: { processed: number; results: LotteryProcessingResult[] };
     claimCompanions: { processed: number; results: ClaimCompanionResult[] };
     swaps: { processed: number; results: SwapProcessingResult[] };
@@ -138,6 +139,7 @@ export class CronController {
     success: boolean;
     processed: number;
     results: ProcessingResult[];
+    skipped?: boolean;
   }> {
     return this.processIntents();
   }
