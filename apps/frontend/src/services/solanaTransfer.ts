@@ -17,15 +17,10 @@ import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
-import { USDC_MINT } from "./solanaBalance";
+import { getSolanaHttpRpc } from "@/lib/solanaCluster";
+import { getUsdcMint } from "@/lib/per/constants";
 
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
-
-const SOLANA_RPC_URL =
-  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-  (process.env.NEXT_PUBLIC_HELIUS_API_KEY
-    ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-    : "https://api.mainnet-beta.solana.com");
 
 const USDC_DECIMALS = 6;
 
@@ -42,8 +37,8 @@ export async function buildUSDCTransferTransaction(params: {
   memo?: string | null;
 }): Promise<VersionedTransaction> {
   const connection =
-    params.connection || new Connection(SOLANA_RPC_URL, "confirmed");
-  const mint = new PublicKey(USDC_MINT);
+    params.connection || new Connection(getSolanaHttpRpc(), "confirmed");
+  const mint = getUsdcMint();
   const sender = new PublicKey(params.senderAddress);
   const recipient = new PublicKey(params.recipientAddress);
 
@@ -136,7 +131,7 @@ export async function sendSignedUSDCTransfer(
   connection?: Connection
 ): Promise<string> {
   const conn =
-    connection || new Connection(SOLANA_RPC_URL, "confirmed");
+    connection || new Connection(getSolanaHttpRpc(), "confirmed");
   const sig = await conn.sendTransaction(signedTx, {
     skipPreflight: false,
     preflightCommitment: "confirmed",

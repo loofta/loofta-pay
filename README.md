@@ -86,9 +86,12 @@ SUPABASE_SECRET_KEY=your_supabase_service_role_key
 # Privy (auth + embedded Solana wallet)
 NEXT_PUBLIC_PRIVY_APP_ID=your_privy_app_id
 
-# Solana (Privacy Cash, withdraw)
+# Solana (PER, Privacy Cash, withdraw)
+# NEXT_PUBLIC_SOLANA_CLUSTER=devnet
 NEXT_PUBLIC_SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 # Or: NEXT_PUBLIC_HELIUS_API_KEY=your_helius_key
+# NEXT_PUBLIC_PER_PROGRAM_ID=...
+# NEXT_PUBLIC_MAGICBLOCK_URL=https://tee.magicblock.app
 
 # Range (AML check for withdrawals – server-side proxy)
 # Add RANGE_API_KEY in backend; frontend calls /api/risk/address
@@ -110,6 +113,32 @@ RANGE_API_KEY=your_range_api_key   # For /api/risk/address proxy
 ```
 
 See `apps/backend/supabase/REMOTE_DEV.md` for using a remote Supabase project instead of local Docker.
+
+### MagicBlock PER (private USDC send links, devnet)
+
+Send-payment “Pay privately” uses the **MagicBlock Private Ephemeral Rollup** client and the Anchor program in `programs/loofta-per-payments/`, not Privacy Cash.
+
+| Variable | Where | Purpose |
+|----------|--------|---------|
+| `NEXT_PUBLIC_SOLANA_CLUSTER` | Frontend | Set to `devnet` for this branch; drives RPC, USDC mint, and UI (e.g. Devnet badge). |
+| `NEXT_PUBLIC_SOLANA_RPC_URL` | Frontend | Devnet RPC (Helius devnet or `https://api.devnet.solana.com`). |
+| `NEXT_PUBLIC_SOLANA_WS_URL` | Frontend | Optional devnet WebSocket (matches RPC). |
+| `NEXT_PUBLIC_PER_PROGRAM_ID` | Frontend | Deployed Anchor program id (matches `programs/loofta-per-payments`). |
+| `NEXT_PUBLIC_MAGICBLOCK_URL` | Frontend | TEE HTTP endpoint (default `https://tee.magicblock.app`). |
+| `NEXT_PUBLIC_MAGICBLOCK_VALIDATOR` | Frontend | Optional; validator pubkey from MagicBlock docs if the default changes. |
+| `NEXT_PUBLIC_SOLANA_USDC_MINT` | Frontend | Override USDC mint; default devnet mint is `4zMMC9…` in `getUsdcMint()`. |
+| `NEXT_PUBLIC_PER_MODE` | Frontend | If `true`, claim page hides “choose another token” even on mainnet (USDC-only pay UX). |
+| `SOLANA_USDC_MINT` | Backend | Must match cluster (devnet USDC mint for devnet). |
+| `SOLANA_RPC_URL` | Backend | Devnet RPC for server-built txs / verification. |
+| `SOLANA_FEE_PAYER_PRIVATE_KEY` | Backend | Fee payer; **fund with devnet SOL** (e.g. [faucet](https://faucet.solana.com/)) for sponsored claim/recipient ATA creation. |
+
+**Privy:** In [dashboard.privy.io](https://dashboard.privy.io), enable **Solana devnet** for embedded wallets if you use devnet.
+
+**Logging:** PER errors on the client use `logPerError` in `apps/frontend/src/lib/per/log.ts` (cluster, program id, user pubkey, step — **no** TEE session tokens). Backend send-payment uses Nest `Logger` with correlation IDs; do not log TEE tokens or raw session material.
+
+**Recipients / claim:** `/send` accepts `email`, `twitter`, or `username` (Loofta username). The backend resolves a **recipient Solana pubkey** at link creation. For **private** sends, the sender completes a PER transfer to that pubkey’s deposit flow; the recipient must log in with the matching identity and claim **after** the link is `FUNDED` (see `send-payment` service).
+
+**Anchor:** Build with `anchor build`; deploy with a devnet-funded wallet. If `cargo-build-sbf` fails on `blake3` edition, pin `blake3` to `1.8.2` in the workspace `Cargo.lock` (see project history).
 
 ## Scripts
 

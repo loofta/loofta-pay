@@ -7,8 +7,6 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-  Headers,
-  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -40,9 +38,11 @@ export class SendPaymentController {
         id: { type: 'string', format: 'uuid' },
         link: { type: 'string' },
         deposit_address: { type: 'string' },
-        burner_address: { type: 'string', description: 'Burner wallet pubkey (for one-click Pay with Phantom)' },
+        burner_address: { type: 'string', description: 'Empty for PER' },
         amount: { type: 'string' },
         token: { type: 'string' },
+        per_recipient_pubkey: { type: 'string' },
+        per_mode: { type: 'boolean' },
       },
     },
   })
@@ -102,151 +102,11 @@ export class SendPaymentController {
     );
   }
 
-  @Post(':id/prepare-private')
-  @UseGuards(AuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Prepare private (Privacy Cash vault) payment — returns unsigned tx to sign' })
-  @ApiParam({ name: 'id' })
-  @ApiResponse({ status: 200, description: 'Unsigned deposit tx + activityId + passphrase' })
-  @ApiResponse({ status: 400, description: 'Private payments not configured or prepare failed' })
-  async preparePrivate(
-    @Param('id') id: string,
-    @PrivyUser() user: { id: string },
-    @Headers('x-session-signature') sessionSignature: string,
-    @Body() body: { sender_public_key: string; use_sponsor?: boolean },
-  ) {
-    if (!sessionSignature || !body.sender_public_key) {
-      throw new BadRequestException('Missing x-session-signature header or sender_public_key');
-    }
-    return this.sendPaymentService.preparePrivate(
-      id,
-      user.id,
-      body.sender_public_key,
-      sessionSignature,
-      body.use_sponsor === true,
-    );
-  }
-
-  @Post(':id/submit-private')
-  @UseGuards(AuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Submit signed private deposit tx and mark link as funded' })
-  @ApiParam({ name: 'id' })
-  @ApiResponse({ status: 200, description: 'Updated' })
-  async submitPrivate(
-    @Param('id') id: string,
-    @PrivyUser() user: { id: string },
-    @Headers('x-session-signature') sessionSignature: string,
-    @Body()
-    body: {
-      signed_deposit_tx: string;
-      activity_id: string;
-      sender_public_key: string;
-      last_valid_block_height?: number;
-      passphrase: string;
-      /** Optional: signed SOL tx (sender → burner) for claim gas; base64. */
-      signed_sol_tx?: string;
-    },
-  ) {
-    if (!sessionSignature || !body.signed_deposit_tx || !body.activity_id || !body.sender_public_key || !body.passphrase) {
-      throw new BadRequestException('Missing required fields or x-session-signature');
-    }
-    return this.sendPaymentService.submitPrivate(
-      id,
-      user.id,
-      {
-        signedDepositTx: body.signed_deposit_tx,
-        activityId: body.activity_id,
-        senderPublicKey: body.sender_public_key,
-        lastValidBlockHeight: body.last_valid_block_height,
-        passphrase: body.passphrase,
-        signedSolTx: body.signed_sol_tx,
-      },
-      sessionSignature,
-    );
-  }
-
-  @Post(':id/private/signed-tx')
-  @UseGuards(AuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Get fully signed deposit tx (add sponsor sig) for frontend to send' })
-  @ApiParam({ name: 'id' })
-  @ApiResponse({ status: 200, description: 'signed_deposit_tx (base64)' })
-  async getSignedTxForPrivate(
-    @Param('id') id: string,
-    @PrivyUser() user: { id: string },
-    @Headers('x-session-signature') sessionSignature: string,
-    @Body()
-    body: {
-      signed_deposit_tx: string;
-      activity_id: string;
-      sender_public_key: string;
-      last_valid_block_height?: number;
-      passphrase: string;
-    },
-  ) {
-    if (!sessionSignature || !body.signed_deposit_tx || !body.activity_id || !body.sender_public_key || !body.passphrase) {
-      throw new BadRequestException('Missing required fields or x-session-signature');
-    }
-    return this.sendPaymentService.getSignedTxForPrivate(
-      id,
-      user.id,
-      {
-        signedDepositTx: body.signed_deposit_tx,
-        activityId: body.activity_id,
-        senderPublicKey: body.sender_public_key,
-        lastValidBlockHeight: body.last_valid_block_height,
-        passphrase: body.passphrase,
-      },
-      sessionSignature,
-    );
-  }
-
-  @Post(':id/private/complete')
-  @UseGuards(AuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Complete private claim after frontend sent the deposit tx' })
-  @ApiParam({ name: 'id' })
-  @ApiResponse({ status: 200, description: 'Updated' })
-  async completePrivateWithSignature(
-    @Param('id') id: string,
-    @PrivyUser() user: { id: string },
-    @Headers('x-session-signature') sessionSignature: string,
-    @Body()
-    body: {
-      deposit_tx_signature: string;
-      activity_id: string;
-      sender_public_key: string;
-      last_valid_block_height?: number;
-      passphrase: string;
-    },
-  ) {
-    if (!sessionSignature || !body.deposit_tx_signature || !body.activity_id || !body.sender_public_key || !body.passphrase) {
-      throw new BadRequestException('Missing required fields or x-session-signature');
-    }
-    return this.sendPaymentService.completePrivateWithSignature(
-      id,
-      user.id,
-      {
-        depositTxSignature: body.deposit_tx_signature,
-        activityId: body.activity_id,
-        senderPublicKey: body.sender_public_key,
-        lastValidBlockHeight: body.last_valid_block_height,
-        passphrase: body.passphrase,
-      },
-      sessionSignature,
-    );
-  }
-
   @Post(':id/claim')
   @UseGuards(AuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Claim payment (recipient must log in with matching email/Twitter)' })
+  @ApiOperation({ summary: 'Claim payment (recipient must log in with matching email/Twitter/username)' })
   @ApiParam({ name: 'id' })
   @ApiResponse({
     status: 200,

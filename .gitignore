@@ -6,6 +6,9 @@ node_modules
 dist
 *.tsbuildinfo
 
+# Anchor / Rust (workspace root)
+target/
+
 # Environment files
 .env.*
 .env

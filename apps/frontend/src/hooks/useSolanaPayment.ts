@@ -11,14 +11,10 @@ import { Connection } from "@solana/web3.js";
 import bs58 from "bs58";
 import { buildUSDCTransferTransaction } from "@/services/solanaTransfer";
 import { getSolanaBalanceUSD } from "@/services/solanaBalance";
+import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-const SOLANA_RPC_URL =
-  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-  (process.env.NEXT_PUBLIC_HELIUS_API_KEY
-    ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-    : "https://api.mainnet-beta.solana.com");
 
 /** Same wallet resolution as Header so balance is consistent. */
 function deriveSolanaEmbeddedAddress(user: { linked_accounts?: Array<{ type?: string; address?: string }>; linkedAccounts?: Array<{ type?: string; address?: string }> } | null): string | null {
@@ -124,7 +120,7 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
 
     setIsLoading(true);
     try {
-      const conn = new Connection(SOLANA_RPC_URL, "confirmed");
+      const conn = new Connection(getSolanaHttpRpc(), "confirmed");
       const unsignedTx = await buildUSDCTransferTransaction({
         senderAddress,
         recipientAddress: config.recipientAddress.trim(),
