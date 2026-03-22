@@ -29,13 +29,13 @@ function ShellContent({ children }: { children: ReactNode }) {
         <div className="relative w-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-4 py-3 mb-3 flex items-center justify-center text-white">
           <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 min-w-0 text-center">
             <span className="text-sm font-medium">
-              Full launch will be announced soon. Claim your username, start sending and receiving payment (private not yet available). Points leaderboard will be live soon.
+              Send and receive private payments with MagicBlock PER — devnet only. Pay anyone by email, X username, or Loofta username.
             </span>
             <Link
-              href="#"
+              href="/send"
               className="inline-flex items-center gap-1 shrink-0 text-sm font-semibold text-white hover:underline underline-offset-2"
             >
-              Leaderboard live soon
+              Send
               <ChevronRight className="h-4 w-4" />
             </Link>
           </div>

@@ -19,6 +19,7 @@ import {
 import { useSendPaymentStore } from '@/store/sendPayment';
 import { buildUSDCTransferTransaction, sendSignedUSDCTransfer } from '@/services/solanaTransfer';
 import { useSolanaPayment } from '@/hooks/useSolanaPayment';
+import { PRIVATE_PAYMENT_ENABLED } from '@/services/privatePayment';
 import { GradientActionButton } from '@/components/ui/GradientActionButton';
 import { MessageInput } from '@/components/MessageInput';
 import { Copy, Check, Send, Mail, AtSign, Share2, Wallet as WalletIcon, Loader2, ArrowRight, Shield, Link2, History, RotateCcw, User } from 'lucide-react';
@@ -91,7 +92,9 @@ export default function SendPaymentPage() {
   const [payingWithLoofta, setPayingWithLoofta] = useState(false);
   const [payWithLooftaError, setPayWithLooftaError] = useState<string | null>(null);
   const [payWithWalletError, setPayWithWalletError] = useState<string | null>(null);
-  const [payPrivately, setPayPrivately] = useState(false);
+  /** Optional non-private path only when private payments are not globally enabled. */
+  const [payPrivatelyOptional, setPayPrivatelyOptional] = useState(false);
+  const payPrivately = PRIVATE_PAYMENT_ENABLED ? true : payPrivatelyOptional;
   const [payWithPrivateError, setPayWithPrivateError] = useState<string | null>(null);
   const [recoverLinks, setRecoverLinks] = useState<{ id: string; amount: string; token: string; status: string; recipient_type: string; created_at: string }[] | null>(null);
   const [recoverLoading, setRecoverLoading] = useState(false);
@@ -642,22 +645,26 @@ export default function SendPaymentPage() {
                       Fund this link — {result.amount} USDC
                     </p>
                     <p className="mb-4 text-xs text-gray-500">
-                      Choose how to pay. You can pay privately (deposit stays private) or regularly. Use Loofta balance or Phantom in both cases.
+                      {PRIVATE_PAYMENT_ENABLED
+                        ? 'Pay with MagicBlock PER (private USDC). Use Loofta balance or Phantom.'
+                        : 'Choose how to pay — private (PER) or regular USDC transfer. Use Loofta balance or Phantom.'}
                     </p>
 
                     {step === 'created' && (
                       <div className="flex flex-col gap-3">
-                        <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 bg-gray-50/50 cursor-pointer hover:bg-violet-50/50 hover:border-violet-200 transition-colors">
-                          <input
-                            type="checkbox"
-                            checked={payPrivately}
-                            onChange={(e) => setPayPrivately(e.target.checked)}
-                            className="rounded border-gray-300 text-violet-600 focus:ring-violet-500"
-                          />
-                          <Shield className="w-5 h-5 text-violet-600 shrink-0" />
-                          <span className="font-medium text-gray-900">Pay privately</span>
-                          <span className="text-sm text-gray-500">Deposit stays private</span>
-                        </label>
+                        {!PRIVATE_PAYMENT_ENABLED && (
+                          <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 bg-gray-50/50 cursor-pointer hover:bg-violet-50/50 hover:border-violet-200 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={payPrivatelyOptional}
+                              onChange={(e) => setPayPrivatelyOptional(e.target.checked)}
+                              className="rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                            />
+                            <Shield className="w-5 h-5 text-violet-600 shrink-0" />
+                            <span className="font-medium text-gray-900">Pay privately</span>
+                            <span className="text-sm text-gray-500">MagicBlock PER</span>
+                          </label>
+                        )}
                         {payPrivately && (
                           <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/80 text-sm text-amber-900 space-y-2">
                             <p className="font-medium">MagicBlock private rollup (PER)</p>

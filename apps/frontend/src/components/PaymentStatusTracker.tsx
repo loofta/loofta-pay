@@ -4,7 +4,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { Loader2, CheckCircle2, Clock, ArrowRight, Zap, Send, Wallet } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getNetworkConfirmationTime, getSameChainProcessingTime } from '@/lib/networkTimes';
-import { PRIVATE_PAYMENT_COMING_SOON } from '@/services/privacyCash';
+import { PRIVATE_PAYMENT_COMING_SOON } from '@/services/privatePayment';
 
 export type PaymentStatus =
   | 'PENDING_DEPOSIT'
@@ -38,7 +38,7 @@ interface PaymentStatusTrackerProps {
   timeEstimate?: number | null; // Time estimate from NEAR Intents quote (in seconds)
   paidAt?: string | null; // Timestamp when payment was completed
   paymentType?: PaymentType; // Type of payment: 'direct' (same chain, same token), 'companion-swap' (same chain, different token), 'near-intent' (cross-chain)
-  isPrivate?: boolean; // Whether this is a private payment (requires Privacy Cash execution step)
+  isPrivate?: boolean; // Private cross-chain: extra step after bridge (PER / private transfer)
   isLooftaPay?: boolean; // Whether this is a Loofta Pay payment (USDC on Solana) - shows simplified steps
 }
 
@@ -64,8 +64,8 @@ const STEP_CONFIG: Record<string, Omit<PaymentStep, 'status'>> = {
     icon: <Send className="w-5 h-5" />,
     estimatedTime: 30, // 30 seconds for cross-chain transfer
   },
-  privacyCash: {
-    id: 'privacy-cash',
+  privateTransfer: {
+    id: 'private-transfer',
     label: 'Private Transfer',
     description: PRIVATE_PAYMENT_COMING_SOON ? 'Private payments coming soon' : 'Processing private transfer',
     icon: <Loader2 className="w-5 h-5" />,
@@ -118,22 +118,21 @@ function getStepsForStatus(
     deposit: { ...STEP_CONFIG.deposit, estimatedTime: depositTime },
     processing: { ...STEP_CONFIG.processing, estimatedTime: processingTime },
     sending: { ...STEP_CONFIG.sending, estimatedTime: sendingTime },
-    privacyCash: { ...STEP_CONFIG.privacyCash, estimatedTime: 45 },
+    privateTransfer: { ...STEP_CONFIG.privateTransfer, estimatedTime: 45 },
     success: { ...STEP_CONFIG.success }, // Success step doesn't need estimatedTime
   };
   const upperStatus = String(status || '').toUpperCase();
 
-  // For private cross-chain payments, include Privacy Cash step
+  // For private cross-chain payments, include private transfer step
   const isPrivateCrossChain = isPrivate && fromChain && toChain && 
                                fromChain.toLowerCase() !== toChain.toLowerCase() &&
                                toChain.toLowerCase() === 'solana';
 
-  // Helper to build steps array conditionally including Privacy Cash
   const buildSteps = (
     depositStatus: 'pending' | 'active' | 'completed',
     processingStatus: 'pending' | 'active' | 'completed',
     sendingStatus: 'pending' | 'active' | 'completed',
-    privacyCashStatus: 'pending' | 'active' | 'completed',
+    privateTransferStatus: 'pending' | 'active' | 'completed',
     successStatus: 'pending' | 'active' | 'completed'
   ) => {
     const steps: PaymentStep[] = [];
@@ -152,9 +151,8 @@ function getStepsForStatus(
 
     steps.push({ ...configWithTimes.processing, status: processingStatus });
 
-    // For private cross-chain, add Privacy Cash step before sending
     if (isPrivateCrossChain) {
-      steps.push({ ...configWithTimes.privacyCash, status: privacyCashStatus });
+      steps.push({ ...configWithTimes.privateTransfer, status: privateTransferStatus });
     }
 
     steps.push(
@@ -181,12 +179,12 @@ function getStepsForStatus(
     return buildSteps('completed', 'active', 'pending', 'pending', 'pending');
   }
 
-  // For private cross-chain: PRIVATE_TRANSFER_PENDING means Near Intents completed, Privacy Cash is executing
+  // For private cross-chain: PRIVATE_TRANSFER_PENDING — bridge done, private transfer in progress
   if (isPrivateCrossChain && upperStatus === 'PRIVATE_TRANSFER_PENDING') {
     return buildSteps('completed', 'completed', 'pending', 'active', 'pending');
   }
 
-  // For private cross-chain: IN_FLIGHT means Near Intents completed, Privacy Cash is executing
+  // For private cross-chain: IN_FLIGHT — private transfer in progress
   if (isPrivateCrossChain && upperStatus === 'IN_FLIGHT') {
     return buildSteps('completed', 'completed', 'pending', 'active', 'pending');
   }
@@ -431,7 +429,7 @@ function TimeEstimate({
     if (upperStatus === 'PENDING_DEPOSIT' || upperStatus === 'INCOMPLETE_DEPOSIT') return null;
     // Don't show for terminal states
     if (upperStatus === 'FAILED' || upperStatus === 'REFUNDED') return null;
-    // Show time estimate for PRIVATE_TRANSFER_PENDING (Privacy Cash execution)
+    // Show time estimate for PRIVATE_TRANSFER_PENDING (private transfer step)
 
     const steps = getStepsForStatus(status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate);
     const activeStepIndex = steps.findIndex(s => s.status === 'active');

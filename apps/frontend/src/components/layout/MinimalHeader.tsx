@@ -14,6 +14,7 @@ import { clusterBadgeLabel, isNonMainnetCluster } from "@/lib/solanaCluster";
 const HEADER_HEIGHT = 64;
 
 export function MinimalHeader() {
+  const solanaClusterTag = clusterBadgeLabel();
   const { authenticated, email, logout } = useAuth();
   const { login: privyLogin, user: privyUser } = usePrivy();
   const username = useAuthStore((s) => s.username ?? null);
@@ -114,9 +115,9 @@ export function MinimalHeader() {
             >
               pay
             </span>
-            {isNonMainnetCluster() && clusterBadgeLabel() ? (
+            {isNonMainnetCluster() && solanaClusterTag ? (
               <span className="relative top-0.5 rounded-full border border-amber-500/35 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400/95">
-                {clusterBadgeLabel()}
+                {solanaClusterTag}
               </span>
             ) : null}
           </Link>
@@ -127,10 +128,17 @@ export function MinimalHeader() {
               <button
                 type="button"
                 onClick={() => setShowBalanceModal(true)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-slate-200 hover:text-white hover:bg-white/15 transition-colors border border-white/10"
+                className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/10 text-slate-200 hover:text-white hover:bg-white/15 transition-colors border border-white/10 text-left"
               >
-                <span className="text-sm font-medium">Balance</span>
-                <span className="text-sm font-semibold tabular-nums">
+                <div className="flex flex-col min-w-0">
+                  <span className="text-sm font-medium leading-tight">Balance</span>
+                  <span className="text-[10px] text-slate-500 font-normal leading-tight truncate max-w-[8rem] sm:max-w-none">
+                    {isNonMainnetCluster() && solanaClusterTag
+                      ? `${solanaClusterTag} USDC`
+                      : "Mainnet USDC"}
+                  </span>
+                </div>
+                <span className="text-sm font-semibold tabular-nums shrink-0">
                   {loadingBalance ? "…" : `$${balanceUSD}`}
                 </span>
               </button>

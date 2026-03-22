@@ -46,8 +46,12 @@ import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction, useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
-import { payPrivatelyWithPrivacyCash, PRIVACY_CASH_FEES, PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
-import { Connection, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import {
+  PRIVATE_TRANSFER_DISPLAY_FEES,
+  PRIVATE_PAYMENT_COMING_SOON,
+  PRIVATE_PAYMENT_ENABLED,
+} from "@/services/privatePayment";
+import { Connection, PublicKey, Transaction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
   createTransferInstruction,
@@ -60,6 +64,8 @@ import { getUsdcMint } from "@/lib/per/constants";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
 import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
+import { usePerPrivateTransfer } from "@/hooks/usePerPrivateTransfer";
+import { phantomWalletToAnchorWallet } from "@/lib/per/signer";
 import { PaymentHistoryClaim } from "@/app/history/page";
 
 /** When embedInApp: only the pay content in a dark card (no tabs, no full page). When false: full page with SendReceiveTabs and white card. */
@@ -521,9 +527,8 @@ async function updateClaimStatus(
 
 function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
   const id = claimId;
-  /** USDC-only pay UX on devnet / testnet or when PER mode is enabled. */
-  const hideAlternateTokenPay =
-    isNonMainnetCluster() || process.env.NEXT_PUBLIC_PER_MODE === "true";
+  /** USDC-only pay UX on devnet / testnet or when private payment is enabled. */
+  const hideAlternateTokenPay = isNonMainnetCluster() || PRIVATE_PAYMENT_ENABLED;
   const { toast } = useToast();
   const { data: tokens = [], isLoading } = useTokensQuery();
   const claimQuery = useQuery({
@@ -627,7 +632,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [refundAddressError, setRefundAddressError] = useState<string | null>(null);
   const hasUpdatedClaimStatus = React.useRef<string | null>(null); // Track if we've already updated DB for this status
   const userCancelled = React.useRef<boolean>(false); // Track if user manually cancelled to prevent re-hydration
-  const privateTransferTriggeredRef = React.useRef<Set<string>>(new Set()); // Auto-run Privacy Cash once per claim when PRIVATE_TRANSFER_PENDING
+  const privateTransferTriggeredRef = React.useRef<Set<string>>(new Set()); // Auto-run private PER transfer once per claim when PRIVATE_TRANSFER_PENDING
   const onPayPrivatelyRef = React.useRef<(() => Promise<void>) | null>(null);
   const { logout, login, authenticated, getAccessToken } = usePrivy();
   const { wallets } = useEvmWallets();
@@ -646,19 +651,29 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const { signMessage: privySignMessage } = usePrivySignMessage();
   const { signTransaction: privySignTransaction } = usePrivySignTransaction();
   const solanaPayment = useSolanaPayment({ enabled: showPayNowModal });
+  const { transfer: perTransfer } = usePerPrivateTransfer();
 
   // Enforce private mode if claim requires it
   const requiresPrivate = claim?.is_private === true;
+  const privatePayActive = requiresPrivate || isPrivateMode || PRIVATE_PAYMENT_ENABLED;
 
-  // Auto-set private mode when claim requires it
+  // Auto-set private mode when claim requires it or app defaults to private (PER)
   useEffect(() => {
-    if (requiresPrivate) {
+    if (requiresPrivate || PRIVATE_PAYMENT_ENABLED) {
       setIsPrivateMode(true);
     }
-  }, [requiresPrivate]);
+  }, [requiresPrivate, PRIVATE_PAYMENT_ENABLED]);
 
   // Prevent changing from private mode if claim requires it
   const handleSetPrivateMode = (value: boolean) => {
+    if (PRIVATE_PAYMENT_ENABLED && !value) {
+      toast({
+        variant: "destructive",
+        title: "Private payment is always on",
+        description: "This app is configured for private payments only.",
+      });
+      return;
+    }
     if (requiresPrivate && !value) {
       // Don't allow disabling private mode if claim requires it
       toast({
@@ -1150,8 +1165,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     const amountUSD = requiresPrivate
       ? requestedAmount
       : (() => {
-        const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-        const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+        const rentFee = PRIVATE_TRANSFER_DISPLAY_FEES.usdc_withdraw_rent_fee;
+        const feeRate = PRIVATE_TRANSFER_DISPLAY_FEES.withdraw_fee_rate;
         const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
         return withdrawalAmountNeeded;
       })();
@@ -1160,7 +1175,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     setPreparing(true);
 
     try {
-      // USDC on Solana payments use Phantom wallet (not Privy embedded wallet)
       const phantom = getPhantomProvider();
       if (!phantom) {
         toast({
@@ -1172,77 +1186,45 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         return;
       }
 
-      let walletAddress: string | undefined;
-      if (phantom.publicKey) {
-        walletAddress = phantom.publicKey.toBase58();
-      } else {
-        try {
-          const { publicKey } = await phantom.connect();
-          walletAddress = publicKey.toBase58();
-        } catch (e) {
-          console.warn("[PrivateTransfer] Phantom connect failed:", e);
-          toast({
-            variant: "destructive",
-            title: "Phantom connection failed",
-            description: "Please connect your Phantom wallet and try again.",
-          });
-          setPreparing(false);
-          return;
-        }
+      let publicKey: PublicKey;
+      try {
+        const res = phantom.publicKey ? { publicKey: phantom.publicKey } : await phantom.connect();
+        publicKey = res.publicKey;
+      } catch (e) {
+        console.warn("[PrivateTransfer] Phantom connect failed:", e);
+        toast({
+          variant: "destructive",
+          title: "Phantom connection failed",
+          description: "Please connect your Phantom wallet and try again.",
+        });
+        setPreparing(false);
+        return;
       }
 
-      const solanaRpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL
-        || (process.env.NEXT_PUBLIC_HELIUS_API_KEY
-          ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-          : "https://api.mainnet-beta.solana.com");
-      const connection = new Connection(solanaRpcUrl);
+      const walletAddress = publicKey.toBase58();
+      const anchorWallet = phantomWalletToAnchorWallet({
+        publicKey,
+        signTransaction: async (tx: Transaction) => {
+          const signed = await phantom.signTransaction(tx as unknown as VersionedTransaction);
+          return signed as unknown as Transaction;
+        },
+      });
+      const mint = getUsdcMint().toBase58();
 
-      const signMessage = async (msg: string): Promise<Uint8Array> => {
-        const encoded = new TextEncoder().encode(msg);
-        const { signature } = await phantom.signMessage(encoded, "utf8");
-        return signature;
-      };
-      const signTransaction = async (tx: VersionedTransaction): Promise<VersionedTransaction> => {
-        return phantom.signTransaction(tx);
-      };
-
-      console.log("[PrivateTransfer] Using Phantom wallet:", walletAddress?.slice(0, 8) + "…");
+      console.log("[PrivateTransfer] Using Phantom wallet:", walletAddress.slice(0, 8) + "…");
       console.log("[PrivateTransfer] Payment details:", { walletAddress, amountUSD, recipientAddress: recipient, claimId: claim.id, recipientPaysFees: requiresPrivate });
 
-      // Execute private payment
-      console.log("[PrivateTransfer] Calling payPrivatelyWithPrivacyCash…");
-      const result = await payPrivatelyWithPrivacyCash({
-        walletAddress,
-        amountUSD,
-        recipientAddress: recipient,
-        signMessage,
-        signTransaction,
-        recipientPaysFees: requiresPrivate, // If claim requires private, recipient pays fees
-      });
+      console.log("[PrivateTransfer] Calling PER transfer…");
+      const signature = await perTransfer(anchorWallet, recipient, mint, amountUSD);
+      console.log("[PrivateTransfer] PER transfer signature:", signature);
 
-      console.log("[PrivateTransfer] payPrivatelyWithPrivacyCash result:", result);
-
-      if (result.success) {
-        console.log("[PrivateTransfer] Success, updating claim status to SUCCESS", { signature: result.signature });
-        toast({ title: "Payment successful!", description: "Your private payment has been completed." });
-        // Update claim status with transaction signature and is_private flag
-        if (result.signature) {
-          await updateClaimStatus(claim.id, 'SUCCESS', { txHash: result.signature, paidWith: 'USDC (Private)', isPrivate: true }, user?.id);
-        } else {
-          // If no signature, still update status (transaction might be pending)
-          await updateClaimStatus(claim.id, 'SUCCESS', { paidWith: 'USDC (Private)', isPrivate: true }, user?.id);
-        }
-        // Update local status immediately
-        setStatus("SUCCESS");
-        useClaimPayStore.getState().setStatus(id, "SUCCESS");
-        // Refresh claim data and payment history list
-        await claimQuery.refetch();
-        queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
-        console.log("[PrivateTransfer] Claim refetched, flow complete");
-      } else {
-        console.log("[PrivateTransfer] SDK returned success: false", result.error);
-        throw new Error(result.error || 'Private payment failed');
-      }
+      toast({ title: "Payment successful!", description: "Your private payment has been completed." });
+      await updateClaimStatus(claim.id, "SUCCESS", { txHash: signature, paidWith: "USDC (Private)", isPrivate: true }, user?.id);
+      setStatus("SUCCESS");
+      useClaimPayStore.getState().setStatus(id, "SUCCESS");
+      await claimQuery.refetch();
+      queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
+      console.log("[PrivateTransfer] Claim refetched, flow complete");
     } catch (error: any) {
       console.error("[PrivateTransfer] Error:", error);
       toast({ variant: "destructive", title: "Payment failed", description: error?.message || "Could not complete private payment" });
@@ -1260,8 +1242,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     const base = parseFloat(claim?.amount || "0") || 0;
     if (requiresPrivate) return base;
     if (isPrivateMode) {
-      const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-      const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+      const rentFee = PRIVATE_TRANSFER_DISPLAY_FEES.usdc_withdraw_rent_fee;
+      const feeRate = PRIVATE_TRANSFER_DISPLAY_FEES.withdraw_fee_rate;
       const withdrawalAmountNeeded = (base + rentFee) / (1 - feeRate);
       return withdrawalAmountNeeded;
     }
@@ -1288,8 +1270,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       ? baseAmount
       : isPrivateMode
         ? (() => {
-          const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-          const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+          const rentFee = PRIVATE_TRANSFER_DISPLAY_FEES.usdc_withdraw_rent_fee;
+          const feeRate = PRIVATE_TRANSFER_DISPLAY_FEES.withdraw_fee_rate;
           const withdrawalAmountNeeded = (baseAmount + rentFee) / (1 - feeRate);
           return withdrawalAmountNeeded;
         })()
@@ -1413,8 +1395,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       ? baseAmount
       : isPrivateMode
         ? (() => {
-          const rentFee = PRIVACY_CASH_FEES.usdc_withdraw_rent_fee;
-          const feeRate = PRIVACY_CASH_FEES.withdraw_fee_rate;
+          const rentFee = PRIVATE_TRANSFER_DISPLAY_FEES.usdc_withdraw_rent_fee;
+          const feeRate = PRIVATE_TRANSFER_DISPLAY_FEES.withdraw_fee_rate;
           const withdrawalAmountNeeded = (baseAmount + rentFee) / (1 - feeRate);
           return withdrawalAmountNeeded;
         })()
@@ -1566,7 +1548,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     onPayPrivatelyRef.current = onPayPrivately;
   });
 
-  // When funds arrive in embedded wallet (PRIVATE_TRANSFER_PENDING), run Privacy Cash automatically
+  // When funds arrive in embedded wallet (PRIVATE_TRANSFER_PENDING), run private PER transfer automatically
   useEffect(() => {
     const s = String(status || "").toUpperCase();
     console.log("[Claim] Auto-trigger effect:", { status: s, claimId: claim?.id, isPrivate: claim?.is_private, alreadyTriggered: claim?.id ? privateTransferTriggeredRef.current.has(claim.id) : false });
@@ -2212,7 +2194,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       fromChain={selectedFrom?.chain}
                       toChain={destToken?.chain}
                       depositAddress={deposit?.depositAddress}
-                      isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
+                      isPrivate={claim?.is_private === true || privatePayActive}
                       paidAt={claim.paid_at}
                       paymentType={
                         deposit?.isDirect ? 'direct' :
@@ -2325,8 +2307,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
             {String(status || "").toUpperCase() !== "SUCCESS" && (!deposit ? (
               <>
-                {/* Private payment switch — show whenever the link does not require private */}
-                {!requiresPrivate && (
+                {/* Private payment switch — hidden when app defaults all links to private */}
+                {!requiresPrivate && !PRIVATE_PAYMENT_ENABLED && (
                   <div className="mt-5 p-4 rounded-xl border border-gray-200 bg-gray-50">
                     <div className="flex items-center justify-between gap-4">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -2354,6 +2336,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                 )}
 
+                {PRIVATE_PAYMENT_ENABLED && !requiresPrivate && (
+                  <div className="mt-5 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-600 shrink-0">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    </svg>
+                    <span className="font-medium">Private payment (MagicBlock PER) is the default — no need to toggle.</span>
+                  </div>
+                )}
+
                 {/* Show private-only indicator if claim requires it */}
                 {requiresPrivate && (
                   <div className="mt-5 flex items-center gap-2 text-sm text-gray-600">
@@ -2370,7 +2361,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <div className="mt-5">
                   <div className="text-base font-medium font-sans text-gray-700 mb-2">Pay with</div>
 
-                  {requiresPrivate || isPrivateMode ? (
+                  {privatePayActive ? (
                     /* Private mode (required or optional) - Show USDC on SOL as best option, but allow other tokens */
                     <>
                       {/* Best option: Pay USDC on SOL (FREE) - select only; Phantom opens when user clicks "Use wallet" */}
@@ -2747,7 +2738,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               setShowPayNowModal(true);
                               return;
                             }
-                            if ((isPrivateMode || requiresPrivate)) {
+                            if (privatePayActive) {
                               onPayPrivately();
                             } else {
                               onPrepare();
@@ -2763,7 +2754,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                 if (isUSDCOnSolana) {
                                   return (!usdcSolanaToken || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
                                 }
-                                if (isPrivateMode || requiresPrivate) {
+                                if (privatePayActive) {
                                   return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
                                 }
                                 return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
@@ -2774,7 +2765,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
                               selectedFrom?.chain === usdcSolanaToken?.chain;
                             if (isUSDCOnSolana) return "Opening…";
-                            if (isPrivateMode || requiresPrivate) return "Processing private payment…";
+                            if (privatePayActive) return "Processing private payment…";
                             return "Preparing…";
                           })()}
                         >
@@ -2784,7 +2775,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             if (!authenticated && !isUSDCOnSolana) return "Login to pay";
                             if (requiresPrivate && !isPrivateMode) return "Private payment required";
                             if (isUSDCOnSolana) return "Pay now";
-                            if (isPrivateMode || requiresPrivate) {
+                            if (privatePayActive) {
                               return "Get deposit address";
                             }
                             return "Get deposit address";
@@ -2864,7 +2855,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                 deposit?.isCompanionSwap ? 'companion-swap' :
                                   'near-intent'
                             }
-                            isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
+                            isPrivate={claim?.is_private === true || privatePayActive}
                             isLooftaPay={
                               claim?.paid_with_token?.toUpperCase() === "USDC" &&
                               (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
@@ -3232,7 +3223,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   deposit?.isCompanionSwap ? 'companion-swap' :
                                     'near-intent'
                               }
-                              isPrivate={claim?.is_private === true || isPrivateMode || requiresPrivate}
+                              isPrivate={claim?.is_private === true || privatePayActive}
                               isLooftaPay={
                                 claim?.paid_with_token?.toUpperCase() === "USDC" &&
                                 (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")

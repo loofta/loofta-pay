@@ -3,7 +3,7 @@
  * Client-side only - fetches directly from Solana RPC
  */
 
-import { getSolanaHttpRpc } from "@/lib/solanaCluster";
+import { getSolanaCluster, getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { getUsdcMint } from "@/lib/per/constants";
 
 /** @deprecated Prefer getUsdcMint() for cluster-aware mint */
@@ -51,7 +51,15 @@ export async function getSolanaUSDCBalance(walletAddress: string): Promise<numbe
     // Get USDC balance (6 decimals)
     const account = data.result.value[0];
     const balance = account.account.data.parsed.info.tokenAmount.uiAmount;
-    
+
+    if (process.env.NODE_ENV === "development") {
+      console.info("[Loofta] USDC balance", {
+        cluster: getSolanaCluster(),
+        mint: usdcMintAddress(),
+        uiAmount: balance ?? 0,
+      });
+    }
+
     return balance || 0;
   } catch (error) {
     console.error("[Solana Balance] Error fetching USDC balance:", error);
