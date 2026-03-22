@@ -1,0 +1,58 @@
+import type { Wallet } from "@coral-xyz/anchor";
+import { PublicKey, Transaction, VersionedTransaction } from "@solana/web3.js";
+
+type PhantomLike = {
+  publicKey: { toBase58(): string };
+  signTransaction: (tx: Transaction) => Promise<Transaction>;
+};
+
+/** Phantom (or compatible) injected wallet for Anchor `Wallet`. */
+export function phantomWalletToAnchorWallet(phantom: PhantomLike): Wallet {
+  const publicKey = new PublicKey(phantom.publicKey.toBase58());
+  const signTransaction = async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
+    if (tx instanceof VersionedTransaction) {
+      throw new Error("PER flow expects legacy Transaction");
+    }
+    return (await phantom.signTransaction(tx)) as T;
+  };
+  return {
+    publicKey,
+    signTransaction,
+    signAllTransactions: async <T extends Transaction | VersionedTransaction>(txs: T[]) => {
+      const out: T[] = [];
+      for (const t of txs) {
+        out.push(await signTransaction(t));
+      }
+      return out;
+    },
+  } as Wallet;
+}
+
+/** Privy `ConnectedStandardWallet` — sign legacy `Transaction` for Anchor. */
+export type PrivySolWallet = {
+  address: string;
+  signTransaction: (opts: { transaction: Uint8Array }) => Promise<{ signedTransaction: Uint8Array }>;
+};
+
+export function privyWalletToAnchorWallet(wallet: PrivySolWallet): Wallet {
+  const publicKey = new PublicKey(wallet.address);
+  const signTransaction = async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
+    if (tx instanceof VersionedTransaction) {
+      throw new Error("PER flow expects legacy Transaction");
+    }
+    const serialized = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+    const { signedTransaction } = await wallet.signTransaction({ transaction: serialized });
+    return Transaction.from(signedTransaction) as T;
+  };
+  return {
+    publicKey,
+    signTransaction,
+    signAllTransactions: async <T extends Transaction | VersionedTransaction>(txs: T[]) => {
+      const out: T[] = [];
+      for (const t of txs) {
+        out.push(await signTransaction(t));
+      }
+      return out;
+    },
+  } as Wallet;
+}

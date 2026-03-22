@@ -55,7 +55,8 @@ import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
-import { USDC_MINT } from "@/services/solanaBalance";
+import { getSolanaHttpRpc, isNonMainnetCluster } from "@/lib/solanaCluster";
+import { getUsdcMint } from "@/lib/per/constants";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
 import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
@@ -520,6 +521,9 @@ async function updateClaimStatus(
 
 function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
   const id = claimId;
+  /** USDC-only pay UX on devnet / testnet or when PER mode is enabled. */
+  const hideAlternateTokenPay =
+    isNonMainnetCluster() || process.env.NEXT_PUBLIC_PER_MODE === "true";
   const { toast } = useToast();
   const { data: tokens = [], isLoading } = useTokensQuery();
   const claimQuery = useQuery({
@@ -1318,13 +1322,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       if (amountRaw <= 0) throw new Error("Invalid amount to send.");
 
       // Direct USDC transfer: Phantom -> claim recipient/burner (no Near-Intent)
-      const rpc =
-        process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-        (process.env.NEXT_PUBLIC_HELIUS_API_KEY
-          ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-          : "https://api.mainnet-beta.solana.com");
-      const connection = new Connection(rpc, "confirmed");
-      const mint = new PublicKey(USDC_MINT);
+      const connection = new Connection(getSolanaHttpRpc(), "confirmed");
+      const mint = getUsdcMint();
       const sender = new PublicKey(senderAddress);
       const recipient = new PublicKey(rawRecipient);
 
@@ -1442,13 +1441,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         throw new Error("Recipient address is not a valid Solana address for this payment.");
       }
 
-      const rpc =
-        process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-        (process.env.NEXT_PUBLIC_HELIUS_API_KEY
-          ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-          : "https://api.mainnet-beta.solana.com");
-      const connection = new Connection(rpc, "confirmed");
-      const mint = new PublicKey(USDC_MINT);
+      const connection = new Connection(getSolanaHttpRpc(), "confirmed");
+      const mint = getUsdcMint();
       const sender = new PublicKey(senderAddress);
       const recipient = new PublicKey(rawRecipient);
       const amountRaw = Math.floor(amountUSD * 1e6);
@@ -2418,42 +2412,46 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         </div>
                       )}
 
-                      {/* Divider - two line segments so line never strikes through text */}
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="flex-1 h-px bg-white/20" />
-                        <span className="text-sm text-slate-400 shrink-0">or choose another token</span>
-                        <div className="flex-1 h-px bg-white/20" />
-                      </div>
+                      {!hideAlternateTokenPay && (
+                        <>
+                          {/* Divider - two line segments so line never strikes through text */}
+                          <div className="flex items-center gap-3 mb-4">
+                            <div className="flex-1 h-px bg-white/20" />
+                            <span className="text-sm text-slate-400 shrink-0">or choose another token</span>
+                            <div className="flex-1 h-px bg-white/20" />
+                          </div>
 
-                      {/* Token selector - hide Solana for private flow */}
-                      <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
-                        <TokenCombobox
-                          tokens={filteredTokens as any}
-                          value={fromSel}
-                          onChange={(sel) => {
-                            // Check if token is unsupported
-                            const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
-                            if (selected?._unsupported) {
-                              toast({
-                                variant: "destructive",
-                                title: "Token not supported",
-                                description: selected._reason || "This token cannot be used for this payment."
-                              });
-                              return;
-                            }
-                            setFromSel(sel);
-                          }}
-                          placeholder="Select token to pay with"
-                          onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                          hideChains={['solana', 'sol']}
-                          className={embedInApp
-                            ? `bg-white/10 text-white border border-white/20 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors hover:bg-white/15 placeholder:text-slate-400 ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400/50 ring-offset-2 ring-offset-[#0f0f12]' : ''}`
-                            : `bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'border-emerald-400 hover:bg-emerald-50' : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'}`
-                          }
-                        />
-                      </div>
+                          {/* Token selector - hide Solana for private flow */}
+                          <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
+                            <TokenCombobox
+                              tokens={filteredTokens as any}
+                              value={fromSel}
+                              onChange={(sel) => {
+                                // Check if token is unsupported
+                                const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
+                                if (selected?._unsupported) {
+                                  toast({
+                                    variant: "destructive",
+                                    title: "Token not supported",
+                                    description: selected._reason || "This token cannot be used for this payment."
+                                  });
+                                  return;
+                                }
+                                setFromSel(sel);
+                              }}
+                              placeholder="Select token to pay with"
+                              onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                              hideChains={['solana', 'sol']}
+                              className={embedInApp
+                                ? `bg-white/10 text-white border border-white/20 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors hover:bg-white/15 placeholder:text-slate-400 ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400/50 ring-offset-2 ring-offset-[#0f0f12]' : ''}`
+                                : `bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'border-emerald-400 hover:bg-emerald-50' : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'}`
+                              }
+                            />
+                          </div>
+                        </>
+                      )}
                       {/* Selected Token Display - Show when a token is selected */}
-                      {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? (
+                      {!hideAlternateTokenPay && selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? (
                         <motion.div
                           initial={{ opacity: 0, y: -10 }}
                           animate={{ opacity: 1, y: 0 }}
@@ -2595,42 +2593,46 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         </div>
                       )}
 
-                      {/* Divider - two line segments so line never strikes through text */}
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="flex-1 h-px bg-white/20" />
-                        <span className="text-sm text-slate-400 shrink-0">or choose token</span>
-                        <div className="flex-1 h-px bg-white/20" />
-                      </div>
+                      {!hideAlternateTokenPay && (
+                        <>
+                          {/* Divider - two line segments so line never strikes through text */}
+                          <div className="flex items-center gap-3 mb-4">
+                            <div className="flex-1 h-px bg-white/20" />
+                            <span className="text-sm text-slate-400 shrink-0">or choose token</span>
+                            <div className="flex-1 h-px bg-white/20" />
+                          </div>
 
-                      {/* Token selector - hide Solana for private flow */}
-                      <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
-                        <TokenCombobox
-                          tokens={filteredTokens as any}
-                          value={fromSel}
-                          onChange={(sel) => {
-                            // Check if token is unsupported
-                            const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
-                            if (selected?._unsupported) {
-                              toast({
-                                variant: "destructive",
-                                title: "Token not supported",
-                                description: selected._reason || "This token cannot be used for this payment."
-                              });
-                              return;
-                            }
-                            setFromSel(sel);
-                          }}
-                          placeholder="Select token to pay with"
-                          onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                          hideChains={['solana', 'sol']}
-                          className={embedInApp
-                            ? `bg-white/10 text-white border border-white/20 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors hover:bg-white/15 placeholder:text-slate-400 ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400/50 ring-offset-2 ring-offset-[#0f0f12]' : ''}`
-                            : `bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'border-emerald-400 hover:bg-emerald-50' : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'}`
-                          }
-                        />
-                      </div>
+                          {/* Token selector - hide Solana for private flow */}
+                          <div className={`relative ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400 ring-offset-2 rounded-xl' : ''}`}>
+                            <TokenCombobox
+                              tokens={filteredTokens as any}
+                              value={fromSel}
+                              onChange={(sel) => {
+                                // Check if token is unsupported
+                                const selected = filteredTokens.find(t => t.symbol === sel.symbol && t.chain === sel.chain) as any;
+                                if (selected?._unsupported) {
+                                  toast({
+                                    variant: "destructive",
+                                    title: "Token not supported",
+                                    description: selected._reason || "This token cannot be used for this payment."
+                                  });
+                                  return;
+                                }
+                                setFromSel(sel);
+                              }}
+                              placeholder="Select token to pay with"
+                              onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                              hideChains={['solana', 'sol']}
+                              className={embedInApp
+                                ? `bg-white/10 text-white border border-white/20 w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors hover:bg-white/15 placeholder:text-slate-400 ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'ring-2 ring-emerald-400/50 ring-offset-2 ring-offset-[#0f0f12]' : ''}`
+                                : `bg-white text-gray-900 border w-full h-14 text-lg text-center focus:ring-0 focus-visible:ring-0 focus:outline-none transition-colors ${selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? 'border-emerald-400 hover:bg-emerald-50' : 'border-orange-200 hover:bg-orange-50 focus:border-orange-400'}`
+                              }
+                            />
+                          </div>
+                        </>
+                      )}
                       {/* Selected Token Display - Show when a token is selected */}
-                      {selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? (
+                      {!hideAlternateTokenPay && selectedFrom && (selectedFrom.symbol !== usdcSolanaToken?.symbol || selectedFrom.chain !== usdcSolanaToken?.chain) ? (
                         <motion.div
                           initial={{ opacity: 0, y: -10 }}
                           animate={{ opacity: 1, y: 0 }}

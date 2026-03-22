@@ -5,18 +5,28 @@ import { toSolanaWalletConnectors } from "@privy-io/react-auth/solana";
 import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
 import React from "react";
 
-// Reachable Solana RPC: prefer custom URL or Helius; fallback to public (rate-limited).
-// Set NEXT_PUBLIC_HELIUS_API_KEY or NEXT_PUBLIC_SOLANA_RPC_URL for reliable mainnet.
-const SOLANA_RPC_HTTP =
-	process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-	(process.env.NEXT_PUBLIC_HELIUS_API_KEY
-		? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-		: "https://api.mainnet-beta.solana.com");
-const SOLANA_RPC_WS =
-	process.env.NEXT_PUBLIC_SOLANA_WS_URL ||
-	(process.env.NEXT_PUBLIC_HELIUS_API_KEY
-		? `wss://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-		: "wss://api.mainnet-beta.solana.com");
+import { getSolanaCluster, getSolanaHttpRpc, getSolanaWsRpc } from "@/lib/solanaCluster";
+
+const cluster = getSolanaCluster();
+
+/** Mainnet HTTP RPC for Privy `solana:mainnet` (when app cluster is mainnet, uses same URL as rest of app). */
+const SOLANA_RPC_HTTP_MAINNET =
+	cluster === "mainnet-beta"
+		? getSolanaHttpRpc()
+		: process.env.NEXT_PUBLIC_HELIUS_API_KEY
+			? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
+			: "https://api.mainnet-beta.solana.com";
+const SOLANA_RPC_WS_MAINNET =
+	cluster === "mainnet-beta"
+		? getSolanaWsRpc()
+		: process.env.NEXT_PUBLIC_HELIUS_API_KEY
+			? `wss://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
+			: "wss://api.mainnet-beta.solana.com";
+
+/** Devnet HTTP RPC for Privy `solana:devnet` (when app cluster is devnet, uses NEXT_PUBLIC_SOLANA_RPC_URL or public devnet). */
+const SOLANA_RPC_HTTP_DEVNET =
+	cluster === "devnet" ? getSolanaHttpRpc() : "https://api.devnet.solana.com";
+const SOLANA_RPC_WS_DEVNET = cluster === "devnet" ? getSolanaWsRpc() : "wss://api.devnet.solana.com";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
 	const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID || "";
@@ -42,8 +52,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				solana: {
 					rpcs: {
 						"solana:mainnet": {
-							rpc: createSolanaRpc(SOLANA_RPC_HTTP),
-							rpcSubscriptions: createSolanaRpcSubscriptions(SOLANA_RPC_WS),
+							rpc: createSolanaRpc(SOLANA_RPC_HTTP_MAINNET),
+							rpcSubscriptions: createSolanaRpcSubscriptions(SOLANA_RPC_WS_MAINNET),
+						},
+						"solana:devnet": {
+							rpc: createSolanaRpc(SOLANA_RPC_HTTP_DEVNET),
+							rpcSubscriptions: createSolanaRpcSubscriptions(SOLANA_RPC_WS_DEVNET),
 						},
 					},
 				},

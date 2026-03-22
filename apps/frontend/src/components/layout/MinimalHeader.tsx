@@ -9,6 +9,7 @@ import { useAuthStore } from "@/store/auth";
 import { UserMenu } from "@/components/UserMenu";
 import { BalanceModal } from "@/components/BalanceModal";
 import { getSolanaBalanceUSD } from "@/services/solanaBalance";
+import { clusterBadgeLabel, isNonMainnetCluster } from "@/lib/solanaCluster";
 
 const HEADER_HEIGHT = 64;
 
@@ -99,7 +100,7 @@ export function MinimalHeader() {
     >
       <div className="w-full max-w-7xl mx-auto px-4 md:px-8 flex items-center justify-between">
         <div className="flex items-center min-w-0">
-          <Link href="/" className="relative inline-flex items-center hover:opacity-90 transition-opacity">
+          <Link href="/" className="relative inline-flex items-center gap-2 hover:opacity-90 transition-opacity">
             <Image
               src="/loofta.svg"
               alt="Loofta Pay"
@@ -113,6 +114,11 @@ export function MinimalHeader() {
             >
               pay
             </span>
+            {isNonMainnetCluster() && clusterBadgeLabel() ? (
+              <span className="relative top-0.5 rounded-full border border-amber-500/35 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400/95">
+                {clusterBadgeLabel()}
+              </span>
+            ) : null}
           </Link>
         </div>
         <div className="flex items-center shrink-0 gap-2">
