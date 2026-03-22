@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState, type SVGProps } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenCombobox } from "@/components/TokenCombobox";
@@ -43,14 +44,10 @@ import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
 import { isEvmChainId } from "@/config/biconomy";
 import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
-import { useWallets, useSignAndSendTransaction, useSignMessage as usePrivySignMessage, useSignTransaction as usePrivySignTransaction } from "@privy-io/react-auth/solana";
+import { useSignMessage as usePrivySignMessage } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
-import {
-  PRIVATE_TRANSFER_DISPLAY_FEES,
-  PRIVATE_PAYMENT_COMING_SOON,
-  PRIVATE_PAYMENT_ENABLED,
-} from "@/services/privatePayment";
+import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { Connection, PublicKey, Transaction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -527,9 +524,11 @@ async function updateClaimStatus(
 
 function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
   const id = claimId;
+  const router = useRouter();
   /** USDC-only pay UX on devnet / testnet or when private payment is enabled. */
   const hideAlternateTokenPay = isNonMainnetCluster() || PRIVATE_PAYMENT_ENABLED;
   const { toast } = useToast();
+  const { user, logout, login, authenticated, getAccessToken } = usePrivy();
   const { data: tokens = [], isLoading } = useTokensQuery();
   const claimQuery = useQuery({
     queryKey: ["claim", id],
@@ -543,7 +542,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const claimData = claimQuery.data as any;
   const claim = claimData?.claim;
   const loadingClaim = claimQuery.isLoading;
-  const { user } = usePrivy();
   // Extract latest intent from claim query (merged into main GET endpoint)
   const latestIntentData = useMemo(() => {
     return claimData?.latestIntent || null;
@@ -634,10 +632,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const userCancelled = React.useRef<boolean>(false); // Track if user manually cancelled to prevent re-hydration
   const privateTransferTriggeredRef = React.useRef<Set<string>>(new Set()); // Auto-run private PER transfer once per claim when PRIVATE_TRANSFER_PENDING
   const onPayPrivatelyRef = React.useRef<(() => Promise<void>) | null>(null);
-  const { logout, login, authenticated, getAccessToken } = usePrivy();
   const { wallets } = useEvmWallets();
-  const { wallets: standardWallets } = useWallets();
-  const { signAndSendTransaction } = useSignAndSendTransaction();
   const [showPayNowModal, setShowPayNowModal] = useState(false);
   const [payingWithLoofta, setPayingWithLoofta] = useState(false);
   const [payWithLooftaError, setPayWithLooftaError] = useState<string | null>(null);
@@ -649,7 +644,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const { signMessage: privySignMessage } = usePrivySignMessage();
-  const { signTransaction: privySignTransaction } = usePrivySignTransaction();
   const solanaPayment = useSolanaPayment({ enabled: showPayNowModal });
   const { transfer: perTransfer } = usePerPrivateTransfer();
 
@@ -1161,15 +1155,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       return;
     }
 
-    // Total USDC to send: recipient amount only (no processing fee)
-    const amountUSD = requiresPrivate
-      ? requestedAmount
-      : (() => {
-        const rentFee = PRIVATE_TRANSFER_DISPLAY_FEES.usdc_withdraw_rent_fee;
-        const feeRate = PRIVATE_TRANSFER_DISPLAY_FEES.withdraw_fee_rate;
-        const withdrawalAmountNeeded = (requestedAmount + rentFee) / (1 - feeRate);
-        return withdrawalAmountNeeded;
-      })();
+    // Total USDC to send: claim amount only (no Privacy Cash rent / withdraw-fee gross-up)
+    const amountUSD = requestedAmount;
 
     console.log("[PrivateTransfer] Starting", { claimId: claim.id, amountUSD, recipient: recipient.slice(0, 8) + "…" });
     setPreparing(true);
@@ -1238,17 +1225,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // Fetch Loofta balance when Pay Now modal is open (for "Pay with Loofta" option).
   // This is USDC only (backend uses getTokenAccountsByOwner for USDC mint).
   // Note: Privy’s confirm modal shows the wallet’s SOL balance (for gas), not USDC — so you may see "$0.00" there even when you have USDC; gas sponsorship covers fees.
-  const claimAmountUSD = (() => {
-    const base = parseFloat(claim?.amount || "0") || 0;
-    if (requiresPrivate) return base;
-    if (isPrivateMode) {
-      const rentFee = PRIVATE_TRANSFER_DISPLAY_FEES.usdc_withdraw_rent_fee;
-      const feeRate = PRIVATE_TRANSFER_DISPLAY_FEES.withdraw_fee_rate;
-      const withdrawalAmountNeeded = (base + rentFee) / (1 - feeRate);
-      return withdrawalAmountNeeded;
-    }
-    return base;
-  })();
+  const claimAmountUSD = parseFloat(claim?.amount || "0") || 0;
   const looftaBalanceUSD = solanaPayment.balanceUSD;
   const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(claimAmountUSD);
   const balanceData = solanaPayment.isBalanceLoading ? undefined : { balanceUSD: looftaBalanceUSD };
@@ -1265,17 +1242,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
       return;
     }
-    // Amount to send: base only (no processing fee)
-    const amountUSD = requiresPrivate
-      ? baseAmount
-      : isPrivateMode
-        ? (() => {
-          const rentFee = PRIVATE_TRANSFER_DISPLAY_FEES.usdc_withdraw_rent_fee;
-          const feeRate = PRIVATE_TRANSFER_DISPLAY_FEES.withdraw_fee_rate;
-          const withdrawalAmountNeeded = (baseAmount + rentFee) / (1 - feeRate);
-          return withdrawalAmountNeeded;
-        })()
-        : baseAmount;
+    // Amount to send: claim amount only (no Privacy Cash gross-up for private mode)
+    const amountUSD = baseAmount;
     const phantom = getPhantomProvider();
     if (!phantom) {
       toast({ variant: "destructive", title: "Phantom not found", description: "Install the Phantom extension to pay with wallet." });
@@ -1390,25 +1358,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
       return;
     }
-    // Amount to send: base only (no processing fee)
-    const amountUSD = requiresPrivate
-      ? baseAmount
-      : isPrivateMode
-        ? (() => {
-          const rentFee = PRIVATE_TRANSFER_DISPLAY_FEES.usdc_withdraw_rent_fee;
-          const feeRate = PRIVATE_TRANSFER_DISPLAY_FEES.withdraw_fee_rate;
-          const withdrawalAmountNeeded = (baseAmount + rentFee) / (1 - feeRate);
-          return withdrawalAmountNeeded;
-        })()
-        : baseAmount;
+    // Amount to send: claim amount only (no Privacy Cash gross-up for private mode)
+    const amountUSD = baseAmount;
     const senderAddress = solanaPayment.senderAddress;
     if (!senderAddress) {
       toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta Solana wallet was not found. Try logging in again." });
-      return;
-    }
-    const selectedWallet = standardWallets?.find((w) => w.address === senderAddress);
-    if (!selectedWallet) {
-      toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta Solana wallet is not available. Try refreshing." });
       return;
     }
     setPayingWithLoofta(true);
@@ -1424,89 +1378,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       }
 
       const connection = new Connection(getSolanaHttpRpc(), "confirmed");
-      const mint = getUsdcMint();
-      const sender = new PublicKey(senderAddress);
-      const recipient = new PublicKey(rawRecipient);
-      const amountRaw = Math.floor(amountUSD * 1e6);
-      if (amountRaw <= 0) throw new Error("Amount must be greater than 0");
-
-      const senderAta = getAssociatedTokenAddressSync(mint, sender, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const recipientAta = getAssociatedTokenAddressSync(mint, recipient, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-
-      const instructions = [];
-      const recipientAccountInfo = await connection.getAccountInfo(recipientAta);
-      if (!recipientAccountInfo) {
-        instructions.push(
-          createAssociatedTokenAccountInstruction(sender, recipientAta, recipient, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
-        );
-      }
-      instructions.push(
-        createTransferInstruction(senderAta, recipientAta, sender, amountRaw, [], TOKEN_PROGRAM_ID)
-      );
-
-      const isBlockhashError = (err: unknown) => {
-        const e = err as { message?: string; error?: { message?: string }; r?: { message?: string } };
-        const msg = [e?.message, e?.error?.message, e?.r?.message].filter(Boolean).join(" ").toLowerCase();
-        return msg.includes("blockhash") || msg.includes("block hash");
-      };
-
-      /** Don't retry on user rejection or clear validation errors. */
-      const isNonRetryableError = (err: unknown) => {
-        const e = err as { message?: string; code?: number };
-        const msg = String(e?.message ?? "").toLowerCase();
-        return (
-          msg.includes("rejected") ||
-          msg.includes("denied") ||
-          msg.includes("user denied") ||
-          msg.includes("invalid address") ||
-          msg.includes("insufficient")
-        );
-      };
-
-      const MAX_SEND_ATTEMPTS = 3;
-      const RETRY_DELAY_MS = 1000;
-      let rawResult: { signature?: Uint8Array } | { signature?: Uint8Array }[] | null = null;
-      let lastError: unknown = null;
-
-      for (let attempt = 0; attempt < MAX_SEND_ATTEMPTS; attempt++) {
-        const { blockhash } = await connection.getLatestBlockhash("confirmed");
-        const message = new TransactionMessage({
-          payerKey: sender,
-          recentBlockhash: blockhash,
-          instructions,
-        }).compileToV0Message();
-        const transaction = new VersionedTransaction(message);
-        const transactionBytes = new Uint8Array(transaction.serialize());
-
-        try {
-          rawResult = await signAndSendTransaction({
-            transaction: transactionBytes,
-            wallet: selectedWallet,
-            options: {
-              sponsor: true,
-              skipPreflight: true,
-            } as Parameters<typeof signAndSendTransaction>[0]["options"],
-          });
-          lastError = null;
-          break;
-        } catch (sendErr: unknown) {
-          lastError = sendErr;
-          if (isNonRetryableError(sendErr)) {
-            console.warn("[PayWithLoofta] Non-retryable error:", sendErr);
-            throw sendErr;
-          }
-          const isLast = attempt === MAX_SEND_ATTEMPTS - 1;
-          if (isLast) throw sendErr;
-          console.warn("[PayWithLoofta] Attempt", attempt + 1, "failed, retrying with fresh blockhash...", sendErr);
-          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-        }
-      }
-      const result = Array.isArray(rawResult) ? rawResult[0] : rawResult;
-      if (!result) throw new Error("Failed to send transaction.");
-
-      const sig = typeof (result as { signature?: Uint8Array })?.signature !== "undefined"
-        ? bs58.encode((result as { signature: Uint8Array }).signature)
-        : String(result);
+      const sig = await solanaPayment.makePayment({
+        amount: amountUSD,
+        recipientAddress: rawRecipient,
+        claimId: claim.id,
+      });
       setConfirmingTxSignature(sig);
       setConfirmingTxSource("loofta");
 
@@ -1902,6 +1778,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           queryClient.setQueryData(["claim", id], undefined);
                           queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
                           toast({ title: "Payment deleted" });
+                          router.replace("/");
                         } catch (e) {
                           toast({ variant: "destructive", title: "Could not delete", description: (e as Error)?.message || "Try again." });
                         } finally {
@@ -1911,7 +1788,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       disabled={deleting}
                       className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
                     >
-                      {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
+                      {deleting ? "Deleting" : "Delete"}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
@@ -2337,11 +2214,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 )}
 
                 {PRIVATE_PAYMENT_ENABLED && !requiresPrivate && (
-                  <div className="mt-5 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-600 shrink-0">
+                  <div className="mt-5 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-600 shrink-0 mt-0.5">
                       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                     </svg>
-                    <span className="font-medium">Private payment (MagicBlock PER) is the default — no need to toggle.</span>
+                    <span className="font-medium leading-snug">
+                      Payments are private by default on MagicBlock PER: the transfer runs on the ephemeral rollup, so the recipient does not see your wallet address.
+                    </span>
                   </div>
                 )}
 

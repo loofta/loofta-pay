@@ -21,6 +21,7 @@ import {
   getAccount,
 } from '@solana/spl-token';
 import { TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const bs58Module = require('bs58');
 const bs58 = bs58Module?.default ?? bs58Module;
@@ -130,6 +131,7 @@ export class SendPaymentService {
         burner_encrypted_secret: null,
         recipient_solana_pubkey: recipientSolanaPubkey,
         message: dto.message || null,
+        is_devnet: isSolanaDevnetFromConfig(this.configService),
       })
       .select('id')
       .single();
@@ -190,6 +192,7 @@ export class SendPaymentService {
     const { data, error } = await this.supabaseService.sendPaymentLinks
       .select('id, amount, token, status, recipient_type, created_at')
       .eq('sender_user_id', senderUserId)
+      .eq('is_devnet', isSolanaDevnetFromConfig(this.configService))
       .order('created_at', { ascending: false })
       .limit(20);
 

@@ -2,6 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { isNonMainnetCluster } from "@/lib/solanaCluster";
 
 export async function POST(request: Request) {
   try {
@@ -20,6 +21,7 @@ export async function POST(request: Request) {
         created_by: userId ? String(userId) : null,
         creator_email: null,
         status: "OPEN",
+        is_devnet: isNonMainnetCluster(),
       })
       .select("id")
       .single();

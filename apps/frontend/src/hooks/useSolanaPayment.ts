@@ -6,10 +6,10 @@ import { usePrivy } from "@privy-io/react-auth";
 import {
   useWallets,
   useSignAndSendTransaction,
+  useSignTransaction,
 } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
-import bs58 from "bs58";
-import { buildUSDCTransferTransaction } from "@/services/solanaTransfer";
+import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSend";
 import { getSolanaBalanceUSD } from "@/services/solanaBalance";
 import { getSolanaHttpRpc, isNonMainnetCluster } from "@/lib/solanaCluster";
 
@@ -54,6 +54,7 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
   const { getAccessToken, user, authenticated } = usePrivy();
   const { wallets: standardWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
+  const { signTransaction } = useSignTransaction();
   const [isLoading, setIsLoading] = useState(false);
 
   const { data: balanceData, refetch: refreshBalance } = useQuery({
@@ -129,18 +130,16 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
     setIsLoading(true);
     try {
       const conn = new Connection(getSolanaHttpRpc(), "confirmed");
-      const unsignedTx = await buildUSDCTransferTransaction({
+      return await sendUsdcWithPrivyEmbeddedWallet({
         senderAddress,
         recipientAddress: config.recipientAddress.trim(),
         amountUSDC: config.amount,
         connection: conn,
-      });
-      const { signature } = await signAndSendTransaction({
-        transaction: unsignedTx.serialize(),
         wallet,
-        options: { sponsor: true } as never,
+        privyUserId: user?.id,
+        signTransaction,
+        signAndSendTransaction,
       });
-      return bs58.encode(signature);
     } catch (error: any) {
       if (
         error?.message?.includes("user rejected") ||

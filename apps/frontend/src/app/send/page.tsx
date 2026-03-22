@@ -20,6 +20,7 @@ import { useSendPaymentStore } from '@/store/sendPayment';
 import { buildUSDCTransferTransaction, sendSignedUSDCTransfer } from '@/services/solanaTransfer';
 import { useSolanaPayment } from '@/hooks/useSolanaPayment';
 import { PRIVATE_PAYMENT_ENABLED } from '@/services/privatePayment';
+import { getPrivySolanaChain } from '@/lib/solanaCluster';
 import { GradientActionButton } from '@/components/ui/GradientActionButton';
 import { MessageInput } from '@/components/MessageInput';
 import { Copy, Check, Send, Mail, AtSign, Share2, Wallet as WalletIcon, Loader2, ArrowRight, Shield, Link2, History, RotateCcw, User } from 'lucide-react';
@@ -367,6 +368,7 @@ export default function SendPaymentPage() {
         const { signature } = await signAndSendTransaction({
           transaction: tx.serialize(),
           wallet,
+          chain: getPrivySolanaChain(),
         });
         txSignature = typeof signature === 'string' ? signature : bs58.encode(signature);
       }

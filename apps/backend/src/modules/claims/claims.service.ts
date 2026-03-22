@@ -16,6 +16,7 @@ import { Claim, ClaimIntent, ClaimStatus } from './entities/claim.entity';
 import { UsersService } from '../users/users.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
+import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 
@@ -67,6 +68,7 @@ export class ClaimsService {
         creator_email: null,
         status: 'OPEN' as ClaimStatus,
         is_private: isPrivate === true,
+        is_devnet: isSolanaDevnetFromConfig(this.configService),
       })
       .select('id')
       .single();
@@ -119,6 +121,7 @@ export class ClaimsService {
           status: 'OPEN' as ClaimStatus,
           is_private: finalIsPrivate,
           description: description || null,
+          is_devnet: isSolanaDevnetFromConfig(this.configService),
         })
         .select('id')
         .single();
@@ -155,6 +158,7 @@ export class ClaimsService {
         status: 'OPEN' as ClaimStatus,
         is_private: isPrivate,
         description: description || null,
+        is_devnet: isSolanaDevnetFromConfig(this.configService),
         ...(burner ? { claim_burner_address: burner.claim_burner_address, claim_burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id')
@@ -307,6 +311,7 @@ export class ClaimsService {
           status: 'OPEN' as ClaimStatus,
           is_private: finalIsPrivate,
           description: description || null,
+          is_devnet: isSolanaDevnetFromConfig(this.configService),
         })
         .select('id')
         .single();
@@ -343,6 +348,7 @@ export class ClaimsService {
         status: 'OPEN' as ClaimStatus,
         is_private: isPrivate,
         description: description || null,
+        is_devnet: isSolanaDevnetFromConfig(this.configService),
         ...(burner ? { claim_burner_address: burner.claim_burner_address, claim_burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id')
