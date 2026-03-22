@@ -18,7 +18,7 @@ import { ArrowRight, Wallet } from "lucide-react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { useRouter, usePathname } from "next/navigation";
-import { PRIVATE_PAYMENT_COMING_SOON } from "@/services/privacyCash";
+import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 
 /** Inline Loofta logo SVG (matches pay modal). */
 function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
@@ -100,6 +100,10 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
   const [amountMode, setAmountMode] = useState<"USD" | "TOKEN">("USD");
   const [showConfetti, setShowConfetti] = useState<boolean>(false);
   const { isPrivateMode, setIsPrivateMode, createdLink, setCreatedLink, clearLink, hydrated: claimHydrated } = useClaimStore();
+
+  useEffect(() => {
+    if (PRIVATE_PAYMENT_ENABLED) setIsPrivateMode(true);
+  }, [setIsPrivateMode]);
   const [showPrivacyInfo, setShowPrivacyInfo] = useState<boolean>(false);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
   const [hasSeenPrivateTutorial, setHasSeenPrivateTutorial] = useState<boolean>(false);
@@ -199,7 +203,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
     }
   }, [showPrivacyInfo]);
 
-  // Auto-select USDC on Solana when entering private mode (Privacy Cash)
+  // Auto-select USDC on Solana when entering private mode (PER / private pay)
   useEffect(() => {
     if (isPrivateMode && tokens.length > 0) {
       const usdcSolana = tokens.find(t => t.symbol === 'USDC' && String(t.chain).toLowerCase().includes('sol'));
@@ -281,7 +285,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         toSel: { symbol: finalToSel.symbol, chain: finalToSel.chain },
         recipient: finalRecipient,
         userId: authenticated ? userId : undefined,
-        isPrivate: PRIVATE_PAYMENT_COMING_SOON ? false : isPrivateMode,
+        isPrivate: PRIVATE_PAYMENT_COMING_SOON ? false : PRIVATE_PAYMENT_ENABLED || isPrivateMode,
       });
       setCreatedLink(res.link);
       setShowConfetti(true);
@@ -323,10 +327,10 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                 <p className="text-slate-500">Get paid without anyone seeing how much or who paid you</p>
               </div>
 
-              {/* Step 1: Privacy Cash */}
+              {/* Step 1: Private payment (MagicBlock PER) */}
               <div className={`absolute inset-0 p-6 flex flex-col items-center justify-center text-center transition-all duration-300 ${tutorialStep === 1 ? 'opacity-100 translate-x-0' : tutorialStep < 1 ? 'opacity-0 translate-x-full pointer-events-none' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
                 <Image src="/images/icons/shield-icon.png" alt="" width={80} height={80} className="mb-5" />
-                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-3">Privacy Cash</h3>
+                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-3">MagicBlock PER</h3>
                 <p className="text-slate-500">Payment is processed privately. You receive in your chosen token (e.g. USDC on Solana). Both addresses stay hidden.</p>
               </div>
 
@@ -480,14 +484,14 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                       Create New Payment
                     </button>
                   </>
-                ) : isPrivateMode ? (
+                ) : isPrivateMode || PRIVATE_PAYMENT_ENABLED ? (
                   /* Private mode left content */
                   <>
                     <h1 className="text-5xl md:text-6xl font-medium font-sans text-white leading-tight mb-8">
                       Receive <br /><span className="text-amber-400">Privately</span>
                     </h1>
                     <p className="text-gray-100 text-xl mb-8">
-                      Get paid with complete financial privacy using Privacy Cash.
+                      Get paid with complete financial privacy using MagicBlock PER (private USDC settlement).
                     </p>
                     <ul className="mt-6 space-y-4">
                       <li className="flex items-start gap-3">
@@ -683,14 +687,14 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                       </div>
                     </div>
 
-                    {/* Private mode note - same form as standard, payment via Privacy Cash */}
-                    {isPrivateMode && (
+                    {/* Private mode note - same form as standard; settlement via PER */}
+                    {(isPrivateMode || PRIVATE_PAYMENT_ENABLED) && (
                       <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-sm text-slate-300">
                         Payment will be processed on Magicblock Private Ephemeral Rollup. You receive in your chosen token below.
                       </div>
                     )}
 
-                    {/* Token display / selection - same for standard and private (Privacy Cash) */}
+                    {/* Token display / selection - same for standard and private */}
                     {authenticated ? (
                       /* Logged in: Receive on Loofta (no token/wallet) or Use another wallet — like pay modal */
                       <>
@@ -841,7 +845,8 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                       </>
                     )}
 
-                    {/* Private payment switch - positioned where email notifications was */}
+                    {/* Private payment — switch hidden when app defaults to private (PER) */}
+                    {!PRIVATE_PAYMENT_ENABLED ? (
                     <div
                       className={`p-4 rounded-xl border ${!PRIVATE_PAYMENT_COMING_SOON && isPrivateMode
                         ? 'bg-amber-500/10 border-amber-400/30'
@@ -861,7 +866,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                             )}
                           </div>
                           <p className="text-sm text-slate-400">
-                            When on, payment must use Privacy Cash. You receive in your chosen token (e.g. USDC on Solana); both addresses stay private.
+                            When on, payment uses MagicBlock PER. You receive in your chosen token (e.g. USDC on Solana); both addresses stay private.
                           </p>
                         </div>
                         <Switch
@@ -878,8 +883,16 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         />
                       </div>
                     </div>
+                    ) : (
+                      <div className="p-4 rounded-xl border border-amber-400/30 bg-amber-500/10">
+                        <p className="text-sm text-slate-200">
+                          <span className="font-semibold text-white">🔒 Private payment</span>
+                          {" "}— MagicBlock PER is on for every link you create.
+                        </p>
+                      </div>
+                    )}
 
-                    {/* Create Button - same for standard and private (Privacy Cash) */}
+                    {/* Create Button - same for standard and private */}
                     {authenticated && !showAccessRequested ? (
                       <GradientActionButton
                         onClick={() => onCreate()}
@@ -893,7 +906,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         loading={creating}
                         loadingText="Creating…"
                       >
-                        {!PRIVATE_PAYMENT_COMING_SOON && isPrivateMode ? (
+                        {!PRIVATE_PAYMENT_COMING_SOON && (isPrivateMode || PRIVATE_PAYMENT_ENABLED) ? (
                           <>
                             <ShieldIcon className="w-5 h-5" />
                             Create private payment link

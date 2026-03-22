@@ -28,6 +28,7 @@ import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { addWithdrawal, getWithdrawalHistory, type WithdrawalHistoryItem } from "@/lib/withdrawalHistory";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { cn } from "@/lib/utils";
+import { clusterBadgeLabel, isNonMainnetCluster } from "@/lib/solanaCluster";
 import { ExternalLink } from "lucide-react";
 
 const SOLANA_RPC_URL =
@@ -58,6 +59,7 @@ export function BalanceModal({
   onRefresh,
   dark = false,
 }: BalanceModalProps) {
+  const solanaClusterTag = clusterBadgeLabel();
   const { toast } = useToast();
   const { data: tokens = [] } = useTokensQuery();
 
@@ -392,6 +394,11 @@ export function BalanceModal({
                   </p>
                   <p className={`text-xl font-semibold mt-0.5 ${dark ? "text-white" : "text-gray-900"}`}>
                     {isUSDCOnSolana && loadingBalance ? "…" : `$${isNearIntentsWithdraw ? balanceUSD : balanceDisplay}`}
+                  </p>
+                  <p className={`text-xs mt-1 ${dark ? "text-slate-500" : "text-gray-500"}`}>
+                    {isNonMainnetCluster() && solanaClusterTag
+                      ? `${solanaClusterTag} — USDC shown is on this cluster only (not mainnet).`
+                      : "Mainnet USDC — your embedded address can hold different balances on devnet/testnet."}
                   </p>
                 </div>
               </div>

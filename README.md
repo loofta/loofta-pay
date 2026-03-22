@@ -2,14 +2,14 @@
 
 **Multi-chain crypto payments made simple and private.**
 
-Loofta Pay is a non-custodial payment platform that lets you create payment links and receive crypto in any token you choose — regardless of what chain or token your payer uses. Pay privately with **Privacy Cash** (USDC on Solana), and withdraw only to AML-compliant addresses via **Range**.
+Loofta Pay is a non-custodial payment platform that lets you create payment links and receive crypto in any token you choose — regardless of what chain or token your payer uses. Pay privately with **MagicBlock PER** (private USDC settlement on Solana), and withdraw only to AML-compliant addresses via **Range**.
 
 ## Features
 
 - **Payment links** — Create a claim, share the link (`/c/[id]`). Payers send any supported token; you receive the token and chain you configured.
 - **Multi-chain** — Accept payments from 20+ blockchains: Ethereum, Arbitrum, Base, Polygon, Solana, Bitcoin, TON, Zcash, and more.
-- **Privacy Cash (USDC on Solana)** — Pay or receive privately using [Privacy Cash](https://privacy.cash/). Private payments settle in USDC on Solana via zero-knowledge privacy; payers can use Phantom to complete the transfer.
-- **Private withdrawals** — Withdraw your embedded-wallet balance privately via Privacy Cash. Destination addresses are checked with **Range** for AML compliance; withdrawal is only allowed to compliant addresses.
+- **Private payments (USDC on Solana)** — Pay or receive using **MagicBlock Private Ephemeral Rollup (PER)**. Settlement uses the in-repo Anchor program (`programs/loofta-per-payments`); payers typically use Phantom or your embedded wallet to sign.
+- **Private withdrawals** — Withdraw your embedded-wallet balance through the app’s private path. Destination addresses are checked with **Range** for AML compliance; withdrawal is only allowed to compliant addresses.
 - **Cross-chain routing** — NEAR Intents routes cross-chain payments; same-chain swaps use Biconomy or Rhinestone.
 - **Embedded wallet** — Privy-powered embedded Solana wallet for receiving and withdrawing USDC; no separate wallet required for basic flows.
 - **Optional private-only claims** — Creators can require private payments only on a payment link.
@@ -18,7 +18,7 @@ Loofta Pay is a non-custodial payment platform that lets you create payment link
 
 - **Frontend**: [Next.js 16](https://nextjs.org/) (App Router), TypeScript, Tailwind CSS, Framer Motion, [Privy](https://privy.io/)
 - **Backend**: [NestJS](https://nestjs.com/), Supabase (Postgres), Redis (locks)
-- **Payments & privacy**: [Privacy Cash](https://privacy.cash/) (USDC on Solana), [NEAR Intents](https://near.org/), [Biconomy](https://biconomy.io/), [Rhinestone](https://rhinestone.dev/)
+- **Payments & privacy**: MagicBlock PER (see `programs/loofta-per-payments`), [NEAR Intents](https://near.org/), [Biconomy](https://biconomy.io/), [Rhinestone](https://rhinestone.dev/)
 - **Compliance**: [Range](https://range.org/) (address risk / AML check for withdrawals)
 
 ## Project structure
@@ -30,7 +30,7 @@ apps/
 ├── frontend/     # Next.js app (payment links, claim, withdraw, swap)
 │   └── src/
 │       ├── app/
-│       │   ├── c/[id]/     # Payment link page (pay with any token or Privacy Cash)
+│       │   ├── c/[id]/     # Payment link page (any token or private USDC / PER)
 │       │   ├── claim/      # Create payment request
 │       │   ├── link/       # Username-based payment link
 │       │   ├── api/
@@ -39,7 +39,7 @@ apps/
 │       │   │   └── ...
 │       │   └── ...
 │       ├── components/     # BalanceModal (withdraw + Range), Header, ...
-│       └── services/       # privacyCash, nearIntents, solanaBalance, ...
+│       └── services/       # privatePayment, nearIntents, solanaBalance, ...
 └── backend/      # NestJS API (claims, deposit, cron, migrations)
     └── src/
         ├── modules/claims/
@@ -86,7 +86,7 @@ SUPABASE_SECRET_KEY=your_supabase_service_role_key
 # Privy (auth + embedded Solana wallet)
 NEXT_PUBLIC_PRIVY_APP_ID=your_privy_app_id
 
-# Solana (PER, Privacy Cash, withdraw)
+# Solana (PER, withdraw)
 # NEXT_PUBLIC_SOLANA_CLUSTER=devnet
 NEXT_PUBLIC_SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 # Or: NEXT_PUBLIC_HELIUS_API_KEY=your_helius_key
@@ -116,7 +116,7 @@ See `apps/backend/supabase/REMOTE_DEV.md` for using a remote Supabase project in
 
 ### MagicBlock PER (private USDC send links, devnet)
 
-Send-payment “Pay privately” uses the **MagicBlock Private Ephemeral Rollup** client and the Anchor program in `programs/loofta-per-payments/`, not Privacy Cash.
+Send-payment “Pay privately” uses the **MagicBlock Private Ephemeral Rollup** client and the Anchor program in `programs/loofta-per-payments/`.
 
 | Variable | Where | Purpose |
 |----------|--------|---------|
@@ -127,7 +127,7 @@ Send-payment “Pay privately” uses the **MagicBlock Private Ephemeral Rollup*
 | `NEXT_PUBLIC_MAGICBLOCK_URL` | Frontend | TEE HTTP endpoint (default `https://tee.magicblock.app`). |
 | `NEXT_PUBLIC_MAGICBLOCK_VALIDATOR` | Frontend | Optional; validator pubkey from MagicBlock docs if the default changes. |
 | `NEXT_PUBLIC_SOLANA_USDC_MINT` | Frontend | Override USDC mint; default devnet mint is `4zMMC9…` in `getUsdcMint()`. |
-| `NEXT_PUBLIC_PER_MODE` | Frontend | If `true`, claim page hides “choose another token” even on mainnet (USDC-only pay UX). |
+| `NEXT_PUBLIC_ENABLE_PRIVATE_PAYMENT` | Frontend | If `true` or `1`, enables MagicBlock PER private flow, defaults all payment links to private, hides the private toggle, and USDC-only pay on claim (replaces legacy `NEXT_PUBLIC_PER_MODE` for that UX). |
 | `SOLANA_USDC_MINT` | Backend | Must match cluster (devnet USDC mint for devnet). |
 | `SOLANA_RPC_URL` | Backend | Devnet RPC for server-built txs / verification. |
 | `SOLANA_FEE_PAYER_PRIVATE_KEY` | Backend | Fee payer; **fund with devnet SOL** (e.g. [faucet](https://faucet.solana.com/)) for sponsored claim/recipient ATA creation. |
@@ -169,13 +169,13 @@ Deploys run from the **`main`** branch via GitHub Actions.
 | Frontend | Vercel   | Auto-deploys on push to `main`. |
 | DB       | GitHub Actions | Migrations when `apps/backend/supabase/migrations/**` change on `main` (`.github/workflows/deploy-migrations.yml`). |
 
-## Privacy Cash & withdraw flow
+## Private pay & withdraw flow
 
 1. **Pay privately (claim page)**  
-   Payer selects “Pay USDC on Solana”; cross-chain funds land in their Phantom (or configured) Solana wallet, then they complete the private transfer via Privacy Cash (Phantom signs).
+   Payer selects private USDC on Solana where applicable; cross-chain funds land in their wallet, then they complete the **MagicBlock PER** transfer (Phantom or embedded wallet signs).
 
 2. **Withdraw balance**  
-   User opens Balance from the header → Withdraw. They enter amount and destination Solana address. The app checks the address with **Range** (AML); only when the address is compliant does “Withdraw” enable. Withdrawal is executed via Privacy Cash (private).
+   User opens Balance from the header → Withdraw. They enter amount and destination Solana address. The app checks the address with **Range** (AML); only when the address is compliant does “Withdraw” enable.
 
 3. **Range**  
    Destination addresses are verified server-side (`/api/risk/address`) using Range; keys stay on the server. See `apps/frontend/src/app/api/risk/address/route.ts`.
@@ -189,7 +189,7 @@ Ethereum, Arbitrum, Base, Polygon, BNB Chain, Solana, Bitcoin, Zcash, TON, Carda
 - **Website**: [loofta.xyz](https://pay.loofta.xyz)
 - **Twitter**: [@looftapay](https://x.com/looftapay)
 - **Telegram**: [t.me/looftaxyz](https://t.me/looftaxyz)
-- **Privacy Cash**: [privacy.cash](https://privacy.cash/)
+- **MagicBlock**: [magicblock.gg](https://www.magicblock.gg/)
 - **Range**: [range.org](https://range.org/)
 
 ## License
