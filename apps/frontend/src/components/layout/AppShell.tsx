@@ -1,7 +1,6 @@
 'use client'
 
 import { type ReactNode, useState } from "react";
-import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { Footer } from "./Footer";
 import { BottomNav } from "./BottomNav";
@@ -31,13 +30,15 @@ function ShellContent({ children }: { children: ReactNode }) {
             <span className="text-sm font-medium">
               Send and receive private payments with MagicBlock PER — devnet only. Pay anyone by email, X username, or Loofta username.
             </span>
-            <Link
-              href="/send"
+            <a
+              href="https://t.me/looftaxyz"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-1 shrink-0 text-sm font-semibold text-white hover:underline underline-offset-2"
             >
-              Send
+              Questions? Contact us on Telegram
               <ChevronRight className="h-4 w-4" />
-            </Link>
+            </a>
           </div>
           <button
             type="button"

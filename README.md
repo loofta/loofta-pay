@@ -120,14 +120,14 @@ Send-payment “Pay privately” uses the **MagicBlock Private Ephemeral Rollup*
 
 | Variable | Where | Purpose |
 |----------|--------|---------|
-| `NEXT_PUBLIC_SOLANA_CLUSTER` | Frontend | Set to `devnet` for this branch; drives RPC, USDC mint, and UI (e.g. Devnet badge). |
+| `NEXT_PUBLIC_SOLANA_CLUSTER` | Frontend | Optional. If unset and `NEXT_PUBLIC_ENABLE_PRIVATE_PAYMENT` is on, defaults to **devnet**. Otherwise defaults to mainnet. Set `mainnet-beta` explicitly for mainnet PER. |
 | `NEXT_PUBLIC_SOLANA_RPC_URL` | Frontend | Devnet RPC (Helius devnet or `https://api.devnet.solana.com`). |
 | `NEXT_PUBLIC_SOLANA_WS_URL` | Frontend | Optional devnet WebSocket (matches RPC). |
 | `NEXT_PUBLIC_PER_PROGRAM_ID` | Frontend | Deployed Anchor program id (matches `programs/loofta-per-payments`). |
 | `NEXT_PUBLIC_MAGICBLOCK_URL` | Frontend | TEE HTTP endpoint (default `https://tee.magicblock.app`). |
 | `NEXT_PUBLIC_MAGICBLOCK_VALIDATOR` | Frontend | Optional; validator pubkey from MagicBlock docs if the default changes. |
 | `NEXT_PUBLIC_SOLANA_USDC_MINT` | Frontend | Override USDC mint; default devnet mint is `4zMMC9…` in `getUsdcMint()`. |
-| `NEXT_PUBLIC_ENABLE_PRIVATE_PAYMENT` | Frontend | If `true` or `1`, enables MagicBlock PER private flow, defaults all payment links to private, hides the private toggle, and USDC-only pay on claim (replaces legacy `NEXT_PUBLIC_PER_MODE` for that UX). |
+| `NEXT_PUBLIC_ENABLE_PRIVATE_PAYMENT` | Frontend | If `true` or `1`, enables MagicBlock PER private flow, defaults all payment links to private, hides the private toggle, and USDC-only pay on claim. When set **without** `NEXT_PUBLIC_SOLANA_CLUSTER`, the frontend also defaults to **devnet** for balance/RPC/mint (use `NEXT_PUBLIC_SOLANA_CLUSTER=mainnet-beta` for mainnet). |
 | `SOLANA_USDC_MINT` | Backend | Must match cluster (devnet USDC mint for devnet). |
 | `SOLANA_RPC_URL` | Backend | Devnet RPC for server-built txs / verification. |
 | `SOLANA_FEE_PAYER_PRIVATE_KEY` | Backend | Fee payer; **fund with devnet SOL** (e.g. [faucet](https://faucet.solana.com/)) for sponsored claim/recipient ATA creation. |

@@ -56,6 +56,11 @@ export class Claim {
   @ApiPropertyOptional({ description: 'Whether this is a private payment using Privacy Cash' })
   is_private: boolean | null;
 
+  @ApiPropertyOptional({
+    description: 'True if payment was created on Solana devnet/testnet; false for mainnet',
+  })
+  is_devnet?: boolean;
+
   @ApiPropertyOptional({ description: 'Timestamp when payment was completed' })
   paid_at: string | null;
 
