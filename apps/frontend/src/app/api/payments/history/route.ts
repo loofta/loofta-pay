@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { isNonMainnetCluster } from "@/lib/solanaCluster";
 
 const CLAIM_SELECT =
-  "id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, recipient_username, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description";
+  "id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, recipient_username, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description, is_devnet";
 
 const OPEN_PAYMENT_EXPIRY_DAYS = 7;
 
@@ -23,6 +24,7 @@ export type PaymentHistoryClaim = {
   paid_with_chain: string | null;
   is_private: boolean | null;
   description: string | null;
+  is_devnet?: boolean;
 };
 
 const TERMINAL_STATUSES = ["SUCCESS", "CANCELLED", "REFUNDED", "EXPIRED", "DELETED"];
@@ -64,12 +66,14 @@ export async function GET(request: Request) {
     }
 
     const supabase = getSupabaseAdmin();
+    const devnetOnly = isNonMainnetCluster();
 
-    // Sent: claims I created
+    // Sent: claims I created (same cluster as this deployment: mainnet vs devnet/testnet)
     const { data: sentRows, error: sentError } = await supabase
       .from("claims")
       .select(CLAIM_SELECT)
       .eq("created_by", userId)
+      .eq("is_devnet", devnetOnly)
       .order("created_at", { ascending: false });
 
     if (sentError) {
@@ -86,6 +90,7 @@ export async function GET(request: Request) {
         .from("claims")
         .select(CLAIM_SELECT)
         .in("recipient_address", walletAddresses)
+        .eq("is_devnet", devnetOnly)
         .order("created_at", { ascending: false });
 
       if (recError) {

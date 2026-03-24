@@ -18,16 +18,17 @@ import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import { CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
-import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
+import { usePrivy } from "@privy-io/react-auth";
+import { useWallets, useSignAndSendTransaction, useSignTransaction } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
-import bs58 from "bs58";
-import { buildUSDCTransferTransaction } from "@/services/solanaTransfer";
+import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSend";
 import { getDepositInfo } from "@/services/nearIntents";
 import type { NearToken } from "@/services/nearIntents";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { addWithdrawal, getWithdrawalHistory, type WithdrawalHistoryItem } from "@/lib/withdrawalHistory";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { cn } from "@/lib/utils";
+import { clusterBadgeLabel, isNonMainnetCluster } from "@/lib/solanaCluster";
 import { ExternalLink } from "lucide-react";
 
 const SOLANA_RPC_URL =
@@ -58,6 +59,7 @@ export function BalanceModal({
   onRefresh,
   dark = false,
 }: BalanceModalProps) {
+  const solanaClusterTag = clusterBadgeLabel();
   const { toast } = useToast();
   const { data: tokens = [] } = useTokensQuery();
 
@@ -73,8 +75,10 @@ export function BalanceModal({
     if (open) setRecentWithdrawals(getWithdrawalHistory());
   }, [open]);
 
+  const { user } = usePrivy();
   const { wallets: solanaWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
+  const { signTransaction } = useSignTransaction();
   const wallet = useMemo(
     () => (solanaAddress ? solanaWallets?.find((w) => w.address === solanaAddress) : undefined),
     [solanaAddress, solanaWallets]
@@ -227,19 +231,17 @@ export function BalanceModal({
       // Log deposit address so you can verify it matches (e.g. Near Intents vs chain explorer)
       console.log(`${LOG_PREFIX} Privy transaction deposit address (USDC send-to):`, recipientAddress, isNearIntentsWithdraw ? "(from Near Intents)" : "(direct withdraw)");
 
-      const unsignedTx = await buildUSDCTransferTransaction({
+      const sig = await sendUsdcWithPrivyEmbeddedWallet({
         senderAddress: solanaAddress,
         recipientAddress,
         amountUSDC: amount,
         connection,
+        wallet,
+        privyUserId: user?.id,
+        signTransaction,
+        signAndSendTransaction,
         memo: memo ?? undefined,
       });
-      const { signature } = await signAndSendTransaction({
-        transaction: unsignedTx.serialize(),
-        wallet,
-        options: { sponsor: true } as never,
-      });
-      const sig = bs58.encode(signature);
       console.log(`${LOG_PREFIX} Withdraw tx sent`, {
         signature: sig,
         amountUSDC: amount,
@@ -392,6 +394,11 @@ export function BalanceModal({
                   </p>
                   <p className={`text-xl font-semibold mt-0.5 ${dark ? "text-white" : "text-gray-900"}`}>
                     {isUSDCOnSolana && loadingBalance ? "…" : `$${isNearIntentsWithdraw ? balanceUSD : balanceDisplay}`}
+                  </p>
+                  <p className={`text-xs mt-1 ${dark ? "text-slate-500" : "text-gray-500"}`}>
+                    {isNonMainnetCluster() && solanaClusterTag
+                      ? `${solanaClusterTag} — USDC shown is on this cluster only (not mainnet).`
+                      : "Mainnet USDC — your embedded address can hold different balances on devnet/testnet."}
                   </p>
                 </div>
               </div>

@@ -1,7 +1,6 @@
 'use client'
 
 import { type ReactNode, useState } from "react";
-import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { Footer } from "./Footer";
 import { BottomNav } from "./BottomNav";
@@ -29,15 +28,17 @@ function ShellContent({ children }: { children: ReactNode }) {
         <div className="relative w-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-4 py-3 mb-3 flex items-center justify-center text-white">
           <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 min-w-0 text-center">
             <span className="text-sm font-medium">
-              Full launch will be announced soon. Claim your username, start sending and receiving payment (private not yet available). Points leaderboard will be live soon.
+              Send and receive private payments with MagicBlock PER — devnet only. Pay anyone by email, X username, or Loofta username.
             </span>
-            <Link
-              href="#"
+            <a
+              href="https://t.me/looftaxyz"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-1 shrink-0 text-sm font-semibold text-white hover:underline underline-offset-2"
             >
-              Leaderboard live soon
+              Questions? Contact us on Telegram
               <ChevronRight className="h-4 w-4" />
-            </Link>
+            </a>
           </div>
           <button
             type="button"

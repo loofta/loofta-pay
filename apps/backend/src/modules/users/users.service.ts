@@ -310,10 +310,15 @@ export class UsersService {
    */
   async verifyRecipientIdentityForSendPayment(
     privyUserId: string,
-    recipientType: 'email' | 'twitter',
+    recipientType: 'email' | 'twitter' | 'username',
     recipientIdentifier: string,
   ): Promise<boolean> {
     const normalized = this.normalizeRecipientIdentifier(recipientType, recipientIdentifier);
+    if (recipientType === 'username') {
+      const row = await this.findByPrivyId(privyUserId);
+      const uname = (row?.username || '').replace(/^@/, '').toLowerCase().trim();
+      return Boolean(uname && uname === normalized);
+    }
     const user = await this.getPrivyUser(privyUserId);
     if (!user) return false;
 
@@ -335,7 +340,7 @@ export class UsersService {
     return false;
   }
 
-  private normalizeRecipientIdentifier(type: 'email' | 'twitter', value: string): string {
+  private normalizeRecipientIdentifier(type: 'email' | 'twitter' | 'username', value: string): string {
     const v = value.trim();
     if (type === 'email') return v.toLowerCase();
     return v.replace(/^@/, '').toLowerCase();
@@ -422,7 +427,9 @@ export class UsersService {
         ? `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`
         : 'https://api.mainnet-beta.solana.com');
 
-    const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const usdcMint =
+      process.env.SOLANA_USDC_MINT?.trim() ||
+      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
     try {
       const response = await fetch(solanaRpcUrl, {
@@ -434,7 +441,7 @@ export class UsersService {
           method: 'getTokenAccountsByOwner',
           params: [
             walletAddress,
-            { mint: USDC_MINT },
+            { mint: usdcMint },
             { encoding: 'jsonParsed' },
           ],
         }),

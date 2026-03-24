@@ -18,7 +18,7 @@ const nextConfig = {
     '@supabase/supabase-js',
     '@lightprotocol/hasher.rs',
   ],
-  // Use `npm run dev` (webpack) for Privacy Cash WASM support; `npm run dev:turbo` for Turbopack only
+  // Use `npm run dev` (webpack) for WASM (e.g. @lightprotocol/hasher.rs); `npm run dev:turbo` for Turbopack only
   turbopack: {
     resolveAlias: {
       fs: { browser: './empty-module.js' },

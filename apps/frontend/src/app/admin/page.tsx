@@ -238,7 +238,7 @@ export default function AdminPage() {
                   Privy Backend Wallet
                 </CardTitle>
                 <CardDescription>
-                  Wallet address where private cross-chain payments arrive before Privacy Cash execution
+                  Wallet address where private cross-chain payments arrive before the private PER transfer
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -248,7 +248,7 @@ export default function AdminPage() {
                     <span className="ml-2 font-mono text-sm">C5H7TyU6fBdvrzYnwME1RUD9tZACuGPw83Kh1TwDWMWb</span>
                   </div>
                   <div className="text-xs text-gray-500 mt-2">
-                    💡 When claims show "PRIVATE_TRANSFER_PENDING", check this wallet for USDC. Execute Privacy Cash manually, then update claim status to SUCCESS.
+                    💡 When claims show "PRIVATE_TRANSFER_PENDING", check this wallet for USDC. Complete the private transfer (PER) manually, then update claim status to SUCCESS.
                   </div>
                 </div>
               </CardContent>

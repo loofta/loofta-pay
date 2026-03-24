@@ -26,6 +26,8 @@ export type PaymentHistoryClaim = {
   paid_with_chain: string | null;
   is_private: boolean | null;
   description: string | null;
+  /** True when claim was created on devnet/testnet (matches deployment cluster in history API). */
+  is_devnet?: boolean;
 };
 
 /** For received: sender label = @username → email → Anonymous */

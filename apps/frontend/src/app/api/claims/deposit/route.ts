@@ -338,7 +338,7 @@ export async function POST(request: Request) {
     
     // Validate recipient address format based on destination chain
     let recipientAddress = (claim.recipient_address || "").trim();
-    // For cross-chain to Solana: use unique claim burner (like Privacy Cash / send-payment)
+    // For cross-chain to Solana: use unique claim burner (same pattern as send-payment)
     const isDestSolana = destChain === "sol" || destChain === "solana";
     let claimBurner = (claim.claim_burner_address || "").trim();
     if (isDestSolana && (!recipientAddress || recipientAddress.startsWith("PENDING_"))) {

@@ -7,10 +7,10 @@ export class CreateSendPaymentDto {
   @Min(0.01)
   amount: number;
 
-  @ApiProperty({ description: 'Recipient type', enum: ['email', 'twitter'] })
+  @ApiProperty({ description: 'Recipient type', enum: ['email', 'twitter', 'username'] })
   @IsString()
-  @IsIn(['email', 'twitter'])
-  recipient_type: 'email' | 'twitter';
+  @IsIn(['email', 'twitter', 'username'])
+  recipient_type: 'email' | 'twitter' | 'username';
 
   @ApiProperty({
     description: 'Recipient identifier: email address or Twitter handle (with or without @)',
