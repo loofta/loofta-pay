@@ -28,6 +28,7 @@ export type PaymentHistoryClaim = {
   paid_with_chain: string | null;
   is_private: boolean | null;
   description: string | null;
+  is_devnet?: boolean;
 };
 
 /** For received: sender label = @username → email → Anonymous */

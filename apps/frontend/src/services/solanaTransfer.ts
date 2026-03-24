@@ -17,21 +17,18 @@ import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
-import { USDC_MINT } from "./solanaBalance";
+import { getSolanaHttpRpc } from "@/lib/solanaCluster";
+import { getUsdcMint } from "@/lib/per/constants";
 
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
-
-const SOLANA_RPC_URL =
-  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-  (process.env.NEXT_PUBLIC_HELIUS_API_KEY
-    ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-    : "https://api.mainnet-beta.solana.com");
 
 const USDC_DECIMALS = 6;
 
 /**
  * Build and return an unsigned VersionedTransaction for USDC transfer.
- * Uses sender as fee payer; Privy's native gas sponsorship (dashboard) covers fees when enabled.
+ * Default: sender pays fees (Privy gas sponsorship or user's SOL).
+ * Optional `feePayerAddress`: Loofta backend (`SOLANA_FEE_PAYER_PRIVATE_KEY`) pays fees + ATA rent;
+ * user still signs as token authority; backend co-signs and broadcasts via `/claims/solana-sponsor/sign-and-broadcast`.
  */
 export async function buildUSDCTransferTransaction(params: {
   senderAddress: string;
@@ -40,12 +37,21 @@ export async function buildUSDCTransferTransaction(params: {
   connection?: Connection;
   /** Optional memo (e.g. for Near Intents deposit); added as SPL Memo instruction. */
   memo?: string | null;
+  /** When set (and distinct from sender), transaction fee payer + ATA rent payer for new accounts. */
+  feePayerAddress?: string | null;
 }): Promise<VersionedTransaction> {
   const connection =
-    params.connection || new Connection(SOLANA_RPC_URL, "confirmed");
-  const mint = new PublicKey(USDC_MINT);
+    params.connection || new Connection(getSolanaHttpRpc(), "confirmed");
+  const mint = getUsdcMint();
   const sender = new PublicKey(params.senderAddress);
   const recipient = new PublicKey(params.recipientAddress);
+  const feePayerRaw = params.feePayerAddress?.trim();
+  const feePayer =
+    feePayerRaw &&
+    feePayerRaw.length > 0 &&
+    feePayerRaw !== params.senderAddress.trim()
+      ? new PublicKey(feePayerRaw)
+      : null;
 
   const amountRaw = Math.floor(params.amountUSDC * 10 ** USDC_DECIMALS);
   if (amountRaw <= 0) {
@@ -90,12 +96,13 @@ export async function buildUSDCTransferTransaction(params: {
     );
   }
 
-  // Create recipient ATA if it doesn't exist
+  // Create recipient ATA if it doesn't exist (rent paid by feePayer when set, else sender)
+  const ataPayer = feePayer ?? sender;
   const recipientAccountInfo = await connection.getAccountInfo(recipientAta);
   if (!recipientAccountInfo) {
     instructions.push(
       createAssociatedTokenAccountInstruction(
-        sender,
+        ataPayer,
         recipientAta,
         recipient,
         mint,
@@ -120,7 +127,7 @@ export async function buildUSDCTransferTransaction(params: {
   const { blockhash } =
     await connection.getLatestBlockhash("confirmed");
   const message = new TransactionMessage({
-    payerKey: sender,
+    payerKey: feePayer ?? sender,
     recentBlockhash: blockhash,
     instructions,
   }).compileToV0Message();
@@ -136,7 +143,7 @@ export async function sendSignedUSDCTransfer(
   connection?: Connection
 ): Promise<string> {
   const conn =
-    connection || new Connection(SOLANA_RPC_URL, "confirmed");
+    connection || new Connection(getSolanaHttpRpc(), "confirmed");
   const sig = await conn.sendTransaction(signedTx, {
     skipPreflight: false,
     preflightCommitment: "confirmed",

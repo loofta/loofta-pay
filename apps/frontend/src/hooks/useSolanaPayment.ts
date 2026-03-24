@@ -6,19 +6,15 @@ import { usePrivy } from "@privy-io/react-auth";
 import {
   useWallets,
   useSignAndSendTransaction,
+  useSignTransaction,
 } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
-import bs58 from "bs58";
-import { buildUSDCTransferTransaction } from "@/services/solanaTransfer";
+import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSend";
 import { getSolanaBalanceUSD } from "@/services/solanaBalance";
+import { getSolanaHttpRpc, isNonMainnetCluster } from "@/lib/solanaCluster";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-const SOLANA_RPC_URL =
-  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-  (process.env.NEXT_PUBLIC_HELIUS_API_KEY
-    ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-    : "https://api.mainnet-beta.solana.com");
 
 /** Same wallet resolution as Header so balance is consistent. */
 function deriveSolanaEmbeddedAddress(user: { linked_accounts?: Array<{ type?: string; address?: string }>; linkedAccounts?: Array<{ type?: string; address?: string }> } | null): string | null {
@@ -58,10 +54,11 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
   const { getAccessToken, user, authenticated } = usePrivy();
   const { wallets: standardWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
+  const { signTransaction } = useSignTransaction();
   const [isLoading, setIsLoading] = useState(false);
 
   const { data: balanceData, refetch: refreshBalance } = useQuery({
-    queryKey: ["solanaPaymentBalance", user?.id],
+    queryKey: ["solanaPaymentBalance", user?.id, isNonMainnetCluster() ? "dev" : "main"],
     queryFn: async () => {
       const token = await getAccessToken?.();
       if (!token || !user?.id) throw new Error("Not authenticated");
@@ -83,8 +80,16 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
       } catch {
         // Backend failed, will use client fallback
       }
-      // If backend returned 0 but we have the same wallet as the header, fetch client-side so modal matches header balance
       const address = walletAddress || clientAddress;
+
+      // Non-mainnet: always use same RPC/mint as the rest of the app (backend used to be mainnet-only).
+      if (isNonMainnetCluster() && address) {
+        balanceUSD = await getSolanaBalanceUSD(address);
+        walletAddress = address;
+        return { balanceUSD, walletAddress };
+      }
+
+      // Mainnet: prefer backend; if zero, try client (e.g. match header).
       if (address && balanceUSD === 0) {
         const clientBalance = await getSolanaBalanceUSD(address);
         if (clientBalance > 0) {
@@ -124,19 +129,17 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
 
     setIsLoading(true);
     try {
-      const conn = new Connection(SOLANA_RPC_URL, "confirmed");
-      const unsignedTx = await buildUSDCTransferTransaction({
+      const conn = new Connection(getSolanaHttpRpc(), "confirmed");
+      return await sendUsdcWithPrivyEmbeddedWallet({
         senderAddress,
         recipientAddress: config.recipientAddress.trim(),
         amountUSDC: config.amount,
         connection: conn,
-      });
-      const { signature } = await signAndSendTransaction({
-        transaction: unsignedTx.serialize(),
         wallet,
-        options: { sponsor: true } as never,
+        privyUserId: user?.id,
+        signTransaction,
+        signAndSendTransaction,
       });
-      return bs58.encode(signature);
     } catch (error: any) {
       if (
         error?.message?.includes("user rejected") ||

@@ -1,6 +1,5 @@
 'use client'
 
-import Image from "next/image";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -16,6 +15,7 @@ import { BalanceModal } from "@/components/BalanceModal";
 import { getSolanaBalanceUSD } from "@/services/solanaBalance";
 import { useAuthStore } from "@/store/auth";
 import { useCallback } from "react";
+import { LooftaPayLogoLink } from "@/components/layout/LooftaPayLogoLink";
 
 export function Header() {
   const { authenticated, email, userId, logout } = useAuth();
@@ -295,14 +295,11 @@ export function Header() {
     >
       <div className="max-w-7xl mx-auto px-4 py-6 md:py-8">
         <div className="flex justify-between items-center animate-fade-in">
-          <Link href="/" prefetch className="inline-block hover:opacity-90 transition-opacity">
-            <Image
-              src="/loofta.svg"
-              alt="Loofta"
-              width={120}
-              height={44}
-            />
-          </Link>
+          <LooftaPayLogoLink
+            imageWidth={120}
+            imageHeight={44}
+            badgeVariant={isDarkPage ? "on-dark" : "on-light"}
+          />
 
           <div className="flex items-center gap-1">
             {/* Desktop menu items */}
@@ -525,12 +522,7 @@ export function Header() {
           <div className="flex flex-col h-full">
             {/* Header with close button */}
             <div className="flex justify-between items-center p-4 border-b border-gray-200">
-              <Image
-                src="/loofta.svg"
-                alt="Loofta"
-                width={100}
-                height={36}
-              />
+              <LooftaPayLogoLink imageWidth={100} imageHeight={36} badgeVariant="on-light" />
               <button
                 onClick={() => setIsMobileMenuOpen(false)}
                 className="p-2 rounded-lg hover:bg-gray-100 transition-colors"

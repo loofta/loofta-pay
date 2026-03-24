@@ -3,13 +3,19 @@
  * Client-side only - fetches directly from Solana RPC
  */
 
-// Use Helius RPC if available, otherwise fallback to public RPC
-// Get free Helius API key at: https://www.helius.dev/
-const SOLANA_RPC_URL = process.env.NEXT_PUBLIC_SOLANA_RPC_URL 
-  || (process.env.NEXT_PUBLIC_HELIUS_API_KEY 
-    ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-    : "https://api.mainnet-beta.solana.com");
-export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // USDC on Solana mainnet
+import { getSolanaCluster, getSolanaHttpRpc } from "@/lib/solanaCluster";
+import { getUsdcMint } from "@/lib/per/constants";
+
+/** @deprecated Prefer getUsdcMint() for cluster-aware mint */
+export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+function rpcUrl(): string {
+  return getSolanaHttpRpc();
+}
+
+function usdcMintAddress(): string {
+  return getUsdcMint().toBase58();
+}
 
 /**
  * Get USDC balance from Solana wallet address
@@ -17,7 +23,7 @@ export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // USDC
 export async function getSolanaUSDCBalance(walletAddress: string): Promise<number> {
   try {
     // Use Solana Web3.js or direct RPC call
-    const response = await fetch(SOLANA_RPC_URL, {
+    const response = await fetch(rpcUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -27,7 +33,7 @@ export async function getSolanaUSDCBalance(walletAddress: string): Promise<numbe
         params: [
           walletAddress,
           {
-            mint: USDC_MINT,
+            mint: usdcMintAddress(),
           },
           {
             encoding: "jsonParsed",
@@ -45,7 +51,15 @@ export async function getSolanaUSDCBalance(walletAddress: string): Promise<numbe
     // Get USDC balance (6 decimals)
     const account = data.result.value[0];
     const balance = account.account.data.parsed.info.tokenAmount.uiAmount;
-    
+
+    if (process.env.NODE_ENV === "development") {
+      console.info("[Loofta] USDC balance", {
+        cluster: getSolanaCluster(),
+        mint: usdcMintAddress(),
+        uiAmount: balance ?? 0,
+      });
+    }
+
     return balance || 0;
   } catch (error) {
     console.error("[Solana Balance] Error fetching USDC balance:", error);
@@ -58,7 +72,7 @@ export async function getSolanaUSDCBalance(walletAddress: string): Promise<numbe
  */
 export async function getSolanaSOLBalance(walletAddress: string): Promise<number> {
   try {
-    const response = await fetch(SOLANA_RPC_URL, {
+    const response = await fetch(rpcUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

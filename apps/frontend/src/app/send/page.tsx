@@ -2,7 +2,7 @@
 
 import React, { useState, type SVGProps } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
-import { useWallets, useSignAndSendTransaction, useSignMessage } from '@privy-io/react-auth/solana';
+import { useWallets, useSignAndSendTransaction } from '@privy-io/react-auth/solana';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,32 +10,28 @@ import { useToast } from '@/components/ui/use-toast';
 import {
   createSendPayment,
   confirmSendPaymentFunded,
-  prepareSendPaymentPrivate,
-  completeSendPaymentPrivateWithSignature,
-  submitSendPaymentPrivate,
   getMySendPaymentLinks,
   getSendPaymentPublic,
   reclaimSendPayment,
-  PRIVACY_SESSION_MESSAGE,
   type CreateSendPaymentInput,
   type CreateSendPaymentResult,
 } from '@/services/api/sendPayment';
 import { useSendPaymentStore } from '@/store/sendPayment';
 import { buildUSDCTransferTransaction, sendSignedUSDCTransfer } from '@/services/solanaTransfer';
 import { useSolanaPayment } from '@/hooks/useSolanaPayment';
+import { PRIVATE_PAYMENT_ENABLED } from '@/services/privatePayment';
+import { getPrivySolanaChain } from '@/lib/solanaCluster';
 import { GradientActionButton } from '@/components/ui/GradientActionButton';
 import { MessageInput } from '@/components/MessageInput';
-import { Copy, Check, Send, Mail, AtSign, Share2, Wallet, Loader2, ArrowRight, Shield, Link2, History, RotateCcw } from 'lucide-react';
-
-const SOLANA_RPC_URL =
-  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-  (process.env.NEXT_PUBLIC_HELIUS_API_KEY
-    ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-    : 'https://api.mainnet-beta.solana.com');
+import { Copy, Check, Send, Mail, AtSign, Share2, Wallet as WalletIcon, Loader2, ArrowRight, Shield, Link2, History, RotateCcw, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
 import bs58 from 'bs58';
-import { Connection, VersionedTransaction } from '@solana/web3.js';
+import type { Wallet } from '@coral-xyz/anchor';
+import { Transaction, VersionedTransaction } from '@solana/web3.js';
+import { usePerPrivateTransfer } from '@/hooks/usePerPrivateTransfer';
+import { phantomWalletToAnchorWallet, privyWalletToAnchorWallet } from '@/lib/per/signer';
+import { getUsdcMint } from '@/lib/per/constants';
 
 type PhantomLike = {
   connect: () => Promise<{ publicKey: { toBase58(): string } }>;
@@ -87,7 +83,7 @@ export default function SendPaymentPage() {
   const [copied, setCopied] = useState<'link' | 'address' | null>(null);
   const [form, setForm] = useState({
     amount: '',
-    recipient_type: 'email' as 'email' | 'twitter',
+    recipient_type: 'email' as 'email' | 'twitter' | 'username',
     recipient_identifier: '',
     message: '',
   });
@@ -97,7 +93,9 @@ export default function SendPaymentPage() {
   const [payingWithLoofta, setPayingWithLoofta] = useState(false);
   const [payWithLooftaError, setPayWithLooftaError] = useState<string | null>(null);
   const [payWithWalletError, setPayWithWalletError] = useState<string | null>(null);
-  const [payPrivately, setPayPrivately] = useState(false);
+  /** Optional non-private path only when private payments are not globally enabled. */
+  const [payPrivatelyOptional, setPayPrivatelyOptional] = useState(false);
+  const payPrivately = PRIVATE_PAYMENT_ENABLED ? true : payPrivatelyOptional;
   const [payWithPrivateError, setPayWithPrivateError] = useState<string | null>(null);
   const [recoverLinks, setRecoverLinks] = useState<{ id: string; amount: string; token: string; status: string; recipient_type: string; created_at: string }[] | null>(null);
   const [recoverLoading, setRecoverLoading] = useState(false);
@@ -105,7 +103,7 @@ export default function SendPaymentPage() {
   const [reclaiming, setReclaiming] = useState(false);
 
   const solanaPayment = useSolanaPayment({ enabled: step === 'created' && !!result });
-  const { signMessage: privySignMessage } = useSignMessage();
+  const { transfer: perTransfer } = usePerPrivateTransfer();
 
   if (!authenticated) {
     return (
@@ -118,7 +116,7 @@ export default function SendPaymentPage() {
             </div>
             <h1 className="text-2xl font-semibold text-white mb-2">Send a payment</h1>
             <p className="text-white/70 text-sm mb-8">
-              Log in to create a payment link. The recipient will claim it with their email or Twitter.
+              Log in to create a payment link. The recipient will claim it with their email, Twitter, or Loofta username.
             </p>
             <Button
               onClick={() => login()}
@@ -151,7 +149,11 @@ export default function SendPaymentPage() {
     e.preventDefault();
     const amount = parseFloat(form.amount);
     if (!amount || amount <= 0 || !form.recipient_identifier.trim()) {
-      toast({ title: 'Please check your input', description: 'Enter an amount and recipient (email or Twitter).', variant: 'destructive' });
+      toast({
+        title: 'Please check your input',
+        description: 'Enter an amount and recipient (email, Twitter, or Loofta username).',
+        variant: 'destructive',
+      });
       return;
     }
     setLoading(true);
@@ -203,8 +205,14 @@ export default function SendPaymentPage() {
   const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(claimAmountUSD);
   const balanceData = solanaPayment.isBalanceLoading ? undefined : { balanceUSD: looftaBalanceUSD };
 
+  function getOnchainRecipientAddress(): string | null {
+    const r = result?.per_recipient_pubkey?.trim() || result?.burner_address?.trim();
+    return r || null;
+  }
+
   async function payWithLooftaBalance() {
-    if (!result?.burner_address || !result?.amount || !user?.id) return;
+    const to = getOnchainRecipientAddress();
+    if (!to || !result?.amount || !user?.id) return;
     const amount = parseFloat(result.amount);
     if (!amount || amount <= 0) return;
     setPayingWithLoofta(true);
@@ -212,7 +220,7 @@ export default function SendPaymentPage() {
     try {
       const sig = await solanaPayment.makePayment({
         amount,
-        recipientAddress: result.burner_address,
+        recipientAddress: to,
       });
       await confirmSendPaymentFunded(result.id, sig, user.id);
       setFunded();
@@ -228,142 +236,45 @@ export default function SendPaymentPage() {
 
   async function payWithPrivate(preferWallet: 'loofta' | 'phantom') {
     if (!result?.id || !result?.amount || !user?.id) return;
+    const recipient = result.per_recipient_pubkey?.trim();
+    if (!recipient) {
+      throw new Error('This link is missing recipient data. Create a new payment link.');
+    }
     setPayWithPrivateError(null);
-    const messageBytes = new TextEncoder().encode(PRIVACY_SESSION_MESSAGE);
-    let senderPublicKey: string;
-    let sessionSigBase64: string;
-    const phantom = preferWallet === 'phantom' ? getPhantomProvider() : null;
-    const usePhantom =
-      preferWallet === 'phantom'
-        ? !!(phantom?.signMessage && phantom?.signTransaction)
-        : false;
+    const amount = parseFloat(result.amount);
+    const mint = getUsdcMint().toBase58();
+    let anchorWallet: Wallet;
 
-    if (usePhantom && phantom) {
-      const { publicKey } = phantom.publicKey ? { publicKey: phantom.publicKey } : await phantom.connect();
+    if (preferWallet === 'phantom') {
+      const ph = getPhantomProvider();
+      if (!ph) throw new Error('Install Phantom to pay with Phantom.');
+      const { publicKey } = ph.publicKey ? { publicKey: ph.publicKey } : await ph.connect();
       if (!publicKey) throw new Error('Phantom: no public key');
-      senderPublicKey = publicKey.toBase58();
-      const signMsg = phantom.signMessage;
-      if (!signMsg) throw new Error('Phantom: signMessage not available');
-      const res = await signMsg(messageBytes, 'utf8');
-      const sig = res?.signature ?? res;
-      // Phantom extension returns Uint8Array; some SDKs return base58 string — send as-is so backend can decode
-      sessionSigBase64 =
-        typeof sig === 'string'
-          ? sig
-          : btoa(String.fromCharCode(...new Uint8Array(sig)));
-    } else {
-      // Loofta path: use embedded Solana wallet (prefer non-Phantom so we use Loofta/Privy wallet)
-      const wallet =
-        solanaWallets?.find(
-          (w) => (w as { walletClientType?: string }).walletClientType !== 'phantom' && (w as { walletClientType?: string }).walletClientType !== 'detected',
-        ) ?? solanaWallets?.[0];
-      if (!wallet?.address) {
-        throw new Error('Connect your Loofta Solana wallet to pay privately from balance.');
-      }
-      senderPublicKey = wallet.address;
-      // Prefer Privy's useSignMessage({ message, wallet }) — returns { signature: Uint8Array }; encode as base64 for backend
-      if (privySignMessage) {
-        const { signature } = await privySignMessage({ message: messageBytes, wallet });
-        const sigBytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature);
-        sessionSigBase64 = btoa(String.fromCharCode(...sigBytes));
-      } else if (typeof wallet.signMessage === 'function') {
-        const res = await wallet.signMessage({ message: messageBytes });
-        const sig =
-          typeof res === 'object' && res !== null && 'signature' in res
-            ? (res as { signature: Uint8Array | string }).signature
-            : (res as Uint8Array);
-        sessionSigBase64 =
-          typeof sig === 'string'
-            ? sig
-            : btoa(String.fromCharCode(...new Uint8Array(sig)));
-      } else {
-        throw new Error('Your wallet cannot sign messages. Try Phantom wallet for private payment.');
-      }
-    }
-
-    // Prepare with sponsor when available so user needs no SOL (gasless).
-    const prep = await prepareSendPaymentPrivate(result.id, senderPublicKey, sessionSigBase64, user.id, {
-      useSponsor: true,
-    });
-    const txBytes = Uint8Array.from(atob(prep.unsigned_deposit_tx), (c) => c.charCodeAt(0));
-    let signedTx: VersionedTransaction;
-    if (usePhantom && phantom) {
-      const unsignedTx = VersionedTransaction.deserialize(txBytes);
-      signedTx = await phantom.signTransaction(unsignedTx);
-    } else {
-      const wallet =
-        solanaWallets?.find(
-          (w) => (w as { walletClientType?: string }).walletClientType !== 'phantom' && (w as { walletClientType?: string }).walletClientType !== 'detected',
-        ) ?? solanaWallets?.[0];
-      if (!wallet) throw new Error('No wallet to sign the transaction.');
-      const signedResult = await wallet.signTransaction({ transaction: txBytes });
-      const signedBytes = (signedResult as { signedTransaction: Uint8Array }).signedTransaction;
-      signedTx = VersionedTransaction.deserialize(signedBytes);
-    }
-
-    let signedSolTxB64: string | undefined;
-    if (prep.unsigned_sol_tx) {
-      const solTxBytes = Uint8Array.from(atob(prep.unsigned_sol_tx), (c) => c.charCodeAt(0));
-      let signedSolTx: VersionedTransaction;
-      if (usePhantom && phantom) {
-        const unsignedSol = VersionedTransaction.deserialize(solTxBytes);
-        signedSolTx = await phantom.signTransaction(unsignedSol);
-      } else {
-        const wallet =
-          solanaWallets?.find(
-            (w) => (w as { walletClientType?: string }).walletClientType !== 'phantom' && (w as { walletClientType?: string }).walletClientType !== 'detected',
-          ) ?? solanaWallets?.[0];
-        if (!wallet) throw new Error('No wallet to sign the SOL transaction.');
-        const signedResult = await wallet.signTransaction({ transaction: solTxBytes });
-        const signedBytes = (signedResult as { signedTransaction: Uint8Array }).signedTransaction;
-        signedSolTx = VersionedTransaction.deserialize(signedBytes);
-      }
-      signedSolTxB64 = btoa(String.fromCharCode(...signedSolTx.serialize()));
-    }
-
-    const submitBody = {
-      signed_deposit_tx: btoa(String.fromCharCode(...signedTx.serialize())),
-      activity_id: prep.activity_id,
-      sender_public_key: senderPublicKey,
-      last_valid_block_height: prep.last_valid_block_height,
-      passphrase: prep.passphrase,
-      ...(signedSolTxB64 ? { signed_sol_tx: signedSolTxB64 } : {}),
-    };
-
-    if (prep.use_sponsor_used) {
-      await submitSendPaymentPrivate(result.id, submitBody, sessionSigBase64, user.id);
-    } else {
-      const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
-      const depositSig = await connection.sendRawTransaction(signedTx.serialize(), {
-        skipPreflight: true,
-        maxRetries: 3,
-        preflightCommitment: 'processed',
-      });
-      if (signedSolTxB64) {
-        try {
-          const solTx = VersionedTransaction.deserialize(
-            Uint8Array.from(atob(signedSolTxB64), (c) => c.charCodeAt(0))
-          );
-          await connection.sendRawTransaction(solTx.serialize(), { skipPreflight: true, maxRetries: 3 });
-        } catch (e) {
-          console.warn('SOL tx for burner gas failed:', e);
-        }
-      }
-      await completeSendPaymentPrivateWithSignature(
-        result.id,
-        {
-          deposit_tx_signature: depositSig,
-          activity_id: prep.activity_id,
-          sender_public_key: senderPublicKey,
-          last_valid_block_height: prep.last_valid_block_height,
-          passphrase: prep.passphrase,
+      anchorWallet = phantomWalletToAnchorWallet({
+        publicKey,
+        signTransaction: async (tx: Transaction) => {
+          const signed = await ph.signTransaction(tx as unknown as VersionedTransaction);
+          return signed as unknown as Transaction;
         },
-        sessionSigBase64,
-        user.id
-      );
+      });
+    } else {
+      const w =
+        solanaWallets?.find(
+          (x) =>
+            (x as { walletClientType?: string }).walletClientType !== 'phantom' &&
+            (x as { walletClientType?: string }).walletClientType !== 'detected',
+        ) ?? solanaWallets?.[0];
+      if (!w?.address) throw new Error('Connect your Loofta Solana wallet.');
+      anchorWallet = privyWalletToAnchorWallet(w as Parameters<typeof privyWalletToAnchorWallet>[0]);
     }
+
+    const sig = await perTransfer(anchorWallet, recipient, mint, amount);
+    await confirmSendPaymentFunded(result.id, sig, user.id);
     setFunded();
-    toast({ title: 'Private payment sent', description: 'Deposit is private. Recipient can claim.' });
+    toast({
+      title: 'Private payment sent',
+      description: 'MagicBlock PER transfer completed. The recipient can claim after funds settle.',
+    });
   }
 
   async function handlePayWithLoofta() {
@@ -419,7 +330,8 @@ export default function SendPaymentPage() {
   }
 
   async function payWithWallet() {
-    if (!result?.burner_address || !result?.amount || !user?.id) return;
+    const to = getOnchainRecipientAddress();
+    if (!to || !result?.amount || !user?.id) return;
     const amount = parseFloat(result.amount);
     if (!amount || amount <= 0) return;
     setPayingWithWallet(true);
@@ -434,7 +346,7 @@ export default function SendPaymentPage() {
         const senderAddress = publicKey.toBase58();
         const tx = await buildUSDCTransferTransaction({
           senderAddress,
-          recipientAddress: result.burner_address,
+          recipientAddress: to,
           amountUSDC: amount,
         });
         const signed = await phantom.signTransaction(tx);
@@ -450,12 +362,13 @@ export default function SendPaymentPage() {
         }
         const tx = await buildUSDCTransferTransaction({
           senderAddress: wallet.address,
-          recipientAddress: result.burner_address,
+          recipientAddress: to,
           amountUSDC: amount,
         });
         const { signature } = await signAndSendTransaction({
           transaction: tx.serialize(),
           wallet,
+          chain: getPrivySolanaChain(),
         });
         txSignature = typeof signature === 'string' ? signature : bs58.encode(signature);
       }
@@ -506,6 +419,8 @@ export default function SendPaymentPage() {
         amount: publicData.amount,
         token: publicData.token,
         required_sol_lamports: publicData.required_sol_lamports ?? 500_000,
+        per_recipient_pubkey: publicData.per_recipient_pubkey ?? undefined,
+        per_mode: !!publicData.per_recipient_pubkey,
       };
       setCurrentLink(link);
       setStep(publicData.status === 'FUNDED' || publicData.status === 'CLAIMED' ? 'funded' : 'created');
@@ -622,7 +537,7 @@ export default function SendPaymentPage() {
                   </div>
                   <h1 className="text-2xl font-semibold text-gray-900">Create a payment link</h1>
                   <p className="mt-1 text-sm text-gray-500">
-                    Enter amount and who can claim it (email or Twitter). They’ll log in to claim to their Loofta wallet.
+                    Enter amount and who can claim it (email, Twitter, or Loofta username). They’ll log in to claim to their Loofta wallet.
                   </p>
                 </div>
 
@@ -643,27 +558,41 @@ export default function SendPaymentPage() {
 
                   <div>
                     <Label className="text-gray-700">Recipient — who can claim</Label>
-                    <div className="mt-2 flex rounded-xl border border-gray-200 bg-gray-50 p-1">
+                    <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
                       <button
                         type="button"
                         onClick={() => setForm((f) => ({ ...f, recipient_type: 'email' }))}
-                        className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-3 text-sm font-medium transition-colors ${form.recipient_type === 'email' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-3 text-xs font-medium transition-colors sm:text-sm ${form.recipient_type === 'email' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                       >
-                        <Mail className="h-4 w-4" />
+                        <Mail className="h-4 w-4 shrink-0" />
                         Email
                       </button>
                       <button
                         type="button"
                         onClick={() => setForm((f) => ({ ...f, recipient_type: 'twitter' }))}
-                        className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-3 text-sm font-medium transition-colors ${form.recipient_type === 'twitter' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-3 text-xs font-medium transition-colors sm:text-sm ${form.recipient_type === 'twitter' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                       >
-                        <AtSign className="h-4 w-4" />
+                        <AtSign className="h-4 w-4 shrink-0" />
                         Twitter
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setForm((f) => ({ ...f, recipient_type: 'username' }))}
+                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-3 text-xs font-medium transition-colors sm:text-sm ${form.recipient_type === 'username' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                      >
+                        <User className="h-4 w-4 shrink-0" />
+                        Loofta
                       </button>
                     </div>
                     <Input
                       type="text"
-                      placeholder={form.recipient_type === 'email' ? 'name@example.com' : 'username or @username'}
+                      placeholder={
+                        form.recipient_type === 'email'
+                          ? 'name@example.com'
+                          : form.recipient_type === 'twitter'
+                            ? 'username or @username'
+                            : 'Loofta username'
+                      }
                       value={form.recipient_identifier}
                       onChange={(e) => setForm((f) => ({ ...f, recipient_identifier: e.target.value }))}
                       className="mt-2"
@@ -718,27 +647,31 @@ export default function SendPaymentPage() {
                       Fund this link — {result.amount} USDC
                     </p>
                     <p className="mb-4 text-xs text-gray-500">
-                      Choose how to pay. You can pay privately (deposit stays private) or regularly. Use Loofta balance or Phantom in both cases.
+                      {PRIVATE_PAYMENT_ENABLED
+                        ? 'Pay with MagicBlock PER (private USDC). Use Loofta balance or Phantom.'
+                        : 'Choose how to pay — private (PER) or regular USDC transfer. Use Loofta balance or Phantom.'}
                     </p>
 
                     {step === 'created' && (
                       <div className="flex flex-col gap-3">
-                        <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 bg-gray-50/50 cursor-pointer hover:bg-violet-50/50 hover:border-violet-200 transition-colors">
-                          <input
-                            type="checkbox"
-                            checked={payPrivately}
-                            onChange={(e) => setPayPrivately(e.target.checked)}
-                            className="rounded border-gray-300 text-violet-600 focus:ring-violet-500"
-                          />
-                          <Shield className="w-5 h-5 text-violet-600 shrink-0" />
-                          <span className="font-medium text-gray-900">Pay privately</span>
-                          <span className="text-sm text-gray-500">Deposit stays private</span>
-                        </label>
+                        {!PRIVATE_PAYMENT_ENABLED && (
+                          <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 bg-gray-50/50 cursor-pointer hover:bg-violet-50/50 hover:border-violet-200 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={payPrivatelyOptional}
+                              onChange={(e) => setPayPrivatelyOptional(e.target.checked)}
+                              className="rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                            />
+                            <Shield className="w-5 h-5 text-violet-600 shrink-0" />
+                            <span className="font-medium text-gray-900">Pay privately</span>
+                            <span className="text-sm text-gray-500">MagicBlock PER</span>
+                          </label>
+                        )}
                         {payPrivately && (
                           <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/80 text-sm text-amber-900 space-y-2">
-                            <p className="font-medium">Fees on you — recipient gets full ${result.amount}</p>
+                            <p className="font-medium">MagicBlock private rollup (PER)</p>
                             <p className="text-amber-800">
-                              Privacy Cash fees (~$0.60 + 0.35%) are added to your total. Min $2. You’ll need a little SOL for gas. When you confirm, the wallet may show &quot;Failed to simulate&quot; — tap <strong>Confirm</strong>; payment still goes through.
+                              USDC moves through a program vault and delegated deposit accounts; the transfer runs on the ephemeral rollup. You need USDC in your wallet and a small amount of SOL for Solana fees on devnet.
                             </p>
                           </div>
                         )}
@@ -750,9 +683,9 @@ export default function SendPaymentPage() {
 
                         <button
                           type="button"
-                          disabled={(balanceData !== undefined && !hasEnoughLooftaBalance && !payPrivately) || payingWithLoofta}
+                          disabled={payingWithLoofta || (balanceData !== undefined && !hasEnoughLooftaBalance)}
                           onClick={() => handlePayWithLoofta()}
-                          title={balanceData !== undefined && !hasEnoughLooftaBalance && !payPrivately ? `Need $${claimAmountUSD.toFixed(2)} (you have $${looftaBalanceUSD.toFixed(2)})` : undefined}
+                          title={balanceData !== undefined && !hasEnoughLooftaBalance ? `Need $${claimAmountUSD.toFixed(2)} (you have $${looftaBalanceUSD.toFixed(2)})` : undefined}
                           className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-orange-50 hover:border-orange-200 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-gray-50 disabled:hover:border-gray-200"
                         >
                           <div className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center shrink-0 p-1.5">
@@ -766,14 +699,14 @@ export default function SendPaymentPage() {
                                 : balanceData === undefined
                                   ? 'Loading balance…'
                                   : payPrivately
-                                    ? 'Pay from balance (private)'
+                                    ? 'Pay from balance (PER)'
                                     : `Your balance: $${looftaBalanceUSD.toFixed(2)}${!hasEnoughLooftaBalance ? ' · Need more' : ''}`}
                             </span>
                           </div>
-                          {!payingWithLoofta && balanceData !== undefined && (hasEnoughLooftaBalance || payPrivately) && (
+                          {!payingWithLoofta && balanceData !== undefined && hasEnoughLooftaBalance && (
                             <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full shrink-0">Ready</span>
                           )}
-                          {!payingWithLoofta && balanceData !== undefined && !hasEnoughLooftaBalance && !payPrivately && (
+                          {!payingWithLoofta && balanceData !== undefined && !hasEnoughLooftaBalance && (
                             <span className="text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-full shrink-0">Low balance</span>
                           )}
                         </button>
@@ -796,7 +729,7 @@ export default function SendPaymentPage() {
                           className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                           <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
-                            {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-700" />}
+                            {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <WalletIcon className="w-5 h-5 text-gray-700" />}
                           </div>
                           <div className="flex-1 min-w-0">
                             <span className="font-semibold text-gray-900 block">Phantom wallet</span>
@@ -814,33 +747,47 @@ export default function SendPaymentPage() {
                           </div>
                         )}
 
-                        <p className="text-xs text-gray-500 mt-1">Or send manually: USDC to deposit address, 0.0005 SOL to burner for claim gas.</p>
-                        <div className="flex flex-col gap-2">
-                          <div className="flex gap-2">
-                            <Input readOnly value={result.deposit_address} className="font-mono text-xs" placeholder="USDC deposit" />
-                            <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.deposit_address, 'address')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
-                              {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
-                            </Button>
-                          </div>
-                          {result.burner_address != null && (
-                            <div className="flex gap-2">
-                              <Input readOnly value={result.burner_address} className="font-mono text-xs" placeholder="SOL (0.0005) for gas" />
-                              <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.burner_address!, 'address')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
-                                {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
-                              </Button>
+                        {result.deposit_address || result.burner_address ? (
+                          <>
+                            <p className="text-xs text-gray-500 mt-1">Or send manually: USDC to deposit address{result.burner_address ? ', 0.0005 SOL to burner for claim gas' : ''}.</p>
+                            <div className="flex flex-col gap-2">
+                              {!!result.deposit_address && (
+                                <div className="flex gap-2">
+                                  <Input readOnly value={result.deposit_address} className="font-mono text-xs" placeholder="USDC deposit" />
+                                  <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.deposit_address, 'address')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
+                                    {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
+                                  </Button>
+                                </div>
+                              )}
+                              {result.burner_address != null && result.burner_address !== '' && (
+                                <div className="flex gap-2">
+                                  <Input readOnly value={result.burner_address} className="font-mono text-xs" placeholder="SOL (0.0005) for gas" />
+                                  <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.burner_address!, 'address')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
+                                    {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
+                                  </Button>
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
+                          </>
+                        ) : (
+                          <p className="text-xs text-gray-500 mt-1">
+                            Use Loofta balance or Phantom — USDC is sent to the recipient&apos;s on-chain deposit (MagicBlock PER). No burner address is used.
+                          </p>
+                        )}
                       </div>
                     )}
 
                     {step === 'funded' && (
-                      <div className="flex gap-2">
-                        <Input readOnly value={result.deposit_address} className="font-mono text-xs" />
-                        <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.deposit_address, 'address')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
-                          {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
-                        </Button>
-                      </div>
+                      result.deposit_address ? (
+                        <div className="flex gap-2">
+                          <Input readOnly value={result.deposit_address} className="font-mono text-xs" />
+                          <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.deposit_address, 'address')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
+                            {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
+                          </Button>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-500">Funded via MagicBlock PER — share the claim link below.</p>
+                      )
                     )}
                   </div>
 

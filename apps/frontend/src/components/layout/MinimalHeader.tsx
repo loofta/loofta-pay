@@ -1,18 +1,19 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import Image from "next/image";
-import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
 import { UserMenu } from "@/components/UserMenu";
 import { BalanceModal } from "@/components/BalanceModal";
 import { getSolanaBalanceUSD } from "@/services/solanaBalance";
+import { clusterBadgeLabel, isNonMainnetCluster } from "@/lib/solanaCluster";
+import { LooftaPayLogoLink } from "@/components/layout/LooftaPayLogoLink";
 
 const HEADER_HEIGHT = 64;
 
 export function MinimalHeader() {
+  const solanaClusterTag = clusterBadgeLabel();
   const { authenticated, email, logout } = useAuth();
   const { login: privyLogin, user: privyUser } = usePrivy();
   const username = useAuthStore((s) => s.username ?? null);
@@ -99,21 +100,7 @@ export function MinimalHeader() {
     >
       <div className="w-full max-w-7xl mx-auto px-4 md:px-8 flex items-center justify-between">
         <div className="flex items-center min-w-0">
-          <Link href="/" className="relative inline-flex items-center hover:opacity-90 transition-opacity">
-            <Image
-              src="/loofta.svg"
-              alt="Loofta Pay"
-              width={120}
-              height={36}
-              className="h-9 w-auto"
-            />
-            <span
-              className="absolute -top-3.5 -right-5 text-sm font-semibold px-1 py-0.5 rounded-full"
-              style={{ background: "linear-gradient(to right, #EAB308, #FF0F00)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}
-            >
-              pay
-            </span>
-          </Link>
+          <LooftaPayLogoLink imageWidth={120} imageHeight={36} imageClassName="h-9 w-auto" badgeVariant="on-dark" />
         </div>
         <div className="flex items-center shrink-0 gap-2">
           {authenticated ? (
@@ -121,10 +108,17 @@ export function MinimalHeader() {
               <button
                 type="button"
                 onClick={() => setShowBalanceModal(true)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-slate-200 hover:text-white hover:bg-white/15 transition-colors border border-white/10"
+                className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/10 text-slate-200 hover:text-white hover:bg-white/15 transition-colors border border-white/10 text-left"
               >
-                <span className="text-sm font-medium">Balance</span>
-                <span className="text-sm font-semibold tabular-nums">
+                <div className="flex flex-col min-w-0">
+                  <span className="text-sm font-medium leading-tight">Balance</span>
+                  <span className="text-[10px] text-slate-500 font-normal leading-tight truncate max-w-[8rem] sm:max-w-none">
+                    {isNonMainnetCluster() && solanaClusterTag
+                      ? `${solanaClusterTag} USDC`
+                      : "Mainnet USDC"}
+                  </span>
+                </div>
+                <span className="text-sm font-semibold tabular-nums shrink-0">
                   {loadingBalance ? "…" : `$${balanceUSD}`}
                 </span>
               </button>

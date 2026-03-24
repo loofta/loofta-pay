@@ -7,7 +7,7 @@ export type SendPaymentLinkStatus =
   | 'CANCELLED'
   | 'EXPIRED';
 
-export type RecipientType = 'email' | 'twitter';
+export type RecipientType = 'email' | 'twitter' | 'username';
 
 export class SendPaymentLink {
   @ApiProperty({ description: 'Send payment link UUID' })
@@ -31,7 +31,7 @@ export class SendPaymentLink {
   @ApiProperty({ description: 'Chain', example: 'solana' })
   chain: string;
 
-  @ApiProperty({ description: 'Recipient identifier type', enum: ['email', 'twitter'] })
+  @ApiProperty({ description: 'Recipient identifier type', enum: ['email', 'twitter', 'username'] })
   recipient_type: RecipientType;
 
   @ApiProperty({ description: 'Recipient identifier (email or Twitter handle)' })
@@ -73,7 +73,7 @@ export class SendPaymentLinkPublic {
   @ApiProperty()
   chain: string;
 
-  @ApiProperty({ enum: ['email', 'twitter'] })
+  @ApiProperty({ enum: ['email', 'twitter', 'username'] })
   recipient_type: RecipientType;
 
   @ApiProperty({ enum: ['OPEN', 'FUNDED', 'CLAIMED', 'CANCELLED', 'EXPIRED'] })
@@ -90,4 +90,7 @@ export class SendPaymentLinkPublic {
 
   @ApiPropertyOptional({ description: 'SOL lamports sender should send to burner for claim gas (e.g. 500000)' })
   required_sol_lamports?: number;
+
+  @ApiPropertyOptional({ description: 'Resolved recipient Solana pubkey (PER flow)' })
+  per_recipient_pubkey?: string | null;
 }

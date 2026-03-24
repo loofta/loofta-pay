@@ -9,7 +9,6 @@ import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
 import { SendPaymentEncryptionService } from './encryption.service';
-import { VaultService } from './vault/vault.service';
 import { decryptWithPassphrase } from './vault/vault-crypto';
 import type { PassphraseEncryptedPayload } from './vault/vault-crypto';
 import { CreateSendPaymentDto, ClaimSendPaymentDto } from './dto';
@@ -22,11 +21,11 @@ import {
   getAccount,
 } from '@solana/spl-token';
 import { TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const bs58Module = require('bs58');
 const bs58 = bs58Module?.default ?? bs58Module;
 
-const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const DECIMALS = 6;
 /** SOL for burner to cover claim/reclaim gas (sent to burner, not fee payer). */
 const BURNER_SOL_LAMPORTS = 500_000;
@@ -37,14 +36,18 @@ export class SendPaymentService {
   private readonly baseUrl: string;
   private readonly connection: Connection;
   private readonly feePayerKeypair: Keypair | null = null;
+  private readonly usdcMint: PublicKey;
 
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
     private readonly encryption: SendPaymentEncryptionService,
-    private readonly vault: VaultService,
   ) {
+    const mintStr =
+      this.configService.get<string>('SOLANA_USDC_MINT') ||
+      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    this.usdcMint = new PublicKey(mintStr);
     this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
     const rpcUrl =
       this.configService.get<string>('SOLANA_RPC_URL') ||
@@ -96,7 +99,8 @@ export class SendPaymentService {
   }
 
   /**
-   * Create a send payment link: generate burner, store encrypted key, return link and deposit address
+   * Create a send payment link (MagicBlock PER). Resolves recipient Solana pubkey for email/username;
+   * Twitter handles require a matching Loofta account (use email or username instead).
    */
   async create(senderUserId: string, dto: CreateSendPaymentDto): Promise<{
     id: string;
@@ -106,17 +110,13 @@ export class SendPaymentService {
     token: string;
     burner_address: string;
     required_sol_lamports: number;
+    per_recipient_pubkey: string;
+    per_mode: true;
   }> {
-    if (!this.encryption.isAvailable()) {
-      throw new BadRequestException('Send payment is not configured (missing SEND_PAYMENT_ENC_KEY)');
-    }
-
     const recipientIdentifier = this.normalizeIdentifier(dto.recipient_type, dto.recipient_identifier);
     const amountStr = String(dto.amount);
 
-    const burnerKeypair = Keypair.generate();
-    const burnerSecret = Buffer.from(burnerKeypair.secretKey);
-    const encryptedSecret = this.encryption.encrypt(burnerSecret);
+    const recipientSolanaPubkey = await this.resolveRecipientSolanaPubkey(dto, recipientIdentifier);
 
     const { data, error } = await this.supabaseService.sendPaymentLinks
       .insert({
@@ -127,9 +127,11 @@ export class SendPaymentService {
         recipient_type: dto.recipient_type,
         recipient_identifier: recipientIdentifier,
         status: 'OPEN',
-        burner_address: burnerKeypair.publicKey.toBase58(),
-        burner_encrypted_secret: encryptedSecret,
+        burner_address: null,
+        burner_encrypted_secret: null,
+        recipient_solana_pubkey: recipientSolanaPubkey,
         message: dto.message || null,
+        is_devnet: isSolanaDevnetFromConfig(this.configService),
       })
       .select('id')
       .single();
@@ -139,23 +141,46 @@ export class SendPaymentService {
       throw new BadRequestException('Failed to create send payment link');
     }
 
-    const depositAddress = await getAssociatedTokenAddress(
-      USDC_MINT,
-      burnerKeypair.publicKey,
-    );
-
     const link = `${this.baseUrl}/s/${data.id}`;
-    this.logger.log(`Created send payment ${data.id} for ${dto.recipient_type}:***`);
+    this.logger.log(
+      `[SendPayment] Created PER send payment ${data.id} recipient_sol=${recipientSolanaPubkey.slice(0, 8)}...`,
+    );
 
     return {
       id: data.id,
       link,
-      deposit_address: depositAddress.toBase58(),
+      deposit_address: '',
       amount: amountStr,
       token: 'USDC',
-      burner_address: burnerKeypair.publicKey.toBase58(),
-      required_sol_lamports: BURNER_SOL_LAMPORTS,
+      burner_address: '',
+      required_sol_lamports: 0,
+      per_recipient_pubkey: recipientSolanaPubkey,
+      per_mode: true,
     };
+  }
+
+  private async resolveRecipientSolanaPubkey(
+    dto: CreateSendPaymentDto,
+    recipientIdentifier: string,
+  ): Promise<string> {
+    try {
+      if (dto.recipient_type === 'username') {
+        const u = await this.usersService.findByUsername(dto.recipient_identifier);
+        return await this.usersService.getSolanaWalletAddress(u.privyUserId);
+      }
+      if (dto.recipient_type === 'email') {
+        const u = await this.usersService.findByEmail(dto.recipient_identifier);
+        return await this.usersService.getSolanaWalletAddress(u.privyUserId);
+      }
+    } catch (e) {
+      this.logger.warn(`resolveRecipientSolanaPubkey failed: ${(e as Error)?.message}`);
+      throw new BadRequestException(
+        'Recipient must have a Loofta account with a linked Solana wallet. Try username or the email they used to sign up.',
+      );
+    }
+    throw new BadRequestException(
+      'Private PER send needs a resolvable Loofta user. Use email or @username (Twitter-only recipients: ask them to register and use email/username).',
+    );
   }
 
   /**
@@ -167,6 +192,7 @@ export class SendPaymentService {
     const { data, error } = await this.supabaseService.sendPaymentLinks
       .select('id, amount, token, status, recipient_type, created_at')
       .eq('sender_user_id', senderUserId)
+      .eq('is_devnet', isSolanaDevnetFromConfig(this.configService))
       .order('created_at', { ascending: false })
       .limit(20);
 
@@ -190,7 +216,7 @@ export class SendPaymentService {
    */
   async getPublic(id: string, userId?: string): Promise<SendPaymentLinkPublic & { deposit_address?: string; is_sender?: boolean }> {
     const { data, error } = await this.supabaseService.sendPaymentLinks
-      .select('id, amount, token, chain, recipient_type, status, message, burner_address, sender_user_id')
+      .select('id, amount, token, chain, recipient_type, status, message, burner_address, sender_user_id, recipient_solana_pubkey')
       .eq('id', id)
       .single();
 
@@ -202,7 +228,7 @@ export class SendPaymentService {
     if (data.burner_address && data.status !== 'CLAIMED' && data.status !== 'CANCELLED') {
       try {
         const burnerPubkey = new PublicKey(data.burner_address);
-        const ata = await getAssociatedTokenAddress(USDC_MINT, burnerPubkey);
+        const ata = await getAssociatedTokenAddress(this.usdcMint, burnerPubkey);
         deposit_address = ata.toBase58();
       } catch {
         deposit_address = null;
@@ -211,6 +237,7 @@ export class SendPaymentService {
 
     const is_sender = Boolean(userId && data.sender_user_id === userId);
 
+    const row = data as typeof data & { recipient_solana_pubkey?: string | null };
     return {
       id: data.id,
       amount: data.amount,
@@ -221,328 +248,10 @@ export class SendPaymentService {
       message: data.message,
       deposit_address: deposit_address ?? undefined,
       burner_address: data.burner_address ?? undefined,
-      required_sol_lamports: BURNER_SOL_LAMPORTS,
+      required_sol_lamports: data.burner_address ? BURNER_SOL_LAMPORTS : 0,
+      per_recipient_pubkey: row.recipient_solana_pubkey ?? undefined,
       ...(is_sender ? { is_sender: true } : {}),
     };
-  }
-
-  /**
-   * Prepare private (Privacy Cash vault) funding: in-repo implementation.
-   * No external HTTP call; uses VaultService and send_payment_links for storage.
-   */
-  async preparePrivate(
-    id: string,
-    senderUserId: string,
-    senderPublicKey: string,
-    sessionSignatureBase64: string,
-    useSponsor: boolean = false,
-  ): Promise<{
-    unsignedDepositTx: string;
-    lastValidBlockHeight: number;
-    activityId: string;
-    passphrase: string;
-    /** When true, frontend must send signed tx to submit-private (backend adds sponsor sig and relays). User needs no SOL. */
-    useSponsorUsed: boolean;
-    /** Privacy Cash fees (sender pays so recipient gets full amount). */
-    feeUsdc: number;
-    /** Total USDC to deposit (recipient amount + fees). */
-    totalDepositUsdc: number;
-    /** Optional unsigned SOL tx: sender → burner for claim gas (0.0005 SOL). */
-    unsignedSolTx?: string;
-  }> {
-    const link = await this.getOne(id);
-    if (link.sender_user_id !== senderUserId) {
-      throw new ForbiddenException('Not the sender of this link');
-    }
-    if (link.status !== 'OPEN') {
-      throw new BadRequestException('Link is not in OPEN status');
-    }
-    const amount = parseFloat(link.amount);
-    if (Number.isNaN(amount) || amount < 0.1) {
-      throw new BadRequestException('Invalid link amount (min 0.1 USDC)');
-    }
-    this.logger.log(`[SendPayment] preparePrivate START id=${id} link.amount=${link.amount} amount=${amount} USDC sender=${senderPublicKey.slice(0, 8)}...`);
-
-    // Use the link's existing burner so there is only one burner (same as deposit address).
-    let existingBurnerSecretKey: Uint8Array | undefined;
-    if (link.burner_encrypted_secret) {
-      const secretKey = this.encryption.decrypt(link.burner_encrypted_secret);
-      existingBurnerSecretKey = new Uint8Array(secretKey);
-    }
-
-    // First try: user as fee payer so Privy signAndSendTransaction can sponsor. Fallback: use_sponsor=true for backend sponsor.
-    const sponsorPublicKey =
-      useSponsor && this.feePayerKeypair ? this.feePayerKeypair.publicKey.toBase58() : null;
-    const tryPrepare = (skipSignatureVerification: boolean) =>
-      this.vault.preparePrivate(id, senderPublicKey, sessionSignatureBase64, amount, link.message ?? undefined, {
-        skipSignatureVerification,
-        sponsorPublicKey,
-        skipUserSolCheck: true,
-        existingBurnerSecretKey,
-      });
-
-    try {
-      const result = await tryPrepare(false);
-      this.logger.log(`[SendPayment] preparePrivate DONE id=${id} amount=${amount} USDC feeUsdc=${result.feeUsdc} totalDepositUsdc=${result.totalDepositUsdc} activityId=${result.activityId}`);
-      return {
-        unsignedDepositTx: result.unsignedDepositTx,
-        lastValidBlockHeight: result.lastValidBlockHeight,
-        activityId: result.activityId,
-        passphrase: result.passphrase,
-        useSponsorUsed: !!sponsorPublicKey,
-        feeUsdc: result.feeUsdc,
-        totalDepositUsdc: result.totalDepositUsdc,
-        unsignedSolTx: result.unsignedSolTx,
-      };
-    } catch (err: any) {
-      const message = err?.message ?? String(err);
-      if (message.includes('Invalid session signature')) {
-        const privyUserId = await this.usersService.getPrivyUserIdByAppUserId(senderUserId);
-        if (privyUserId && (await this.usersService.isSolanaAddressInLinkedAccounts(privyUserId, senderPublicKey))) {
-          try {
-            const result = await tryPrepare(true);
-            return {
-              unsignedDepositTx: result.unsignedDepositTx,
-              lastValidBlockHeight: result.lastValidBlockHeight,
-              activityId: result.activityId,
-              passphrase: result.passphrase,
-              useSponsorUsed: !!sponsorPublicKey,
-              feeUsdc: result.feeUsdc,
-              totalDepositUsdc: result.totalDepositUsdc,
-              unsignedSolTx: result.unsignedSolTx,
-            };
-          } catch (fallbackErr: any) {
-            this.logger.warn(`preparePrivate (linked-wallet fallback) failed for link ${id}: ${fallbackErr?.message}`);
-            throw new BadRequestException(fallbackErr?.message ?? message);
-          }
-        }
-      }
-      this.logger.warn(`preparePrivate failed for link ${id}: ${message}`, err?.stack);
-      throw new BadRequestException(message);
-    }
-  }
-
-  /**
-   * Submit signed private deposit tx: in-repo vault (relay + withdraw to burner), then mark link FUNDED.
-   */
-  async submitPrivate(
-    id: string,
-    senderUserId: string,
-    body: {
-      signedDepositTx: string;
-      activityId: string;
-      senderPublicKey: string;
-      lastValidBlockHeight?: number;
-      passphrase: string;
-      signedSolTx?: string;
-    },
-    sessionSignatureBase64: string,
-  ): Promise<SendPaymentLinkPublic> {
-    const link = await this.getOne(id);
-    if (link.sender_user_id !== senderUserId) {
-      throw new ForbiddenException('Not the sender of this link');
-    }
-    const linkAmount = parseFloat(link.amount);
-    this.logger.log(`[SendPayment] submitPrivate START id=${id} link.amount=${link.amount} linkAmount=${linkAmount} USDC body.activityId=${body.activityId}`);
-
-    const linkRow = link as typeof link & {
-      private_claim_burner_address?: string | null;
-      private_claim_encrypted_receiver?: string | null;
-      private_claim_encrypted_sender?: string | null;
-    };
-    const state = {
-      private_claim_burner_address: linkRow.private_claim_burner_address ?? '',
-      private_claim_encrypted_receiver: linkRow.private_claim_encrypted_receiver ?? '',
-      private_claim_encrypted_sender: linkRow.private_claim_encrypted_sender ?? '',
-    };
-    if (!state.private_claim_burner_address || !state.private_claim_encrypted_receiver) {
-      throw new BadRequestException('Private claim state missing. Call prepare first.');
-    }
-    if (Number.isNaN(linkAmount) || linkAmount < 0.1) {
-      throw new BadRequestException(`Invalid link amount: ${link.amount}`);
-    }
-    this.logger.log(`[SendPayment] submitPrivate AMOUNT_CHECK id=${id} passing amount=${linkAmount} USDC to vault (match link.amount)`);
-
-    // Deposit tx is built with user as fee payer (same as privacy-hack); relay as-is, no sponsor signature.
-    const signedDepositTxToRelay = body.signedDepositTx;
-
-    const trySubmit = (skipSignatureVerification: boolean) =>
-      this.vault.submitPrivate(
-        id,
-        body.senderPublicKey,
-        sessionSignatureBase64,
-        signedDepositTxToRelay,
-        body.lastValidBlockHeight,
-        state,
-        linkAmount,
-        { skipSignatureVerification, signedSolTx: body.signedSolTx },
-      );
-
-    try {
-      await trySubmit(false);
-    } catch (err: any) {
-      const message = err?.message ?? String(err);
-      if (message.includes('Invalid session signature')) {
-        const privyUserId = await this.usersService.getPrivyUserIdByAppUserId(senderUserId);
-        if (
-          privyUserId &&
-          (await this.usersService.isSolanaAddressInLinkedAccounts(privyUserId, body.senderPublicKey))
-        ) {
-          try {
-            await trySubmit(true);
-          } catch (fallbackErr: any) {
-            this.logger.warn(`submitPrivate (linked-wallet fallback) failed for link ${id}: ${fallbackErr?.message}`);
-            throw new BadRequestException(fallbackErr?.message ?? message);
-          }
-        } else {
-          throw new BadRequestException(message);
-        }
-      } else {
-        throw new BadRequestException(message);
-      }
-    }
-    this.logger.log(`[SendPayment] submitPrivate DONE id=${id} amount=${linkAmount} USDC marking FUNDED`);
-    const { data: updateData, error } = await this.supabaseService.sendPaymentLinks
-      .update({
-        status: 'FUNDED',
-        private_claim_activity_id: body.activityId,
-        private_claim_passphrase: body.passphrase,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .select()
-      .single();
-    if (error) throw new BadRequestException('Failed to update link');
-    return this.toPublic(updateData);
-  }
-
-  /**
-   * Return fully signed deposit tx (add sponsor signature) for frontend to send.
-   * Frontend then sends the tx and calls completePrivateWithSignature with the tx signature.
-   */
-  async getSignedTxForPrivate(
-    id: string,
-    senderUserId: string,
-    body: {
-      signedDepositTx: string;
-      activityId: string;
-      senderPublicKey: string;
-      lastValidBlockHeight?: number;
-      passphrase: string;
-    },
-    sessionSignatureBase64: string,
-  ): Promise<{ signed_deposit_tx: string }> {
-    const link = await this.getOne(id);
-    if (link.sender_user_id !== senderUserId) {
-      throw new ForbiddenException('Not the sender of this link');
-    }
-    const linkRow = link as typeof link & {
-      private_claim_burner_address?: string | null;
-      private_claim_encrypted_receiver?: string | null;
-      private_claim_encrypted_sender?: string | null;
-    };
-    const state = {
-      private_claim_burner_address: linkRow.private_claim_burner_address ?? '',
-      private_claim_encrypted_receiver: linkRow.private_claim_encrypted_receiver ?? '',
-      private_claim_encrypted_sender: linkRow.private_claim_encrypted_sender ?? '',
-    };
-    if (!state.private_claim_burner_address || !state.private_claim_encrypted_receiver) {
-      throw new BadRequestException('Private claim state missing. Call prepare first.');
-    }
-    // Deposit tx is user-signed only (no sponsor on deposit).
-    return { signed_deposit_tx: body.signedDepositTx };
-  }
-
-  /**
-   * Complete private claim after frontend has sent the deposit tx.
-   * Backend runs withdraw to burner and marks link FUNDED.
-   */
-  async completePrivateWithSignature(
-    id: string,
-    senderUserId: string,
-    body: {
-      depositTxSignature: string;
-      activityId: string;
-      senderPublicKey: string;
-      lastValidBlockHeight?: number;
-      passphrase: string;
-    },
-    sessionSignatureBase64: string,
-  ): Promise<SendPaymentLinkPublic> {
-    const link = await this.getOne(id);
-    if (link.sender_user_id !== senderUserId) {
-      throw new ForbiddenException('Not the sender of this link');
-    }
-    const linkAmount = parseFloat(link.amount);
-    this.logger.log(`[SendPayment] completePrivateWithSignature START id=${id} link.amount=${link.amount} linkAmount=${linkAmount} USDC depositTxSignature=${body.depositTxSignature?.slice(0, 16)}...`);
-
-    const linkRow = link as typeof link & {
-      private_claim_burner_address?: string | null;
-      private_claim_encrypted_receiver?: string | null;
-      private_claim_encrypted_sender?: string | null;
-    };
-    const state = {
-      private_claim_burner_address: linkRow.private_claim_burner_address ?? '',
-      private_claim_encrypted_receiver: linkRow.private_claim_encrypted_receiver ?? '',
-      private_claim_encrypted_sender: linkRow.private_claim_encrypted_sender ?? '',
-    };
-    if (!state.private_claim_burner_address || !state.private_claim_encrypted_receiver) {
-      throw new BadRequestException('Private claim state missing. Call prepare first.');
-    }
-    if (Number.isNaN(linkAmount) || linkAmount < 0.1) {
-      throw new BadRequestException(`Invalid link amount: ${link.amount}`);
-    }
-    this.logger.log(`[SendPayment] completePrivateWithSignature AMOUNT_CHECK id=${id} passing amount=${linkAmount} USDC to vault (match link.amount) proceeding`);
-
-    const tryComplete = (skipSignatureVerification: boolean) =>
-      this.vault.completePrivateWithSignature(
-        id,
-        body.senderPublicKey,
-        sessionSignatureBase64,
-        body.depositTxSignature,
-        body.lastValidBlockHeight,
-        state,
-        linkAmount,
-        { skipSignatureVerification },
-      );
-    try {
-      await tryComplete(false);
-    } catch (err: any) {
-      const message = err?.message ?? String(err);
-      if (message.includes('Invalid session signature')) {
-        const privyUserId = await this.usersService.getPrivyUserIdByAppUserId(senderUserId);
-        if (
-          privyUserId &&
-          (await this.usersService.isSolanaAddressInLinkedAccounts(privyUserId, body.senderPublicKey))
-        ) {
-          try {
-            await tryComplete(true);
-          } catch (fallbackErr: any) {
-            this.logger.warn(
-              `completePrivateWithSignature (linked-wallet fallback) failed for link ${id}: ${(fallbackErr as Error)?.message}`,
-            );
-            throw new BadRequestException((fallbackErr as Error)?.message ?? message);
-          }
-        } else {
-          throw new BadRequestException(message);
-        }
-      } else {
-        throw new BadRequestException(message);
-      }
-    }
-    this.logger.log(`[SendPayment] completePrivateWithSignature DONE id=${id} amount=${linkAmount} USDC marking FUNDED`);
-    const { data: updateData, error } = await this.supabaseService.sendPaymentLinks
-      .update({
-        status: 'FUNDED',
-        private_claim_activity_id: body.activityId,
-        private_claim_passphrase: body.passphrase,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .select()
-      .single();
-    if (error) throw new BadRequestException('Failed to update link');
-    return this.toPublic(updateData);
   }
 
   /**
@@ -590,9 +299,46 @@ export class SendPaymentService {
       throw new BadRequestException('Link is not ready to claim');
     }
 
+    const linkAny = link as Record<string, unknown>;
+    if (!link.burner_encrypted_secret && linkAny.recipient_solana_pubkey) {
+      if (link.status !== 'FUNDED') {
+        throw new BadRequestException(
+          'Payment not yet received. The sender must complete the private MagicBlock transfer first.',
+        );
+      }
+      const matchesPer = await this.usersService.verifyRecipientIdentityForSendPayment(
+        claimantPrivyUserId,
+        link.recipient_type as 'email' | 'twitter' | 'username',
+        link.recipient_identifier,
+      );
+      if (!matchesPer) {
+        throw new ForbiddenException(
+          'You are not the intended recipient of this payment. Log in with the account the sender used.',
+        );
+      }
+      const recipientWalletAddr = await this.usersService.getSolanaWalletAddress(claimantPrivyUserId);
+      if (recipientWalletAddr !== String(linkAny.recipient_solana_pubkey)) {
+        throw new ForbiddenException('Recipient wallet does not match this payment link.');
+      }
+      const { error: claimErr } = await this.supabaseService.sendPaymentLinks
+        .update({
+          status: 'CLAIMED',
+          receiver_privy_user_id: claimantPrivyUserId,
+          claim_tx_hash: 'per-magicblock',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id);
+      if (claimErr) throw new BadRequestException('Failed to update link');
+      this.logger.log(`[SendPayment] PER claim completed linkId=${id} correlationId=${id}`);
+      return {
+        claim_tx_hash: 'per-magicblock',
+        amount_received: parseFloat(String(link.amount)).toFixed(DECIMALS),
+      };
+    }
+
     const matches = await this.usersService.verifyRecipientIdentityForSendPayment(
       claimantPrivyUserId,
-      link.recipient_type as 'email' | 'twitter',
+      link.recipient_type as 'email' | 'twitter' | 'username',
       link.recipient_identifier,
     );
     if (!matches) {
@@ -607,7 +353,7 @@ export class SendPaymentService {
       private_claim_passphrase?: string | null;
     };
 
-    const mint = USDC_MINT;
+    const mint = this.usdcMint;
     const recipientPubkey = new PublicKey(recipientWallet);
     const recipientAta = await getAssociatedTokenAddress(mint, recipientPubkey);
 
@@ -756,7 +502,15 @@ export class SendPaymentService {
       throw new BadRequestException('Link cannot be reclaimed');
     }
     if (!link.burner_encrypted_secret) {
-      throw new BadRequestException('Invalid link data');
+      if (link.status === 'OPEN') {
+        await this.supabaseService.sendPaymentLinks
+          .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
+          .eq('id', id);
+        return { reclaim_tx_hash: 'cancelled-per', amount_reclaimed: '0' };
+      }
+      throw new BadRequestException(
+        'This link uses MagicBlock PER. Use the app to move funds from program deposits.',
+      );
     }
 
     const linkRow = link as typeof link & {
@@ -765,7 +519,7 @@ export class SendPaymentService {
       private_claim_activity_id?: string | null;
     };
 
-    const mint = USDC_MINT;
+    const mint = this.usdcMint;
     const senderWallet = await this.usersService.getSolanaWalletAddress(senderUserId);
     const senderPubkey = new PublicKey(senderWallet);
     const senderAta = await getAssociatedTokenAddress(mint, senderPubkey);
@@ -906,7 +660,7 @@ export class SendPaymentService {
     return data as any;
   }
 
-  private normalizeIdentifier(type: 'email' | 'twitter', value: string): string {
+  private normalizeIdentifier(type: 'email' | 'twitter' | 'username', value: string): string {
     const v = value.trim();
     if (type === 'email') return v.toLowerCase();
     return v.replace(/^@/, '').toLowerCase();
