@@ -106,6 +106,8 @@ export class ClaimsController {
    * Declared before :id so "solana-sponsor/fee-payer" is not captured as claim id.
    */
   @Get('solana-sponsor/fee-payer')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Get Solana fee payer address for sponsorship' })
   @ApiResponse({
     status: 200,

@@ -24,9 +24,14 @@ export function isPrivyGasSponsorNotConfiguredError(err: unknown): boolean {
   return /gas sponsorship is not configured/i.test(msg);
 }
 
-export async function fetchSolanaFeePayerAddress(): Promise<string | null> {
+export async function fetchSolanaFeePayerAddress(privyUserId?: string | null): Promise<string | null> {
+  if (!privyUserId) return null;
   try {
-    const r = await fetch(`${BACKEND_URL}/claims/solana-sponsor/fee-payer`);
+    const r = await fetch(`${BACKEND_URL}/claims/solana-sponsor/fee-payer`, {
+      headers: {
+        "x-privy-user-id": privyUserId,
+      },
+    });
     if (!r.ok) return null;
     const j = (await r.json()) as { feePayerAddress?: string | null };
     const a = j.feePayerAddress?.trim();

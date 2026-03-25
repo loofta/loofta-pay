@@ -52,7 +52,7 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
   } = params;
   const chain = getPrivySolanaChain();
 
-  const feePayerAddr = await fetchSolanaFeePayerAddress();
+  const feePayerAddr = await fetchSolanaFeePayerAddress(privyUserId);
   if (feePayerAddr && privyUserId) {
     try {
       const unsignedTx = await buildUSDCTransferTransaction({
