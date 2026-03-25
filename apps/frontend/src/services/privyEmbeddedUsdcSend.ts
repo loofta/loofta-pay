@@ -8,8 +8,8 @@ import bs58 from "bs58";
 import { getPrivySolanaChain } from "@/lib/solanaCluster";
 import { buildUSDCTransferTransaction } from "@/services/solanaTransfer";
 import {
-  fetchSolanaFeePayerAddress,
   isPrivyGasSponsorNotConfiguredError,
+  prepareSponsoredTransaction,
   signAndBroadcastSponsoredTx,
 } from "@/services/solanaSponsor";
 
@@ -52,8 +52,7 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
   } = params;
   const chain = getPrivySolanaChain();
 
-  const feePayerAddr = await fetchSolanaFeePayerAddress(privyUserId);
-  if (feePayerAddr && privyUserId) {
+  if (privyUserId) {
     try {
       const unsignedTx = await buildUSDCTransferTransaction({
         senderAddress,
@@ -61,14 +60,18 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
         amountUSDC,
         connection,
         memo: memo ?? undefined,
-        feePayerAddress: feePayerAddr,
       });
+      const preparedBytes = await prepareSponsoredTransaction(
+        new Uint8Array(unsignedTx.serialize()),
+        privyUserId,
+        "embedded-usdc",
+      );
       const { signedTransaction } = await signTransaction({
-        transaction: new Uint8Array(unsignedTx.serialize()),
+        transaction: preparedBytes,
         wallet,
         chain,
       });
-      return await signAndBroadcastSponsoredTx(signedTransaction, privyUserId);
+      return await signAndBroadcastSponsoredTx(signedTransaction, privyUserId, "embedded-usdc");
     } catch (e) {
       console.warn("[privyEmbeddedUsdcSend] Loofta fee payer path failed, trying Privy sponsor", e);
     }
