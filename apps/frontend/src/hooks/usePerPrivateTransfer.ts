@@ -191,7 +191,7 @@ export function usePerPrivateTransfer() {
       const minLamports = cluster === "mainnet-beta" ? 5_000_000 : 12_000_000;
       let sponsorPk: PublicKey | null = null;
       if (options?.privyUserId) {
-        const addr = await fetchSolanaFeePayerAddress();
+        const addr = await fetchSolanaFeePayerAddress(options.privyUserId);
         if (addr) {
           try {
             sponsorPk = new PublicKey(addr);
