@@ -540,10 +540,12 @@ export function usePerPrivateTransfer() {
         return { ...action, tx };
       });
 
-      // Session signer for ephemeral txs must be present.
+      // Ephemeral txs: session keypair signs first (not sent through sponsor endpoint).
+      // createSessionTx must NOT be pre-signed: some wallet implementations can rebuild
+      // the tx during signing and drop existing signatures.
       for (let i = 0; i < actions.length; i++) {
         const action = actions[i];
-        if (action.blockhash === ephemeralBlockhash || action.name === "createSessionTx") {
+        if (action.blockhash === ephemeralBlockhash) {
           action.tx.partialSign(sessionKp);
           actions[i].signedTx = action.tx;
         }
@@ -560,6 +562,9 @@ export function usePerPrivateTransfer() {
       const signedWalletTxs = await wallet.signAllTransactions(walletTxs);
       for (let i = 0; i < userSignedActions.length; i++) {
         userSignedActions[i].signedTx = signedWalletTxs[i];
+        if (userSignedActions[i].needsSessionKpAfterWallet) {
+          userSignedActions[i].signedTx.partialSign(sessionKp);
+        }
       }
 
       // Ephemeral txs: full sign with session keypair.
@@ -577,13 +582,15 @@ export function usePerPrivateTransfer() {
         onProgress?.({ phase: "broadcasting", step: action.name, index: i + 1, total: actions.length });
         let signature = "";
         try {
-          if (useBackendSponsor && options?.privyUserId && sponsorPk && action.name !== "ephemeralTx") {
+          const isEphemeral = action.blockhash === ephemeralBlockhash;
+          if (useBackendSponsor && options?.privyUserId && sponsorPk && !isEphemeral) {
             // Sponsor path: backend co-signs and broadcasts wallet-signed tx bytes (for rent/fees).
             const bytes = action.signedTx.serialize({ requireAllSignatures: false, verifySignatures: false });
             signature = await signAndBroadcastSponsoredTx(bytes, options.privyUserId);
+            await waitForSignatureConfirmation(action.connection, signature);
           } else {
             signature = await action.connection.sendRawTransaction(action.signedTx.serialize(), { preflightCommitment: "confirmed" });
-            await action.connection.confirmTransaction(signature);
+            await waitForSignatureConfirmation(action.connection, signature);
           }
           await action.callback?.(signature);
           lastSignature = signature;
