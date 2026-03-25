@@ -647,33 +647,25 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const solanaPayment = useSolanaPayment({ enabled: showPayNowModal });
   const { transfer: perTransfer } = usePerPrivateTransfer();
 
-  // Enforce private mode if claim requires it
+  // Global env flag now acts as private-only mode everywhere.
   const requiresPrivate = claim?.is_private === true;
-  const privatePayActive = requiresPrivate || isPrivateMode || PRIVATE_PAYMENT_ENABLED;
+  const privateRequired = PRIVATE_PAYMENT_ENABLED || requiresPrivate;
+  const privatePayActive = privateRequired || isPrivateMode;
 
-  // Auto-set private mode when claim requires it or app defaults to private (PER)
+  // Auto-set private mode when private-only is required globally or by claim.
   useEffect(() => {
-    if (requiresPrivate || PRIVATE_PAYMENT_ENABLED) {
+    if (privateRequired) {
       setIsPrivateMode(true);
     }
-  }, [requiresPrivate, PRIVATE_PAYMENT_ENABLED]);
+  }, [privateRequired]);
 
   // Prevent changing from private mode if claim requires it
   const handleSetPrivateMode = (value: boolean) => {
-    if (PRIVATE_PAYMENT_ENABLED && !value) {
+    if (privateRequired && !value) {
       toast({
         variant: "destructive",
         title: "Private payment is always on",
         description: "This app is configured for private payments only.",
-      });
-      return;
-    }
-    if (requiresPrivate && !value) {
-      // Don't allow disabling private mode if claim requires it
-      toast({
-        variant: "destructive",
-        title: "Private payment required",
-        description: "This payment link requires private payments only. Standard payment is not available.",
       });
       return;
     }
@@ -1012,8 +1004,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       const userWalletAddress = wallets[0]?.address;
 
       // Determine if this is a private payment
-      const isUSDCOnSolana = selectedFrom.symbol === 'USDC' && selectedFrom.chain?.toLowerCase() === 'solana';
-      const isPrivatePayment = requiresPrivate || (isPrivateMode && !isUSDCOnSolana);
+      const isPrivatePayment = privateRequired || isPrivateMode;
 
       // For private cross-chain to Solana: use Phantom wallet (USDC-on-Solana payments use Phantom, not Privy)
       const destChainLower = (claim.to_chain || '').toLowerCase();
@@ -2213,19 +2204,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                 )}
 
-                {PRIVATE_PAYMENT_ENABLED && !requiresPrivate && (
-                  <div className="mt-5 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-600 shrink-0 mt-0.5">
-                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                    </svg>
-                    <span className="font-medium leading-snug">
-                      Payments are private by default on MagicBlock PER: the transfer runs on the ephemeral rollup, so the recipient does not see your wallet address.
-                    </span>
-                  </div>
-                )}
-
                 {/* Show private-only indicator if claim requires it */}
-                {requiresPrivate && (
+                {privateRequired && (
                   <div className="mt-5 flex items-center gap-2 text-sm text-gray-600">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0">
                       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
