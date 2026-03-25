@@ -2584,6 +2584,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           onClick={() => {
                             const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
                               selectedFrom?.chain === usdcSolanaToken?.chain;
+                            // Global/private-required mode must always route through MagicBlock PER.
+                            if (privatePayActive) {
+                              onPayPrivately();
+                              return;
+                            }
                             if (!authenticated && !isUSDCOnSolana) {
                               login();
                               return;
@@ -2609,12 +2614,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               : (() => {
                                 const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
                                   selectedFrom?.chain === usdcSolanaToken?.chain;
+                                if (privatePayActive) {
+                                  return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
+                                }
                                 if (!authenticated && !isUSDCOnSolana) return false;
                                 if (isUSDCOnSolana) {
                                   return (!usdcSolanaToken || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
-                                }
-                                if (privatePayActive) {
-                                  return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
                                 }
                                 return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
                               })()
@@ -2623,8 +2628,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           loadingText={(() => {
                             const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
                               selectedFrom?.chain === usdcSolanaToken?.chain;
-                            if (isUSDCOnSolana) return "Opening…";
                             if (privatePayActive) return "Processing private payment…";
+                            if (isUSDCOnSolana) return "Opening…";
                             return "Preparing…";
                           })()}
                         >
@@ -2633,10 +2638,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               selectedFrom?.chain === usdcSolanaToken?.chain;
                             if (!authenticated && !isUSDCOnSolana) return "Login to pay";
                             if (requiresPrivate && !isPrivateMode) return "Private payment required";
+                            if (privatePayActive) return "Pay privately";
                             if (isUSDCOnSolana) return "Pay now";
-                            if (privatePayActive) {
-                              return "Get deposit address";
-                            }
                             return "Get deposit address";
                           })()}
                         </GradientActionButton>

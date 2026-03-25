@@ -104,19 +104,37 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
   const [updatingToTwitter, setUpdatingToTwitter] = useState(false);
+  const [twitterLinkedOptimistic, setTwitterLinkedOptimistic] = useState(false);
+  const [linkingMethod, setLinkingMethod] = useState<"twitter" | "email" | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
   const { linkTwitter, linkEmail } = useLinkAccount({
-    onSuccess: () => {
+    onSuccess: (arg: { linkedAccount?: { type?: string }; linkMethod?: string } | undefined) => {
+      const linkedType = arg?.linkedAccount?.type;
+      const didLinkTwitter =
+        linkedType === "twitter_oauth" ||
+        linkedType === "twitter" ||
+        linkedType === "x" ||
+        arg?.linkMethod === "twitter" ||
+        linkingMethod === "twitter";
+      if (didLinkTwitter) {
+        // Keep UI stable until Privy user object refreshes.
+        setTwitterLinkedOptimistic(true);
+      }
+      setLinkingMethod(null);
       toast({ title: "Account linked", description: "Sign-in method added successfully." });
     },
     onError: (err: unknown) => {
       const msg = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : String(err);
+      setLinkingMethod(null);
       if (/already been linked|already linked|linked to another user/i.test(msg)) {
+        const isTwitterConflict = linkingMethod === "twitter" || /twitter|x|oauth/i.test(msg);
         toast({
           variant: "destructive",
-          title: "Email already in use",
-          description: "This email is linked to another account. Sign in with that email to use it.",
+          title: isTwitterConflict ? "X account already in use" : "Email already in use",
+          description: isTwitterConflict
+            ? "This X account is already linked to another user. Use another X account or sign in to the existing account."
+            : "This email is linked to another account. Sign in with that email to use it.",
         });
       } else {
         toast({ variant: "destructive", title: "Could not link", description: msg || "Try again." });
@@ -129,13 +147,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
 
   const linkedAccounts = (privyUser?.linkedAccounts || []) as Array<{ type?: string; username?: string; name?: string; address?: string; subject?: string }>;
   const hasTwitter = linkedAccounts.some((a) => a.type && TWITTER_TYPES.includes(a.type as any));
+  const hasTwitterLinked = hasTwitter || twitterLinkedOptimistic;
   const hasEmail = linkedAccounts.some((a) => a.type === "email");
   const twitterHandle = useMemo(() => getTwitterUsername(linkedAccounts), [linkedAccounts]);
   const linkedEmailAddress = useMemo(() => {
     const acc = linkedAccounts.find((a) => a.type === "email");
     return acc && "address" in acc ? (acc as { address: string }).address : null;
   }, [linkedAccounts]);
-  const canUpdateToTwitter = hasTwitter && twitterHandle && username !== twitterHandle;
+  const canUpdateToTwitter = hasTwitterLinked && twitterHandle && username !== twitterHandle;
 
   // Get Solana wallet address from Privy
   // Use linkedAccounts - these are wallets tied to user (what shows in Privy dashboard)
@@ -843,7 +862,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             <div>
               <Label className="text-sm font-medium mb-2 block text-gray-300">Sign-in methods</Label>
               {/* Always show what's already connected */}
-              {(hasEmail || hasTwitter) && (
+              {(hasEmail || hasTwitterLinked) && (
                 <div className="mb-3 p-3 rounded-xl bg-white/5 border border-white/10 space-y-2">
                   <p className="text-xs font-medium text-gray-400 mb-1.5">Connected</p>
                   {hasEmail && linkedEmailAddress && (
@@ -855,7 +874,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       <span className="truncate">{linkedEmailAddress}</span>
                     </div>
                   )}
-                  {hasTwitter && twitterHandle && (
+                  {hasTwitterLinked && twitterHandle && (
                     <div className="flex items-center gap-2 text-sm text-white/90">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="shrink-0 text-gray-400">
                         <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
@@ -869,12 +888,17 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 Add a second method so you can recover your account.
               </p>
               <div className="space-y-1">
-                {!hasTwitter && (
+                {!hasTwitterLinked && (
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       setShowSettingsModal(false);
-                      linkTwitter();
+                      setLinkingMethod("twitter");
+                      try {
+                        await linkTwitter();
+                      } catch {
+                        // Errors are surfaced via useLinkAccount onError.
+                      }
                     }}
                     title="You'll be redirected to Twitter to login"
                     className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-3 text-orange-400 hover:bg-orange-400/10"
@@ -888,7 +912,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 {!hasEmail && (
                   <button
                     type="button"
-                    onClick={() => linkEmail()}
+                    onClick={async () => {
+                      setLinkingMethod("email");
+                      try {
+                        await linkEmail();
+                      } catch {
+                        // Errors are surfaced via useLinkAccount onError.
+                      }
+                    }}
                     className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-3 text-gray-300 hover:bg-white/10 hover:text-white"
                   >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
