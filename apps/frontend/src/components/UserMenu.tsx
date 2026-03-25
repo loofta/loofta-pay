@@ -20,6 +20,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Settings } from "lucide-react";
+import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 /** Privy uses type "twitter_oauth" for Twitter (not "twitter" or "x"). */
 const TWITTER_TYPES = ["twitter_oauth", "twitter", "x"] as const;
 
@@ -670,7 +671,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     </div>
                   </motion.div>
 
-                  {/* Private Payment Option — Coming soon */}
+                  {/* Private payment status */}
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -682,14 +683,22 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         <span className="text-base font-semibold text-white">
                           🔒 Private Payments
                         </span>
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                          Coming soon
-                        </span>
+                        {PRIVATE_PAYMENT_ENABLED ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            Enabled
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            Coming soon
+                          </span>
+                        )}
                       </div>
 
                     </div>
                     <p className="text-sm text-slate-400 mt-3 w-full block">
-                      When available, all payments to your link wi use Magicblock Private Ephemeral Rollup for privacy.
+                      {PRIVATE_PAYMENT_ENABLED
+                        ? "All payments to your link use the MagicBlock Private Ephemeral Rollup for privacy."
+                        : "When available, all payments to your link will use the MagicBlock Private Ephemeral Rollup for privacy."}
                     </p>
                   </motion.div>
 
