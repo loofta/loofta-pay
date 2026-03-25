@@ -44,7 +44,11 @@ import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
 import { isEvmChainId } from "@/config/biconomy";
 import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
-import { useSignMessage as usePrivySignMessage } from "@privy-io/react-auth/solana";
+import {
+  useSignMessage as usePrivySignMessage,
+  useWallets as useSolanaWallets,
+  useSignTransaction as usePrivySolanaSignTransaction,
+} from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
 import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
@@ -61,9 +65,26 @@ import { getUsdcMint } from "@/lib/per/constants";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
 import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
-import { usePerPrivateTransfer } from "@/hooks/usePerPrivateTransfer";
-import { phantomWalletToAnchorWallet } from "@/lib/per/signer";
+import { usePerPrivateTransfer, type PerTransferProgress } from "@/hooks/usePerPrivateTransfer";
+import { phantomWalletToAnchorWallet, privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
 import { PaymentHistoryClaim } from "@/app/history/page";
+
+function formatPerTransferStepName(step: string): string {
+  const labels: Record<string, string> = {
+    sessionAndRecipientInitTx: "Session & setup",
+    combinedBaseTx: "Session & on-chain steps",
+    createSessionTx: "Create session",
+    recipientInitTx: "Recipient deposit",
+    recipientAndMainnetTx: "Recipient & on-chain steps",
+    baseSolanaOpsTx: "Deposit & delegation",
+    preliminaryTx: "Prepare funds (rollup)",
+    ephemeralTx: "Private transfer",
+    revokeSessionTx: "Close session",
+    sponsoredBaseTx: "Sponsor on-chain steps",
+    mainnetTx: "Deposit & delegation",
+  };
+  return labels[step] ?? step;
+}
 
 /** When embedInApp: only the pay content in a dark card (no tabs, no full page). When false: full page with SendReceiveTabs and white card. */
 function ClaimPayLayout({
@@ -641,11 +662,19 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   /** When set, we're waiting for on-chain confirmation; show tracker UI in Pay Now modal. */
   const [confirmingTxSignature, setConfirmingTxSignature] = useState<string | null>(null);
   const [confirmingTxSource, setConfirmingTxSource] = useState<"loofta" | "wallet" | null>(null);
+  /** MagicBlock PER: signing popup + sequential broadcast (stay on page). */
+  const [perTransferPhase, setPerTransferPhase] = useState<PerTransferProgress | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const { signMessage: privySignMessage } = usePrivySignMessage();
+  const { wallets: solanaStandardWallets } = useSolanaWallets();
+  const { signTransaction: privySolanaSignTransaction } = usePrivySolanaSignTransaction();
   const solanaPayment = useSolanaPayment({ enabled: showPayNowModal });
   const { transfer: perTransfer } = usePerPrivateTransfer();
+
+  /** Overlay / Escape / close must not dismiss Pay Now while Privy, Phantom, or confirmation is in flight. */
+  const payNowModalDismissLocked =
+    confirmingTxSignature !== null || payingWithLoofta || payingWithWallet || perTransferPhase !== null;
 
   // Global env flag now acts as private-only mode everywhere.
   const requiresPrivate = claim?.is_private === true;
@@ -1221,7 +1250,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(claimAmountUSD);
   const balanceData = solanaPayment.isBalanceLoading ? undefined : { balanceUSD: looftaBalanceUSD };
 
-  /** Direct Solana only; never Near-Intent. Recipient = burner for pending, user address for existing. See docs/CLAIM_PAYMENT_ROUTING.md */
+  /** Phantom → MagicBlock PER. Recipient = burner for pending, user address for existing. */
   async function payWithWallet() {
     const effectiveRecipient = getEffectiveRecipient(claim);
     if (!claim?.id || !effectiveRecipient || !claim?.amount) {
@@ -1246,10 +1275,16 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     }
     setPayingWithWallet(true);
     setPayWithWalletError(null);
+    setPerTransferPhase({ phase: "preparing" });
     try {
-      const { publicKey } = await phantom.connect();
+      let publicKey: PublicKey;
+      try {
+        const res = phantom.publicKey ? { publicKey: phantom.publicKey } : await phantom.connect();
+        publicKey = res.publicKey;
+      } catch {
+        throw new Error("Could not connect Phantom. Please try again.");
+      }
       if (!publicKey) throw new Error("Could not get wallet address from Phantom.");
-      const senderAddress = publicKey.toBase58();
 
       const rawRecipient = effectiveRecipient.replace(/\s/g, "");
       if (/^0x/i.test(rawRecipient)) {
@@ -1259,46 +1294,23 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         throw new Error("Recipient address is not a valid Solana address.");
       }
 
-      const amountRaw = Math.floor(amountUSD * 1e6);
-      if (amountRaw <= 0) throw new Error("Invalid amount to send.");
-
-      // Direct USDC transfer: Phantom -> claim recipient/burner (no Near-Intent)
-      const connection = new Connection(getSolanaHttpRpc(), "confirmed");
-      const mint = getUsdcMint();
-      const sender = new PublicKey(senderAddress);
-      const recipient = new PublicKey(rawRecipient);
-
-      const senderAta = getAssociatedTokenAddressSync(mint, sender, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const recipientAta = getAssociatedTokenAddressSync(mint, recipient, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-
-      const instructions = [];
-      const recipientAccountInfo = await connection.getAccountInfo(recipientAta);
-      if (!recipientAccountInfo) {
-        instructions.push(
-          createAssociatedTokenAccountInstruction(sender, recipientAta, recipient, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
-        );
-      }
-      instructions.push(
-        createTransferInstruction(senderAta, recipientAta, sender, amountRaw, [], TOKEN_PROGRAM_ID)
-      );
-
-      const { blockhash } = await connection.getLatestBlockhash("confirmed");
-      const message = new TransactionMessage({
-        payerKey: sender,
-        recentBlockhash: blockhash,
-        instructions,
-      }).compileToV0Message();
-      const transaction = new VersionedTransaction(message);
-
-      const signedTx = await phantom.signTransaction(transaction);
-      const sig = await connection.sendRawTransaction(signedTx.serialize(), {
-        skipPreflight: true,
-        maxRetries: 3,
-        preflightCommitment: "processed",
+      const anchorWallet = phantomWalletToAnchorWallet({
+        publicKey,
+        signTransaction: async (tx: Transaction) => {
+          const signed = await phantom.signTransaction(tx as unknown as VersionedTransaction);
+          return signed as unknown as Transaction;
+        },
       });
+      const mint = getUsdcMint().toBase58();
+
+      const sig = await perTransfer(anchorWallet, rawRecipient, mint, amountUSD, {
+        onProgress: setPerTransferPhase,
+      });
+      setPerTransferPhase(null);
       setConfirmingTxSignature(sig);
       setConfirmingTxSource("wallet");
 
+      const connection = new Connection(getSolanaHttpRpc(), "confirmed");
       const confirmed = await waitForConfirmation(connection, sig, 90_000);
       if (!confirmed) {
         throw new Error(
@@ -1306,13 +1318,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         );
       }
 
-      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana wallet)" }, user?.id);
+      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Phantom / PER)" }, user?.id);
       setStatus("SUCCESS");
       useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
       await claimQuery.refetch();
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
       setShowPayNowModal(false);
-      toast({ title: "Payment confirmed", description: `$${amountUSD.toFixed(2)} sent from your wallet.` });
+      toast({ title: "Payment confirmed", description: `$${amountUSD.toFixed(2)} USDC sent via MagicBlock PER.` });
     } catch (e: any) {
       console.error("[PayWithWallet] Error:", e);
       const message = e?.message || "Could not complete payment with wallet.";
@@ -1320,6 +1332,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       toast({ variant: "destructive", title: "Payment failed", description: message });
     } finally {
       setPayingWithWallet(false);
+      setPerTransferPhase(null);
       setConfirmingTxSignature(null);
       setConfirmingTxSource(null);
     }
@@ -1368,12 +1381,25 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         throw new Error("Recipient address is not a valid Solana address for this payment.");
       }
 
+      const wallet = solanaStandardWallets?.find((w) => w.address === senderAddress);
+      if (!wallet) {
+        toast({
+          variant: "destructive",
+          title: "Wallet not ready",
+          description: "Could not find your Loofta Solana wallet. Try logging in again.",
+        });
+        return;
+      }
+
       const connection = new Connection(getSolanaHttpRpc(), "confirmed");
-      const sig = await solanaPayment.makePayment({
-        amount: amountUSD,
-        recipientAddress: rawRecipient,
-        claimId: claim.id,
+      const anchorWallet = privyStandardWalletToAnchorWallet(wallet, privySolanaSignTransaction);
+      const mint = getUsdcMint().toBase58();
+      setPerTransferPhase({ phase: "preparing" });
+      const sig = await perTransfer(anchorWallet, rawRecipient, mint, amountUSD, {
+        privyUserId: user?.id,
+        onProgress: setPerTransferPhase,
       });
+      setPerTransferPhase(null);
       setConfirmingTxSignature(sig);
       setConfirmingTxSource("loofta");
 
@@ -1384,7 +1410,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         );
       }
 
-      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Solana)" }, user?.id);
+      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Loofta / PER)" }, user?.id);
       setStatus("SUCCESS");
       useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
       await claimQuery.refetch();
@@ -1392,7 +1418,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       setShowPayNowModal(false);
       toast({
         title: "Payment confirmed",
-        description: `$${amountUSD.toFixed(2)} USDC sent successfully.`,
+        description: `$${amountUSD.toFixed(2)} USDC sent via MagicBlock PER.`,
       });
     } catch (e: any) {
       console.error("[PayWithLoofta] Error:", e);
@@ -1405,6 +1431,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       });
     } finally {
       setPayingWithLoofta(false);
+      setPerTransferPhase(null);
       setConfirmingTxSignature(null);
       setConfirmingTxSource(null);
     }
@@ -2584,11 +2611,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           onClick={() => {
                             const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
                               selectedFrom?.chain === usdcSolanaToken?.chain;
-                            // Global/private-required mode must always route through MagicBlock PER.
-                            if (privatePayActive) {
-                              onPayPrivately();
-                              return;
-                            }
                             if (!authenticated && !isUSDCOnSolana) {
                               login();
                               return;
@@ -2602,11 +2624,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               setShowPayNowModal(true);
                               return;
                             }
-                            if (privatePayActive) {
-                              onPayPrivately();
-                            } else {
-                              onPrepare();
-                            }
+                            if (privatePayActive) return onPayPrivately();
+                            return onPrepare();
                           }}
                           disabled={
                             requiresPrivate && !isPrivateMode
@@ -2638,7 +2657,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               selectedFrom?.chain === usdcSolanaToken?.chain;
                             if (!authenticated && !isUSDCOnSolana) return "Login to pay";
                             if (requiresPrivate && !isPrivateMode) return "Private payment required";
-                            if (privatePayActive) return "Pay privately";
                             if (isUSDCOnSolana) return "Pay now";
                             return "Get deposit address";
                           })()}
@@ -3139,21 +3157,34 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       <Dialog
         open={showPayNowModal}
         onOpenChange={(open) => {
+          if (!open && payNowModalDismissLocked) return;
           setShowPayNowModal(open);
           if (open) {
             setPayWithLooftaError(null);
             setPayWithWalletError(null);
             setConfirmingTxSignature(null);
             setConfirmingTxSource(null);
+            setPerTransferPhase(null);
           }
         }}
       >
         <DialogContent
-          className="sm:max-w-md p-8 border-white/10 bg-[#0f0f12] text-white shadow-2xl [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-muted-foreground]:!text-slate-400 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.ring-offset-background]:!ring-offset-[#0f0f12] [&_.bg-red-50]:!bg-red-500/15 [&_.border-red-200]:!border-red-400/30 [&_.text-red-800]:!text-red-200 [&_.bg-emerald-50]:!bg-emerald-500/15 [&_.border-emerald-200]:!border-emerald-400/30 [&_.bg-emerald-100]:!bg-emerald-500/20 [&_.text-emerald-600]:!text-emerald-300 [&_.bg-orange-50]:!bg-orange-500/15 [&_.border-orange-200]:!border-orange-400/30 [&_.bg-orange-100]:!bg-orange-500/20 [&_.text-orange-600]:!text-orange-300 [&_.text-orange-500]:!text-orange-300 [&_.bg-amber-50]:!bg-amber-500/15 [&_.text-amber-600]:!text-amber-300 [&>*:last-child]:!text-slate-400 [&>*:last-child:hover]:!text-white [&>*:last-child:hover]:!bg-white/10"
+          className={cn(
+            "sm:max-w-md p-8 border-white/10 bg-[#0f0f12] text-white shadow-2xl [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-muted-foreground]:!text-slate-400 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.ring-offset-background]:!ring-offset-[#0f0f12] [&_.bg-red-50]:!bg-red-500/15 [&_.border-red-200]:!border-red-400/30 [&_.text-red-800]:!text-red-200 [&_.bg-emerald-50]:!bg-emerald-500/15 [&_.border-emerald-200]:!border-emerald-400/30 [&_.bg-emerald-100]:!bg-emerald-500/20 [&_.text-emerald-600]:!text-emerald-300 [&_.bg-orange-50]:!bg-orange-500/15 [&_.border-orange-200]:!border-orange-400/30 [&_.bg-orange-100]:!bg-orange-500/20 [&_.text-orange-600]:!text-orange-300 [&_.text-orange-500]:!text-orange-300 [&_.bg-amber-50]:!bg-amber-500/15 [&_.text-amber-600]:!text-amber-300 [&>*:last-child]:!text-slate-400 [&>*:last-child:hover]:!text-white [&>*:last-child:hover]:!bg-white/10",
+            payNowModalDismissLocked && "[&>button.absolute.right-4.top-4]:pointer-events-none [&>button.absolute.right-4.top-4]:opacity-0",
+          )}
           aria-describedby={undefined}
+          onPointerDownOutside={(e) => { if (payNowModalDismissLocked) e.preventDefault(); }}
+          onEscapeKeyDown={(e) => { if (payNowModalDismissLocked) e.preventDefault(); }}
         >
           <DialogTitle id="pay-now-dialog-title" className="sr-only">
-            {confirmingTxSignature ? "Transaction on the way" : claim?.amount ? `Pay $${claimAmountUSD.toFixed(2)}` : "Pay now"}
+            {confirmingTxSignature
+              ? "Transaction on the way"
+              : perTransferPhase
+                ? "Payment in progress"
+                : claim?.amount
+                  ? `Pay $${claimAmountUSD.toFixed(2)}`
+                  : "Pay now"}
           </DialogTitle>
           {confirmingTxSignature ? (
             <>
@@ -3204,6 +3235,47 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 >
                   View transaction on {getExplorerName(selectedFrom?.chain ?? undefined)}
                 </a>
+              </div>
+            </>
+          ) : (payingWithLoofta || payingWithWallet) && perTransferPhase ? (
+            <>
+              <DialogHeader className="flex flex-col items-center justify-center text-center space-y-0 pb-4 sm:text-center" aria-hidden>
+                <div className="mb-4 flex justify-center">
+                  <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center">
+                    <Loader2 className="w-8 h-8 animate-spin text-orange-600" />
+                  </div>
+                </div>
+                <h2 className="text-xl font-semibold text-gray-900 text-center">
+                  {perTransferPhase.phase === "preparing" && "Preparing payment"}
+                  {perTransferPhase.phase === "awaiting_signature" && "Approve in your wallet"}
+                  {perTransferPhase.phase === "broadcasting" && "Finishing on-chain steps"}
+                </h2>
+                <p className="pt-2 text-sm text-center text-muted-foreground max-w-sm">
+                  {perTransferPhase.phase === "preparing" &&
+                    "Setting up MagicBlock session and transactions. Please keep this window open."}
+                  {perTransferPhase.phase === "awaiting_signature" && (
+                    <>
+                      Your wallet may show{" "}
+                      <span className="font-medium text-gray-800">
+                        {perTransferPhase.walletTransactionCount} transaction
+                        {perTransferPhase.walletTransactionCount === 1 ? "" : "s"}
+                      </span>{" "}
+                      in one approval. Do not close this tab until you finish signing.
+                    </>
+                  )}
+                  {perTransferPhase.phase === "broadcasting" && (
+                    <>
+                      Step {perTransferPhase.index} of {perTransferPhase.total}:{" "}
+                      <span className="font-medium text-orange-600">
+                        {formatPerTransferStepName(perTransferPhase.step)}
+                      </span>
+                      . Confirmations can take a few seconds each.
+                    </>
+                  )}
+                </p>
+              </DialogHeader>
+              <div className="rounded-lg border border-amber-200 bg-amber-50/90 p-3 text-center text-sm text-amber-950">
+                Stay on this page until the payment completes.
               </div>
             </>
           ) : (

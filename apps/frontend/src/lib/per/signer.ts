@@ -1,5 +1,7 @@
 import type { Wallet } from "@coral-xyz/anchor";
+import type { ConnectedStandardSolanaWallet } from "@privy-io/react-auth/solana";
 import { PublicKey, Transaction, VersionedTransaction } from "@solana/web3.js";
+import { getPrivySolanaChain } from "@/lib/solanaCluster";
 
 type PhantomLike = {
   publicKey: { toBase58(): string };
@@ -51,6 +53,47 @@ export function privyWalletToAnchorWallet(wallet: PrivySolWallet): Wallet {
       const out: T[] = [];
       for (const t of txs) {
         out.push(await signTransaction(t));
+      }
+      return out;
+    },
+  } as Wallet;
+}
+
+type PrivySolanaChain = ReturnType<typeof getPrivySolanaChain>;
+
+/**
+ * Privy embedded wallet from `useWallets()` + `useSignTransaction()` — implements Anchor `Wallet`
+ * for PER / MagicBlock flows.
+ */
+export function privyStandardWalletToAnchorWallet(
+  wallet: ConnectedStandardSolanaWallet,
+  signTransaction: (input: {
+    transaction: Uint8Array;
+    wallet: ConnectedStandardSolanaWallet;
+    chain?: PrivySolanaChain;
+  }) => Promise<{ signedTransaction: Uint8Array }>,
+): Wallet {
+  const publicKey = new PublicKey(wallet.address);
+  const chain = getPrivySolanaChain();
+  const signOne = async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
+    if (tx instanceof VersionedTransaction) {
+      throw new Error("PER flow expects legacy Transaction");
+    }
+    const serialized = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+    const { signedTransaction } = await signTransaction({
+      transaction: serialized,
+      wallet,
+      chain,
+    });
+    return Transaction.from(signedTransaction) as T;
+  };
+  return {
+    publicKey,
+    signTransaction: signOne,
+    signAllTransactions: async <T extends Transaction | VersionedTransaction>(txs: T[]) => {
+      const out: T[] = [];
+      for (const t of txs) {
+        out.push(await signOne(t));
       }
       return out;
     },

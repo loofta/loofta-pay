@@ -3,7 +3,15 @@
 import { useCallback, useMemo } from "react";
 import type { Wallet } from "@coral-xyz/anchor";
 import { AnchorProvider, BN, Program } from "@coral-xyz/anchor";
-import { Keypair, PublicKey, Transaction, Connection } from "@solana/web3.js";
+import {
+  Keypair,
+  PublicKey,
+  Transaction,
+  TransactionInstruction,
+  Connection,
+  SendTransactionError,
+  SystemProgram,
+} from "@solana/web3.js";
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import {
   DELEGATION_PROGRAM_ID,
@@ -15,19 +23,66 @@ import { SessionTokenManager } from "@magicblock-labs/gum-sdk";
 import LooftaPerIdl from "@/per/idl/loofta_per_payments.json";
 import {
   LOOFTA_PER_PROGRAM_ID,
+  LOOFTA_PER_WALLET_MEMO,
   VALIDATOR_PUBKEY,
   DEPOSIT_PDA_SEED,
   VAULT_PDA_SEED,
-  EPHEMERAL_RPC_URL,
 } from "@/lib/per/constants";
-import { getSolanaHttpRpc } from "@/lib/solanaCluster";
+import { getSolanaCluster, getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { usePerAuth } from "@/hooks/usePerAuth";
 import { logPerError } from "@/lib/per/log";
+import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
+import { fetchSolanaFeePayerAddress, signAndBroadcastSponsoredTx } from "@/services/solanaSponsor";
 
 interface DepositAccount {
   user: PublicKey;
   token_mint: PublicKey;
   amount: BN;
+}
+
+const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+
+function prependWalletMemo(tx: Transaction, memo: string): void {
+  tx.instructions.unshift(
+    new TransactionInstruction({
+      keys: [],
+      programId: MEMO_PROGRAM_ID,
+      data: Buffer.from(memo, "utf8"),
+    }),
+  );
+}
+
+/** Solana packet limit for legacy `Transaction` (minus encoding overhead, ~1232). */
+const MAX_LEGACY_TX_SERIALIZED_BYTES = 1232;
+
+function mergeInstructionsFromTxs(...sources: (Transaction | undefined)[]): Transaction {
+  const out = new Transaction();
+  for (const src of sources) {
+    if (!src) continue;
+    for (const ix of src.instructions) {
+      out.add(ix);
+    }
+  }
+  return out;
+}
+
+/** Copy instructions + metadata so we can measure serialize size before signing. */
+function copyTxWithBlockhashAndFeePayer(tx: Transaction, blockhash: string, feePayer: PublicKey): Transaction {
+  const t = new Transaction();
+  for (const ix of tx.instructions) {
+    t.add(ix);
+  }
+  t.recentBlockhash = blockhash;
+  t.feePayer = feePayer;
+  return t;
+}
+
+function legacyTxSerializedLength(tx: Transaction): number {
+  try {
+    return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).length;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
 }
 
 async function initializeDeposit({
@@ -36,17 +91,21 @@ async function initializeDeposit({
   tokenMint,
   depositPda,
   transaction,
+  payer,
 }: {
   program: Program;
   user: PublicKey;
   tokenMint: PublicKey;
   depositPda: PublicKey;
   transaction: Transaction;
+  /** When set (e.g. Loofta backend sponsor), pays rent; must sign on-chain (backend co-signs). */
+  payer?: PublicKey;
 }) {
+  const pay = payer ?? program.provider.publicKey;
   let initIx = await program.methods
     .initializeDeposit()
     .accountsPartial({
-      payer: program.provider.publicKey,
+      payer: pay,
       user,
       deposit: depositPda,
       tokenMint: tokenMint,
@@ -59,7 +118,7 @@ async function initializeDeposit({
   let createPermissionIx = await program.methods
     .createPermission()
     .accountsPartial({
-      payer: program.provider.publicKey,
+      payer: pay,
       user,
       deposit: depositPda,
       permission,
@@ -73,6 +132,22 @@ async function initializeDeposit({
 
   return transaction;
 }
+
+type PerSendAction = {
+  name: string;
+  tx: Transaction;
+  signedTx: Transaction;
+  blockhash: string;
+  connection: Connection;
+  needsSessionKpAfterWallet: boolean;
+  callback?: (signature?: string) => Promise<void>;
+};
+
+/** UI progress for Privy, Phantom, or any wallet using `signAllTransactions`. */
+export type PerTransferProgress =
+  | { phase: "preparing" }
+  | { phase: "awaiting_signature"; walletTransactionCount: number }
+  | { phase: "broadcasting"; step: string; index: number; total: number };
 
 export function usePerPrivateTransfer() {
   const connection = useMemo(() => new Connection(getSolanaHttpRpc(), "confirmed"), []);
@@ -101,19 +176,54 @@ export function usePerPrivateTransfer() {
   }, []);
 
   const transfer = useCallback(
-    async (wallet: Wallet, recipient: string, tokenMint: string, amount: number) => {
-      if (!connection) {
-        throw new Error("Connection not ready.");
+    async (
+      wallet: Wallet,
+      recipient: string,
+      tokenMint: string,
+      amount: number,
+      options?: { privyUserId?: string | null; onProgress?: (p: PerTransferProgress) => void },
+    ) => {
+      const onProgress = options?.onProgress;
+      if (!connection) throw new Error("Connection not ready.");
+      onProgress?.({ phase: "preparing" });
+
+      const cluster = getSolanaCluster();
+      const minLamports = cluster === "mainnet-beta" ? 5_000_000 : 12_000_000;
+      let sponsorPk: PublicKey | null = null;
+      if (options?.privyUserId) {
+        const addr = await fetchSolanaFeePayerAddress();
+        if (addr) {
+          try {
+            sponsorPk = new PublicKey(addr);
+          } catch {
+            sponsorPk = null;
+          }
+        }
       }
+      const useBackendSponsor = sponsorPk !== null && !!options?.privyUserId;
+      if (!useBackendSponsor) {
+        const solBalance = await connection.getBalance(wallet.publicKey);
+        if (solBalance < minLamports) {
+          throw new Error(
+            `Not enough SOL for fees (session, deposit, delegation). Have ${(solBalance / 1e9).toFixed(
+              4,
+            )} SOL; need at least ~${(minLamports / 1e9).toFixed(3)} SOL on ${cluster}.`,
+          );
+        }
+      }
+
       const program = programForWallet(wallet);
       let token: string;
+      let ephemeralBaseUrl: string;
       try {
-        token = await ensureAuthToken(wallet.publicKey);
+        const auth = await ensureAuthToken(wallet.publicKey);
+        token = auth.token;
+        ephemeralBaseUrl = auth.baseUrl;
       } catch (e) {
         logPerError(e, { step: "ensureAuthToken", userPubkey: wallet.publicKey.toBase58() });
         throw e;
       }
-      const ephemeralConnection = new Connection(`${EPHEMERAL_RPC_URL}?token=${token}`, "confirmed");
+      const ephemeralConnection = new Connection(`${ephemeralBaseUrl.replace(/\/$/, "")}?token=${token}`, "confirmed");
       const ephemeralProgram = new Program(
         LooftaPerIdl as never,
         new AnchorProvider(ephemeralConnection, wallet, { commitment: "confirmed" }),
@@ -124,6 +234,7 @@ export function usePerPrivateTransfer() {
       const tokenMintPk = new PublicKey(tokenMint);
 
       let preliminaryTx: Transaction | undefined;
+      /** Base-cluster (devnet or mainnet-beta) txs: deposit, delegate, init — not the ER chain. */
       let mainnetTx: Transaction | undefined;
 
       const vaultPda = getVaultPda(tokenMintPk)!;
@@ -174,15 +285,39 @@ export function usePerPrivateTransfer() {
         ],
         sessionManager.program.programId,
       )[0];
-      const createSessionTx = await sessionManager.program.methods
-        .createSession(true, null, null)
-        .accountsPartial({
-          sessionToken,
-          sessionSigner: sessionKp.publicKey,
-          authority: wallet.publicKey,
-          targetProgram: LOOFTA_PER_PROGRAM_ID,
-        })
-        .transaction();
+      const gumMethods = sessionManager.program.methods as {
+        createSession: (
+          a: boolean,
+          b: null,
+          c: null,
+        ) => { accountsPartial: (x: Record<string, PublicKey>) => { transaction: () => Promise<Transaction> } };
+        createSessionWithPayer: (
+          a: boolean,
+          b: null,
+          c: null,
+        ) => { accountsPartial: (x: Record<string, PublicKey>) => { transaction: () => Promise<Transaction> } };
+      };
+      const createSessionTx = sponsorPk
+        ? await gumMethods
+            .createSessionWithPayer(true, null, null)
+            .accountsPartial({
+              sessionToken,
+              sessionSigner: sessionKp.publicKey,
+              payer: sponsorPk,
+              authority: wallet.publicKey,
+              targetProgram: LOOFTA_PER_PROGRAM_ID,
+              systemProgram: SystemProgram.programId,
+            })
+            .transaction()
+        : await gumMethods
+            .createSession(true, null, null)
+            .accountsPartial({
+              sessionToken,
+              sessionSigner: sessionKp.publicKey,
+              authority: wallet.publicKey,
+              targetProgram: LOOFTA_PER_PROGRAM_ID,
+            })
+            .transaction();
       const revokeSessionTx = await sessionManager.program.methods
         .revokeSession()
         .accountsPartial({
@@ -198,6 +333,7 @@ export function usePerPrivateTransfer() {
           tokenMint: tokenMintPk,
           depositPda: senderDepositPda,
           transaction: new Transaction(),
+          payer: sponsorPk ?? undefined,
         });
       } else {
         // If the sender has a deposit, we need to undelegate to transfer more tokens to it
@@ -232,6 +368,7 @@ export function usePerPrivateTransfer() {
           tokenMint: tokenMintPk,
           depositPda: recipientDepositPda,
           transaction: new Transaction(),
+          payer: sponsorPk ?? undefined,
         });
       }
 
@@ -243,7 +380,7 @@ export function usePerPrivateTransfer() {
         let depositIx = await program.methods
           .modifyBalance({ amount: amountToDeposit, increase: true })
           .accountsPartial({
-            payer: program.provider.publicKey,
+            payer: sponsorPk ?? wallet.publicKey,
             user: wallet.publicKey,
             vault: vaultPda,
             deposit: senderDepositPda,
@@ -273,7 +410,7 @@ export function usePerPrivateTransfer() {
         let delegateIx = await program.methods
           .delegate(wallet.publicKey, tokenMintPk)
           .accountsPartial({
-            payer: wallet.publicKey,
+            payer: sponsorPk ?? wallet.publicKey,
             validator: VALIDATOR_PUBKEY,
             deposit: senderDepositPda,
           })
@@ -287,7 +424,7 @@ export function usePerPrivateTransfer() {
         let delegateIx = await program.methods
           .delegate(recipientPk, tokenMintPk)
           .accountsPartial({
-            payer: wallet.publicKey,
+            payer: sponsorPk ?? wallet.publicKey,
             validator: VALIDATOR_PUBKEY,
             deposit: recipientDepositPda,
           })
@@ -303,7 +440,7 @@ export function usePerPrivateTransfer() {
         .accountsPartial({
           sessionToken,
           payer: sessionKp.publicKey,
-          user: program.provider.publicKey,
+          user: wallet.publicKey,
           sourceDeposit: senderDepositPda,
           destinationDeposit: recipientDepositPda,
           tokenMint: tokenMintPk,
@@ -314,106 +451,156 @@ export function usePerPrivateTransfer() {
       let blockhash = (await connection.getLatestBlockhash()).blockhash;
       let ephemeralBlockhash = (await ephemeralConnection.getLatestBlockhash()).blockhash;
 
-      let actions = [
+      let actions: PerSendAction[] = [
         {
-          name: 'createSessionTx',
+          name: "createSessionTx",
           tx: createSessionTx,
           signedTx: createSessionTx,
           blockhash,
           connection,
+          needsSessionKpAfterWallet: true,
         },
+        ...(recipientInitTx
+          ? [
+              {
+                name: "recipientInitTx",
+                tx: recipientInitTx,
+                signedTx: recipientInitTx,
+                blockhash,
+                connection,
+                needsSessionKpAfterWallet: false,
+                callback: () => new Promise((resolve) => setTimeout(resolve, 3000)),
+              } as PerSendAction,
+            ]
+          : []),
+        ...(preliminaryTx
+          ? [
+              {
+                name: "preliminaryTx",
+                tx: preliminaryTx,
+                signedTx: preliminaryTx,
+                blockhash: ephemeralBlockhash,
+                connection: ephemeralConnection,
+                needsSessionKpAfterWallet: true,
+                callback: async (signature?: string) => {
+                  if (!signature) return;
+                  let retries = 5;
+                  while (retries > 0) {
+                    try {
+                      await GetCommitmentSignature(signature, ephemeralConnection);
+                      break;
+                    } catch {
+                      retries--;
+                    }
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, 1000));
+                },
+              } as PerSendAction,
+            ]
+          : []),
+        ...(mainnetTx
+          ? [
+              {
+                name: "mainnetTx",
+                tx: mainnetTx,
+                signedTx: mainnetTx,
+                blockhash,
+                connection,
+                needsSessionKpAfterWallet: false,
+              } as PerSendAction,
+            ]
+          : []),
         {
-          name: 'recipientInitTx',
-          tx: recipientInitTx,
-          signedTx: recipientInitTx,
-          blockhash,
-          connection,
-          callback: () => new Promise(resolve => setTimeout(resolve, 3000)),
-        },
-        {
-          name: 'preliminaryTx',
-          tx: preliminaryTx,
-          signedTx: preliminaryTx,
-          blockhash: ephemeralBlockhash,
-          connection: ephemeralConnection,
-          callback: async (signature: string) => {
-            let retries = 5;
-            while (retries > 0) {
-              try {
-                await GetCommitmentSignature(signature, ephemeralConnection);
-              } catch (error) {
-                retries--;
-              }
-            }
-            return new Promise(resolve => setTimeout(resolve, 1000));
-          },
-        },
-        {
-          name: 'mainnetTx',
-          tx: mainnetTx,
-          signedTx: mainnetTx,
-          blockhash,
-          connection,
-        },
-        {
-          name: 'ephemeralTx',
+          name: "ephemeralTx",
           tx: ephemeralTx,
           signedTx: ephemeralTx,
           blockhash: ephemeralBlockhash,
           connection: ephemeralConnection,
-          callback: (signature: string) => ephemeralConnection.confirmTransaction(signature),
+          needsSessionKpAfterWallet: true,
+          callback: async (signature?: string) => {
+            if (!signature) return;
+            await ephemeralConnection.confirmTransaction(signature);
+          },
         },
         {
-          name: 'revokeSessionTx',
+          name: "revokeSessionTx",
           tx: revokeSessionTx,
           signedTx: revokeSessionTx,
           blockhash,
           connection,
+          needsSessionKpAfterWallet: false,
         },
-      ]
-        .filter(action => action.tx)
-        .map(action => {
-          let tx = action.tx!;
-          tx.recentBlockhash = action.blockhash;
-          tx.feePayer =
-            action.blockhash === ephemeralBlockhash
-              ? sessionKp.publicKey
-              : program.provider.publicKey;
-          return { ...action, tx };
-        });
+      ].map((action) => {
+        const tx = action.tx;
+        tx.recentBlockhash = action.blockhash;
+        tx.feePayer =
+          action.blockhash === ephemeralBlockhash
+            ? sessionKp.publicKey
+            : sponsorPk ?? wallet.publicKey;
+        return { ...action, tx };
+      });
 
+      // Session signer for ephemeral txs must be present.
       for (let i = 0; i < actions.length; i++) {
-        let action = actions[i];
-        if (action.blockhash === ephemeralBlockhash || action.name === 'createSessionTx') {
-          action.tx!.partialSign(sessionKp);
-          actions[i].signedTx = action.tx!;
+        const action = actions[i];
+        if (action.blockhash === ephemeralBlockhash || action.name === "createSessionTx") {
+          action.tx.partialSign(sessionKp);
+          actions[i].signedTx = action.tx;
         }
       }
 
-      let userSignedActions = actions.filter(action => action.blockhash !== ephemeralBlockhash);
-      let txs = userSignedActions.map(action => action.tx!);
-      let signedTxs = await wallet.signAllTransactions(txs);
+      // Wallet signs only base-cluster txs (not ephemeral blockhash).
+      const userSignedActions = actions.filter((a) => a.blockhash !== ephemeralBlockhash);
+      onProgress?.({ phase: "awaiting_signature", walletTransactionCount: userSignedActions.length });
 
+      // IMPORTANT: Do not merge wallet-signed actions when using backend sponsorship.
+      // The sponsor endpoint validates the tx feePayer; reusing a merged tx across actions
+      // can produce "Invalid fee payer in transaction" even if individual actions were correct.
+      const walletTxs = userSignedActions.map((a) => a.tx);
+      const signedWalletTxs = await wallet.signAllTransactions(walletTxs);
+      for (let i = 0; i < userSignedActions.length; i++) {
+        userSignedActions[i].signedTx = signedWalletTxs[i];
+      }
+
+      // Ephemeral txs: full sign with session keypair.
       for (let i = 0; i < actions.length; i++) {
-        let action = actions[i];
+        const action = actions[i];
         if (action.blockhash === ephemeralBlockhash) {
-          action.tx!.sign(sessionKp);
-          actions[i].signedTx = action.tx!;
-        } else {
-          actions[i].signedTx = signedTxs[userSignedActions.findIndex(a => a.name === action.name)];
+          action.tx.sign(sessionKp);
+          actions[i].signedTx = action.tx;
         }
       }
 
       let lastSignature = "";
-      for (let action of actions) {
-        console.log(`Sending ${action.name} transaction`);
-        const signature = await action.connection.sendRawTransaction(action.signedTx!.serialize(), {
-          preflightCommitment: "confirmed",
-        });
-        await action.connection.confirmTransaction(signature);
-        await action.callback?.(signature);
-        lastSignature = signature;
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        onProgress?.({ phase: "broadcasting", step: action.name, index: i + 1, total: actions.length });
+        let signature = "";
+        try {
+          if (useBackendSponsor && options?.privyUserId && sponsorPk && action.name !== "ephemeralTx") {
+            // Sponsor path: backend co-signs and broadcasts wallet-signed tx bytes (for rent/fees).
+            const bytes = action.signedTx.serialize({ requireAllSignatures: false, verifySignatures: false });
+            signature = await signAndBroadcastSponsoredTx(bytes, options.privyUserId);
+          } else {
+            signature = await action.connection.sendRawTransaction(action.signedTx.serialize(), { preflightCommitment: "confirmed" });
+            await action.connection.confirmTransaction(signature);
+          }
+          await action.callback?.(signature);
+          lastSignature = signature;
+        } catch (e) {
+          if (e instanceof SendTransactionError) {
+            try {
+              const logs = await e.getLogs(action.connection);
+              console.error(`[PER] ${action.name} simulation failed, logs:`, logs);
+            } catch {
+              // ignore log fetch failures
+            }
+            throw new Error(`[PER] ${action.name}: ${e.message}`);
+          }
+          throw e;
+        }
       }
+      await waitForSignatureConfirmation(connection, lastSignature, 60_000).catch(() => {});
       return lastSignature;
     },
     [connection, ensureAuthToken, programForWallet, getDepositPda, getVaultPda],
