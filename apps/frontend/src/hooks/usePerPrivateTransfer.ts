@@ -32,7 +32,11 @@ import { getSolanaCluster, getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { usePerAuth } from "@/hooks/usePerAuth";
 import { logPerError } from "@/lib/per/log";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
-import { fetchSolanaFeePayerAddress, signAndBroadcastSponsoredTx } from "@/services/solanaSponsor";
+import {
+  fetchSolanaFeePayerAddress,
+  prepareSponsoredTransaction,
+  signAndBroadcastSponsoredTx,
+} from "@/services/solanaSponsor";
 
 interface DepositAccount {
   user: PublicKey;
@@ -200,8 +204,9 @@ export function usePerPrivateTransfer() {
           }
         }
       }
-      const useBackendSponsor = sponsorPk !== null && !!options?.privyUserId;
-      if (!useBackendSponsor) {
+      /** Backend pays fees + Gum session rent when sponsor key is configured. */
+      const useSponsorRelayer = sponsorPk !== null && !!options?.privyUserId;
+      if (!useSponsorRelayer) {
         const solBalance = await connection.getBalance(wallet.publicKey);
         if (solBalance < minLamports) {
           throw new Error(
@@ -333,7 +338,7 @@ export function usePerPrivateTransfer() {
           tokenMint: tokenMintPk,
           depositPda: senderDepositPda,
           transaction: new Transaction(),
-          payer: sponsorPk ?? undefined,
+          payer: sponsorPk ?? wallet.publicKey,
         });
       } else {
         // If the sender has a deposit, we need to undelegate to transfer more tokens to it
@@ -368,7 +373,7 @@ export function usePerPrivateTransfer() {
           tokenMint: tokenMintPk,
           depositPda: recipientDepositPda,
           transaction: new Transaction(),
-          payer: sponsorPk ?? undefined,
+          payer: sponsorPk ?? wallet.publicKey,
         });
       }
 
@@ -534,9 +539,7 @@ export function usePerPrivateTransfer() {
         const tx = action.tx;
         tx.recentBlockhash = action.blockhash;
         tx.feePayer =
-          action.blockhash === ephemeralBlockhash
-            ? sessionKp.publicKey
-            : sponsorPk ?? wallet.publicKey;
+          action.blockhash === ephemeralBlockhash ? sessionKp.publicKey : sponsorPk ?? wallet.publicKey;
         return { ...action, tx };
       });
 
@@ -554,6 +557,20 @@ export function usePerPrivateTransfer() {
       // Wallet signs only base-cluster txs (not ephemeral blockhash).
       const userSignedActions = actions.filter((a) => a.blockhash !== ephemeralBlockhash);
       onProgress?.({ phase: "awaiting_signature", walletTransactionCount: userSignedActions.length });
+      if (useSponsorRelayer && options?.privyUserId) {
+        for (let i = 0; i < userSignedActions.length; i++) {
+          const action = userSignedActions[i];
+          const prepared = await prepareSponsoredTransaction(
+            action.tx.serialize({ requireAllSignatures: false, verifySignatures: false }),
+            options.privyUserId,
+            action.name,
+          );
+          const preparedTx = Transaction.from(prepared);
+          action.tx = preparedTx;
+          action.signedTx = preparedTx;
+          actions = actions.map((a) => (a.name === action.name ? { ...a, tx: preparedTx, signedTx: preparedTx } : a));
+        }
+      }
 
       // IMPORTANT: Do not merge wallet-signed actions when using backend sponsorship.
       // The sponsor endpoint validates the tx feePayer; reusing a merged tx across actions
@@ -564,6 +581,11 @@ export function usePerPrivateTransfer() {
         userSignedActions[i].signedTx = signedWalletTxs[i];
         if (userSignedActions[i].needsSessionKpAfterWallet) {
           userSignedActions[i].signedTx.partialSign(sessionKp);
+        }
+        // Keep the broadcast action list in sync with signed wallet tx objects.
+        const actionIdx = actions.findIndex((a) => a.name === userSignedActions[i].name);
+        if (actionIdx >= 0) {
+          actions[actionIdx].signedTx = userSignedActions[i].signedTx;
         }
       }
 
@@ -583,14 +605,17 @@ export function usePerPrivateTransfer() {
         let signature = "";
         try {
           const isEphemeral = action.blockhash === ephemeralBlockhash;
-          if (useBackendSponsor && options?.privyUserId && sponsorPk && !isEphemeral) {
+          console.info(
+            `[PER] broadcast ${i + 1}/${actions.length} ${action.name} ephemeral=${isEphemeral} sponsorPath=${Boolean(useSponsorRelayer && options?.privyUserId && !isEphemeral)}`,
+          );
+          if (useSponsorRelayer && options?.privyUserId && !isEphemeral) {
             // Sponsor path: backend co-signs and broadcasts wallet-signed tx bytes (for rent/fees).
             const bytes = action.signedTx.serialize({ requireAllSignatures: false, verifySignatures: false });
-            signature = await signAndBroadcastSponsoredTx(bytes, options.privyUserId);
-            await waitForSignatureConfirmation(action.connection, signature);
+            signature = await signAndBroadcastSponsoredTx(bytes, options.privyUserId, action.name);
+            await waitForSignatureConfirmation(action.connection, signature, 120_000, 1500, action.name);
           } else {
             signature = await action.connection.sendRawTransaction(action.signedTx.serialize(), { preflightCommitment: "confirmed" });
-            await waitForSignatureConfirmation(action.connection, signature);
+            await waitForSignatureConfirmation(action.connection, signature, 120_000, 1500, action.name);
           }
           await action.callback?.(signature);
           lastSignature = signature;
@@ -607,7 +632,7 @@ export function usePerPrivateTransfer() {
           throw e;
         }
       }
-      await waitForSignatureConfirmation(connection, lastSignature, 60_000).catch(() => {});
+      await waitForSignatureConfirmation(connection, lastSignature, 60_000, 1500, "final").catch(() => {});
       return lastSignature;
     },
     [connection, ensureAuthToken, programForWallet, getDepositPda, getVaultPda],

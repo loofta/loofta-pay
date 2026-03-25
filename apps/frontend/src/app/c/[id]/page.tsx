@@ -3213,7 +3213,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-gray-900">Signed & sent</p>
-                    <p className="text-xs text-gray-600">Transaction is on the network</p>
+                    <p className="text-xs text-gray-900">Transaction is on the network</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 rounded-lg border border-orange-200 bg-orange-50 p-4">
@@ -3222,7 +3222,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-gray-900">Confirming</p>
-                    <p className="text-xs text-gray-600">Waiting for on-chain confirmation…</p>
+                    <p className="text-xs text-gray-900">Waiting for on-chain confirmation…</p>
                   </div>
                   <Loader2 className="h-5 w-5 shrink-0 animate-spin text-orange-500" />
                 </div>
@@ -3256,7 +3256,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   {perTransferPhase.phase === "awaiting_signature" && (
                     <>
                       Your wallet may show{" "}
-                      <span className="font-medium text-gray-800">
+                      <span className="font-medium text-orange-600">
                         {perTransferPhase.walletTransactionCount} transaction
                         {perTransferPhase.walletTransactionCount === 1 ? "" : "s"}
                       </span>{" "}
@@ -3369,8 +3369,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       )}
                     </button>
                     {payWithLooftaError && (
-                      <div className="mt-2 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-800">
-                        <strong>Payment failed:</strong> {payWithLooftaError}
+                      <div className="mt-2 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-800 [overflow-wrap:anywhere] whitespace-pre-wrap">
+                        <strong>Payment failed:</strong>{" "}
+                        <span>{payWithLooftaError}</span>
                       </div>
                     )}
 

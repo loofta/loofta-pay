@@ -292,6 +292,41 @@ export class ClaimsController {
    * Sign a user-signed sponsored transaction with the fee payer and broadcast.
    * Body: { transaction: base64 serialized VersionedTransaction (user already signed) }.
    */
+  @Post('solana-sponsor/prepare')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Prepare unsigned Solana transaction with sponsor fee payer' })
+  @ApiResponse({
+    status: 200,
+    description: 'Prepared transaction bytes',
+    schema: { properties: { transaction: { type: 'string' } } },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid transaction' })
+  @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
+  async prepareSponsoredTransaction(
+    @Body() body: { transaction: string },
+  ): Promise<{ transaction: string }> {
+    if (!body?.transaction || typeof body.transaction !== 'string') {
+      throw new BadRequestException('Missing or invalid transaction');
+    }
+    if (!this.solanaSponsor.isAvailable()) {
+      throw new ServiceUnavailableException('Solana fee sponsorship is not configured');
+    }
+    try {
+      return await this.solanaSponsor.prepareSponsoredTransaction(body.transaction);
+    } catch (e: any) {
+      if (e?.message?.includes('not configured')) {
+        throw new ServiceUnavailableException('Solana sponsorship is not configured');
+      }
+      throw new BadRequestException(e?.message || 'Failed to prepare sponsored transaction');
+    }
+  }
+
+  /**
+   * Sign a user-signed sponsored transaction with the fee payer and broadcast.
+   * Body: { transaction: base64 serialized VersionedTransaction (user already signed) }.
+   */
   @Post('solana-sponsor/sign-and-broadcast')
   @HttpCode(HttpStatus.OK)
   @UseGuards(AuthGuard)
