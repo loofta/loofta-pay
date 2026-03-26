@@ -10,7 +10,6 @@ import { createPortal } from "react-dom";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { UsernameSetupModal } from "@/components/UsernameSetupModal";
 import { UserMenu } from "@/components/UserMenu";
-import { WelcomeOnboarding } from "@/components/WelcomeOnboarding";
 import { BalanceModal } from "@/components/BalanceModal";
 import { getSolanaBalanceUSD } from "@/services/solanaBalance";
 import { useAuthStore } from "@/store/auth";
@@ -41,7 +40,6 @@ export function Header() {
   const [pendingAccessRequest, setPendingAccessRequest] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showUsernameModal, setShowUsernameModal] = useState(false);
-  const [showWelcomeOnboarding, setShowWelcomeOnboarding] = useState(false);
   const [showBalanceModal, setShowBalanceModal] = useState(false);
   const [balanceUSD, setBalanceUSD] = useState<string>("0.00");
   const [loadingBalance, setLoadingBalance] = useState(false);
@@ -111,45 +109,6 @@ export function Header() {
 
     checkUser();
   }, [authenticated, userId, email]);
-
-  // Show onboarding right after login (add-email, add-Twitter, then username step). Don't wait for Solana wallet.
-  useEffect(() => {
-    if (!authenticated || !privyReady || !privyUser || !userId) {
-      return;
-    }
-
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const checkOnboardingPreference = async () => {
-      try {
-        const userResponse = await fetch("/api/users/check", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            privyUserId: userId,
-            email: email,
-          }),
-        });
-
-        const userData = await userResponse.json();
-
-        if (cancelled || userData.user?.skipOnboarding) return;
-
-        timer = setTimeout(() => {
-          if (!cancelled) setShowWelcomeOnboarding(true);
-        }, 600);
-      } catch (error) {
-        console.error("[Header] Error checking onboarding preference:", error);
-      }
-    };
-
-    checkOnboardingPreference();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [authenticated, privyUser, privyReady, userId, email]);
 
   // Fetch balance from Solana wallet (client-side, from Privy session)
   useEffect(() => {
@@ -761,63 +720,6 @@ export function Header() {
             setShowUsernameModal(false);
           }}
           privyUserId={userId}
-        />
-      )}
-
-      {/* Welcome Onboarding Modal - shown after login (add-email, add-Twitter, username, etc.) */}
-      {userId && (
-        <WelcomeOnboarding
-          open={showWelcomeOnboarding}
-          onClose={(dontShowAgain) => {
-            setShowWelcomeOnboarding(false);
-            // Preference is saved to database in the component itself
-            // Refresh user data to get updated username
-            if (authenticated && userId) {
-              // Trigger a refresh of user data
-              const refreshUser = async () => {
-                try {
-                  const userResponse = await fetch("/api/users/check", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      privyUserId: userId,
-                      email: email,
-                    }),
-                  });
-                  const userData = await userResponse.json();
-                  if (userData.user?.username) {
-                    setUsername(userData.user.username);
-                  }
-                } catch (error) {
-                  console.error("[Header] Error refreshing user:", error);
-                }
-              };
-              refreshUser();
-            }
-          }}
-          username={username}
-          privyUserId={userId}
-          onEditUsername={async () => {
-            // Refresh user data after username is saved
-            if (authenticated && userId) {
-              try {
-                const userResponse = await fetch("/api/users/check", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    privyUserId: userId,
-                    email: email,
-                  }),
-                });
-                const userData = await userResponse.json();
-                if (userData.user?.username) {
-                  setUsername(userData.user.username);
-                }
-              } catch (error) {
-                console.error("[Header] Error refreshing user:", error);
-              }
-            }
-          }}
         />
       )}
 
