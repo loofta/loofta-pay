@@ -1,67 +1,64 @@
 import type { PublicKey } from "@solana/web3.js";
 import { getAuthToken } from "@magicblock-labs/ephemeral-rollups-sdk";
 import { EPHEMERAL_RPC_URL } from "@/lib/per/constants";
-import { getSolanaCluster, type SolanaClusterName } from "@/lib/solanaCluster";
-
-/** JSON-RPC + token must use this host; must match server proxy upstream (see /api/magicblock/auth/*). */
-function connectionBaseUrl(): string {
-  return EPHEMERAL_RPC_URL.replace(/\/$/, "");
-}
-
-function buildAuthBaseCandidates(primary: string, cluster: SolanaClusterName): string[] {
-  const add = (list: string[], u: string) => {
-    const x = u.replace(/\/$/, "");
-    if (!list.includes(x)) list.push(x);
-  };
-  const out: string[] = [];
-  add(out, primary);
-  if (cluster !== "mainnet-beta") {
-    add(out, "https://devnet.magicblock.app");
-    add(out, "https://tee.magicblock.app");
-  } else {
-    add(out, "https://mainnet-tee.magicblock.app");
-  }
-  return out;
-}
+import { getSolanaCluster } from "@/lib/solanaCluster";
 
 /**
- * MagicBlock SDK calls GET /auth/challenge and POST /auth/login on the given base.
- * Browser direct calls to *.magicblock.app often fail with "Failed to fetch" (CORS / mixed rules).
- * We first use same-origin `/api/magicblock` (proxied on the server); then fall back to direct URLs.
+ * MagicBlock TEE auth token fetch — resilient two-path strategy:
+ *
+ *   1. Same-origin proxy  /api/magicblock  (Next.js server-side, no CORS / CSP restrictions)
+ *      → proxies to tee.magicblock.app server-side, so browser never touches it directly.
+ *
+ *   2. Direct TEE call    https://tee.magicblock.app  (or mainnet-tee on mainnet)
+ *      → CSP allows it; works if the browser can reach the TEE endpoint directly.
+ *
+ * NOTE: devnet.magicblock.app is a JSON-RPC-only endpoint. It does NOT serve
+ *       /auth/challenge or /auth/login — never use it for getAuthToken().
+ *
+ * The returned `baseUrl` is always `EPHEMERAL_RPC_URL` so that the Connection
+ * used for ephemeral transactions matches the configured primary endpoint.
  */
 export async function fetchMagicblockAuthToken(
   publicKey: PublicKey,
   signMessage: (message: Uint8Array) => Promise<Uint8Array>,
 ): Promise<{ token: string; baseUrl: string }> {
-  const rpcBase = connectionBaseUrl();
-
-  if (typeof window !== "undefined") {
-    const proxyBase = `${window.location.origin}/api/magicblock`;
-    try {
-      const res = await getAuthToken(proxyBase, publicKey, signMessage);
-      const tokenStr = typeof res === "string" ? res : (res as { token: string }).token;
-      if (!tokenStr) throw new Error("Empty token from MagicBlock auth");
-      return { token: tokenStr, baseUrl: rpcBase };
-    } catch {
-      // fall through to direct
-    }
-  }
-
+  const rpcBase = EPHEMERAL_RPC_URL.replace(/\/$/, "");
   const cluster = getSolanaCluster();
-  const candidates = buildAuthBaseCandidates(EPHEMERAL_RPC_URL, cluster);
   const errors: string[] = [];
 
-  for (const baseUrl of candidates) {
+  const tryAuth = async (authBase: string): Promise<string | null> => {
     try {
-      const res = await getAuthToken(baseUrl, publicKey, signMessage);
-      const tokenStr = typeof res === "string" ? res : (res as { token: string }).token;
-      if (!tokenStr) throw new Error("Empty token from MagicBlock auth");
-      return { token: tokenStr, baseUrl: rpcBase };
+      const res = await getAuthToken(authBase, publicKey, signMessage);
+      const tokenStr = typeof res === "string" ? res : (res as { token?: string }).token;
+      return tokenStr || null;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      errors.push(`${baseUrl}: ${msg}`);
+      errors.push(`${authBase}: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
     }
+  };
+
+  // 1. Same-origin server proxy (bypasses CORS and CSP entirely).
+  //    The proxy's upstream is tee.magicblock.app (set in /api/magicblock/[...path]/route.ts).
+  if (typeof window !== "undefined") {
+    const proxyBase = `${window.location.origin}/api/magicblock`;
+    const token = await tryAuth(proxyBase);
+    if (token) return { token, baseUrl: rpcBase };
   }
 
-  throw new Error(`MagicBlock getAuthToken failed (proxy + ${candidates.length} direct). ${errors.join(" | ")}`);
+  // 2. Direct TEE call (fallback if proxy fails — e.g. server-side rendering context).
+  const teeDirect =
+    cluster === "mainnet-beta"
+      ? "https://mainnet-tee.magicblock.app"
+      : "https://tee.magicblock.app";
+
+  const candidates = [rpcBase, teeDirect].filter((u, i, arr) => arr.indexOf(u) === i);
+
+  for (const authBase of candidates) {
+    const token = await tryAuth(authBase);
+    if (token) return { token, baseUrl: rpcBase };
+  }
+
+  throw new Error(
+    `MagicBlock getAuthToken failed (proxy + ${candidates.length} direct). ${errors.join(" | ")}`,
+  );
 }

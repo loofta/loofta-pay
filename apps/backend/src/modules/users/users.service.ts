@@ -192,8 +192,7 @@ export class UsersService {
 
       const privyUser = await privyResponse.json();
       
-      this.logger.debug('Privy user response:', JSON.stringify(privyUser, null, 2));
-
+    
       // Find Solana wallet in linked accounts — use same logic as frontend Header so balance matches
       // Privy API returns snake_case: linked_accounts. Header uses type 'wallet' | 'smart_wallet' + base58.
       const linkedAccounts = privyUser?.linked_accounts || privyUser?.linkedAccounts || [];

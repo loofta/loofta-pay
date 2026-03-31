@@ -278,13 +278,13 @@ export default function Home() {
                 <>
                   {!authenticated && (
                     <div className="rounded-2xl bg-gradient-to-r from-amber-500/10 to-red-500/10 border border-white/10 px-4 py-3 mb-6">
-                      <p className="text-sm text-slate-300">
+                      <p className="text-base text-slate-300">
                         Log in to keep track of this payment and reclaim your money if needed.
                       </p>
                       <button
                         type="button"
                         onClick={() => privyLogin({ loginMethods: ["email"], disableSignup: false })}
-                        className="inline-block mt-2 text-sm font-medium text-amber-400 hover:text-amber-300"
+                        className="inline-block mt-2 text-base font-medium text-amber-400 hover:text-amber-300"
                       >
                         Sign in →
                       </button>
@@ -348,7 +348,7 @@ export default function Home() {
                             setRecipient(trimmed);
                           }}
                           autoComplete="off"
-                          className="h-12 pl-10 mb-2 bg-white/5 border-white/10 text-white text-md placeholder:text-slate-500 placeholder:text-sm"
+                          className="h-12 pl-10 mb-2 bg-white/5 border-white/10 text-white text-md placeholder:text-slate-500 placeholder:text-[20px]"
                           style={{
                             fontSize: `20px`,
                           }}

@@ -27,7 +27,7 @@ export type PaymentHistoryClaim = {
   is_devnet?: boolean;
 };
 
-const TERMINAL_STATUSES = ["SUCCESS", "CANCELLED", "REFUNDED", "EXPIRED", "DELETED"];
+const TERMINAL_STATUSES = ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CANCELLED", "REFUNDED", "EXPIRED", "DELETED"];
 
 function isExpiredOpenPayment(claim: PaymentHistoryClaim): boolean {
   const status = String(claim.status || "").toUpperCase();
@@ -125,9 +125,11 @@ export async function GET(request: Request) {
     const sent = sentRaw
       .map(enrich)
       .filter((c) => !isExpiredOpenPayment(c) && String(c.status || "").toUpperCase() !== "DELETED");
+    // Show received payments that are complete (SUCCESS) OR still sweeping to wallet (PRIVATE_TRANSFER_PENDING).
+    const RECEIVED_VISIBLE_STATUSES = ["SUCCESS", "PRIVATE_TRANSFER_PENDING"];
     const received = receivedRaw
       .map(enrich)
-      .filter((c) => String(c.status || "").toUpperCase() === "SUCCESS");
+      .filter((c) => RECEIVED_VISIBLE_STATUSES.includes(String(c.status || "").toUpperCase()));
 
     const res = NextResponse.json({ sent, received });
     res.headers.set("Cache-Control", "private, max-age=60, stale-while-revalidate=120");

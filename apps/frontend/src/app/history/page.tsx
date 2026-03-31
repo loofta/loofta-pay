@@ -250,7 +250,7 @@ export default function HistoryPage() {
       <div className="max-w-lg mx-auto px-4 py-6 pb-24">
         <div className="min-h-[calc(100vh-var(--header-h,0px))]">
             <div className="hidden md:block">
-                <SendReceiveTabs activeTab="send" visualOnly />
+                <SendReceiveTabs activeTab={null} visualOnly />
             </div>
           <div className="rounded-2xl border border-white/10 bg-white/5 p-6 mb-6">
           <h1 className="text-lg font-medium font-sans text-white mb-4">Payment history</h1>

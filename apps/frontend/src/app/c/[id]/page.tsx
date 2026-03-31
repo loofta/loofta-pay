@@ -134,18 +134,18 @@ function ClaimPayLayout({
   );
 }
 
-/** Shown only when the current user is the logged-in creator of a pending-username claim: copy link, share, reclaim. */
+/** Shown for logged-in creator of pending-recipient claim: copy/share/reclaim after payment. */
 function ClaimPageSenderShareView({
   claimId,
   amount,
-  recipientUsername,
+  recipientLabel,
   status,
   userId,
   onReclaimed,
 }: {
   claimId: string;
   amount: number;
-  recipientUsername: string;
+  recipientLabel?: string;
   status: string;
   /** Logged-in creator's Privy user id; Reclaim is only shown when this is set. */
   userId?: string | null;
@@ -218,11 +218,12 @@ function ClaimPageSenderShareView({
   };
 
   const handleShare = () => {
+    const who = recipientLabel ? ` (${recipientLabel})` : "";
     if (navigator.share) {
       navigator
         .share({
           title: "Payment for you",
-          text: `You have a payment of $${amount.toFixed(2)} to claim. Sign up with @${recipientUsername} on Loofta to claim it.`,
+          text: `You have a payment of $${amount.toFixed(2)} to claim${who}. Sign in or sign up on Loofta to claim it.`,
           url: claimLink,
         })
         .then(() => toast({ title: "Shared!" }))
@@ -236,12 +237,12 @@ function ClaimPageSenderShareView({
     <div className="mt-6 text-center py-12">
       <div className="mb-4 text-6xl">🔗</div>
       <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-        Share this link with @{recipientUsername}
+        Share this claim link
       </h3>
       <p className="text-gray-600 text-base mb-4">
-        {status === "SUCCESS"
-          ? `$${amount.toFixed(2)} is ready. They can claim it by signing up with this username on Loofta.`
-          : `They can claim $${amount.toFixed(2)} when they sign up with this username on Loofta.`}
+        {["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(status)
+          ? `$${amount.toFixed(2)} is ready. The recipient can claim after signing in or signing up on Loofta${recipientLabel ? ` (${recipientLabel})` : ""}.`
+          : `The recipient can claim $${amount.toFixed(2)} after signing in or signing up on Loofta${recipientLabel ? ` (${recipientLabel})` : ""}.`}
       </p>
       <div className="flex flex-col sm:flex-row gap-2 justify-center items-stretch sm:items-center">
         <div className="flex gap-2 flex-1 max-w-md mx-auto">
@@ -376,9 +377,14 @@ async function fetchClaim(id: string) {
     if (r.ok) {
       const data = await r.json();
       const c = data.claim || {};
-      console.log("[fetchClaim] From backend:", { claimId: id, hasBurner: !!c.claim_burner_address, recipient_address: c.recipient_address ? `${String(c.recipient_address).slice(0, 20)}…` : "(empty)" });
+      console.log("[fetchClaim] From backend:", {
+        claimId: id,
+        burnerWallet: c.claim_burner_address || null,
+        hasBurner: !!c.claim_burner_address,
+        recipient_address: c.recipient_address ? `${String(c.recipient_address).slice(0, 20)}…` : "(empty)",
+      });
       return {
-        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
         latestIntent: data.intent ? {
           depositAddress: data.intent.deposit_address || null,
           memo: data.intent.memo ?? null,
@@ -402,9 +408,14 @@ async function fetchClaim(id: string) {
   }
   const data = await r.json();
   const c = data.claim || {};
-  console.log("[fetchClaim] From frontend API:", { claimId: id, hasBurner: !!c.claim_burner_address, recipient_address: c.recipient_address ? `${String(c.recipient_address).slice(0, 20)}…` : "(empty)" });
+  console.log("[fetchClaim] From frontend API:", {
+    claimId: id,
+    burnerWallet: c.claim_burner_address || null,
+    hasBurner: !!c.claim_burner_address,
+    recipient_address: c.recipient_address ? `${String(c.recipient_address).slice(0, 20)}…` : "(empty)",
+  });
   return {
-    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -509,7 +520,16 @@ async function prepareDeposit(input: {
 async function updateClaimStatus(
   claimId: string,
   status: string,
-  extra?: { txHash?: string; paidWith?: string; depositReceivedAt?: string; originAsset?: string; destinationAsset?: string; isPrivate?: boolean },
+  extra?: {
+    txHash?: string;
+    paidWith?: string;
+    depositReceivedAt?: string;
+    originAsset?: string;
+    destinationAsset?: string;
+    isPrivate?: boolean;
+    paidWithToken?: string;
+    paidWithChain?: string;
+  },
   userId?: string
 ) {
   try {
@@ -584,41 +604,229 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     staleTime: 60_000,
   });
   const isRecipient = recipientCheckQuery.data?.isRecipient === true;
+  // True while we're still checking — hide the pay form until we know the user is NOT the recipient.
+  const isCheckingRecipient = recipientCheckQuery.isLoading || recipientCheckQuery.isFetching;
+
+  const isPendingRecipientClaim =
+    !!claim?.recipient_pending_email || !!claim?.recipient_pending_username;
+
+  // Poll burner USDC balance so the recipient only claims once the payer’s transfer has landed (private leg can take a few minutes).
+  const burnerAddr = (claim as { claim_burner_address?: string | null } | null)?.claim_burner_address ?? null;
+  const burnerReadyQuery = useQuery({
+    queryKey: ["burner-ready", burnerAddr],
+    queryFn: async (): Promise<{ balance: number; isReady: boolean }> => {
+      if (!burnerAddr) return { balance: 0, isReady: false };
+      try {
+        const conn = new Connection(getSolanaHttpRpc(), "confirmed");
+        const usdcMint = getUsdcMint();
+        const ata = getAssociatedTokenAddressSync(usdcMint, new PublicKey(burnerAddr));
+        const info = await conn.getTokenAccountBalance(ata);
+        const balance = Number(info.value.amount);
+        console.info(
+          `[BurnerReady] claimId=${id} burnerWallet=${burnerAddr} usdcBaseUnits=${balance} (ATA may be missing until first deposit)`,
+        );
+        return { balance, isReady: balance > 0 };
+      } catch {
+        // ATA may not exist yet (token account not initialised)
+        return { balance: 0, isReady: false };
+      }
+    },
+    enabled: !!burnerAddr && !!user?.id && isPendingRecipientClaim,
+    refetchInterval: 5_000,
+    staleTime: 8_000,
+  });
+  const burnerIsReady = burnerReadyQuery.data?.isReady ?? false;
+  const burnerIsChecking = burnerReadyQuery.isLoading || (!burnerReadyQuery.isFetched && !!burnerAddr);
+  /** Logged-in pending recipient cannot claim until burner USDC ATA has a balance (or burner address is missing). */
+  const waitingForBurnerFunds =
+    !!user?.id && isPendingRecipientClaim && (!burnerAddr || !burnerIsReady);
+
+  useEffect(() => {
+    if (!isPendingRecipientClaim) return;
+    if (burnerAddr) {
+      console.info("[Claim] escrow burnerWallet (pending recipient)", { claimId: id, burnerWallet: burnerAddr });
+    } else {
+      console.warn("[Claim] pending recipient but claim_burner_address missing — claim cannot fund until backfilled", {
+        claimId: id,
+      });
+    }
+  }, [id, isPendingRecipientClaim, burnerAddr]);
+
   const queryClient = useQueryClient();
   const claimAsRecipientMutation = useMutation({
     mutationFn: async () => {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-      const r = await fetch(`${backendUrl}/claims/${id}/claim`, {
+      console.info("[Claim] Initiating claim for:", id, "user:", user?.id?.slice(0, 12));
+      const claimResp = await fetch(`${backendUrl}/claims/${id}/claim`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-privy-user-id": user!.id },
       });
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({}));
-        throw new Error(err?.message || `Claim failed: ${r.status}`);
+      console.info("[Claim] /claim response:", claimResp.status);
+      if (claimResp.ok) {
+        const claimData = await claimResp.json().catch(() => ({}));
+        console.info("[Claim] /claim success:", claimData);
+        // Always attempt a follow-up sweep so funds that arrive later can still be claimed in the same flow.
+        console.info("[Claim] Running retry-sweep…");
+        const retryResp = await fetch(`${backendUrl}/claims/${id}/claim-retry-sweep`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-privy-user-id": user!.id },
+        });
+        console.info("[Claim] retry-sweep response:", retryResp.status);
+        if (retryResp.ok) {
+          const retryData = await retryResp.json().catch(() => ({}));
+          console.info("[Claim] retry-sweep result:", retryData);
+          return {
+            claimed: true,
+            sweepTxHash: retryData?.sweepTxHash || claimData?.sweepTxHash,
+            sweptAmount: retryData?.sweptAmount || claimData?.sweptAmount,
+            swept: retryData?.swept,
+          };
+        }
+        const retryErr = await retryResp.json().catch(() => ({}));
+        console.warn("[Claim] retry-sweep failed (non-fatal):", retryErr);
+        return claimData;
       }
-      return r.json();
+      // If already claimed/not pending, still allow normal "Claim now" to retry sweep to wallet.
+      const err = await claimResp.json().catch(() => ({}));
+      const msg = String(err?.message || "");
+      console.warn("[Claim] /claim failed:", msg);
+      if (/not pending claim|already been claimed|already claimed/i.test(msg)) {
+        console.info("[Claim] Already claimed — running retry-sweep…");
+        const retryResp = await fetch(`${backendUrl}/claims/${id}/claim-retry-sweep`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-privy-user-id": user!.id },
+        });
+        if (!retryResp.ok) {
+          const retryErr = await retryResp.json().catch(() => ({}));
+          throw new Error(retryErr?.message || `Claim retry failed: ${retryResp.status}`);
+        }
+        const retryData = await retryResp.json().catch(() => ({}));
+        console.info("[Claim] retry-sweep (already-claimed path):", retryData);
+        return {
+          claimed: true,
+          sweepTxHash: retryData?.sweepTxHash,
+          sweptAmount: retryData?.sweptAmount,
+          swept: retryData?.swept,
+        };
+      }
+      throw new Error(err?.message || `Claim failed: ${claimResp.status}`);
     },
-    onSuccess: () => {
+    onSuccess: (data: { claimed?: boolean; sweepTxHash?: string; sweptAmount?: string; swept?: boolean } | undefined) => {
+      toast({
+        title: "Payment claimed!",
+        description: "USDC will arrive in your wallet shortly.",
+      });
       queryClient.invalidateQueries({ queryKey: ["claim", id] });
       queryClient.invalidateQueries({ queryKey: ["claim", id, "recipient-check", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Claim failed";
+      toast({ variant: "destructive", title: "Claim failed", description: message });
     },
   });
-  const hasClaimedPendingRef = React.useRef<string | null>(null);
-  useEffect(() => {
-    if (
-      !claim?.id ||
-      !user?.id ||
-      !isRecipient ||
-      claimAsRecipientMutation.isPending ||
-      claimAsRecipientMutation.isSuccess
-    )
+  const [burnerDiagLoading, setBurnerDiagLoading] = useState(false);
+  const [retrySweepLoading, setRetrySweepLoading] = useState(false);
+  const [reclaimingSenderFunds, setReclaimingSenderFunds] = useState(false);
+  const [burnerDiag, setBurnerDiag] = useState<{
+    claimId: string;
+    claimStatus: string;
+    isPrivate: boolean;
+    paidWithToken: string | null;
+    paidWithChain: string | null;
+    burnerAddress: string | null;
+    burnerUsdcRaw: string;
+    burnerUsdc: string;
+    perDepositDetected?: boolean;
+    perWithdrawAttempted?: boolean;
+    perDepositAmountRaw?: string;
+    perWithdrawError?: string | null;
+    perDebugLog?: string[];
+    recipientWallet: string | null;
+  } | null>(null);
+  const runBurnerTroubleshoot = async () => {
+    if (!user?.id) {
+      toast({ variant: "destructive", title: "Login required", description: "Sign in to run diagnostics." });
       return;
-    const isPending = claim?.recipient_pending_email === true || claim?.recipient_pending_username === true;
-    if (!isPending) return;
-    if (hasClaimedPendingRef.current === claim.id) return;
-    hasClaimedPendingRef.current = claim.id;
-    claimAsRecipientMutation.mutate();
-  }, [claim?.id, claim?.recipient_pending_email, claim?.recipient_pending_username, user?.id, isRecipient, claimAsRecipientMutation.isPending, claimAsRecipientMutation.isSuccess]);
+    }
+    setBurnerDiagLoading(true);
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const r = await fetch(`${backendUrl}/claims/${id}/troubleshoot-burner`, {
+        headers: { "x-privy-user-id": user.id },
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err?.message || `Diagnostics failed: ${r.status}`);
+      }
+      const data = await r.json();
+      setBurnerDiag(data);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Could not run diagnostics";
+      toast({ variant: "destructive", title: "Diagnostics failed", description: msg });
+    } finally {
+      setBurnerDiagLoading(false);
+    }
+  };
+  const retryClaimSweep = async () => {
+    if (!user?.id) {
+      toast({ variant: "destructive", title: "Login required", description: "Sign in to retry claim sweep." });
+      return;
+    }
+    setRetrySweepLoading(true);
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const r = await fetch(`${backendUrl}/claims/${id}/claim-retry-sweep`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-privy-user-id": user.id },
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err?.message || `Retry sweep failed: ${r.status}`);
+      }
+      const data = await r.json();
+      if (data?.swept && data?.sweptAmount) {
+        toast({ title: "Claim sweep completed", description: `$${data.sweptAmount} USDC moved to your wallet.` });
+      } else {
+        toast({ title: "No funds to sweep", description: "Burner currently has no USDC in ATA. For private PER payments, funds may still be in PER state." });
+      }
+      await runBurnerTroubleshoot();
+      queryClient.invalidateQueries({ queryKey: ["claim", id] });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Could not retry sweep";
+      toast({ variant: "destructive", title: "Retry sweep failed", description: msg });
+    } finally {
+      setRetrySweepLoading(false);
+    }
+  };
+  const reclaimBySender = async () => {
+    if (!user?.id) {
+      toast({ variant: "destructive", title: "Login required", description: "Sign in to reclaim funds." });
+      return;
+    }
+    setReclaimingSenderFunds(true);
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const r = await fetch(`${backendUrl}/claims/${id}/reclaim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-privy-user-id": user.id },
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err?.message || `Reclaim failed: ${r.status}`);
+      }
+      toast({ title: "Withdraw/reclaim sent", description: "We attempted PER withdraw and return to your wallet." });
+      await runBurnerTroubleshoot();
+      queryClient.invalidateQueries({ queryKey: ["claim", id] });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Could not reclaim funds";
+      toast({ variant: "destructive", title: "Reclaim failed", description: msg });
+    } finally {
+      setReclaimingSenderFunds(false);
+    }
+  };
+  // Phase 2 = recipient has already claimed (wallet linked). Phase 1 = sender paid, burner in-flight.
+  const ALREADY_COMPLETE_STATUSES = ["SUCCESS", "CLAIMED", "FUNDED"];
 
   // Log claim + intent when data loads or updates
   useEffect(() => {
@@ -680,6 +888,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const requiresPrivate = claim?.is_private === true;
   const privateRequired = PRIVATE_PAYMENT_ENABLED || requiresPrivate;
   const privatePayActive = privateRequired || isPrivateMode;
+  const isCreatorView = !!user?.id && claim?.created_by === user.id;
+  const isSenderPendingFundedView =
+    isCreatorView &&
+    isPendingRecipientClaim &&
+    ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CLAIMED"].includes(String(status || claim?.status || "").toUpperCase());
+  const hidePaySectionForPendingClaimant = isPendingRecipientClaim && !isCreatorView;
 
   // Auto-set private mode when private-only is required globally or by claim.
   useEffect(() => {
@@ -1160,8 +1374,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       return;
     }
 
-    // Private payment: always use burner as recipient when claim has a burner (see docs/CLAIM_PAYMENT_ROUTING.md)
-    const recipient = (claim && ((claim as { claim_burner_address?: string }).claim_burner_address || claim.recipient_address) || "").trim();
+    // Private payment: use burner as recipient when claim has a burner (unregistered user).
+    const burnerAddr = ((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
+    const recipient = (burnerAddr || claim.recipient_address || "").trim();
+    const isBurnerRecipient = !!burnerAddr;
     if (!recipient) {
       console.log("[PrivateTransfer] Early exit: no recipient");
       toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
@@ -1178,10 +1394,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     // Total USDC to send: claim amount only (no Privacy Cash rent / withdraw-fee gross-up)
     const amountUSD = requestedAmount;
 
-    console.log("[PrivateTransfer] Starting", { claimId: claim.id, amountUSD, recipient: recipient.slice(0, 8) + "…" });
+    console.log("[PrivateTransfer] Starting", { claimId: claim.id, amountUSD });
     setPreparing(true);
 
     try {
+      if (!user?.id) {
+        toast({ variant: "destructive", title: "Log in required", description: "Sign in to complete a private transfer." });
+        setPreparing(false);
+        return;
+      }
       const phantom = getPhantomProvider();
       if (!phantom) {
         toast({
@@ -1208,7 +1429,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         return;
       }
 
-      const walletAddress = publicKey.toBase58();
+      console.log("[PrivateTransfer] Using Phantom wallet:", publicKey.toBase58().slice(0, 8) + "…");
+
       const anchorWallet = phantomWalletToAnchorWallet({
         publicKey,
         signTransaction: async (tx: Transaction) => {
@@ -1216,17 +1438,27 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           return signed as unknown as Transaction;
         },
       });
-      const mint = getUsdcMint().toBase58();
-
-      console.log("[PrivateTransfer] Using Phantom wallet:", walletAddress.slice(0, 8) + "…");
-      console.log("[PrivateTransfer] Payment details:", { walletAddress, amountUSD, recipientAddress: recipient, claimId: claim.id, recipientPaysFees: requiresPrivate });
-
-      console.log("[PrivateTransfer] Calling PER transfer…");
-      const signature = await perTransfer(anchorWallet, recipient, mint, amountUSD);
+      console.log("[PrivateTransfer] Calling private transfer…", { isBurnerRecipient });
+      const signature = await perTransfer(anchorWallet, {
+        privyUserId: user.id,
+        claimId: claim.id,
+        isBurnerRecipient,
+      });
       console.log("[PrivateTransfer] PER transfer signature:", signature);
 
-      toast({ title: "Payment successful!", description: "Your private payment has been completed." });
-      await updateClaimStatus(claim.id, "SUCCESS", { txHash: signature, paidWith: "USDC (Private)", isPrivate: true }, user?.id);
+      toast({ title: "Transfer submitted!", description: "Your private transfer is processing — funds can take up to 3 minutes to appear." });
+      await updateClaimStatus(
+        claim.id,
+        "SUCCESS",
+        {
+          txHash: signature,
+          paidWith: "USDC (Private)",
+          isPrivate: true,
+          paidWithToken: "USDC",
+          paidWithChain: "solana",
+        },
+        user?.id,
+      );
       setStatus("SUCCESS");
       useClaimPayStore.getState().setStatus(id, "SUCCESS");
       await claimQuery.refetch();
@@ -1250,7 +1482,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(claimAmountUSD);
   const balanceData = solanaPayment.isBalanceLoading ? undefined : { balanceUSD: looftaBalanceUSD };
 
-  /** Phantom → MagicBlock PER. Recipient = burner for pending, user address for existing. */
+  /** Phantom payment path. Pending recipients use burner ATA escrow; registered users use PER. */
   async function payWithWallet() {
     const effectiveRecipient = getEffectiveRecipient(claim);
     if (!claim?.id || !effectiveRecipient || !claim?.amount) {
@@ -1273,6 +1505,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       toast({ variant: "destructive", title: "Token not loaded", description: "USDC on Solana is required. Please try again." });
       return;
     }
+    const isPending =
+      !!(claim as { recipient_pending_username?: boolean; recipient_pending_email?: boolean })
+        ?.recipient_pending_username ||
+      (claim as { recipient_pending_email?: boolean })?.recipient_pending_email;
     setPayingWithWallet(true);
     setPayWithWalletError(null);
     setPerTransferPhase({ phase: "preparing" });
@@ -1301,10 +1537,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           return signed as unknown as Transaction;
         },
       });
-      const mint = getUsdcMint().toBase58();
-
-      const sig = await perTransfer(anchorWallet, rawRecipient, mint, amountUSD, {
+      if (!user?.id) {
+        throw new Error("Log in to pay with your wallet.");
+      }
+      const isBurnerWallet = !!((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
+      const sig = await perTransfer(anchorWallet, {
+        privyUserId: user.id,
+        claimId: claim.id,
         onProgress: setPerTransferPhase,
+        isBurnerRecipient: isBurnerWallet,
       });
       setPerTransferPhase(null);
       setConfirmingTxSignature(sig);
@@ -1318,13 +1559,26 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         );
       }
 
-      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Phantom / PER)" }, user?.id);
+      console.info("[PayWithWallet] Updating claim status → SUCCESS, tx:", sig);
+      await updateClaimStatus(
+        claim.id,
+        "SUCCESS",
+        {
+          txHash: sig,
+          paidWith: "USDC (Phantom / Private)",
+          isPrivate: true,
+          paidWithToken: "USDC",
+          paidWithChain: "solana",
+        },
+        user?.id,
+      );
+      console.info("[PayWithWallet] Claim status updated to SUCCESS");
       setStatus("SUCCESS");
       useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
       await claimQuery.refetch();
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
       setShowPayNowModal(false);
-      toast({ title: "Payment confirmed", description: `$${amountUSD.toFixed(2)} USDC sent via MagicBlock PER.` });
+      toast({ title: "Transfer submitted!", description: `$${amountUSD.toFixed(2)} USDC sent privately. Funds can take up to 3 minutes to appear.` });
     } catch (e: any) {
       console.error("[PayWithWallet] Error:", e);
       const message = e?.message || "Could not complete payment with wallet.";
@@ -1393,11 +1647,16 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
       const connection = new Connection(getSolanaHttpRpc(), "confirmed");
       const anchorWallet = privyStandardWalletToAnchorWallet(wallet, privySolanaSignTransaction);
-      const mint = getUsdcMint().toBase58();
+      const isBurnerForLoofta = !!((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
+      if (!user?.id) {
+        throw new Error("Log in to pay with Loofta.");
+      }
       setPerTransferPhase({ phase: "preparing" });
-      const sig = await perTransfer(anchorWallet, rawRecipient, mint, amountUSD, {
-        privyUserId: user?.id,
+      const sig = await perTransfer(anchorWallet, {
+        privyUserId: user.id,
+        claimId: claim.id,
         onProgress: setPerTransferPhase,
+        isBurnerRecipient: isBurnerForLoofta,
       });
       setPerTransferPhase(null);
       setConfirmingTxSignature(sig);
@@ -1410,15 +1669,28 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         );
       }
 
-      await updateClaimStatus(claim.id, "SUCCESS", { txHash: sig, paidWith: "USDC (Loofta / PER)" }, user?.id);
+      console.info("[PayWithLoofta] Updating claim status → SUCCESS, tx:", sig);
+      await updateClaimStatus(
+        claim.id,
+        "SUCCESS",
+        {
+          txHash: sig,
+          paidWith: "USDC (Loofta / Private)",
+          isPrivate: true,
+          paidWithToken: "USDC",
+          paidWithChain: "solana",
+        },
+        user?.id,
+      );
+      console.info("[PayWithLoofta] Claim status updated to SUCCESS");
       setStatus("SUCCESS");
       useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
       await claimQuery.refetch();
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
       setShowPayNowModal(false);
       toast({
-        title: "Payment confirmed",
-        description: `$${amountUSD.toFixed(2)} USDC sent via MagicBlock PER.`,
+        title: "Transfer submitted!",
+        description: `$${amountUSD.toFixed(2)} USDC sent privately. Funds can take up to 3 minutes to appear.`,
       });
     } catch (e: any) {
       console.error("[PayWithLoofta] Error:", e);
@@ -1437,24 +1709,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     }
   }
 
-  // Keep ref updated so auto-trigger effect can call latest onPayPrivately
+  // Keep ref updated (retained for any legacy callers but auto-trigger is disabled below)
   useEffect(() => {
     onPayPrivatelyRef.current = onPayPrivately;
   });
 
-  // When funds arrive in embedded wallet (PRIVATE_TRANSFER_PENDING), run private PER transfer automatically
-  useEffect(() => {
-    const s = String(status || "").toUpperCase();
-    console.log("[Claim] Auto-trigger effect:", { status: s, claimId: claim?.id, isPrivate: claim?.is_private, alreadyTriggered: claim?.id ? privateTransferTriggeredRef.current.has(claim.id) : false });
-    if (s !== "PRIVATE_TRANSFER_PENDING" || !claim?.is_private || !claim?.id) return;
-    if (privateTransferTriggeredRef.current.has(claim.id)) {
-      console.log("[Claim] Skipping auto-trigger (already ran for this claim):", claim.id);
-      return;
-    }
-    privateTransferTriggeredRef.current.add(claim.id);
-    console.log("[Claim] Auto-running Magicblock for claim:", claim.id);
-    onPayPrivatelyRef.current?.();
-  }, [status, claim?.id, claim?.is_private]);
+  // PRIVATE_TRANSFER_PENDING auto-trigger is intentionally disabled in the new API-based flow.
+  // In the old SDK flow this triggered onPayPrivately (which required Phantom) from the recipient side.
+  // In the new flow, claimAsRecipientMutation (above) handles recipient claiming automatically.
+  // Keeping this comment so the intent is clear: do NOT re-enable without updating onPayPrivately.
 
   async function onPayNow() {
     if (!claim || !selectedFrom || !destToken) return;
@@ -1806,7 +2069,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       disabled={deleting}
                       className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
                     >
-                      {deleting ? "Deleting" : "Delete"}
+                      {deleting ? "Deleting..." : "Delete"}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
@@ -1833,7 +2096,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           </div>
         ) : claim ? (
           <>
-            {isRecipient && String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
+            {isRecipient &&
+            !claim?.recipient_pending_email &&
+            !claim?.recipient_pending_username &&
+            String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
               <div className="mt-6 py-6">
                 <div className="text-center mb-6">
                   <div className="mb-4 text-6xl">✅</div>
@@ -1895,68 +2161,316 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   )}
                   {claim?.paid_at && (
                     <div className="flex items-center justify-between">
-                      <span className="text-gray-600 text-sm">Claimed</span>
+                      <span className="text-gray-600 text-sm">
+                        {claim?.recipient_pending_email || claim?.recipient_pending_username ? "Paid" : "Claimed"}
+                      </span>
                       <span className="text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
                     </div>
                   )}
                 </div>
+                {!!(claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.claim_burner_address) && (
+                  <div className="mt-4 rounded-xl border border-amber-300/60 bg-amber-50/40 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-amber-900">Troubleshoot payment</div>
+                        <div className="text-sm text-amber-800">
+                          Check if funds are still in burner wallet or already swept.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={runBurnerTroubleshoot}
+                        disabled={burnerDiagLoading}
+                        className="inline-flex items-center justify-center rounded-lg bg-amber-500 text-white px-3 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                      >
+                        {burnerDiagLoading ? "Checking..." : "Run check"}
+                      </button>
+                    </div>
+                    {burnerDiag && (
+                      <div className="mt-3 text-sm text-amber-900 space-y-1">
+                        <div>Burner: {burnerDiag.burnerAddress ? `${burnerDiag.burnerAddress.slice(0, 8)}...${burnerDiag.burnerAddress.slice(-6)}` : "none"}</div>
+                        <div>Burner USDC: {burnerDiag.burnerUsdc}</div>
+                        <div>PER deposit detected: {burnerDiag.perDepositDetected ? "yes" : "no"}</div>
+                        <div>PER withdraw attempted: {burnerDiag.perWithdrawAttempted ? "yes" : "no"}</div>
+                        {burnerDiag.perDepositAmountRaw !== undefined && (
+                          <div>PER deposit amount: {(Number(burnerDiag.perDepositAmountRaw || "0") / 1_000_000).toFixed(6)} USDC</div>
+                        )}
+                        {burnerDiag.perWithdrawError && (
+                          <div className="text-rose-700">PER withdraw error: {burnerDiag.perWithdrawError}</div>
+                        )}
+                        {burnerDiag.perDebugLog?.length ? (
+                          <div className="rounded-md bg-black/5 p-2 text-[11px] text-slate-700 max-h-28 overflow-auto">
+                            {burnerDiag.perDebugLog.map((line, idx) => (
+                              <div key={idx}>- {line}</div>
+                            ))}
+                          </div>
+                        ) : null}
+                        <div>Private mode: {burnerDiag.isPrivate ? "yes" : "no"}</div>
+                        <div>Paid with: {burnerDiag.paidWithToken || "-"} / {burnerDiag.paidWithChain || "-"}</div>
+                        <div>Recipient wallet: {burnerDiag.recipientWallet ? `${burnerDiag.recipientWallet.slice(0, 8)}...${burnerDiag.recipientWallet.slice(-6)}` : "not available"}</div>
+                        <div>Status: {burnerDiag.claimStatus}</div>
+                        <div>
+                          {Number(burnerDiag.burnerUsdcRaw || "0") > 0
+                            ? "Funds are still in burner ATA. Claim/sweep is not completed yet."
+                            : burnerDiag.perDepositDetected
+                              ? "PER deposit exists. Funds may still be in PER state; withdraw-to-burner was attempted."
+                              : burnerDiag.isPrivate
+                              ? "Burner ATA is empty. For MagicBlock PER/private flow, funds may still be in PER deposit state (not visible in burner ATA)."
+                              : "No USDC in burner ATA. Funds may already be swept to recipient wallet."}
+                        </div>
+                        {!!user?.id && (
+                          <div className="pt-2">
+                            <button
+                              type="button"
+                              onClick={retryClaimSweep}
+                              disabled={retrySweepLoading}
+                              className="inline-flex items-center justify-center rounded-lg bg-amber-600 text-white px-3 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                            >
+                              {retrySweepLoading ? "Retrying..." : "Retry claim sweep"}
+                            </button>
+                            {claim?.created_by === user.id && (
+                              <button
+                                type="button"
+                                onClick={reclaimBySender}
+                                disabled={reclaimingSenderFunds}
+                                className="ml-2 inline-flex items-center justify-center rounded-lg bg-slate-800 text-white px-3 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                              >
+                                {reclaimingSenderFunds ? "Withdrawing..." : "Withdraw from PER"}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            ) : isRecipient && claim?.recipient_pending_email ? (
+            ) : isRecipient && claimAsRecipientMutation.isPending ? (
               <div className="mt-6 text-center py-12">
+                <div className="mb-4 text-6xl">🔒</div>
+                <h3 className="text-2xl font-semibold text-gray-900 mb-2">Claiming your payment…</h3>
+                <p className="text-gray-600 text-base">Securely routing your funds — this takes just a moment.</p>
+              </div>
+            ) : isRecipient && (
+                claimAsRecipientMutation.isSuccess
+                // On refresh: only show claimed screen if recipient_address is already a wallet (Phase 2).
+                // If still PENDING_EMAIL/USERNAME (Phase 1), auto-trigger will handle it.
+                || (!isPendingRecipientClaim && ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CLAIMED"].includes(String(status || claim?.status || "").toUpperCase()))
+              ) ? (
+              (() => {
+                const senderLabel =
+                  claim?.creator_username ? `@${claim.creator_username}` : (claim?.creator_email || null);
+                const claimDesc = claim?.description?.trim() || null;
+                const isGif = claimDesc && /^https?:\/\/.+\.(gif|webp)(\?.*)?$/i.test(claimDesc);
+                const amt = parseFloat(claim?.amount || "0").toFixed(2);
+                return (
+                  <div className="mt-6 text-center py-12 px-4">
+                    <div className="mb-4 text-6xl">🎉</div>
+                    <h3 className="text-2xl font-semibold text-gray-900 mb-1">Payment claimed!</h3>
+                    {senderLabel && (
+                      <p className="text-sm text-gray-500 mb-3">
+                        From <span className="font-medium text-gray-700">{senderLabel}</span>
+                      </p>
+                    )}
+                    {claimDesc && !isGif && (
+                      <p className="text-gray-700 text-base italic mb-3 max-w-xs mx-auto">&ldquo;{claimDesc}&rdquo;</p>
+                    )}
+                    {isGif && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={claimDesc!} alt="gif" className="mx-auto mb-3 rounded-xl max-h-40 object-contain" />
+                    )}
+                    <p className="text-gray-900 text-lg font-semibold mb-1">Payment received</p>
+                    <p className="text-gray-600 text-base">${amt} USDC</p>
+                  </div>
+                );
+              })()
+            ) : claim?.recipient_pending_email && !(user?.id && claim?.created_by === user.id) ? (
+              <div className="mt-6 text-center py-12 px-4">
                 <div className="mb-4 text-6xl">🎁</div>
                 <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                  Claim this payment
+                  {user?.id ? `$${parseFloat(claim?.amount || "0").toFixed(2)} is waiting for you` : "You received a payment"}
                 </h3>
-                <p className="text-gray-600 text-base mb-4">
-                  Sign in with the email this link was sent to to claim ${parseFloat(claim?.amount || "0").toFixed(2)}.
+                {user?.id && (
+                  <div className="flex items-center justify-center gap-2 text-sm mb-4">
+                    {burnerIsChecking ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                        <span className="text-gray-500">Checking if funds have arrived…</span>
+                      </>
+                    ) : burnerIsReady ? (
+                      <>
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span className="text-green-600 font-medium">Funds ready — claiming now…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+                        <span className="text-gray-500">Waiting for the payment to land — can take up to 3 minutes after the sender pays.</span>
+                      </>
+                    )}
+                  </div>
+                )}
+                <p className="text-gray-500 text-sm mb-5">
+                  {!user?.id && `Sign in with the email this link was sent to to claim $${parseFloat(claim?.amount || "0").toFixed(2)}.`}
                 </p>
                 <button
                   type="button"
-                  onClick={() => login({ loginMethods: ["email"], disableSignup: false })}
-                  className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90"
+                  onClick={() => {
+                    if (!user?.id) {
+                      login({ loginMethods: ["email"], disableSignup: false });
+                      return;
+                    }
+                    claimAsRecipientMutation.mutate();
+                  }}
+                  disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
+                  className={cn(
+                    "inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
+                    claimAsRecipientMutation.isPending && "bg-slate-200 text-slate-500 cursor-not-allowed",
+                    !claimAsRecipientMutation.isPending &&
+                      !user?.id &&
+                      "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 cursor-pointer",
+                    !claimAsRecipientMutation.isPending &&
+                      !!user?.id &&
+                      waitingForBurnerFunds &&
+                      "bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed shadow-none",
+                    !claimAsRecipientMutation.isPending &&
+                      !!user?.id &&
+                      !waitingForBurnerFunds &&
+                      burnerIsReady &&
+                      "bg-green-500 text-white hover:bg-green-600 shadow-lg shadow-green-200 cursor-pointer",
+                  )}
                 >
-                  Sign in to claim
+                  {claimAsRecipientMutation.isPending ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> Claiming…</>
+                  ) : user?.id ? (
+                    burnerIsReady ? (
+                      <><CheckCircle2 className="h-4 w-4" /> Claim to wallet</>
+                    ) : (
+                      "Not yet — waiting for payment"
+                    )
+                  ) : (
+                    "Sign in to claim"
+                  )}
                 </button>
               </div>
             ) : isRecipient && claim?.recipient_pending_username ? (
-              <div className="mt-6 text-center py-12">
+              <div className="mt-6 text-center py-12 px-4">
                 <div className="mb-4 text-6xl">📩</div>
-                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                  This payment is for you
-                </h3>
-                <p className="text-gray-600 text-base mb-4">
-                  ${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay. When they do, it&apos;ll show up here and in your Loofta account.
-                </p>
+                <h3 className="text-2xl font-semibold text-gray-900 mb-2">This payment is for you</h3>
+                {["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(String(claim?.status || "").toUpperCase()) ? (
+                  <>
+                    <div className="flex items-center justify-center gap-2 text-sm mb-4">
+                      {burnerIsChecking ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                          <span className="text-gray-500">Checking if funds have arrived…</span>
+                        </>
+                      ) : burnerIsReady ? (
+                        <>
+                          <CheckCircle2 className="h-4 w-4 text-green-500" />
+                          <span className="text-green-600 font-medium">Funds ready — claiming now…</span>
+                        </>
+                      ) : (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+                          <span className="text-gray-500">Waiting for the payment to land — can take up to 3 minutes after the sender pays.</span>
+                        </>
+                      )}
+                    </div>
+                    <p className="text-gray-500 text-sm mb-5">
+                      {!user?.id &&
+                        `Sign in with @${claim.recipient_pending_username_value || "username"} on Loofta to claim $${parseFloat(claim?.amount || "0").toFixed(2)}.`}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!user?.id) {
+                          login({ disableSignup: false });
+                          return;
+                        }
+                        claimAsRecipientMutation.mutate();
+                      }}
+                      disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
+                      className={cn(
+                        "inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
+                        claimAsRecipientMutation.isPending && "bg-slate-200 text-slate-500 cursor-not-allowed",
+                        !claimAsRecipientMutation.isPending &&
+                          !user?.id &&
+                          "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 cursor-pointer",
+                        !claimAsRecipientMutation.isPending &&
+                          !!user?.id &&
+                          waitingForBurnerFunds &&
+                          "bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed shadow-none",
+                        !claimAsRecipientMutation.isPending &&
+                          !!user?.id &&
+                          !waitingForBurnerFunds &&
+                          burnerIsReady &&
+                          "bg-green-500 text-white hover:bg-green-600 shadow-lg shadow-green-200 cursor-pointer",
+                      )}
+                    >
+                      {claimAsRecipientMutation.isPending ? (
+                        <><Loader2 className="h-4 w-4 animate-spin" /> Claiming…</>
+                      ) : user?.id ? (
+                        burnerIsReady ? (
+                          <><CheckCircle2 className="h-4 w-4" /> Claim to wallet</>
+                        ) : (
+                          "Not yet — waiting for payment"
+                        )
+                      ) : (
+                        "Sign in to claim"
+                      )}
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-gray-600 text-base mb-4">
+                    ${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay.
+                  </p>
+                )}
               </div>
-            ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
+            ) : claim?.recipient_pending_email && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
                 claimId={id}
                 amount={parseFloat(claim?.amount || "0")}
-                recipientUsername={claim.recipient_pending_username_value || "username"}
+                recipientLabel={claim?.recipient_pending_email_value || "email recipient"}
+                status={String(status || claim?.status || "").toUpperCase()}
+                userId={user?.id}
+              />
+            ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+              <ClaimPageSenderShareView
+                claimId={id}
+                amount={parseFloat(claim?.amount || "0")}
+                recipientLabel={`@${claim.recipient_pending_username_value || "username"}`}
                 status={String(status || claim?.status || "").toUpperCase()}
                 userId={user?.id}
               />
             ) : claim?.recipient_pending_username && !(user?.id && claim?.created_by === user.id) ? (
-              <div className="mt-6 text-center py-12">
-                <div className="mb-4 text-6xl">🎁</div>
-                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                  Payment for @{claim.recipient_pending_username_value || "username"}
-                </h3>
-                <p className="text-gray-600 text-base mb-4">
-                  {String(status || claim?.status || "").toUpperCase() === "SUCCESS"
-                    ? `${parseFloat(claim?.amount || "0").toFixed(2)} is ready. They can claim it by signing up with this username on Loofta.`
-                    : `They can claim ${parseFloat(claim?.amount || "0").toFixed(2)} when they sign up with this username on Loofta.`}
-                </p>
-                {String(status || claim?.status || "").toUpperCase() === "SUCCESS" && (
-                  <button
-                    type="button"
-                    onClick={() => login({ disableSignup: false })}
-                    className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90"
-                  >
-                    Sign up to claim
-                  </button>
-                )}
-              </div>
+              (() => {
+                const senderHasPaid = ["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(
+                  String(claim?.status || "").toUpperCase()
+                );
+                return (
+                  <div className="mt-6 text-center py-12 px-4">
+                    <div className="mb-4 text-6xl">🎁</div>
+                    <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                      Payment for @{claim.recipient_pending_username_value || "username"}
+                    </h3>
+                    <p className="text-gray-600 text-sm mb-5">
+                      {senderHasPaid
+                        ? `$${parseFloat(claim?.amount || "0").toFixed(2)} is waiting. Sign up with @${claim.recipient_pending_username_value || "username"} on Loofta to claim it.`
+                        : `They can claim $${parseFloat(claim?.amount || "0").toFixed(2)} when they sign up with this username on Loofta.`}
+                    </p>
+                    {senderHasPaid && (
+                      <button
+                        type="button"
+                        onClick={() => login({ disableSignup: false })}
+                        className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90"
+                      >
+                        Sign up to claim
+                      </button>
+                    )}
+                  </div>
+                );
+              })()
             ) : isRecipient ? (
               <div className="mt-6 text-center py-12">
                 <div className="mb-4 text-6xl">📩</div>
@@ -1970,7 +2484,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   ← Back to Send
                 </Link>
               </div>
-            ) : String(status || "").toUpperCase() === "SUCCESS" ? (
+            ) : ["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <>
                 {/* Payment Complete Message (payer view) */}
                 <div className="mt-6 text-center py-12">
@@ -2079,6 +2593,82 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     )}
                   </div>
                 </div>
+                {!!(claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.claim_burner_address) && (
+                  <div className="mt-4 rounded-xl border border-amber-300/60 bg-amber-50/40 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-amber-900">Troubleshoot payment</div>
+                        <div className="text-sm text-amber-800">
+                          Check if funds are still in burner wallet or already swept.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={runBurnerTroubleshoot}
+                        disabled={burnerDiagLoading}
+                        className="inline-flex items-center justify-center rounded-lg bg-amber-500 text-white px-3 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                      >
+                        {burnerDiagLoading ? "Checking..." : "Run check"}
+                      </button>
+                    </div>
+                    {burnerDiag && (
+                      <div className="mt-3 text-sm text-amber-900 space-y-1">
+                        <div>Burner: {burnerDiag.burnerAddress ? `${burnerDiag.burnerAddress.slice(0, 8)}...${burnerDiag.burnerAddress.slice(-6)}` : "none"}</div>
+                        <div>Burner USDC: {burnerDiag.burnerUsdc}</div>
+                        <div>PER deposit detected: {burnerDiag.perDepositDetected ? "yes" : "no"}</div>
+                        <div>PER withdraw attempted: {burnerDiag.perWithdrawAttempted ? "yes" : "no"}</div>
+                        {burnerDiag.perDepositAmountRaw !== undefined && (
+                          <div>PER deposit amount: {(Number(burnerDiag.perDepositAmountRaw || "0") / 1_000_000).toFixed(6)} USDC</div>
+                        )}
+                        {burnerDiag.perWithdrawError && (
+                          <div className="text-rose-700">PER withdraw error: {burnerDiag.perWithdrawError}</div>
+                        )}
+                        {burnerDiag.perDebugLog?.length ? (
+                          <div className="rounded-md bg-black/5 p-2 text-[11px] text-slate-700 max-h-28 overflow-auto">
+                            {burnerDiag.perDebugLog.map((line, idx) => (
+                              <div key={idx}>- {line}</div>
+                            ))}
+                          </div>
+                        ) : null}
+                        <div>Private mode: {burnerDiag.isPrivate ? "yes" : "no"}</div>
+                        <div>Paid with: {burnerDiag.paidWithToken || "-"} / {burnerDiag.paidWithChain || "-"}</div>
+                        <div>Recipient wallet: {burnerDiag.recipientWallet ? `${burnerDiag.recipientWallet.slice(0, 8)}...${burnerDiag.recipientWallet.slice(-6)}` : "not available"}</div>
+                        <div>Status: {burnerDiag.claimStatus}</div>
+                        <div>
+                          {Number(burnerDiag.burnerUsdcRaw || "0") > 0
+                            ? "Funds are still in burner ATA. Claim/sweep is not completed yet."
+                            : burnerDiag.perDepositDetected
+                              ? "PER deposit exists. Funds may still be in PER state; withdraw-to-burner was attempted."
+                              : burnerDiag.isPrivate
+                              ? "Burner ATA is empty. For MagicBlock PER/private flow, funds may still be in PER deposit state (not visible in burner ATA)."
+                              : "No USDC in burner ATA. Funds may already be swept to recipient wallet."}
+                        </div>
+                        {!!user?.id && (
+                          <div className="pt-2">
+                            <button
+                              type="button"
+                              onClick={retryClaimSweep}
+                              disabled={retrySweepLoading}
+                              className="inline-flex items-center justify-center rounded-lg bg-amber-600 text-white px-3 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                            >
+                              {retrySweepLoading ? "Retrying..." : "Retry claim sweep"}
+                            </button>
+                            {claim?.created_by === user.id && (
+                              <button
+                                type="button"
+                                onClick={reclaimBySender}
+                                disabled={reclaimingSenderFunds}
+                                className="ml-2 inline-flex items-center justify-center rounded-lg bg-slate-800 text-white px-3 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                              >
+                                {reclaimingSenderFunds ? "Withdrawing..." : "Withdraw from PER"}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {String(status || "").toUpperCase() !== "SUCCESS" && (
                   <div className="mt-6">
                     <PaymentStatusTracker
@@ -2200,7 +2790,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               </>
             )}
 
-            {String(status || "").toUpperCase() !== "SUCCESS" && (!deposit ? (
+            {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) && (!deposit ? (
               <>
                 {/* Private payment switch — hidden when app defaults all links to private */}
                 {!requiresPrivate && !PRIVATE_PAYMENT_ENABLED && (
@@ -2240,7 +2830,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     <p className="min-w-0 leading-relaxed">
                       {PRIVATE_PAYMENT_COMING_SOON
                         ? "Private payment — coming soon."
-                        : "All payments use MagicBlock PER for privacy."}
+                        : "All payments are private. Funds can take up to 3 minutes to appear."}
                     </p>
                   </div>
                 )}
@@ -3209,7 +3799,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 )}
               </DialogHeader>
               <div className="space-y-3 py-2">
-                <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50/80 p-4">
+                <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-500 p-4">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100">
                     <CheckCircle2 className="h-5 w-5 text-emerald-600" />
                   </div>

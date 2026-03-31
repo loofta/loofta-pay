@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
@@ -19,6 +19,10 @@ export function UserSync() {
   const setAuth = useAuthStore((s) => s.setAuth);
   const [showUsernameModal, setShowUsernameModal] = useState(false);
   const [showWelcomeOnboarding, setShowWelcomeOnboarding] = useState(false);
+  /** Avoid re-opening welcome modal when Privy refreshes `user` (fixes flicker / “stuck” after skip). */
+  const welcomeDismissedRef = useRef(false);
+
+  const welcomeSessionDismissedKey = (uid: string) => `loofta_welcome_onboarding_dismissed_${uid}`;
 
   // Check user and set username from backend
   useEffect(() => {
@@ -47,7 +51,7 @@ export function UserSync() {
               username: usernameValue,
             });
           }
-          // Onboarding (add-email, add-Twitter, username step) shows after login; no separate username modal
+          // Onboarding (add-email, then welcome flow) shows after login; no separate username modal
         }
       } catch (error) {
         console.error("[UserSync] Error checking user:", error);
@@ -57,7 +61,17 @@ export function UserSync() {
     checkUser();
   }, [authenticated, userId, email, setUsername, setAuth]);
 
-  // Show onboarding right after login (add-email, add-Twitter, then username step). Don't wait for Solana wallet.
+  useEffect(() => {
+    if (!authenticated || !userId) {
+      welcomeDismissedRef.current = false;
+      return;
+    }
+    welcomeDismissedRef.current =
+      typeof window !== "undefined" &&
+      sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1";
+  }, [authenticated, userId]);
+
+  // Show onboarding right after login (add-email, then welcome flow). Don't wait for Solana wallet.
   useEffect(() => {
     if (!authenticated || !privyReady || !privyUser || !userId) {
       return;
@@ -68,6 +82,12 @@ export function UserSync() {
 
     const run = async () => {
       try {
+        if (typeof window !== "undefined" && sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1") {
+          welcomeDismissedRef.current = true;
+          return;
+        }
+        if (welcomeDismissedRef.current) return;
+
         const userResponse = await fetch("/api/users/check", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -75,9 +95,10 @@ export function UserSync() {
         });
         const userData = await userResponse.json();
         if (cancelled || userData.user?.skipOnboarding) return;
+        if (welcomeDismissedRef.current) return;
 
         timer = setTimeout(() => {
-          if (!cancelled) setShowWelcomeOnboarding(true);
+          if (!cancelled && !welcomeDismissedRef.current) setShowWelcomeOnboarding(true);
         }, 600);
       } catch (error) {
         console.error("[UserSync] Error checking onboarding:", error);
@@ -89,7 +110,7 @@ export function UserSync() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [authenticated, userId, email, privyUser, privyReady]);
+  }, [authenticated, userId, email, privyReady, privyUser?.id]);
 
   const refreshUser = async () => {
     if (!authenticated || !userId) return;
@@ -123,8 +144,18 @@ export function UserSync() {
         <WelcomeOnboarding
           open={showWelcomeOnboarding}
           onClose={(_dontShowAgain) => {
+            welcomeDismissedRef.current = true;
+            if (typeof window !== "undefined") {
+              try {
+                sessionStorage.setItem(welcomeSessionDismissedKey(userId), "1");
+              } catch {
+                /* ignore quota / private mode */
+              }
+            }
             setShowWelcomeOnboarding(false);
-            refreshUser();
+            queueMicrotask(() => {
+              void refreshUser();
+            });
           }}
           username={username ?? null}
           privyUserId={userId}

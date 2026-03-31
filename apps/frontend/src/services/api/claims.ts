@@ -8,6 +8,7 @@
  */
 
 import { fetchApi } from './client';
+import type { MagicblockTxResponse } from '../magicblockPaymentsApi';
 
 // ===========================================
 // Types
@@ -121,6 +122,22 @@ export async function updateClaimStatus(
   return fetchApi<{ claim: Claim }>(`/claims/${id}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status }),
+    userId,
+  });
+}
+
+/**
+ * Build unsigned MagicBlock private transfer — recipient is resolved on the server only
+ * (not visible in the browser network tab).
+ */
+export async function buildClaimPrivateTransfer(
+  claimId: string,
+  userId: string,
+  senderWallet: string,
+): Promise<MagicblockTxResponse> {
+  return fetchApi<MagicblockTxResponse>(`/claims/${claimId}/build-private-transfer`, {
+    method: 'POST',
+    body: JSON.stringify({ sender_wallet: senderWallet }),
     userId,
   });
 }
