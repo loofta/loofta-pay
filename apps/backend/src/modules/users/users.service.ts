@@ -328,7 +328,7 @@ export class UsersService {
         const email = (account.address || account.email || '').toString().toLowerCase().trim();
         if (email && normalized === email) return true;
       }
-      if (recipientType === 'twitter' && (type === 'twitter' || type === 'x')) {
+      if (recipientType === 'twitter' && (type === 'twitter' || type === 'x' || type === 'twitter_oauth')) {
         const handle = (account.username || account.name || account.address || '')
           .toString()
           .replace(/^@/, '')
