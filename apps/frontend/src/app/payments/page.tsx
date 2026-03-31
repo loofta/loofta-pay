@@ -49,17 +49,24 @@ type Direction = "sent" | "received";
 
 const STATUS_LABELS: Record<string, string> = {
   SUCCESS: "Paid",
+  CLAIMED: "Paid",
+  PRIVATE_TRANSFER_PENDING: "Paid",
+  FUNDED: "Paid",
   OPEN: "Open",
-  PENDING_DEPOSIT: "Waiting",
+  PENDING: "Open",
+  PENDING_DEPOSIT: "Open",
   IN_FLIGHT: "In progress",
+  PROCESSING: "In progress",
   REFUNDED: "Refunded",
   EXPIRED: "Expired",
   CANCELLED: "Cancelled",
+  FAILED: "Failed",
 };
 
 function statusStyles(status: string): string {
   const s = String(status).toUpperCase();
-  if (s === "SUCCESS") return "bg-green-100 text-green-700";
+  if (["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(s)) return "bg-green-100 text-green-700";
+  if (["IN_FLIGHT", "PROCESSING"].includes(s)) return "bg-blue-100 text-blue-700";
   return "bg-gray-100 text-gray-600";
 }
 

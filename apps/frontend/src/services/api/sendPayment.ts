@@ -4,6 +4,7 @@
  */
 
 import { fetchApi } from './client';
+import type { MagicblockTxResponse } from '../magicblockPaymentsApi';
 
 export type SendPaymentStatus = 'OPEN' | 'FUNDED' | 'CLAIMED' | 'CANCELLED' | 'EXPIRED';
 export type RecipientType = 'email' | 'twitter' | 'username';
@@ -117,6 +118,22 @@ export async function reclaimSendPayment(
   return fetchApi<ReclaimSendPaymentResult>(`/send-payment/${id}/reclaim`, {
     method: 'POST',
     body: JSON.stringify({}),
+    userId,
+  });
+}
+
+/**
+ * Build unsigned MagicBlock private transfer — recipient pubkey comes from DB only
+ * (not sent from the browser).
+ */
+export async function buildSendPaymentPrivateTransfer(
+  sendPaymentId: string,
+  userId: string,
+  senderWallet: string,
+): Promise<MagicblockTxResponse> {
+  return fetchApi<MagicblockTxResponse>(`/send-payment/${sendPaymentId}/build-private-transfer`, {
+    method: 'POST',
+    body: JSON.stringify({ sender_wallet: senderWallet }),
     userId,
   });
 }

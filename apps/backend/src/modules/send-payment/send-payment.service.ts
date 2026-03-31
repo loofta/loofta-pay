@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
+import type { MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
@@ -99,6 +100,40 @@ export class SendPaymentService {
   }
 
   /**
+   * Build unsigned MagicBlock private transfer; recipient pubkey comes from DB only
+   * (not sent from the client). Only the link sender may call.
+   */
+  async buildPrivateTransferForSender(
+    linkId: string,
+    privyUserId: string,
+    senderWallet: string,
+  ): Promise<MagicblockPrivateTransferTxResponse> {
+    const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
+    const link = await this.getOne(linkId);
+    if (link.sender_user_id !== privyUserId) {
+      throw new ForbiddenException('Not the sender of this link');
+    }
+    const row = link as { recipient_solana_pubkey?: string | null };
+    const to = (row.recipient_solana_pubkey || '').trim();
+    if (!to || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(to)) {
+      throw new BadRequestException('Recipient is not resolved for this link');
+    }
+    const amountUsd = parseFloat(String(link.amount || '0'));
+    if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+      throw new BadRequestException('Invalid amount');
+    }
+    const baseUnits = Math.round(amountUsd * 1_000_000);
+    const cluster = isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
+    return requestMagicblockPrivateTransfer({
+      from: senderWallet.trim(),
+      to,
+      mint: this.usdcMint.toBase58(),
+      amount: baseUnits,
+      cluster,
+    });
+  }
+
+  /**
    * Create a send payment link (MagicBlock PER). Resolves recipient Solana pubkey for email/username;
    * Twitter handles require a matching Loofta account (use email or username instead).
    */
@@ -116,7 +151,31 @@ export class SendPaymentService {
     const recipientIdentifier = this.normalizeIdentifier(dto.recipient_type, dto.recipient_identifier);
     const amountStr = String(dto.amount);
 
-    const recipientSolanaPubkey = await this.resolveRecipientSolanaPubkey(dto, recipientIdentifier);
+    let recipientSolanaPubkey = await this.resolveRecipientSolanaPubkey(dto, recipientIdentifier);
+    let burnerAddress: string | null = null;
+    let burnerEncryptedSecret: string | null = null;
+
+    // Recipient not found yet -> create burner fallback so recipient can claim after signup/login.
+    if (!recipientSolanaPubkey) {
+      const burner = Keypair.generate();
+      burnerAddress = burner.publicKey.toBase58();
+      burnerEncryptedSecret = this.encryption.encrypt(Buffer.from(burner.secretKey));
+      // Keep PER UX working: transfer targets burner pubkey, then recipient claims by identity.
+      recipientSolanaPubkey = burnerAddress;
+      this.logger.log(
+        `[SendPayment] Pending recipient fallback for ${dto.recipient_type}:${recipientIdentifier} -> burner ${burnerAddress.slice(0, 8)}...`,
+      );
+    }
+
+    let depositAddress = '';
+    if (burnerAddress) {
+      try {
+        const burnerPubkey = new PublicKey(burnerAddress);
+        depositAddress = (await getAssociatedTokenAddress(this.usdcMint, burnerPubkey)).toBase58();
+      } catch {
+        depositAddress = '';
+      }
+    }
 
     const { data, error } = await this.supabaseService.sendPaymentLinks
       .insert({
@@ -127,8 +186,8 @@ export class SendPaymentService {
         recipient_type: dto.recipient_type,
         recipient_identifier: recipientIdentifier,
         status: 'OPEN',
-        burner_address: null,
-        burner_encrypted_secret: null,
+        burner_address: burnerAddress,
+        burner_encrypted_secret: burnerEncryptedSecret,
         recipient_solana_pubkey: recipientSolanaPubkey,
         message: dto.message || null,
         is_devnet: isSolanaDevnetFromConfig(this.configService),
@@ -149,11 +208,11 @@ export class SendPaymentService {
     return {
       id: data.id,
       link,
-      deposit_address: '',
+      deposit_address: depositAddress,
       amount: amountStr,
       token: 'USDC',
-      burner_address: '',
-      required_sol_lamports: 0,
+      burner_address: burnerAddress ?? '',
+      required_sol_lamports: burnerAddress ? BURNER_SOL_LAMPORTS : 0,
       per_recipient_pubkey: recipientSolanaPubkey,
       per_mode: true,
     };
@@ -162,7 +221,7 @@ export class SendPaymentService {
   private async resolveRecipientSolanaPubkey(
     dto: CreateSendPaymentDto,
     recipientIdentifier: string,
-  ): Promise<string> {
+  ): Promise<string | null> {
     try {
       if (dto.recipient_type === 'username') {
         const u = await this.usersService.findByUsername(dto.recipient_identifier);
@@ -172,15 +231,15 @@ export class SendPaymentService {
         const u = await this.usersService.findByEmail(dto.recipient_identifier);
         return await this.usersService.getSolanaWalletAddress(u.privyUserId);
       }
+      if (dto.recipient_type === 'twitter') {
+        // For @handle recipients without account yet, we fallback to burner pending flow.
+        return null;
+      }
     } catch (e) {
-      this.logger.warn(`resolveRecipientSolanaPubkey failed: ${(e as Error)?.message}`);
-      throw new BadRequestException(
-        'Recipient must have a Loofta account with a linked Solana wallet. Try username or the email they used to sign up.',
-      );
+      this.logger.warn(`resolveRecipientSolanaPubkey failed (${dto.recipient_type}): ${(e as Error)?.message}`);
+      return null;
     }
-    throw new BadRequestException(
-      'Private PER send needs a resolvable Loofta user. Use email or @username (Twitter-only recipients: ask them to register and use email/username).',
-    );
+    return null;
   }
 
   /**
@@ -299,7 +358,7 @@ export class SendPaymentService {
       throw new BadRequestException('Link is not ready to claim');
     }
 
-    const linkAny = link as Record<string, unknown>;
+    const linkAny = link as unknown as Record<string, unknown>;
     if (!link.burner_encrypted_secret && linkAny.recipient_solana_pubkey) {
       if (link.status !== 'FUNDED') {
         throw new BadRequestException(

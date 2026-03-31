@@ -30,7 +30,11 @@
     "db:seed:users": "ts-node -r tsconfig-paths/register scripts/seed-local-users.ts"
   },
   "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
     "@defuse-protocol/one-click-sdk-typescript": "0.1.1",
+    "@lightprotocol/hasher.rs": "^0.2.1",
+    "@magicblock-labs/ephemeral-rollups-sdk": "^0.10.1",
+    "@magicblock-labs/gum-sdk": "^3.0.10",
     "@nestjs/common": "^10.4.0",
     "@nestjs/config": "^3.2.0",
     "@nestjs/core": "^10.4.0",
@@ -40,7 +44,6 @@
     "@nestjs/throttler": "^6.2.0",
     "@rhinestone/sdk": "^1.0.34",
     "@solana/spl-token": "^0.4.14",
-    "@lightprotocol/hasher.rs": "^0.2.1",
     "@solana/web3.js": "^1.95.8",
     "@supabase/supabase-js": "^2.87.3",
     "bn.js": "^5.2.1",
@@ -48,9 +51,9 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "ioredis": "^5.4.1",
+    "privacycash": "^1.1.10",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "privacycash": "^1.1.10",
     "tweetnacl": "^1.0.3",
     "viem": "^2.40.3"
   },

@@ -154,10 +154,13 @@ export class ClaimProcessorService {
 
       // Update claim status based on normalized status
       if (statusResult.isComplete) {
-        // Near Intents completed - funds arrived. For any private claim, funds are in user's
-        // embedded wallet; do NOT set SUCCESS until user completes Privacy Cash in the UI.
+        // Near Intents completed - funds arrived. For private claims OR unresolved recipients,
+        // do NOT mark recipient-claimed yet.
         const claim = await this.claimsService.findOne(claimId);
-        if (claim.is_private === true) {
+        const recipientAddress = (claim.recipient_address || '').trim();
+        const hasPendingRecipient =
+          recipientAddress.startsWith('PENDING_EMAIL:') || recipientAddress.startsWith('PENDING_USERNAME:');
+        if (claim.is_private === true || hasPendingRecipient) {
           await this.claimsService.updateStatus(claimId, 'PRIVATE_TRANSFER_PENDING');
           return {
             claimId,

@@ -35,15 +35,13 @@ const TOTAL_STEPS = 5; // welcome, username, pay friend, top up, share
 export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEditUsername }: WelcomeOnboardingProps) {
   const { user: privyUser } = usePrivy();
   const [emailLinkError, setEmailLinkError] = useState<"already_linked" | null>(null);
-  const { linkEmail, linkTwitter } = useLinkAccount({
+  const { linkEmail } = useLinkAccount({
     onSuccess: (arg: { linkedAccount?: { type?: string }; linkMethod?: string } | undefined) => {
       const isEmail = arg?.linkedAccount?.type === "email" || arg?.linkMethod === "email";
-      const isTwitter = arg?.linkedAccount?.type === "twitter_oauth" || arg?.linkedAccount?.type === "twitter" || arg?.linkedAccount?.type === "x" || arg?.linkMethod === "twitter";
       if (isEmail) {
         setEmailLinkError(null);
         setEmailStepDone(true);
       }
-      if (isTwitter) setTwitterStepDone(true);
     },
     onError: (err: unknown) => {
       const msg = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : String(err);
@@ -57,9 +55,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
     () => getTwitterUsername(privyUser?.linkedAccounts as Array<{ type?: string; username?: string; name?: string; subject?: string }> | undefined),
     [privyUser?.linkedAccounts]
   );
-  const hasTwitter = !!twitterUsername;
   const [emailStepDone, setEmailStepDone] = useState(false);
-  const [twitterStepDone, setTwitterStepDone] = useState(false);
   const [step, setStep] = useState(0);
   const [displayText, setDisplayText] = useState("");
   const [dontShowAgain, setDontShowAgain] = useState(false);
@@ -68,14 +64,11 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
-  /** Twitter prompt runs after the 5-step flow so it does not interrupt onboarding. */
-  const [showTwitterAfterMainOnboarding, setShowTwitterAfterMainOnboarding] = useState(false);
-  const showTwitterAfterMainRef = useRef(false);
   const onboardingCloseOnceRef = useRef(false);
+  /** Only reset step/state when the modal opens — not when `username` updates after save (avoids jumping back to welcome). */
+  const prevOpenRef = useRef(false);
 
   const showAddEmailStep = open && !hasEmail && !emailStepDone;
-  const showAddTwitterStep =
-    open && !showAddEmailStep && !hasTwitter && !twitterStepDone && showTwitterAfterMainOnboarding;
   const usernameFromTwitter = !!twitterUsername;
 
   const getPaymentLink = () => {
@@ -127,15 +120,12 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
     "Top up with your favorite\nwallet and token",
   ];
 
-  // Reset step when modal opens. Twitter → @handle (read-only). No Twitter → loo- + editable suffix.
+  // Reset step only when modal transitions closed → open. Twitter → @handle (read-only). No Twitter → loo- + editable suffix.
   useEffect(() => {
-    if (open) {
+    if (open && !prevOpenRef.current) {
       onboardingCloseOnceRef.current = false;
-      setShowTwitterAfterMainOnboarding(false);
-      showTwitterAfterMainRef.current = false;
       setStep(0);
       setEmailStepDone(hasEmail);
-      setTwitterStepDone(hasTwitter);
       setEmailLinkError(null);
       setDisplayText("");
       setDontShowAgain(false);
@@ -151,7 +141,16 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
       setCheckingAvailability(false);
       setLinkCopied(false);
     }
-  }, [open, username, hasEmail, hasTwitter, twitterUsername]);
+    prevOpenRef.current = open;
+  }, [open, username, hasEmail, twitterUsername]);
+
+  // If the user connects Twitter mid-flow (e.g. on username step), sync the handle without resetting the step.
+  useEffect(() => {
+    if (!open || !twitterUsername) return;
+    setNewUsername(twitterUsername);
+    setUsernameAvailable(true);
+    setUsernameError(null);
+  }, [open, twitterUsername]);
 
   // Check username availability with debounce (only when user can choose — not when username is from Twitter)
   useEffect(() => {
@@ -342,13 +341,6 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
     onClose(dontShowAgain);
   }, [dontShowAgain, privyUserId, onClose]);
 
-  // After main onboarding, user can link Twitter; when Privy updates, close once (no local state before close — avoids flashing main steps).
-  useEffect(() => {
-    if (!open || !showTwitterAfterMainOnboarding || !hasTwitter) return;
-    showTwitterAfterMainRef.current = false;
-    void persistAndClose();
-  }, [open, showTwitterAfterMainOnboarding, hasTwitter, persistAndClose]);
-
   const handleNext = async () => {
     // If on step 1, save username first before proceeding
     if (step === 1) {
@@ -361,11 +353,6 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
     if (step < 4) {
       setStep(step + 1);
     } else {
-      if (!hasTwitter && !twitterStepDone) {
-        setShowTwitterAfterMainOnboarding(true);
-        showTwitterAfterMainRef.current = true;
-        return;
-      }
       await persistAndClose();
     }
   };
@@ -434,38 +421,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
             </div>
           )}
 
-          {/* Add Twitter step: get payment link = exact Twitter username */}
-          {showAddTwitterStep && (
-            <div className="p-5 space-y-5">
-              <div className="text-center">
-                <h2 className="text-lg font-semibold text-white mb-1">Add Twitter to get your exact @username</h2>
-                <p className="text-sm text-slate-400">
-                  Your payment link will match your Twitter handle exactly (e.g. @you → pay.loofta.xyz/link/@you).
-                </p>
-              </div>
-              <div className="flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() => linkTwitter()}
-                  className="w-full py-2.5 rounded-xl font-medium text-white bg-gradient-to-r from-[#FF1301] to-[#EAB308] hover:opacity-90 transition-opacity"
-                >
-                  Add Twitter
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    showTwitterAfterMainRef.current = false;
-                    void persistAndClose();
-                  }}
-                  className="w-full py-2.5 rounded-xl font-medium text-slate-400 hover:text-white transition-colors"
-                >
-                  Skip for now
-                </button>
-              </div>
-            </div>
-          )}
-
-          {!showAddEmailStep && !showAddTwitterStep && (
+          {!showAddEmailStep && (
             <>
               {/* Progress bar */}
               <div className="flex gap-1 p-3 pb-0">
@@ -570,9 +526,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                       >
                         {usernameFromTwitter
                           ? "Your payment link will use this username. It can't be changed."
-                          : username?.startsWith(LOO_PREFIX)
-                            ? "The loo- part is fixed. Add Twitter later to get a unique @handle."
-                            : "Your link will be @loo-yourname. Add Twitter later to get @yourhandle."}
+                          : "Pick a username for your payment link. You can connect X later to use your @handle without the loo- prefix."}
                       </motion.p>
                       <motion.div
                         initial={{ opacity: 0, scale: 0.9 }}
@@ -654,7 +608,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                           )}
                           {!usernameFromTwitter && (
                             <p className="text-xs text-slate-500 text-center">
-                              loo- is fixed. 1–16 letters, numbers, underscores after it.
+                              loo- is fixed; 1–16 letters, numbers, underscores after it.
                             </p>
                           )}
                         </div>
@@ -833,7 +787,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     Don&apos;t show this again
                   </label>
                 </div>
-§               </div>
+              </div>
             </>
           )}
         </motion.div>

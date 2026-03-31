@@ -60,7 +60,7 @@ function getEnvFromFile(varName: string): string | null {
  * Not the same as SEND_PAYMENT_ENC_KEY (which is an AES key for encrypting burner secrets in the DB).
  */
 @Injectable()
-export class SolanaSponsorService {
+export class SolanaSponsorService implements OnModuleInit {
   private readonly logger = new Logger(SolanaSponsorService.name);
   private readonly feePayerKeypair: Keypair | null = null;
   private readonly connection: Connection;

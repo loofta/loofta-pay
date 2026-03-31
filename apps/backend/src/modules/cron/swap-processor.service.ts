@@ -312,13 +312,18 @@ export class SwapProcessorService {
         await this.redisService.set(redisKey, JSON.stringify(data));
         await this.redisService.sRem(pendingKey, redisKey);
 
-        // Update claim status – private claims stay PRIVATE_TRANSFER_PENDING until user completes Privacy Cash
+        // Update claim status – private claims or unresolved recipients stay
+        // PRIVATE_TRANSFER_PENDING until funds are swept to recipient wallet.
         if (type === 'claim' && data.claimId) {
           const { data: claim } = await this.supabaseService.claims
-            .select('is_private')
+            .select('is_private, recipient_address')
             .eq('id', data.claimId)
             .single();
-          const newStatus = claim?.is_private === true ? 'PRIVATE_TRANSFER_PENDING' : 'SUCCESS';
+          const recipientAddress = (claim?.recipient_address || '').trim();
+          const hasPendingRecipient =
+            recipientAddress.startsWith('PENDING_EMAIL:') || recipientAddress.startsWith('PENDING_USERNAME:');
+          const newStatus =
+            claim?.is_private === true || hasPendingRecipient ? 'PRIVATE_TRANSFER_PENDING' : 'SUCCESS';
           await this.supabaseService.claims
             .update({ status: newStatus })
             .eq('id', data.claimId);

@@ -72,6 +72,25 @@ export class SendPaymentController {
     return this.sendPaymentService.listBySender(user.id);
   }
 
+  @Post(':id/build-private-transfer')
+  @UseGuards(AuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({
+    summary:
+      'Build unsigned MagicBlock private USDC transfer (recipient resolved server-side; not in browser network tab)',
+  })
+  @ApiParam({ name: 'id' })
+  @ApiResponse({ status: 200, description: 'Unsigned tx (MagicBlock response shape)' })
+  @ApiResponse({ status: 403, description: 'Not the sender' })
+  async buildPrivateTransfer(
+    @Param('id') id: string,
+    @PrivyUser() user: { id: string },
+    @Body() body: { sender_wallet: string },
+  ) {
+    return this.sendPaymentService.buildPrivateTransferForSender(id, user.id, body.sender_wallet);
+  }
+
   @Get(':id')
   @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Get public send payment link details (optional auth for is_sender)' })

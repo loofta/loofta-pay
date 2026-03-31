@@ -31,7 +31,6 @@ import type { Wallet } from '@coral-xyz/anchor';
 import { Transaction, VersionedTransaction } from '@solana/web3.js';
 import { usePerPrivateTransfer } from '@/hooks/usePerPrivateTransfer';
 import { phantomWalletToAnchorWallet, privyWalletToAnchorWallet } from '@/lib/per/signer';
-import { getUsdcMint } from '@/lib/per/constants';
 
 type PhantomLike = {
   connect: () => Promise<{ publicKey: { toBase58(): string } }>;
@@ -242,7 +241,6 @@ export default function SendPaymentPage() {
     }
     setPayWithPrivateError(null);
     const amount = parseFloat(result.amount);
-    const mint = getUsdcMint().toBase58();
     let anchorWallet: Wallet;
 
     if (preferWallet === 'phantom') {
@@ -268,12 +266,17 @@ export default function SendPaymentPage() {
       anchorWallet = privyWalletToAnchorWallet(w as Parameters<typeof privyWalletToAnchorWallet>[0]);
     }
 
-    const sig = await perTransfer(anchorWallet, recipient, mint, amount);
+    // Recipient resolved server-side — not sent in browser requests
+    const sig = await perTransfer(anchorWallet, {
+      privyUserId: user.id,
+      sendPaymentId: result.id,
+      isBurnerRecipient: !!result.burner_address?.trim(),
+    });
     await confirmSendPaymentFunded(result.id, sig, user.id);
     setFunded();
     toast({
-      title: 'Private payment sent',
-      description: 'MagicBlock PER transfer completed. The recipient can claim after funds settle.',
+      title: 'Transfer submitted!',
+      description: 'Private transfer is processing — funds can take up to 3 minutes to appear.',
     });
   }
 
@@ -543,7 +546,9 @@ export default function SendPaymentPage() {
 
                 <form onSubmit={handleCreate} className="space-y-6">
                   <div>
-                    <Label htmlFor="amount" className="text-gray-700">Amount (USD)</Label>
+                    <Label htmlFor="amount" className="text-gray-900 !text-2xl font-sans font-medium">
+                      Amount (USD)
+                    </Label>
                     <Input
                       id="amount"
                       type="number"
@@ -552,12 +557,12 @@ export default function SendPaymentPage() {
                       placeholder="0.00"
                       value={form.amount}
                       onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
-                      className="mt-2 h-14 text-2xl font-semibold tabular-nums"
+                      className="mt-3 h-20 !text-5xl font-semibold tabular-nums placeholder:text-gray-400 placeholder:!text-5xl"
                     />
                   </div>
 
                   <div>
-                    <Label className="text-gray-700">Recipient — who can claim</Label>
+                    <Label className="text-gray-900 !text-2xl font-sans font-medium">Recipient — who can claim</Label>
                     <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
                       <button
                         type="button"
@@ -595,12 +600,13 @@ export default function SendPaymentPage() {
                       }
                       value={form.recipient_identifier}
                       onChange={(e) => setForm((f) => ({ ...f, recipient_identifier: e.target.value }))}
-                      className="mt-2"
+                      className="mt-3 h-12 text-gray-900 placeholder:text-gray-400 placeholder:text-[20px]"
+                      style={{ fontSize: "20px" }}
                     />
                   </div>
 
                   <div>
-                    <Label className="text-gray-700">Message (optional)</Label>
+                    <Label className="text-gray-900 !text-2xl font-sans font-medium">Message (optional)</Label>
                     <MessageInput
                       value={form.message}
                       onChange={(value) => setForm((f) => ({ ...f, message: value }))}
@@ -608,7 +614,7 @@ export default function SendPaymentPage() {
                       maxLength={500}
                       gifUrl={gifUrl}
                       onGifChange={setGifUrl}
-                      className="mt-2 [&_input]:h-12"
+                      className="mt-3 [&_input]:h-16 [&_input]:!text-2xl [&_input]:text-gray-900 [&_input]:placeholder:text-gray-400 [&_input]:placeholder:!text-2xl"
                     />
                   </div>
 
@@ -648,8 +654,8 @@ export default function SendPaymentPage() {
                     </p>
                     <p className="mb-4 text-xs text-gray-500">
                       {PRIVATE_PAYMENT_ENABLED
-                        ? 'Pay with MagicBlock PER (private USDC). Use Loofta balance or Phantom.'
-                        : 'Choose how to pay — private (PER) or regular USDC transfer. Use Loofta balance or Phantom.'}
+                        ? 'Pay privately with USDC. Funds can take up to 3 minutes to appear — the transfer is untraceable.'
+                        : 'Choose how to pay — private or regular USDC transfer. Use Loofta balance or Phantom.'}
                     </p>
 
                     {step === 'created' && (
@@ -664,14 +670,14 @@ export default function SendPaymentPage() {
                             />
                             <Shield className="w-5 h-5 text-violet-600 shrink-0" />
                             <span className="font-medium text-gray-900">Pay privately</span>
-                            <span className="text-sm text-gray-500">MagicBlock PER</span>
+                            <span className="text-sm text-gray-500">Private · up to 3 min</span>
                           </label>
                         )}
                         {payPrivately && (
                           <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/80 text-sm text-amber-900 space-y-2">
-                            <p className="font-medium">MagicBlock private rollup (PER)</p>
+                            <p className="font-medium">🔒 Private transfer</p>
                             <p className="text-amber-800">
-                              USDC moves through a program vault and delegated deposit accounts; the transfer runs on the ephemeral rollup. You need USDC in your wallet and a small amount of SOL for Solana fees on devnet.
+                              The transfer is routed privately — the on-chain link between sender and recipient is hidden. Funds will appear within 3 minutes. You need USDC in your wallet and a small amount of SOL for fees.
                             </p>
                           </div>
                         )}
@@ -771,7 +777,7 @@ export default function SendPaymentPage() {
                           </>
                         ) : (
                           <p className="text-xs text-gray-500 mt-1">
-                            Use Loofta balance or Phantom — USDC is sent to the recipient&apos;s on-chain deposit (MagicBlock PER). No burner address is used.
+                            Use Loofta balance or Phantom — USDC is sent privately. Funds can take up to 3 minutes to appear.
                           </p>
                         )}
                       </div>
@@ -786,7 +792,7 @@ export default function SendPaymentPage() {
                           </Button>
                         </div>
                       ) : (
-                        <p className="text-xs text-gray-500">Funded via MagicBlock PER — share the claim link below.</p>
+                        <p className="text-xs text-gray-500">Transfer submitted privately — share the claim link below. Funds can take up to 3 minutes to appear.</p>
                       )
                     )}
                   </div>

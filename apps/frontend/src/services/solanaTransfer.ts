@@ -24,6 +24,30 @@ const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfc
 
 const USDC_DECIMALS = 6;
 
+const RETRYABLE_RPC_MESSAGE = /too many requests|429|rate limit/i;
+
+async function rpcWithRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+  retries = 3
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const message = String((error as Error)?.message ?? error ?? "");
+      const shouldRetry = RETRYABLE_RPC_MESSAGE.test(message) && attempt < retries;
+      if (!shouldRetry) throw error;
+      const waitMs = 250 * Math.pow(2, attempt);
+      console.warn(`[solanaTransfer] ${label} rate-limited, retrying in ${waitMs}ms`, error);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`RPC failed for ${label}`);
+}
+
 /**
  * Build and return an unsigned VersionedTransaction for USDC transfer.
  * Default: sender pays fees (Privy gas sponsorship or user's SOL).
@@ -98,7 +122,10 @@ export async function buildUSDCTransferTransaction(params: {
 
   // Create recipient ATA if it doesn't exist (rent paid by feePayer when set, else sender)
   const ataPayer = feePayer ?? sender;
-  const recipientAccountInfo = await connection.getAccountInfo(recipientAta);
+  const recipientAccountInfo = await rpcWithRetry(
+    () => connection.getAccountInfo(recipientAta),
+    "getAccountInfo(recipientAta)"
+  );
   if (!recipientAccountInfo) {
     instructions.push(
       createAssociatedTokenAccountInstruction(
@@ -124,8 +151,10 @@ export async function buildUSDCTransferTransaction(params: {
   );
 
   // Use a real blockhash so RPC simulation succeeds; Privy still handles signing/broadcast.
-  const { blockhash } =
-    await connection.getLatestBlockhash("confirmed");
+  const { blockhash } = await rpcWithRetry(
+    () => connection.getLatestBlockhash("confirmed"),
+    "getLatestBlockhash"
+  );
   const message = new TransactionMessage({
     payerKey: feePayer ?? sender,
     recentBlockhash: blockhash,
@@ -144,10 +173,14 @@ export async function sendSignedUSDCTransfer(
 ): Promise<string> {
   const conn =
     connection || new Connection(getSolanaHttpRpc(), "confirmed");
-  const sig = await conn.sendTransaction(signedTx, {
-    skipPreflight: false,
-    preflightCommitment: "confirmed",
-    maxRetries: 3,
-  });
+  const sig = await rpcWithRetry(
+    () =>
+      conn.sendTransaction(signedTx, {
+        skipPreflight: false,
+        preflightCommitment: "confirmed",
+        maxRetries: 3,
+      }),
+    "sendTransaction"
+  );
   return sig;
 }

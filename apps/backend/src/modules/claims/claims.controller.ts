@@ -137,6 +137,35 @@ export class ClaimsController {
   }
 
   /**
+   * Troubleshoot endpoint: inspect claim burner balance for creator/recipient.
+   */
+  @Get(':id/troubleshoot-burner')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Troubleshoot burner balance for this claim' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Burner diagnostics' })
+  async troubleshootBurner(
+    @Param('id') id: string,
+    @Req() req: { user?: { id: string } },
+  ): Promise<{
+    canView: true;
+    claimId: string;
+    claimStatus: string;
+    isPrivate: boolean;
+    paidWithToken: string | null;
+    paidWithChain: string | null;
+    burnerAddress: string | null;
+    burnerUsdcRaw: string;
+    burnerUsdc: string;
+    recipientWallet: string | null;
+  }> {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) throw new UnauthorizedException('Login required.');
+    return this.claimsService.getBurnerDiagnostics(id, privyUserId);
+  }
+
+  /**
    * Claim a pending payment (PENDING_EMAIL / PENDING_USERNAME) as the logged-in recipient.
    * Updates the claim's recipient to your Solana wallet so the payer can complete the deposit.
    */
@@ -152,10 +181,47 @@ export class ClaimsController {
   async claimAsRecipient(
     @Param('id') id: string,
     @Req() req: { user?: { id: string } },
-  ): Promise<{ claimed: boolean }> {
+  ): Promise<{ claimed: boolean; sweepTxHash?: string; sweptAmount?: string }> {
     const privyUserId = req.user?.id;
     if (!privyUserId) throw new UnauthorizedException('Login required to claim.');
     return this.claimsService.claimAsRecipient(id, privyUserId);
+  }
+
+  @Post(':id/claim-retry-sweep')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Retry sweeping claim burner funds to recipient wallet' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Sweep retried' })
+  async retryClaimSweep(
+    @Param('id') id: string,
+    @Req() req: { user?: { id: string } },
+  ): Promise<{ swept: boolean; sweepTxHash?: string; sweptAmount?: string }> {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) throw new UnauthorizedException('Login required.');
+    return this.claimsService.retryRecipientSweep(id, privyUserId);
+  }
+
+  @Post(':id/build-private-transfer')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({
+    summary:
+      'Build unsigned MagicBlock private USDC transfer (recipient resolved server-side; not in browser network tab)',
+  })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Unsigned tx (MagicBlock response shape)' })
+  @ApiResponse({ status: 403, description: 'Not the payer' })
+  async buildPrivateTransfer(
+    @Param('id') id: string,
+    @Req() req: { user?: { id: string } },
+    @Body() body: { sender_wallet: string },
+  ) {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) throw new UnauthorizedException('Login required.');
+    return this.claimsService.buildPrivateTransferForPayer(id, privyUserId, body.sender_wallet);
   }
 
   /**
@@ -276,7 +342,14 @@ export class ClaimsController {
   @ApiResponse({ status: 404, description: 'Claim not found' })
   async updateStatus(
     @Param('id') id: string,
-    @Body() body: { status: string; txHash?: string; paidWith?: string; isPrivate?: boolean },
+    @Body() body: {
+      status: string;
+      txHash?: string;
+      paidWith?: string;
+      isPrivate?: boolean;
+      paidWithToken?: string;
+      paidWithChain?: string;
+    },
     @Req() req?: { headers?: { [k: string]: string | string[] | undefined } },
   ): Promise<Claim> {
     const userId = req?.headers?.['x-privy-user-id'];
@@ -285,6 +358,8 @@ export class ClaimsController {
       txHash: body.txHash,
       paidWith: body.paidWith,
       isPrivate: body.isPrivate,
+      paidWithToken: body.paidWithToken,
+      paidWithChain: body.paidWithChain,
     }, createdByUserId);
   }
 
