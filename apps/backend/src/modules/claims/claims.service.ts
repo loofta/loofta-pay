@@ -314,17 +314,19 @@ export class ClaimsService {
   /** Generate a unique burner keypair per claim (like send-payment); secret encrypted with SEND_PAYMENT_ENC_KEY. */
   private createClaimBurner(): { claim_burner_address: string; claim_burner_encrypted_secret: string } | null {
     const burnerKeypair = Keypair.generate();
+    const burnerAddress = burnerKeypair.publicKey.toBase58();
     const secret = Buffer.from(burnerKeypair.secretKey);
     let encrypted: string;
     if (this.encryption?.isAvailable()) {
-      encrypted = this.encryption.encrypt(secret);
+      // v2: per-payment HKDF key derived from burner address — unique key per payment
+      encrypted = this.encryption.encrypt(secret, burnerAddress);
     } else {
       const key = this.getClaimBurnerDecryptionKey();
       if (!key) return null;
       encrypted = this.encryptBurnerSecret(secret, key);
     }
     return {
-      claim_burner_address: burnerKeypair.publicKey.toBase58(),
+      claim_burner_address: burnerAddress,
       claim_burner_encrypted_secret: encrypted,
     };
   }
@@ -382,8 +384,8 @@ export class ClaimsService {
     return null;
   }
 
-  /** Decrypt burner secret (same format as SendPaymentEncryptionService). */
-  private decryptBurnerSecret(ciphertextBase64: string, key: Buffer): Buffer {
+  /** Decrypt burner secret with an explicit AES key (legacy / fallback path). */
+  private decryptBurnerSecretWithKey(ciphertextBase64: string, key: Buffer): Buffer {
     const buf = Buffer.from(ciphertextBase64, 'base64');
     if (buf.length < ENC_IV_LENGTH + ENC_TAG_LENGTH) throw new Error('Invalid ciphertext');
     const iv = buf.subarray(0, ENC_IV_LENGTH);
@@ -400,14 +402,27 @@ export class ClaimsService {
     return this.getClaimBurnerDecryptionKey() !== null;
   }
 
-  /** Decrypt claim burner secret; uses injected encryption service or direct key. */
-  private decryptClaimBurnerSecret(ciphertextBase64: string): Buffer {
+  /**
+   * Decrypt a burner secret from the database.
+   *
+   * Supports all stored formats:
+   *   • "v2:<base64>"   — per-payment HKDF key (context = burnerAddress, required)
+   *   • "<base64>"      — legacy master-key encryption; falls back to SEND_PAYMENT_ENC_KEY_OLD
+   *
+   * @param ciphertextBase64  Value from `claim_burner_encrypted_secret` column.
+   * @param burnerAddress     Value from `claim_burner_address` column (needed for v2 decryption).
+   */
+  private decryptClaimBurnerSecret(ciphertextBase64: string, burnerAddress?: string): Buffer {
     if (this.encryption?.isAvailable()) {
-      return this.encryption.decrypt(ciphertextBase64);
+      // The EncryptionService handles v2/legacy/rotation internally
+      return this.encryption.decrypt(ciphertextBase64, burnerAddress);
     }
+    // Fallback: direct key path (when EncryptionService DI is unavailable)
     const key = this.getClaimBurnerDecryptionKey();
     if (!key) throw new Error('SEND_PAYMENT_ENC_KEY not available for decrypt');
-    return this.decryptBurnerSecret(ciphertextBase64, key);
+    // v2 format in direct-key mode is not supported — all v2 secrets were produced
+    // via EncryptionService and will be handled in the branch above.
+    return this.decryptBurnerSecretWithKey(ciphertextBase64, key);
   }
 
   /**
@@ -838,7 +853,7 @@ export class ClaimsService {
       );
     }
     try {
-      const secretKey = this.decryptClaimBurnerSecret(rawClaim.claim_burner_encrypted_secret);
+      const secretKey = this.decryptClaimBurnerSecret(rawClaim.claim_burner_encrypted_secret, burnerAddr);
       const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
       const conn = this.solanaSponsor.getConnection();
       // Always attempt PER withdraw first. This also recovers older claims that
@@ -1232,7 +1247,7 @@ export class ClaimsService {
           reclaimBlockedReason = 'Creator Solana wallet not found. Link a wallet first.';
         } else {
           const encryptedSecret = rawClaim.claim_burner_encrypted_secret!;
-          const secretKey = this.decryptClaimBurnerSecret(encryptedSecret);
+          const secretKey = this.decryptClaimBurnerSecret(encryptedSecret, burnerAddress);
           const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
           const conn = this.solanaSponsor.getConnection();
           // Attempt PER -> burner ATA first so reclaim also works when funds are
@@ -1346,7 +1361,7 @@ export class ClaimsService {
     }
     try {
       // Ensure burner secret can be decrypted; reclaim endpoint needs this.
-      this.decryptClaimBurnerSecret(rawClaim.claim_burner_encrypted_secret!);
+      this.decryptClaimBurnerSecret(rawClaim.claim_burner_encrypted_secret!, burnerAddress || undefined);
       return { canReclaim: true };
     } catch {
       return { canReclaim: false };
@@ -1413,7 +1428,7 @@ export class ClaimsService {
           const depositInfo = await conn.getAccountInfo(depositPda);
           perDepositDetected = !!depositInfo;
           if (depositInfo && rawClaim.claim_burner_encrypted_secret && this.canDecryptBurnerSecret() && this.solanaSponsor.isAvailable()) {
-            const secretKey = this.decryptClaimBurnerSecret(rawClaim.claim_burner_encrypted_secret);
+            const secretKey = this.decryptClaimBurnerSecret(rawClaim.claim_burner_encrypted_secret, burnerAddress || undefined);
             const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
             const withdrawResult = await this.tryWithdrawPerDepositToBurnerAta(
               claimId,
@@ -1842,5 +1857,81 @@ export class ClaimsService {
     }
 
     return { claim, intents: intents || [] };
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // Key rotation migration
+  // ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Re-encrypt all legacy (v1) burner secrets using the current key + per-payment HKDF (v2 format).
+   *
+   * Run this ONCE after setting SEND_PAYMENT_ENC_KEY to a new value and
+   * SEND_PAYMENT_ENC_KEY_OLD to the previous value. After it completes with
+   * zero errors, remove SEND_PAYMENT_ENC_KEY_OLD from your environment.
+   *
+   * Returns a summary so you can confirm before removing the old key.
+   */
+  async rotateBurnerKeys(): Promise<{
+    total: number;
+    alreadyV2: number;
+    migrated: number;
+    failed: number;
+    errors: string[];
+  }> {
+    if (!this.encryption?.isAvailable()) {
+      throw new BadRequestException('EncryptionService is not available (SEND_PAYMENT_ENC_KEY not set).');
+    }
+    if (!this.encryption.isRotating) {
+      throw new BadRequestException(
+        'SEND_PAYMENT_ENC_KEY_OLD is not set. Set it to the previous key before running rotation.',
+      );
+    }
+
+    this.logger.log('[rotateBurnerKeys] Starting key rotation scan…');
+
+    const { data: rows, error } = await this.supabaseService.claims
+      .select('id, claim_burner_address, claim_burner_encrypted_secret')
+      .not('claim_burner_address', 'is', null)
+      .not('claim_burner_encrypted_secret', 'is', null);
+
+    if (error) throw new Error(`DB fetch failed: ${error.message}`);
+
+    const stats = { total: 0, alreadyV2: 0, migrated: 0, failed: 0, errors: [] as string[] };
+    const { V2_PREFIX } = await import('@/modules/send-payment/encryption.service');
+
+    for (const row of rows ?? []) {
+      stats.total++;
+      const ciphertext: string = (row as any).claim_burner_encrypted_secret;
+      const burnerAddress: string = (row as any).claim_burner_address;
+
+      if (ciphertext.startsWith(V2_PREFIX)) {
+        stats.alreadyV2++;
+        continue;
+      }
+
+      try {
+        // Decrypt with old key (handled internally by EncryptionService fallback)
+        const secret = this.encryption.decrypt(ciphertext, undefined);
+        // Re-encrypt with new key + per-payment HKDF
+        const newCiphertext = this.encryption.encrypt(secret, burnerAddress);
+
+        const { error: updateError } = await this.supabaseService.claims
+          .update({ claim_burner_encrypted_secret: newCiphertext })
+          .eq('id', (row as any).id);
+
+        if (updateError) throw new Error(updateError.message);
+        stats.migrated++;
+      } catch (e: any) {
+        stats.failed++;
+        stats.errors.push(`claim ${(row as any).id}: ${e?.message ?? e}`);
+        this.logger.error(`[rotateBurnerKeys] Failed for claim ${(row as any).id}: ${e?.message}`);
+      }
+    }
+
+    this.logger.log(
+      `[rotateBurnerKeys] Done. total=${stats.total} alreadyV2=${stats.alreadyV2} migrated=${stats.migrated} failed=${stats.failed}`,
+    );
+    return stats;
   }
 }

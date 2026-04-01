@@ -140,7 +140,7 @@ function PaymentRow({
 }
 
 export default function PaymentsPage() {
-  const { authenticated, userId, ready, login } = useAuth();
+  const { authenticated, userId, ready, login, getAccessToken } = useAuth();
   const { wallets } = useWallets();
   const [tab, setTab] = useState<Tab>("all");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -176,25 +176,27 @@ export default function PaymentsPage() {
       params.set("walletAddresses", walletAddresses.join(","));
     }
 
-    fetch(`/api/payments/history?${params.toString()}`, {
-      headers: { "x-privy-user-id": userId },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(res.status === 401 ? "Please log in" : "Failed to load payments");
-        return res.json();
+    getAccessToken().then((token) => {
+      fetch(`/api/payments/history?${params.toString()}`, {
+        headers: token ? { authorization: `Bearer ${token}` } : { "x-privy-user-id": userId! },
       })
-      .then((data: { sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[] }) => {
-        if (!cancelled) {
-          setSent(data.sent || []);
-          setReceived(data.received || []);
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e.message || "Something went wrong");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        .then((res) => {
+          if (!res.ok) throw new Error(res.status === 401 ? "Please log in" : "Failed to load payments");
+          return res.json();
+        })
+        .then((data: { sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[] }) => {
+          if (!cancelled) {
+            setSent(data.sent || []);
+            setReceived(data.received || []);
+          }
+        })
+        .catch((e) => {
+          if (!cancelled) setError(e.message || "Something went wrong");
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    });
 
     return () => {
       cancelled = true;

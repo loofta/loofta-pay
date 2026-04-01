@@ -28,11 +28,11 @@ export function isPrivyGasSponsorNotConfiguredError(err: unknown): boolean {
  * Sponsor pubkey for instruction accounts (Gum `payer`, PER rent, etc.). Auth-only.
  * Still required client-side to build txs; hybrid prepare only sets fee payer + blockhash.
  */
-export async function fetchSolanaFeePayerAddress(privyUserId?: string | null): Promise<string | null> {
+export async function fetchSolanaFeePayerAddress(privyUserId?: string | null, accessToken?: string | null): Promise<string | null> {
   if (!privyUserId) return null;
   try {
     const r = await fetch(`${BACKEND_URL}/claims/solana-sponsor/fee-payer`, {
-      headers: { "x-privy-user-id": privyUserId },
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : { "x-privy-user-id": privyUserId },
     });
     if (!r.ok) return null;
     const j = (await r.json()) as { feePayerAddress?: string | null };
@@ -48,6 +48,7 @@ export async function prepareSponsoredTransaction(
   privyUserId: string,
   /** For console logs (e.g. PER action name). */
   stepLabel?: string,
+  accessToken?: string | null,
 ): Promise<Uint8Array> {
   const label = stepLabel ?? "prepare";
   const t0 =
@@ -57,7 +58,7 @@ export async function prepareSponsoredTransaction(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-privy-user-id": privyUserId,
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : { "x-privy-user-id": privyUserId }),
     },
     body: JSON.stringify({
       transaction: uint8ArrayToBase64(unsignedTransactionBytes),
@@ -96,12 +97,13 @@ export async function prepareSponsoredTransaction(
 
 /**
  * User-signed transaction (embedded wallet only); backend adds fee-payer signature and broadcasts.
- * Requires `AuthGuard` header `x-privy-user-id`.
+ * Requires auth via Authorization: Bearer or x-privy-user-id (legacy).
  */
 export async function signAndBroadcastSponsoredTx(
   signedTransactionBytes: Uint8Array,
   privyUserId: string,
   stepLabel?: string,
+  accessToken?: string | null,
 ): Promise<string> {
   const label = stepLabel ?? "sign-and-broadcast";
   const t0 =
@@ -113,7 +115,7 @@ export async function signAndBroadcastSponsoredTx(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-privy-user-id": privyUserId,
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : { "x-privy-user-id": privyUserId }),
     },
     body: JSON.stringify({
       transaction: uint8ArrayToBase64(signedTransactionBytes),

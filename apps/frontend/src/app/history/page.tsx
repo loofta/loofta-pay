@@ -108,12 +108,9 @@ async function fetchPaymentHistory(
   userId: string,
   accessToken?: string | null,
 ): Promise<{ sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[] }> {
-  const headers: Record<string, string> = {
-    "x-privy-user-id": userId,
-  };
-  if (accessToken) {
-    headers["authorization"] = `Bearer ${accessToken}`;
-  }
+  const headers: Record<string, string> = accessToken
+    ? { authorization: `Bearer ${accessToken}` }
+    : { "x-privy-user-id": userId };
   const r = await fetch("/api/payments/history", { headers, cache: "no-store" });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
@@ -264,7 +261,44 @@ export default function HistoryPage() {
           <div className="rounded-2xl border border-white/10 bg-white/5 p-6 mb-6">
           <h1 className="text-lg font-medium font-sans text-white mb-4">Payment history</h1>
           {loading ? (
-            <p className="text-slate-400 text-sm">Loading…</p>
+            <div className="animate-pulse">
+              {/* Stat cards */}
+              <div className="grid grid-cols-2 gap-3 mb-6">
+                {[0, 1].map((i) => (
+                  <div key={i} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-7 h-7 rounded-full bg-white/10" />
+                      <div className="h-2.5 w-20 rounded-full bg-white/10" />
+                    </div>
+                    <div className="h-8 w-24 rounded-lg bg-white/10" />
+                  </div>
+                ))}
+              </div>
+              {/* List header */}
+              <div className="flex items-center justify-between mb-3">
+                <div className="h-3 w-28 rounded-full bg-white/10" />
+                <div className="flex gap-1">
+                  <div className="w-7 h-7 rounded-lg bg-white/10" />
+                  <div className="w-7 h-7 rounded-lg bg-white/10" />
+                </div>
+              </div>
+              {/* Payment rows */}
+              <ul className="space-y-2">
+                {[0, 1, 2, 3].map((i) => (
+                  <li key={i} className="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="h-3 w-10 rounded-full bg-white/10" />
+                      <div className="h-3 w-16 rounded-full bg-white/10" />
+                    </div>
+                    <div className="h-3 w-32 rounded-full bg-white/10 mb-2" />
+                    <div className="flex items-center justify-between">
+                      <div className="h-2.5 w-20 rounded-full bg-white/10" />
+                      <div className="h-4 w-16 rounded-full bg-white/10" />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : error ? (
             <p className="text-red-400 text-sm">{error}</p>
           ) : (

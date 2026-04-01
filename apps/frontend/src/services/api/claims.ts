@@ -107,8 +107,8 @@ export async function getClaimWithLatestIntent(
 /**
  * Get claims by user (requires auth)
  */
-export async function getClaimsByUser(userId: string): Promise<{ claims: Claim[] }> {
-  return fetchApi<{ claims: Claim[] }>('/claims/user', { userId });
+export async function getClaimsByUser(userId: string, accessToken?: string | null): Promise<{ claims: Claim[] }> {
+  return fetchApi<{ claims: Claim[] }>('/claims/user', { userId, accessToken });
 }
 
 /**
@@ -117,12 +117,14 @@ export async function getClaimsByUser(userId: string): Promise<{ claims: Claim[]
 export async function updateClaimStatus(
   id: string,
   status: ClaimStatus,
-  userId?: string
+  userId?: string,
+  accessToken?: string | null,
 ): Promise<{ claim: Claim }> {
   return fetchApi<{ claim: Claim }>(`/claims/${id}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status }),
     userId,
+    accessToken,
   });
 }
 
@@ -134,11 +136,13 @@ export async function buildClaimPrivateTransfer(
   claimId: string,
   userId: string,
   senderWallet: string,
+  accessToken?: string | null,
 ): Promise<MagicblockTxResponse> {
   return fetchApi<MagicblockTxResponse>(`/claims/${claimId}/build-private-transfer`, {
     method: 'POST',
     body: JSON.stringify({ sender_wallet: senderWallet }),
     userId,
+    accessToken,
   });
 }
 

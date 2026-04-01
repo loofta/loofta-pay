@@ -22,6 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { AuthGuard, OptionalAuthGuard } from '@/common/guards';
 import { ClaimsService } from './claims.service';
+import { ConfigService } from '@nestjs/config';
 import { DepositService, DepositResult } from './deposit.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
 import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto, RequestDepositDto } from './dto';
@@ -34,6 +35,7 @@ export class ClaimsController {
     private readonly claimsService: ClaimsService,
     private readonly depositService: DepositService,
     private readonly solanaSponsor: SolanaSponsorService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -470,5 +472,34 @@ export class ClaimsController {
     // This would use the user ID from the request
     // For now, return empty array as placeholder
     return { claims: [] };
+  }
+
+  /**
+   * Admin: re-encrypt all legacy v1 burner secrets to v2 (per-payment HKDF) format.
+   *
+   * Prerequisites:
+   *   1. Set SEND_PAYMENT_ENC_KEY to the NEW 32-byte key.
+   *   2. Set SEND_PAYMENT_ENC_KEY_OLD to the PREVIOUS key.
+   *   3. Deploy the new backend.
+   *   4. POST to this endpoint — inspect the response (migrated/failed counts).
+   *   5. Once failed === 0, remove SEND_PAYMENT_ENC_KEY_OLD from your environment.
+   *
+   * Protected by ADMIN_API_KEY header (set ADMIN_API_KEY env var on the backend).
+   */
+  @Post('admin/rotate-burner-keys')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Admin: rotate burner encryption keys to v2 per-payment HKDF format' })
+  @ApiSecurity('admin-key')
+  @ApiResponse({ status: 200, description: 'Migration summary' })
+  @ApiResponse({ status: 403, description: 'Invalid admin key' })
+  async rotateBurnerKeys(
+    @Req() req: Request & { headers: Record<string, string> },
+  ): Promise<{ total: number; alreadyV2: number; migrated: number; failed: number; errors: string[] }> {
+    const adminKey = this.configService.get<string>('ADMIN_API_KEY');
+    const provided = (req.headers as Record<string, string>)['x-admin-api-key'];
+    if (!adminKey || !provided || provided !== adminKey) {
+      throw new ForbiddenException('Invalid admin API key');
+    }
+    return this.claimsService.rotateBurnerKeys();
   }
 }

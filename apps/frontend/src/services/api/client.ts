@@ -43,11 +43,10 @@ export async function fetchApi<T>(
       : {}),
   };
 
-  // Prefer JWT bearer token over raw user ID header
+  // Prefer JWT bearer token; only fall back to x-privy-user-id when no token is available
   if (accessToken) {
     requestHeaders['Authorization'] = `Bearer ${accessToken}`;
-  }
-  if (userId) {
+  } else if (userId) {
     requestHeaders['x-privy-user-id'] = userId;
   }
 

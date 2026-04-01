@@ -58,12 +58,14 @@ export interface ReclaimSendPaymentResult {
 
 export async function createSendPayment(
   input: CreateSendPaymentInput,
-  userId: string
+  userId: string,
+  accessToken?: string | null,
 ): Promise<CreateSendPaymentResult> {
   return fetchApi<CreateSendPaymentResult>('/send-payment/create', {
     method: 'POST',
     body: JSON.stringify(input),
     userId,
+    accessToken,
   });
 }
 
@@ -76,8 +78,8 @@ export interface MySendPaymentLinkItem {
   created_at: string;
 }
 
-export async function getMySendPaymentLinks(userId: string): Promise<MySendPaymentLinkItem[]> {
-  return fetchApi<MySendPaymentLinkItem[]>('/send-payment/my-links', { userId });
+export async function getMySendPaymentLinks(userId: string, accessToken?: string | null): Promise<MySendPaymentLinkItem[]> {
+  return fetchApi<MySendPaymentLinkItem[]>('/send-payment/my-links', { userId, accessToken });
 }
 
 export async function getSendPaymentPublic(
@@ -90,35 +92,41 @@ export async function getSendPaymentPublic(
 export async function confirmSendPaymentFunded(
   id: string,
   depositTxHash: string | null,
-  userId: string
+  userId: string,
+  accessToken?: string | null,
 ): Promise<SendPaymentLinkPublic> {
   return fetchApi<SendPaymentLinkPublic>(`/send-payment/${id}/confirm-funded`, {
     method: 'POST',
     body: JSON.stringify({ deposit_tx_hash: depositTxHash || undefined }),
     userId,
+    accessToken,
   });
 }
 
 export async function claimSendPayment(
   id: string,
   userId: string,
-  options?: { forward_to?: { chain: string; token: string; address: string } }
+  options?: { forward_to?: { chain: string; token: string; address: string } },
+  accessToken?: string | null,
 ): Promise<ClaimSendPaymentResult> {
   return fetchApi<ClaimSendPaymentResult>(`/send-payment/${id}/claim`, {
     method: 'POST',
     body: JSON.stringify(options || {}),
     userId,
+    accessToken,
   });
 }
 
 export async function reclaimSendPayment(
   id: string,
-  userId: string
+  userId: string,
+  accessToken?: string | null,
 ): Promise<ReclaimSendPaymentResult> {
   return fetchApi<ReclaimSendPaymentResult>(`/send-payment/${id}/reclaim`, {
     method: 'POST',
     body: JSON.stringify({}),
     userId,
+    accessToken,
   });
 }
 
@@ -130,10 +138,12 @@ export async function buildSendPaymentPrivateTransfer(
   sendPaymentId: string,
   userId: string,
   senderWallet: string,
+  accessToken?: string | null,
 ): Promise<MagicblockTxResponse> {
   return fetchApi<MagicblockTxResponse>(`/send-payment/${sendPaymentId}/build-private-transfer`, {
     method: 'POST',
     body: JSON.stringify({ sender_wallet: senderWallet }),
     userId,
+    accessToken,
   });
 }

@@ -6,13 +6,22 @@ export async function createClaimFromEmail(input: {
   email: string;
   amount: string;
   userId?: string;
+  accessToken?: string | null;
   isPrivate?: boolean;
   description?: string;
 }): Promise<{ id: string }> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  const authHeader = input.accessToken
+    ? { Authorization: `Bearer ${input.accessToken}` }
+    : input.userId
+      ? { "x-privy-user-id": input.userId }
+      : {};
   const r = await fetch(`${backendUrl}/claims/create-from-email`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeader,
+    },
     body: JSON.stringify({
       email: input.email.trim().toLowerCase(),
       amount: Number(input.amount),
