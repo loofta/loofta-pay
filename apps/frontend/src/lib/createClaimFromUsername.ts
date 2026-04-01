@@ -13,7 +13,7 @@ export async function createClaimFromUsername(input: {
   description?: string;
 }): Promise<{ id: string }> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-  const authHeader = input.accessToken
+  const authHeader: Record<string, string> = input.accessToken
     ? { Authorization: `Bearer ${input.accessToken}` }
     : input.userId
       ? { "x-privy-user-id": input.userId }
