@@ -157,8 +157,15 @@ function ClaimPageSenderShareView({
   const [reclaiming, setReclaiming] = useState(false);
   const [reclaimed, setReclaimed] = useState(false);
   const [canReclaim, setCanReclaim] = useState<boolean | null>(null);
+  const [isLocalhost, setIsLocalhost] = useState(false);
   const statusUpper = (status || "").toUpperCase();
   const isCancelled = statusUpper === "CANCELLED" || reclaimed;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const h = window.location.hostname;
+    setIsLocalhost(h === "localhost" || h === "127.0.0.1");
+  }, []);
 
   // Reclaim button only when not cancelled and burner has balance
   useEffect(() => {
@@ -277,8 +284,8 @@ function ClaimPageSenderShareView({
           Share
         </Button>
       </div>
-      {/* Reclaim only when not cancelled, creator is logged in, and burner has balance */}
-      {!isCancelled && userId && canReclaim === true && (
+      {/* Reclaim only on localhost, when not cancelled, creator is logged in, and burner has balance */}
+      {isLocalhost && !isCancelled && userId && canReclaim === true && (
         <div className="mt-6">
           <Button
             type="button"
@@ -386,9 +393,8 @@ async function fetchClaim(id: string) {
       const c = data.claim || {};
       console.log("[fetchClaim] From backend:", {
         claimId: id,
-        burnerWallet: c.claim_burner_address || null,
         hasBurner: !!c.claim_burner_address,
-        recipient_address: c.recipient_address ? `${String(c.recipient_address).slice(0, 20)}…` : "(empty)",
+        isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
       });
       return {
         claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
@@ -417,9 +423,8 @@ async function fetchClaim(id: string) {
   const c = data.claim || {};
   console.log("[fetchClaim] From frontend API:", {
     claimId: id,
-    burnerWallet: c.claim_burner_address || null,
     hasBurner: !!c.claim_burner_address,
-    recipient_address: c.recipient_address ? `${String(c.recipient_address).slice(0, 20)}…` : "(empty)",
+    isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
     claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
@@ -430,14 +435,10 @@ async function fetchClaim(id: string) {
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
 
-/** Recipient for payments: pending → burner, existing → recipient_address. See docs/CLAIM_PAYMENT_ROUTING.md */
-function getEffectiveRecipient(claim: { recipient_address?: string; claim_burner_address?: string } | null): string {
+/** Always route payments through the burner wallet — never expose or use the real recipient address. */
+function getEffectiveRecipient(claim: { claim_burner_address?: string } | null): string {
   if (!claim) return "";
-  const c = claim as { recipient_address?: string; claim_burner_address?: string };
-  const ra = (c.recipient_address || "").trim();
-  const burner = (c.claim_burner_address || "").trim();
-  if (ra && !ra.startsWith(PENDING_EMAIL_PREFIX) && !ra.startsWith(PENDING_USERNAME_PREFIX)) return ra;
-  return burner;
+  return ((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
 }
 
 async function prepareDeposit(input: {
@@ -676,8 +677,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // True while we're still checking — hide the pay form until we know the user is NOT the recipient.
   const isCheckingRecipient = recipientCheckQuery.isLoading || recipientCheckQuery.isFetching;
 
+  // Registered recipients now also route through a burner — treat them the same as pending
+  // recipients so the burner-balance poller and claim UI are activated.
   const isPendingRecipientClaim =
-    !!claim?.recipient_pending_email || !!claim?.recipient_pending_username;
+    !!claim?.recipient_pending_email ||
+    !!claim?.recipient_pending_username ||
+    !!(claim as { recipient_is_registered?: boolean } | null)?.recipient_is_registered;
 
   // Poll burner USDC balance so the recipient only claims once the payer’s transfer has landed (private leg can take a few minutes).
   const burnerAddr = (claim as { claim_burner_address?: string | null } | null)?.claim_burner_address ?? null;
@@ -692,7 +697,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         const info = await conn.getTokenAccountBalance(ata);
         const balance = Number(info.value.amount);
         console.info(
-          `[BurnerReady] claimId=${id} burnerWallet=${burnerAddr} usdcBaseUnits=${balance} (ATA may be missing until first deposit)`,
+          `[BurnerReady] claimId=${id} usdcBaseUnits=${balance} (ATA may be missing until first deposit)`,
         );
         return { balance, isReady: balance > 0 };
       } catch {
@@ -712,9 +717,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
   useEffect(() => {
     if (!isPendingRecipientClaim) return;
-    if (burnerAddr) {
-      console.info("[Claim] escrow burnerWallet (pending recipient)", { claimId: id, burnerWallet: burnerAddr });
-    } else {
+    if (!burnerAddr) {
       console.warn("[Claim] pending recipient but claim_burner_address missing — claim cannot fund until backfilled", {
         claimId: id,
       });
@@ -812,6 +815,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [burnerDiagLoading, setBurnerDiagLoading] = useState(false);
   const [retrySweepLoading, setRetrySweepLoading] = useState(false);
   const [reclaimingSenderFunds, setReclaimingSenderFunds] = useState(false);
+  const [claimInitiated, setClaimInitiated] = useState(false);
   const [burnerDiag, setBurnerDiag] = useState<{
     claimId: string;
     claimStatus: string;
@@ -1467,9 +1471,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       return;
     }
 
-    // Private payment: use burner as recipient when claim has a burner (unregistered user).
+    // Private payment: always route through the burner — never use the real recipient wallet.
     const burnerAddr = ((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
-    const recipient = (burnerAddr || claim.recipient_address || "").trim();
+    const recipient = burnerAddr;
     const isBurnerRecipient = !!burnerAddr;
     if (!recipient) {
       console.log("[PrivateTransfer] Early exit: no recipient");
@@ -1693,17 +1697,17 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
   async function payWithLooftaBalance() {
     const isPending = !!(claim as { recipient_pending_username?: boolean; recipient_pending_email?: boolean })?.recipient_pending_username || (claim as { recipient_pending_email?: boolean })?.recipient_pending_email;
-    console.log("[PayWithLoofta] Clicked:", { claimId: claim?.id, isPending, claim_burner_address: (claim as { claim_burner_address?: string })?.claim_burner_address ? "present" : "missing", recipient_address: (claim as { recipient_address?: string })?.recipient_address ? "present" : "missing" });
+    console.log("[PayWithLoofta] Clicked:", { claimId: claim?.id, isPending, hasBurner: !!(claim as { claim_burner_address?: string })?.claim_burner_address });
     let effectiveRecipient = getEffectiveRecipient(claim);
     if (!effectiveRecipient && isPending && claim?.id) {
-      console.log("[PayWithLoofta] Pending claim missing burner, refetching...", { claimId: claim.id, recipient_address: (claim as { recipient_address?: string }).recipient_address, claim_burner_address: (claim as { claim_burner_address?: string }).claim_burner_address });
+      console.log("[PayWithLoofta] Pending claim missing burner, refetching...", { claimId: claim.id });
       const result = await claimQuery.refetch();
       const freshClaim = (result.data as { claim?: typeof claim } | undefined)?.claim;
       effectiveRecipient = getEffectiveRecipient(freshClaim ?? null);
-      console.log("[PayWithLoofta] After refetch:", { claim_burner_address: freshClaim ? (freshClaim as { claim_burner_address?: string }).claim_burner_address : "(no claim)", effectiveRecipient: effectiveRecipient ? `${effectiveRecipient.slice(0, 8)}…` : "(empty)" });
+      console.log("[PayWithLoofta] After refetch:", { hasBurner: !!(freshClaim as { claim_burner_address?: string } | null)?.claim_burner_address, recipientFound: !!effectiveRecipient });
     }
     if (!claim?.id || !effectiveRecipient || !claim?.amount) {
-      console.warn("[PayWithLoofta] Missing recipient:", { claimId: claim?.id, effectiveRecipient: effectiveRecipient ? `${effectiveRecipient.slice(0, 8)}…` : "(empty)", recipient_address: (claim as { recipient_address?: string })?.recipient_address, claim_burner_address: (claim as { claim_burner_address?: string })?.claim_burner_address, isPending });
+      console.warn("[PayWithLoofta] Missing recipient:", { claimId: claim?.id, recipientFound: !!effectiveRecipient, isPending });
       const description = isPending && !effectiveRecipient
         ? "This payment link is for someone who hasn't signed up yet. The burner address could not be loaded — try refreshing the page or use a different browser."
         : "Claim or recipient address is missing.";
@@ -2308,40 +2312,21 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                   )}
               </div>
-            ) : user?.id && claimAsRecipientMutation.isSuccess ? (
+            ) : user?.id && (claimInitiated || claimAsRecipientMutation.isSuccess || claimAsRecipientMutation.isPending) ? (
               (() => {
                 const senderLabel =
                   claim?.creator_username ? `@${claim.creator_username}` : (claim?.creator_email || null);
-                const claimDesc = claim?.description?.trim() || null;
-                const isGif = claimDesc && /^https?:\/\/.+\.(gif|webp)(\?.*)?$/i.test(claimDesc);
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
                 return (
-                  <div className="mt-6 text-center py-12 px-4">
-                    <div className="mb-4 text-6xl">🎉</div>
-                    <h3 className="text-2xl font-semibold text-gray-900 mb-1">Payment received!</h3>
+                  <div className="mt-6 text-center py-16 px-4">
+                    <div className="mb-5 text-7xl">✅</div>
+                    <div className="text-5xl font-bold text-gray-900 mb-3">+ ${amt}</div>
                     {senderLabel && (
-                      <p className="text-sm text-gray-500 mb-3">
-                        From <span className="font-medium text-gray-700">{senderLabel}</span>
-                      </p>
+                      <p className="text-xl text-gray-500">from <span className="font-medium text-gray-700">{senderLabel}</span></p>
                     )}
-                    {claimDesc && !isGif && (
-                      <p className="text-gray-700 text-base italic mb-3 max-w-xs mx-auto">&ldquo;{claimDesc}&rdquo;</p>
-                    )}
-                    {isGif && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={claimDesc!} alt="gif" className="mx-auto mb-3 rounded-xl max-h-40 object-contain" />
-                    )}
-                    <p className="text-gray-900 text-lg font-semibold mb-1">Claim completed</p>
-                    <p className="text-gray-600 text-base">${amt} USDC</p>
                   </div>
                 );
               })()
-            ) : isRecipient && claimAsRecipientMutation.isPending ? (
-              <div className="mt-6 text-center py-12">
-                <div className="mb-4 text-6xl">🔒</div>
-                <h3 className="text-2xl font-semibold text-gray-900 mb-2">Claiming your payment…</h3>
-                <p className="text-gray-600 text-base">Securely routing your funds — this takes just a moment.</p>
-              </div>
             ) : isRecipient &&
               !isPendingRecipientClaim &&
               ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CLAIMED"].includes(
@@ -2350,27 +2335,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               (() => {
                 const senderLabel =
                   claim?.creator_username ? `@${claim.creator_username}` : (claim?.creator_email || null);
-                const claimDesc = claim?.description?.trim() || null;
-                const isGif = claimDesc && /^https?:\/\/.+\.(gif|webp)(\?.*)?$/i.test(claimDesc);
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
                 return (
-                  <div className="mt-6 text-center py-12 px-4">
-                    <div className="mb-4 text-6xl">🎉</div>
-                    <h3 className="text-2xl font-semibold text-gray-900 mb-1">Payment received!</h3>
+                  <div className="mt-6 text-center py-16 px-4">
+                    <div className="mb-5 text-7xl">✅</div>
+                    <div className="text-5xl font-bold text-gray-900 mb-3">+ ${amt}</div>
                     {senderLabel && (
-                      <p className="text-sm text-gray-500 mb-3">
-                        From <span className="font-medium text-gray-700">{senderLabel}</span>
-                      </p>
+                      <p className="text-xl text-gray-500">from <span className="font-medium text-gray-700">{senderLabel}</span></p>
                     )}
-                    {claimDesc && !isGif && (
-                      <p className="text-gray-700 text-base italic mb-3 max-w-xs mx-auto">&ldquo;{claimDesc}&rdquo;</p>
-                    )}
-                    {isGif && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={claimDesc!} alt="gif" className="mx-auto mb-3 rounded-xl max-h-40 object-contain" />
-                    )}
-                    <p className="text-gray-900 text-lg font-semibold mb-1">Claim completed</p>
-                    <p className="text-gray-600 text-base">${amt} USDC</p>
                   </div>
                 );
               })()
@@ -2427,7 +2399,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                     <button
                       type="button"
-                      onClick={() => claimAsRecipientMutation.mutate()}
+                      onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
                       disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
                       className={cn(
                         "inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
@@ -2436,17 +2408,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         "opacity-50 cursor-not-allowed hover:opacity-50",
                       )}
                     >
-                      {claimAsRecipientMutation.isPending ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" /> Claiming…
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="h-4 w-4" />
-                          Claim to wallet
-                          {waitingForBurnerFunds ? " (not ready)" : ""}
-                        </>
-                      )}
+                      <CheckCircle2 className="h-4 w-4" />
+                      Claim to wallet
+                      {waitingForBurnerFunds ? " (not ready)" : ""}
                     </button>
                   </>
                 )}
@@ -2505,7 +2469,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       </div>
                       <button
                         type="button"
-                        onClick={() => claimAsRecipientMutation.mutate()}
+                        onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
                         disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
                         className={cn(
                           "inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
@@ -2514,17 +2478,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           "opacity-50 cursor-not-allowed hover:opacity-50",
                         )}
                       >
-                        {claimAsRecipientMutation.isPending ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" /> Claiming…
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 className="h-4 w-4" />
-                            Claim to wallet
-                            {waitingForBurnerFunds ? " (not ready)" : ""}
-                          </>
-                        )}
+                        <CheckCircle2 className="h-4 w-4" />
+                        Claim to wallet
+                        {waitingForBurnerFunds ? " (not ready)" : ""}
                       </button>
                     </>
                   )
@@ -3909,13 +3865,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 )}
               </DialogHeader>
               <div className="space-y-3 py-2">
-                <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-500 p-4">
+                <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50/80 p-4">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100">
                     <CheckCircle2 className="h-5 w-5 text-emerald-600" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-gray-900">Signed & sent</p>
-                    <p className="text-xs text-gray-900">Transaction is on the network</p>
+                    <p className="text-xs text-gray-600">Transaction is on the network</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 rounded-lg border border-orange-200 bg-orange-50 p-4">
@@ -4025,7 +3981,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
-                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-900" />}
+                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin border-gray-600" /> : <Wallet className="w-5 h-5 text-gray-900" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <span className="font-semibold text-gray-900 block">Use wallet</span>
@@ -4090,7 +4046,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
-                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <Wallet className="w-5 h-5 text-gray-900" />}
+                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin border-gray-600" /> : <Wallet className="w-5 h-5 text-black" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <span className="font-semibold text-gray-900 block">Use wallet</span>

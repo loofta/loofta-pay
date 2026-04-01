@@ -140,6 +140,13 @@ export class ClaimsService {
       }
       recipientAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
 
+      // Always create a burner for registered recipients so the sender never sends
+      // directly to the recipient's wallet (privacy: real wallet stays server-side only).
+      const registeredBurner = this.createClaimBurner();
+      if (!registeredBurner) {
+        this.logger.warn('Creating registered-recipient claim without burner: SEND_PAYMENT_ENC_KEY may be missing.');
+      }
+
       const { data: claim, error: claimError } = await this.supabaseService.claims
         .insert({
           amount: String(amount),
@@ -153,6 +160,7 @@ export class ClaimsService {
           is_private: finalIsPrivate,
           description: description || null,
           is_devnet: isSolanaDevnetFromConfig(this.configService),
+          ...(registeredBurner ? { claim_burner_address: registeredBurner.claim_burner_address, claim_burner_encrypted_secret: registeredBurner.claim_burner_encrypted_secret } : {}),
         })
         .select('id')
         .single();
@@ -540,7 +548,7 @@ export class ClaimsService {
       (claim as Claim & { recipient_pending_email_value?: string }).recipient_pending_email_value = this.maskEmail(pendingEmail);
       const dataWithBurner = data as { claim_burner_address?: string | null };
       this.logger.log(
-        `[findOne] Pending-email claim ${id}: claim_burner_address=${dataWithBurner.claim_burner_address?.trim() || 'missing'}`,
+        `[findOne] Pending-email claim ${id}: burner=${dataWithBurner.claim_burner_address ? 'present' : 'missing'}`,
       );
       let burnerAddr = dataWithBurner.claim_burner_address?.trim() || null;
       if (!burnerAddr) {
@@ -549,14 +557,14 @@ export class ClaimsService {
       if (burnerAddr) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = burnerAddr;
     }
     // Mask pending-username claims: expose flag and username so UI can show "Claim with @username"
-    if (claim.recipient_address?.startsWith(ClaimsService.PENDING_USERNAME_PREFIX)) {
+    else if (claim.recipient_address?.startsWith(ClaimsService.PENDING_USERNAME_PREFIX)) {
       const pendingUsername = claim.recipient_address.slice(ClaimsService.PENDING_USERNAME_PREFIX.length).trim();
       (claim as Claim & { recipient_address?: string }).recipient_address = undefined;
       (claim as Claim & { recipient_pending_username?: boolean }).recipient_pending_username = true;
       (claim as Claim & { recipient_pending_username_value?: string }).recipient_pending_username_value = pendingUsername;
       const dataWithBurner = data as { claim_burner_address?: string | null };
       this.logger.log(
-        `[findOne] Pending-username claim ${id}: claim_burner_address=${dataWithBurner.claim_burner_address?.trim() || 'missing'}`,
+        `[findOne] Pending-username claim ${id}: burner=${dataWithBurner.claim_burner_address ? 'present' : 'missing'}`,
       );
       let burnerAddr = dataWithBurner.claim_burner_address?.trim() || null;
       if (!burnerAddr) {
@@ -564,9 +572,24 @@ export class ClaimsService {
       }
       if (burnerAddr) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = burnerAddr;
     }
+    // Registered recipient: strip real wallet from response, backfill burner if missing so sender
+    // always sends to an intermediary and never sees the recipient's actual wallet address.
+    else if (claim.recipient_address?.trim()) {
+      const dataWithBurner = data as { claim_burner_address?: string | null };
+      let burnerAddr = dataWithBurner.claim_burner_address?.trim() || null;
+      if (!burnerAddr) {
+        burnerAddr = await this.backfillBurnerForClaim(id);
+      }
+      if (burnerAddr) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = burnerAddr;
+      // Mark as registered so the frontend knows the recipient already has an account
+      (claim as Claim & { recipient_is_registered?: boolean }).recipient_is_registered = true;
+      // Never expose the real recipient wallet to the public API
+      delete (claim as unknown as Record<string, unknown>)['recipient_address'];
+    }
 
-    // Never expose the encrypted burner private key to the frontend
+    // Never expose the encrypted burner private key or real recipient wallet to the frontend
     delete (claim as unknown as Record<string, unknown>)['claim_burner_encrypted_secret'];
+    delete (claim as unknown as Record<string, unknown>)['recipient_address'];
 
     return claim;
   }
@@ -705,10 +728,17 @@ export class ClaimsService {
     privyUserId: string,
   ): Promise<{ claimed: boolean; sweepTxHash?: string; sweptAmount?: string }> {
     const claim = await this.findOneRaw(claimId);
+    // Guard: do not re-claim a completed or cancelled payment
+    const claimStatus = (claim.status || '').toUpperCase();
+    if (claimStatus === 'SUCCESS' || claimStatus === 'CANCELLED') {
+      throw new BadRequestException('This payment has already been completed or cancelled.');
+    }
     const ra = (claim.recipient_address || '').trim();
     const isPendingEmail = ra.startsWith(ClaimsService.PENDING_EMAIL_PREFIX);
     const isPendingUsername = ra.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
-    if (!isPendingEmail && !isPendingUsername) {
+    // Also allow registered recipients (real wallet stored, burner used as intermediary)
+    const isRegisteredRecipient = !isPendingEmail && !isPendingUsername && !!ra;
+    if (!isPendingEmail && !isPendingUsername && !isRegisteredRecipient) {
       throw new BadRequestException('This payment is not pending claim or has already been claimed.');
     }
     const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
@@ -719,14 +749,18 @@ export class ClaimsService {
     if (!wallet?.trim()) {
       throw new BadRequestException('No Solana wallet linked to your account. Please add a wallet in settings.');
     }
-    const { error } = await this.supabaseService.claims
-      .update({ recipient_address: wallet.trim() })
-      .eq('id', claimId)
-      .select()
-      .single();
-    if (error) {
-      this.logger.error('Failed to claim payment:', error);
-      throw new BadRequestException('Failed to claim payment.');
+
+    // For pending claims we need to record the real wallet; for registered recipients it's already set.
+    if (isPendingEmail || isPendingUsername) {
+      const { error } = await this.supabaseService.claims
+        .update({ recipient_address: wallet.trim() })
+        .eq('id', claimId)
+        .select()
+        .single();
+      if (error) {
+        this.logger.error('Failed to claim payment:', error);
+        throw new BadRequestException('Failed to claim payment.');
+      }
     }
 
     const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);

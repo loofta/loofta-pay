@@ -17,10 +17,8 @@ export interface SendPaymentLinkPublic {
   recipient_type: RecipientType;
   status: SendPaymentStatus;
   message?: string | null;
+  /** USDC ATA deposit address (derived from burner). The underlying burner wallet is never exposed. */
   deposit_address?: string | null;
-  burner_address?: string | null;
-  /** Resolved recipient (MagicBlock PER). */
-  per_recipient_pubkey?: string | null;
   /** SOL lamports to send to burner for claim gas (e.g. 500000 = 0.0005 SOL). */
   required_sol_lamports?: number;
   is_sender?: boolean;
@@ -36,13 +34,14 @@ export interface CreateSendPaymentInput {
 export interface CreateSendPaymentResult {
   id: string;
   link: string;
+  /** USDC ATA deposit address (burner-derived). Send USDC here. */
   deposit_address: string;
+  /** Burner wallet pubkey — needed to fund SOL gas for claim. */
   burner_address: string;
   /** SOL lamports sender should send to burner for claim gas (0.0005 SOL). */
   required_sol_lamports: number;
   amount: string;
   token: string;
-  per_recipient_pubkey?: string;
   per_mode?: boolean;
 }
 

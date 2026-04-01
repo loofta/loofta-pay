@@ -97,9 +97,7 @@ export async function buildUSDCTransferTransaction(params: {
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
-  console.log("[buildUSDCTransferTransaction] Privy transaction deposit address (recipient):", params.recipientAddress, {
-    senderWallet: params.senderAddress,
-    recipientWallet: params.recipientAddress,
+  console.log("[buildUSDCTransferTransaction] Building USDC transfer", {
     senderAta: senderAta.toBase58(),
     recipientAta: recipientAta.toBase58(),
     amountUSDC: params.amountUSDC,

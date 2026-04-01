@@ -151,6 +151,22 @@ export default function Home() {
     { question: "Can I send to someone before they have an account?", answer: "Yes. You can send to a Twitter/X username or email. They'll get a link to sign up and claim the payment. Once they log in with that identity, they can claim the funds." },
     { question: "APY on received amount & auto-compound?", answer: "We're building APY in USD on your received balance, with every claimed payment auto-compounding. Coming soon." },
     { question: "Points system", answer: "A points system is coming soon. You'll earn points for receiving and for sending both private and standard payments." },
+    {
+      question: "I'm on devnet — how do I get test SOL and USDC?",
+      answer: (
+        <>
+          Get free devnet SOL from the{" "}
+          <a href="https://faucet.solana.com/" target="_blank" rel="noopener noreferrer" className="underline text-amber-400 hover:text-amber-300">
+            Solana faucet
+          </a>
+          . For devnet USDC, use the{" "}
+          <a href="https://faucet.circle.com/" target="_blank" rel="noopener noreferrer" className="underline text-amber-400 hover:text-amber-300">
+            Circle faucet
+          </a>
+          .
+        </>
+      ),
+    },
   ];
 
   // Exact email only: no partial match to avoid linking/leaking users

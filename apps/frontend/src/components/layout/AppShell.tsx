@@ -31,7 +31,7 @@ function ShellContent({ children }: { children: ReactNode }) {
               Send and receive private payments with MagicBlock PER — devnet only. Pay anyone by email, X username, or Loofta username.
             </span>
             <a
-              href="https://t.me/looftaxyz"
+              href="https://t.me/looftapay"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 shrink-0 text-sm font-semibold text-white hover:underline underline-offset-2"
