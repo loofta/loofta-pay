@@ -563,9 +563,64 @@ async function updateClaimStatus(
   }
 }
 
+/** Message + embedded GIF rendering for claim description (shared paid / claim flows). */
+function ClaimDescriptionMessageBox({ description }: { description?: string | null }) {
+  if (!description?.trim()) return null;
+  const desc = description;
+  const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
+  const parts: string[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  gifUrlPattern.lastIndex = 0;
+  while ((match = gifUrlPattern.exec(desc)) !== null) {
+    if (match.index > lastIndex) parts.push(desc.slice(lastIndex, match.index));
+    parts.push(match[0]);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < desc.length) parts.push(desc.slice(lastIndex));
+  return (
+    <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+      <div className="text-sm text-gray-600 mb-1">Message</div>
+      <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
+        {parts.length === 0 ? (
+          desc
+        ) : (
+          parts.map((part, idx) => {
+            if (/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i.test(part)) {
+              let imageUrl = part;
+              if (part.includes("giphy.com") && !part.endsWith(".gif")) {
+                const giphyIdMatch = part.match(/giphy\.com\/media\/([^/]+)/);
+                if (giphyIdMatch) imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
+                else imageUrl = part.replace(/\/$/, "") + ".gif";
+              }
+              return (
+                // eslint-disable-next-line @next/next/no-img-element -- GIF URLs from user message; remote patterns vary
+                <img
+                  key={idx}
+                  src={imageUrl}
+                  alt="GIF"
+                  className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
+                  style={{ maxHeight: "200px", maxWidth: "100%" }}
+                />
+              );
+            }
+            return <span key={idx}>{part}</span>;
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
   const id = claimId;
   const router = useRouter();
+  const [isClaimPageLocalhost, setIsClaimPageLocalhost] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const h = window.location.hostname;
+    setIsClaimPageLocalhost(h === "localhost" || h === "127.0.0.1");
+  }, []);
   /** USDC-only pay UX on devnet / testnet or when private payment is enabled. */
   const hideAlternateTokenPay = isNonMainnetCluster() || PRIVATE_PAYMENT_ENABLED;
   const { toast } = useToast();
@@ -713,8 +768,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     },
     onSuccess: (data: { claimed?: boolean; sweepTxHash?: string; sweptAmount?: string; swept?: boolean } | undefined) => {
       toast({
-        title: "Payment claimed!",
-        description: "USDC will arrive in your wallet shortly.",
+        title: "Payment received!",
+        description: "Your claim completed successfully. USDC will arrive in your wallet shortly.",
       });
       queryClient.invalidateQueries({ queryKey: ["claim", id] });
       queryClient.invalidateQueries({ queryKey: ["claim", id, "recipient-check", user?.id] });
@@ -725,6 +780,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       toast({ variant: "destructive", title: "Claim failed", description: message });
     },
   });
+  useEffect(() => {
+    claimAsRecipientMutation.reset();
+    // Only reset when navigating to a different payment link (reset is stable).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
   const [burnerDiagLoading, setBurnerDiagLoading] = useState(false);
   const [retrySweepLoading, setRetrySweepLoading] = useState(false);
   const [reclaimingSenderFunds, setReclaimingSenderFunds] = useState(false);
@@ -2110,48 +2170,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     from {getSenderDisplay(claim)}
                   </div>
                 </div>
-                {claim?.description && (
-                  <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                    <div className="text-sm text-gray-600 mb-1">Message</div>
-                    <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
-                      {(() => {
-                        const desc = claim.description || "";
-                        const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
-                        const parts: string[] = [];
-                        let lastIndex = 0;
-                        let match;
-                        gifUrlPattern.lastIndex = 0;
-                        while ((match = gifUrlPattern.exec(desc)) !== null) {
-                          if (match.index > lastIndex) parts.push(desc.slice(lastIndex, match.index));
-                          parts.push(match[0]);
-                          lastIndex = match.index + match[0].length;
-                        }
-                        if (lastIndex < desc.length) parts.push(desc.slice(lastIndex));
-                        if (parts.length === 0) return desc;
-                        return parts.map((part, idx) => {
-                          if (/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i.test(part)) {
-                            let imageUrl = part;
-                            if (part.includes("giphy.com") && !part.endsWith(".gif")) {
-                              const giphyIdMatch = part.match(/giphy\.com\/media\/([^/]+)/);
-                              if (giphyIdMatch) imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
-                              else imageUrl = part.replace(/\/$/, "") + ".gif";
-                            }
-                            return (
-                              <img
-                                key={idx}
-                                src={imageUrl}
-                                alt="GIF"
-                                className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
-                                style={{ maxHeight: "200px", maxWidth: "100%" }}
-                              />
-                            );
-                          }
-                          return <span key={idx}>{part}</span>;
-                        });
-                      })()}
-                    </div>
-                  </div>
-                )}
+                <ClaimDescriptionMessageBox description={claim?.description} />
                 <div className="mb-6 p-3 rounded-lg bg-gray-50 border border-gray-200 space-y-2">
                   {claim?.created_at && (
                     <div className="flex items-center justify-between">
@@ -2168,7 +2187,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                   )}
                 </div>
-                {!!(claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.claim_burner_address) && (
+                {isClaimPageLocalhost &&
+                  !!(claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.claim_burner_address) && (
                   <div className="mt-4 rounded-xl border border-amber-300/60 bg-amber-50/40 p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -2245,18 +2265,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                 )}
               </div>
-            ) : isRecipient && claimAsRecipientMutation.isPending ? (
-              <div className="mt-6 text-center py-12">
-                <div className="mb-4 text-6xl">🔒</div>
-                <h3 className="text-2xl font-semibold text-gray-900 mb-2">Claiming your payment…</h3>
-                <p className="text-gray-600 text-base">Securely routing your funds — this takes just a moment.</p>
-              </div>
-            ) : isRecipient && (
-                claimAsRecipientMutation.isSuccess
-                // On refresh: only show claimed screen if recipient_address is already a wallet (Phase 2).
-                // If still PENDING_EMAIL/USERNAME (Phase 1), auto-trigger will handle it.
-                || (!isPendingRecipientClaim && ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CLAIMED"].includes(String(status || claim?.status || "").toUpperCase()))
-              ) ? (
+            ) : user?.id && claimAsRecipientMutation.isSuccess ? (
               (() => {
                 const senderLabel =
                   claim?.creator_username ? `@${claim.creator_username}` : (claim?.creator_email || null);
@@ -2266,7 +2275,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 return (
                   <div className="mt-6 text-center py-12 px-4">
                     <div className="mb-4 text-6xl">🎉</div>
-                    <h3 className="text-2xl font-semibold text-gray-900 mb-1">Payment claimed!</h3>
+                    <h3 className="text-2xl font-semibold text-gray-900 mb-1">Payment received!</h3>
                     {senderLabel && (
                       <p className="text-sm text-gray-500 mb-3">
                         From <span className="font-medium text-gray-700">{senderLabel}</span>
@@ -2279,7 +2288,45 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={claimDesc!} alt="gif" className="mx-auto mb-3 rounded-xl max-h-40 object-contain" />
                     )}
-                    <p className="text-gray-900 text-lg font-semibold mb-1">Payment received</p>
+                    <p className="text-gray-900 text-lg font-semibold mb-1">Claim completed</p>
+                    <p className="text-gray-600 text-base">${amt} USDC</p>
+                  </div>
+                );
+              })()
+            ) : isRecipient && claimAsRecipientMutation.isPending ? (
+              <div className="mt-6 text-center py-12">
+                <div className="mb-4 text-6xl">🔒</div>
+                <h3 className="text-2xl font-semibold text-gray-900 mb-2">Claiming your payment…</h3>
+                <p className="text-gray-600 text-base">Securely routing your funds — this takes just a moment.</p>
+              </div>
+            ) : isRecipient &&
+                !isPendingRecipientClaim &&
+                ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CLAIMED"].includes(
+                  String(status || claim?.status || "").toUpperCase(),
+                ) ? (
+              (() => {
+                const senderLabel =
+                  claim?.creator_username ? `@${claim.creator_username}` : (claim?.creator_email || null);
+                const claimDesc = claim?.description?.trim() || null;
+                const isGif = claimDesc && /^https?:\/\/.+\.(gif|webp)(\?.*)?$/i.test(claimDesc);
+                const amt = parseFloat(claim?.amount || "0").toFixed(2);
+                return (
+                  <div className="mt-6 text-center py-12 px-4">
+                    <div className="mb-4 text-6xl">🎉</div>
+                    <h3 className="text-2xl font-semibold text-gray-900 mb-1">Payment received!</h3>
+                    {senderLabel && (
+                      <p className="text-sm text-gray-500 mb-3">
+                        From <span className="font-medium text-gray-700">{senderLabel}</span>
+                      </p>
+                    )}
+                    {claimDesc && !isGif && (
+                      <p className="text-gray-700 text-base italic mb-3 max-w-xs mx-auto">&ldquo;{claimDesc}&rdquo;</p>
+                    )}
+                    {isGif && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={claimDesc!} alt="gif" className="mx-auto mb-3 rounded-xl max-h-40 object-contain" />
+                    )}
+                    <p className="text-gray-900 text-lg font-semibold mb-1">Claim completed</p>
                     <p className="text-gray-600 text-base">${amt} USDC</p>
                   </div>
                 );
@@ -2287,78 +2334,34 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             ) : claim?.recipient_pending_email && !(user?.id && claim?.created_by === user.id) ? (
               <div className="mt-6 text-center py-12 px-4">
                 <div className="mb-4 text-6xl">🎁</div>
-                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                  {user?.id ? `$${parseFloat(claim?.amount || "0").toFixed(2)} is waiting for you` : "You received a payment"}
-                </h3>
-                {user?.id && (
-                  <div className="flex items-center justify-center gap-2 text-sm mb-4">
-                    {burnerIsChecking ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-                        <span className="text-gray-500">Checking if funds have arrived…</span>
-                      </>
-                    ) : burnerIsReady ? (
-                      <>
-                        <CheckCircle2 className="h-4 w-4 text-green-500" />
-                        <span className="text-green-600 font-medium">Funds ready — claiming now…</span>
-                      </>
-                    ) : (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                        <span className="text-gray-500">Waiting for the payment to land — can take up to 3 minutes after the sender pays.</span>
-                      </>
-                    )}
-                  </div>
-                )}
-                <p className="text-gray-500 text-sm mb-5">
-                  {!user?.id && `Sign in with the email this link was sent to to claim $${parseFloat(claim?.amount || "0").toFixed(2)}.`}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!user?.id) {
-                      login({ loginMethods: ["email"], disableSignup: false });
-                      return;
-                    }
-                    claimAsRecipientMutation.mutate();
-                  }}
-                  disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
-                  className={cn(
-                    "inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
-                    claimAsRecipientMutation.isPending && "bg-slate-200 text-slate-500 cursor-not-allowed",
-                    !claimAsRecipientMutation.isPending &&
-                      !user?.id &&
-                      "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 cursor-pointer",
-                    !claimAsRecipientMutation.isPending &&
-                      !!user?.id &&
-                      waitingForBurnerFunds &&
-                      "bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed shadow-none",
-                    !claimAsRecipientMutation.isPending &&
-                      !!user?.id &&
-                      !waitingForBurnerFunds &&
-                      burnerIsReady &&
-                      "bg-green-500 text-white hover:bg-green-600 shadow-lg shadow-green-200 cursor-pointer",
-                  )}
-                >
-                  {claimAsRecipientMutation.isPending ? (
-                    <><Loader2 className="h-4 w-4 animate-spin" /> Claiming…</>
-                  ) : user?.id ? (
-                    burnerIsReady ? (
-                      <><CheckCircle2 className="h-4 w-4" /> Claim to wallet</>
-                    ) : (
-                      "Not yet — waiting for payment"
-                    )
-                  ) : (
-                    "Sign in to claim"
-                  )}
-                </button>
-              </div>
-            ) : isRecipient && claim?.recipient_pending_username ? (
-              <div className="mt-6 text-center py-12 px-4">
-                <div className="mb-4 text-6xl">📩</div>
-                <h3 className="text-2xl font-semibold text-gray-900 mb-2">This payment is for you</h3>
-                {["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(String(claim?.status || "").toUpperCase()) ? (
+                {!user?.id ? (
                   <>
+                    <h3 className="text-2xl font-semibold text-gray-900 mb-2">You received a payment</h3>
+                    <p className="text-gray-500 text-sm mb-5">
+                      Sign in with the email this link was sent to to claim.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => login({ loginMethods: ["email"], disableSignup: false })}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                    >
+                      Sign in to claim
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className={"text-6xl font-sans font-semibold"}>
+                      + ${parseFloat(claim?.amount || "0").toFixed(2)}
+                    </div>
+                    <div className={"text-xl text-gray-500 mt-3 mb-5"}>
+                      from{" "}
+                      {claim?.creator_username
+                        ? `@${claim.creator_username}`
+                        : claim?.creator_email || "Anonymous"}
+                    </div>
+                    <div className="text-left max-w-md mx-auto">
+                      <ClaimDescriptionMessageBox description={claim?.description} />
+                    </div>
                     <div className="flex items-center justify-center gap-2 text-sm mb-4">
                       {burnerIsChecking ? (
                         <>
@@ -2368,62 +2371,125 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       ) : burnerIsReady ? (
                         <>
                           <CheckCircle2 className="h-4 w-4 text-green-500" />
-                          <span className="text-green-600 font-medium">Funds ready — claiming now…</span>
+                          <span className="text-green-600 font-medium">Funds ready — you can claim now.</span>
                         </>
                       ) : (
                         <>
                           <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                          <span className="text-gray-500">Waiting for the payment to land — can take up to 3 minutes after the sender pays.</span>
+                          <span className="text-gray-500">
+                            Waiting for the payment to land — can take up to 3 minutes after the sender pays.
+                          </span>
                         </>
                       )}
                     </div>
-                    <p className="text-gray-500 text-sm mb-5">
-                      {!user?.id &&
-                        `Sign in with @${claim.recipient_pending_username_value || "username"} on Loofta to claim $${parseFloat(claim?.amount || "0").toFixed(2)}.`}
-                    </p>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (!user?.id) {
-                          login({ disableSignup: false });
-                          return;
-                        }
-                        claimAsRecipientMutation.mutate();
-                      }}
+                      onClick={() => claimAsRecipientMutation.mutate()}
                       disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
                       className={cn(
                         "inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
-                        claimAsRecipientMutation.isPending && "bg-slate-200 text-slate-500 cursor-not-allowed",
-                        !claimAsRecipientMutation.isPending &&
-                          !user?.id &&
-                          "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 cursor-pointer",
-                        !claimAsRecipientMutation.isPending &&
-                          !!user?.id &&
-                          waitingForBurnerFunds &&
-                          "bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed shadow-none",
-                        !claimAsRecipientMutation.isPending &&
-                          !!user?.id &&
-                          !waitingForBurnerFunds &&
-                          burnerIsReady &&
-                          "bg-green-500 text-white hover:bg-green-600 shadow-lg shadow-green-200 cursor-pointer",
+                        "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+                        (claimAsRecipientMutation.isPending || waitingForBurnerFunds) &&
+                          "opacity-50 cursor-not-allowed hover:opacity-50",
                       )}
                     >
                       {claimAsRecipientMutation.isPending ? (
-                        <><Loader2 className="h-4 w-4 animate-spin" /> Claiming…</>
-                      ) : user?.id ? (
-                        burnerIsReady ? (
-                          <><CheckCircle2 className="h-4 w-4" /> Claim to wallet</>
-                        ) : (
-                          "Not yet — waiting for payment"
-                        )
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" /> Claiming…
+                        </>
                       ) : (
-                        "Sign in to claim"
+                        <>
+                          <CheckCircle2 className="h-4 w-4" />
+                          Claim to wallet
+                          {waitingForBurnerFunds ? " (not ready)" : ""}
+                        </>
                       )}
                     </button>
                   </>
+                )}
+              </div>
+            ) : isRecipient && claim?.recipient_pending_username ? (
+              <div className="mt-6 text-center py-12 px-4">
+                <div className="mb-4 text-6xl">📩</div>
+                <h3 className="text-2xl font-semibold text-gray-900 mb-2">This payment is for you</h3>
+                {["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(String(claim?.status || "").toUpperCase()) ? (
+                  !user?.id ? (
+                    <>
+                      <p className="text-gray-500 text-sm mb-5">
+                        Sign in with @{claim.recipient_pending_username_value || "username"} on Loofta to claim.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => login({ disableSignup: false })}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                      >
+                        Sign in to claim
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className={"text-6xl font-sans font-semibold"}>
+                        + ${parseFloat(claim?.amount || "0").toFixed(2)}
+                      </div>
+                      <div className={"text-xl text-gray-500 mt-3 mb-5"}>
+                        from{" "}
+                        {claim?.creator_username
+                          ? `@${claim.creator_username}`
+                          : claim?.creator_email || "Anonymous"}
+                      </div>
+                      <div className="text-left max-w-md mx-auto">
+                        <ClaimDescriptionMessageBox description={claim?.description} />
+                      </div>
+                      <div className="flex items-center justify-center gap-2 text-sm mb-4">
+                        {burnerIsChecking ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                            <span className="text-gray-500">Checking if funds have arrived…</span>
+                          </>
+                        ) : burnerIsReady ? (
+                          <>
+                            <CheckCircle2 className="h-4 w-4 text-green-500" />
+                            <span className="text-green-600 font-medium">Funds ready — you can claim now.</span>
+                          </>
+                        ) : (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+                            <span className="text-gray-500">
+                              Waiting for the payment to land — can take up to 3 minutes after the sender pays.
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => claimAsRecipientMutation.mutate()}
+                        disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
+                        className={cn(
+                          "inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
+                          "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+                          (claimAsRecipientMutation.isPending || waitingForBurnerFunds) &&
+                            "opacity-50 cursor-not-allowed hover:opacity-50",
+                        )}
+                      >
+                        {claimAsRecipientMutation.isPending ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" /> Claiming…
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-4 w-4" />
+                            Claim to wallet
+                            {waitingForBurnerFunds ? " (not ready)" : ""}
+                          </>
+                        )}
+                      </button>
+                    </>
+                  )
                 ) : (
                   <p className="text-gray-600 text-base mb-4">
-                    ${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay.
+                    {user?.id
+                      ? `$${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay.`
+                      : "Waiting for the sender to pay. Sign in to see the amount and claim when it’s ready."}
                   </p>
                 )}
               </div>
@@ -2593,7 +2659,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     )}
                   </div>
                 </div>
-                {!!(claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.claim_burner_address) && (
+                {isClaimPageLocalhost &&
+                  !!(claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.claim_burner_address) && (
                   <div className="mt-4 rounded-xl border border-amber-300/60 bg-amber-50/40 p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
