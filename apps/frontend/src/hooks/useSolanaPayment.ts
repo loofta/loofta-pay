@@ -69,7 +69,6 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
         const r = await fetch(`${BACKEND_URL}/users/me/wallet/balance`, {
           headers: {
             Authorization: `Bearer ${token}`,
-            "x-privy-user-id": user.id,
           },
         });
         if (r.ok) {

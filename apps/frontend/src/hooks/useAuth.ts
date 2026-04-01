@@ -5,7 +5,7 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
 
 export function useAuth() {
-	const { login, logout, user, ready, authenticated } = usePrivy();
+	const { login, logout, user, ready, authenticated, getAccessToken } = usePrivy();
 	const cached = useAuthStore((s) => ({ authenticated: s.authenticated, userId: s.userId, email: s.email }));
 	const setAuth = useAuthStore((s) => s.setAuth);
 
@@ -29,5 +29,6 @@ export function useAuth() {
 		email: effectiveEmail,
 		login,
 		logout,
+		getAccessToken,
 	};
 }

@@ -34,7 +34,7 @@ export interface SendFlowInAppProps {
 
 export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, onClaimCreated }: SendFlowInAppProps) {
   const router = useRouter();
-  const { user } = usePrivy();
+  const { user, getAccessToken } = usePrivy();
   const { toast } = useToast();
   const [amount, setAmount] = useState(initialAmount || "100");
   const [description, setDescription] = useState("");
@@ -88,11 +88,13 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
     setPreparing(true);
     const fullDescription = [description.trim(), gifUrl].filter(Boolean).join(" ").trim() || undefined;
     try {
+      const accessToken = await getAccessToken();
       if (isEmail) {
         const result = await createClaimFromEmail({
           email: recipientUsername.trim().toLowerCase(),
           amount,
           userId: user?.id,
+          accessToken,
           isPrivate: requirePrivate,
           description: fullDescription,
         });
@@ -104,6 +106,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           username: cleanUsername,
           amount,
           userId: user?.id,
+          accessToken,
           isPrivate: requirePrivate,
           description: fullDescription,
         });

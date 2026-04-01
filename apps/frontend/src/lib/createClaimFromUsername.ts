@@ -7,14 +7,23 @@ export async function createClaimFromUsername(input: {
   username: string;
   amount: string;
   userId?: string;
+  accessToken?: string | null;
   userEmail?: string;
   isPrivate?: boolean;
   description?: string;
 }): Promise<{ id: string }> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  const authHeader = input.accessToken
+    ? { Authorization: `Bearer ${input.accessToken}` }
+    : input.userId
+      ? { "x-privy-user-id": input.userId }
+      : {};
   const r = await fetch(`${backendUrl}/claims/create-from-username`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeader,
+    },
     body: JSON.stringify({
       username: input.username,
       amount: Number(input.amount),

@@ -278,7 +278,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
           const response = await fetch(`${backendUrl}/users/me/preferences`, {
             headers: {
               'Authorization': `Bearer ${token}`,
-              'x-privy-user-id': privyUser.id,
             },
           });
           if (response.ok) {
@@ -311,7 +310,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'x-privy-user-id': privyUser.id,
         },
         body: JSON.stringify({ requirePrivatePayments: checked }),
       });
