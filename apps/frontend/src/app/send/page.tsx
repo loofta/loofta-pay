@@ -205,8 +205,8 @@ export default function SendPaymentPage() {
   const balanceData = solanaPayment.isBalanceLoading ? undefined : { balanceUSD: looftaBalanceUSD };
 
   function getOnchainRecipientAddress(): string | null {
-    const r = result?.per_recipient_pubkey?.trim() || result?.burner_address?.trim();
-    return r || null;
+    // Always route through burner — never use recipient's real wallet directly.
+    return result?.burner_address?.trim() || null;
   }
 
   async function payWithLooftaBalance() {
@@ -235,9 +235,8 @@ export default function SendPaymentPage() {
 
   async function payWithPrivate(preferWallet: 'loofta' | 'phantom') {
     if (!result?.id || !result?.amount || !user?.id) return;
-    const recipient = result.per_recipient_pubkey?.trim();
-    if (!recipient) {
-      throw new Error('This link is missing recipient data. Create a new payment link.');
+    if (!result.burner_address?.trim()) {
+      throw new Error('This link is missing burner data. Create a new payment link.');
     }
     setPayWithPrivateError(null);
     const amount = parseFloat(result.amount);
@@ -418,12 +417,11 @@ export default function SendPaymentPage() {
         id: publicData.id,
         link: `${origin}/s/${id}`,
         deposit_address: publicData.deposit_address ?? '',
-        burner_address: publicData.burner_address ?? '',
+        burner_address: '',
         amount: publicData.amount,
         token: publicData.token,
         required_sol_lamports: publicData.required_sol_lamports ?? 500_000,
-        per_recipient_pubkey: publicData.per_recipient_pubkey ?? undefined,
-        per_mode: !!publicData.per_recipient_pubkey,
+        per_mode: true,
       };
       setCurrentLink(link);
       setStep(publicData.status === 'FUNDED' || publicData.status === 'CLAIMED' ? 'funded' : 'created');
@@ -735,7 +733,7 @@ export default function SendPaymentPage() {
                           className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                           <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
-                            {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin text-gray-600" /> : <WalletIcon className="w-5 h-5 text-gray-700" />}
+                            {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin border-gray-600" /> : <WalletIcon className="w-5 h-5 text-gray-700" />}
                           </div>
                           <div className="flex-1 min-w-0">
                             <span className="font-semibold text-gray-900 block">Phantom wallet</span>
@@ -753,26 +751,16 @@ export default function SendPaymentPage() {
                           </div>
                         )}
 
-                        {result.deposit_address || result.burner_address ? (
+                        {result.deposit_address ? (
                           <>
-                            <p className="text-xs text-gray-500 mt-1">Or send manually: USDC to deposit address{result.burner_address ? ', 0.0005 SOL to burner for claim gas' : ''}.</p>
+                            <p className="text-xs text-gray-500 mt-1">Or send manually: USDC to the deposit address below.</p>
                             <div className="flex flex-col gap-2">
-                              {!!result.deposit_address && (
-                                <div className="flex gap-2">
-                                  <Input readOnly value={result.deposit_address} className="font-mono text-xs" placeholder="USDC deposit" />
-                                  <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.deposit_address, 'address')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
-                                    {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
-                                  </Button>
-                                </div>
-                              )}
-                              {result.burner_address != null && result.burner_address !== '' && (
-                                <div className="flex gap-2">
-                                  <Input readOnly value={result.burner_address} className="font-mono text-xs" placeholder="SOL (0.0005) for gas" />
-                                  <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.burner_address!, 'address')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
-                                    {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
-                                  </Button>
-                                </div>
-                              )}
+                              <div className="flex gap-2">
+                                <Input readOnly value={result.deposit_address} className="font-mono text-xs" placeholder="USDC deposit" />
+                                <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(result.deposit_address, 'address')} className="text-gray-700 border-gray-300 hover:bg-gray-100 hover:text-gray-900">
+                                  {copied === 'address' ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-700" />}
+                                </Button>
+                              </div>
                             </div>
                           </>
                         ) : (

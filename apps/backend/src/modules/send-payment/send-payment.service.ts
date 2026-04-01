@@ -145,36 +145,31 @@ export class SendPaymentService {
     token: string;
     burner_address: string;
     required_sol_lamports: number;
-    per_recipient_pubkey: string;
     per_mode: true;
   }> {
     const recipientIdentifier = this.normalizeIdentifier(dto.recipient_type, dto.recipient_identifier);
     const amountStr = String(dto.amount);
 
-    let recipientSolanaPubkey = await this.resolveRecipientSolanaPubkey(dto, recipientIdentifier);
-    let burnerAddress: string | null = null;
-    let burnerEncryptedSecret: string | null = null;
+    // Always create a burner regardless of whether the recipient is registered.
+    // The sender never needs to know the recipient's real wallet — all deposits go through
+    // the burner intermediary, and the backend sweeps to the real wallet after claiming.
+    const resolvedRecipientPubkey = await this.resolveRecipientSolanaPubkey(dto, recipientIdentifier);
+    const burner = Keypair.generate();
+    const burnerAddress = burner.publicKey.toBase58();
+    const burnerEncryptedSecret = this.encryption.encrypt(Buffer.from(burner.secretKey));
+    // For PER: target = burner (funds held there until recipient claims).
+    const recipientSolanaPubkey = burnerAddress;
 
-    // Recipient not found yet -> create burner fallback so recipient can claim after signup/login.
-    if (!recipientSolanaPubkey) {
-      const burner = Keypair.generate();
-      burnerAddress = burner.publicKey.toBase58();
-      burnerEncryptedSecret = this.encryption.encrypt(Buffer.from(burner.secretKey));
-      // Keep PER UX working: transfer targets burner pubkey, then recipient claims by identity.
-      recipientSolanaPubkey = burnerAddress;
-      this.logger.log(
-        `[SendPayment] Pending recipient fallback for ${dto.recipient_type}:${recipientIdentifier} -> burner ${burnerAddress.slice(0, 8)}...`,
-      );
-    }
+    this.logger.log(
+      `[SendPayment] Created burner for ${dto.recipient_type}:${recipientIdentifier} (recipient known: ${!!resolvedRecipientPubkey})`,
+    );
 
     let depositAddress = '';
-    if (burnerAddress) {
-      try {
-        const burnerPubkey = new PublicKey(burnerAddress);
-        depositAddress = (await getAssociatedTokenAddress(this.usdcMint, burnerPubkey)).toBase58();
-      } catch {
-        depositAddress = '';
-      }
+    try {
+      const burnerPubkey = new PublicKey(burnerAddress);
+      depositAddress = (await getAssociatedTokenAddress(this.usdcMint, burnerPubkey)).toBase58();
+    } catch {
+      depositAddress = '';
     }
 
     const { data, error } = await this.supabaseService.sendPaymentLinks
@@ -188,7 +183,8 @@ export class SendPaymentService {
         status: 'OPEN',
         burner_address: burnerAddress,
         burner_encrypted_secret: burnerEncryptedSecret,
-        recipient_solana_pubkey: recipientSolanaPubkey,
+        // Store the real recipient pubkey in DB only — never returned to the sender.
+        recipient_solana_pubkey: resolvedRecipientPubkey ?? recipientSolanaPubkey,
         message: dto.message || null,
         is_devnet: isSolanaDevnetFromConfig(this.configService),
       })
@@ -201,9 +197,6 @@ export class SendPaymentService {
     }
 
     const link = `${this.baseUrl}/s/${data.id}`;
-    this.logger.log(
-      `[SendPayment] Created PER send payment ${data.id} recipient_sol=${recipientSolanaPubkey.slice(0, 8)}...`,
-    );
 
     return {
       id: data.id,
@@ -211,9 +204,8 @@ export class SendPaymentService {
       deposit_address: depositAddress,
       amount: amountStr,
       token: 'USDC',
-      burner_address: burnerAddress ?? '',
-      required_sol_lamports: burnerAddress ? BURNER_SOL_LAMPORTS : 0,
-      per_recipient_pubkey: recipientSolanaPubkey,
+      burner_address: burnerAddress,
+      required_sol_lamports: BURNER_SOL_LAMPORTS,
       per_mode: true,
     };
   }
@@ -296,7 +288,6 @@ export class SendPaymentService {
 
     const is_sender = Boolean(userId && data.sender_user_id === userId);
 
-    const row = data as typeof data & { recipient_solana_pubkey?: string | null };
     return {
       id: data.id,
       amount: data.amount,
@@ -305,10 +296,10 @@ export class SendPaymentService {
       recipient_type: data.recipient_type,
       status: data.status,
       message: data.message,
+      // Only expose the derived ATA deposit address (not the underlying burner wallet or
+      // recipient pubkey — those are never returned to the public to preserve recipient privacy).
       deposit_address: deposit_address ?? undefined,
-      burner_address: data.burner_address ?? undefined,
       required_sol_lamports: data.burner_address ? BURNER_SOL_LAMPORTS : 0,
-      per_recipient_pubkey: row.recipient_solana_pubkey ?? undefined,
       ...(is_sender ? { is_sender: true } : {}),
     };
   }

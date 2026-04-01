@@ -168,6 +168,22 @@ export default function AboutPage() {
       question: "Can businesses use Loofta Pay?",
       answer: "Yes. A checkout SDK and branded checkout are available so businesses can accept multi-chain payments with a single integration.",
     },
+    {
+      question: "I'm on devnet — how do I get test SOL and USDC?",
+      answer: (
+        <>
+          Get free devnet SOL from the{" "}
+          <a href="https://faucet.solana.com/" target="_blank" rel="noopener noreferrer" className="underline text-orange-500 hover:text-orange-600">
+            Solana faucet
+          </a>
+          . For devnet USDC, use the{" "}
+          <a href="https://faucet.circle.com/" target="_blank" rel="noopener noreferrer" className="underline text-orange-500 hover:text-orange-600">
+            Circle faucet
+          </a>
+          .
+        </>
+      ),
+    },
   ];
 
   return (

@@ -7,6 +7,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { usePrivy, useLinkAccount } from "@privy-io/react-auth";
 
 const LOO_PREFIX = "loo-";
+const EMAIL_SKIP_KEY = "loofta_email_step_skip_until";
+const EMAIL_SKIP_DURATION_MS = 8 * 60 * 60 * 1000; // 8 hours
+
+function isEmailSkipActive(): boolean {
+  if (typeof window === "undefined") return false;
+  const val = localStorage.getItem(EMAIL_SKIP_KEY);
+  if (!val) return false;
+  return Date.now() < parseInt(val, 10);
+}
 
 /** Privy uses type "twitter_oauth" for Twitter. */
 const TWITTER_TYPES = ["twitter_oauth", "twitter", "x"] as const;
@@ -55,7 +64,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
     () => getTwitterUsername(privyUser?.linkedAccounts as Array<{ type?: string; username?: string; name?: string; subject?: string }> | undefined),
     [privyUser?.linkedAccounts]
   );
-  const [emailStepDone, setEmailStepDone] = useState(false);
+  const [emailStepDone, setEmailStepDone] = useState(() => isEmailSkipActive());
   const [step, setStep] = useState(0);
   const [displayText, setDisplayText] = useState("");
   const [dontShowAgain, setDontShowAgain] = useState(false);
@@ -125,7 +134,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
     if (open && !prevOpenRef.current) {
       onboardingCloseOnceRef.current = false;
       setStep(0);
-      setEmailStepDone(hasEmail);
+      setEmailStepDone(hasEmail || isEmailSkipActive());
       setEmailLinkError(null);
       setDisplayText("");
       setDontShowAgain(false);
@@ -411,6 +420,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                   type="button"
                   onClick={() => {
                     setEmailLinkError(null);
+                    localStorage.setItem(EMAIL_SKIP_KEY, String(Date.now() + EMAIL_SKIP_DURATION_MS));
                     setEmailStepDone(true);
                   }}
                   className="w-full py-2.5 rounded-xl font-medium text-slate-400 hover:text-white transition-colors"

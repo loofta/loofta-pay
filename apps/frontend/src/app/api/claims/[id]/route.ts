@@ -78,27 +78,36 @@ export async function GET(_: Request, props: { params: Promise<{ id: string }> }
       creator_username = appUser?.username ?? null;
     }
     
-    // Mask pending claims like backend: expose recipient_pending_* and claim_burner_address so payers can pay to burner
+    // Mirror the backend findOne() masking: never expose the real recipient wallet to the public.
+    // Only expose pending-* flags, burner address (payment intermediary), and registered flag.
     const ra = (rawClaim?.recipient_address ?? "").trim();
     const claim: Record<string, unknown> = {
       ...rawClaim,
       creator_username: creator_username ?? null,
     };
     if (ra.startsWith(PENDING_EMAIL_PREFIX)) {
-      (claim as Record<string, unknown>).recipient_address = undefined;
-      (claim as Record<string, unknown>).recipient_pending_email = true;
-      // Ensure burner is always present for payers (explicit so it cannot be dropped)
+      claim.recipient_address = undefined;
+      claim.recipient_pending_email = true;
       const burner = (rawClaim as { claim_burner_address?: string | null })?.claim_burner_address;
-      if (burner) (claim as Record<string, unknown>).claim_burner_address = burner;
-      console.log("[api/claims GET] Pending-email claim:", params.id, "claim_burner_address:", !!burner);
+      if (burner) claim.claim_burner_address = burner;
+      console.log("[api/claims GET] Pending-email claim:", params.id, "hasBurner:", !!burner);
     } else if (ra.startsWith(PENDING_USERNAME_PREFIX)) {
-      (claim as Record<string, unknown>).recipient_address = undefined;
-      (claim as Record<string, unknown>).recipient_pending_username = true;
-      (claim as Record<string, unknown>).recipient_pending_username_value = ra.slice(PENDING_USERNAME_PREFIX.length).trim();
+      claim.recipient_address = undefined;
+      claim.recipient_pending_username = true;
+      claim.recipient_pending_username_value = ra.slice(PENDING_USERNAME_PREFIX.length).trim();
       const burner = (rawClaim as { claim_burner_address?: string | null })?.claim_burner_address;
-      if (burner) (claim as Record<string, unknown>).claim_burner_address = burner;
-      console.log("[api/claims GET] Pending-username claim:", params.id, "claim_burner_address:", !!burner);
+      if (burner) claim.claim_burner_address = burner;
+      console.log("[api/claims GET] Pending-username claim:", params.id, "hasBurner:", !!burner);
+    } else if (ra) {
+      // Registered recipient: strip real wallet, expose only the burner and a flag.
+      claim.recipient_address = undefined;
+      claim.recipient_is_registered = true;
+      const burner = (rawClaim as { claim_burner_address?: string | null })?.claim_burner_address;
+      if (burner) claim.claim_burner_address = burner;
+      console.log("[api/claims GET] Registered recipient claim:", params.id, "hasBurner:", !!burner);
     }
+    // Always strip the real recipient wallet — belt-and-suspenders
+    delete claim.recipient_address;
     
     // Also get latest intent data (for hydration)
     const { data: intent } = await supabase
@@ -365,7 +374,7 @@ const DELETABLE_STATUSES = ["OPEN", "PENDING_DEPOSIT"];
 export async function DELETE(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const claimId = params.id;
-  const userId = request.headers.get("x-privy-user-id");
+  const userId = await getVerifiedUserId(request);
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
