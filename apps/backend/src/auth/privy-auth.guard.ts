@@ -3,37 +3,47 @@ import {
   CanActivate,
   ExecutionContext,
   UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
+import { PrivyVerificationService } from './privy-verification.service';
 
 /**
- * PrivyAuthGuard - Validates Privy authentication token from Authorization header
- * Extracts user ID from Privy token and attaches to request.user
+ * PrivyAuthGuard — identical behaviour to AuthGuard; used by UsersController.
+ * Both guards share the same PrivyVerificationService logic.
  */
 @Injectable()
 export class PrivyAuthGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
+  private readonly logger = new Logger(PrivyAuthGuard.name);
+
+  constructor(private readonly privy: PrivyVerificationService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
-    
-    // Try to get token from Authorization header (Bearer token)
-    const authHeader = request.headers['authorization'];
-    let userId: string | undefined;
-    
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.substring(7);
-      // For now, we'll extract user ID from x-privy-user-id header as fallback
-      // In production, you'd validate the Privy token and extract user ID from it
-      userId = request.headers['x-privy-user-id'];
-    } else {
-      // Fallback to x-privy-user-id header (for compatibility with existing code)
-      userId = request.headers['x-privy-user-id'];
+
+    const authHeader = (request.headers['authorization'] as string | undefined)?.trim();
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.slice(7).trim();
+      const userId = await this.privy.verifyAccessToken(token);
+      if (!userId) {
+        throw new UnauthorizedException('Invalid or expired token');
+      }
+      request.user = { id: userId };
+      return true;
     }
 
-    if (!userId) {
-      throw new UnauthorizedException('Missing authentication. Please provide Privy token or x-privy-user-id header.');
+    const legacyId = (request.headers['x-privy-user-id'] as string | undefined)?.trim();
+    if (legacyId) {
+      const valid = await this.privy.verifyUserId(legacyId);
+      if (!valid) {
+        throw new UnauthorizedException('Invalid user ID');
+      }
+      this.logger.warn(
+        `[PrivyAuthGuard] Legacy x-privy-user-id — migrate to Bearer token`,
+      );
+      request.user = { id: legacyId };
+      return true;
     }
 
-    // Attach user info to request
-    request.user = { id: userId };
-    return true;
+    throw new UnauthorizedException('Authentication required');
   }
 }

@@ -45,6 +45,19 @@ export class ClaimProcessorService {
   }
 
   /**
+   * Retry burner sweeps for PRIVATE_TRANSFER_PENDING claims every minute.
+   * Replaces the in-process setTimeout retry loop so sweeps survive server restarts.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleBurnerSweepRetries() {
+    try {
+      await this.claimsService.cronSweepPendingBurners();
+    } catch (e: any) {
+      this.logger.error('[handleBurnerSweepRetries] Error:', e?.message);
+    }
+  }
+
+  /**
    * Process all pending claims
    */
   async processPendingClaims(): Promise<ProcessingResult[]> {
