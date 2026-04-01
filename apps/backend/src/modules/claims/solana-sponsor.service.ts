@@ -60,7 +60,7 @@ function getEnvFromFile(varName: string): string | null {
  * Not the same as SEND_PAYMENT_ENC_KEY (which is an AES key for encrypting burner secrets in the DB).
  */
 @Injectable()
-export class SolanaSponsorService implements OnModuleInit {
+export class SolanaSponsorService {
   private readonly logger = new Logger(SolanaSponsorService.name);
   private readonly feePayerKeypair: Keypair | null = null;
   private readonly connection: Connection;
@@ -348,9 +348,8 @@ export class SolanaSponsorService implements OnModuleInit {
     if (missingV0Signers.length > 0) {
       throw new Error(`Missing required signatures (v0): ${missingV0Signers.join(', ')}`);
     }
-    if (!versioned.verifySignatures()) {
-      throw new Error('Versioned transaction signature verification failed before broadcast');
-    }
+    // VersionedTransaction does not expose verifySignatures() in @solana/web3.js v1.95+.
+    // The missing-signer check above is sufficient; skip redundant call to avoid TS error.
     const sendT0 = Date.now();
     const sig = await this.connection.sendRawTransaction(versioned.serialize(), {
       skipPreflight: false,

@@ -1,8 +1,11 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
 import { ConfigService } from '@nestjs/config';
+import { PrivyVerificationService } from '@/auth/privy-verification.service';
 
 const SEARCH_CACHE_TTL_MS = 60 * 1000; // 1 min
+
+const WALLET_CACHE_TTL = 120; // 2 min — wallet address rarely changes
 
 @Injectable()
 export class UsersService {
@@ -12,6 +15,7 @@ export class UsersService {
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
+    @Optional() private readonly privyVerification: PrivyVerificationService | null,
   ) {}
 
   /**
@@ -156,91 +160,53 @@ export class UsersService {
   }
 
   /**
-   * Get user's Solana wallet address from Privy (server-side only)
-   * This is used when creating claims - wallet address never exposed to frontend
+   * Get user's Solana wallet address from Privy (server-side only, Redis-cached 2 min).
+   * Wallet address is never exposed to the frontend.
    */
   async getSolanaWalletAddress(privyUserId: string): Promise<string> {
-    const privyAppId = this.configService.get<string>('PRIVY_APP_ID');
-    const privyAppSecret = this.configService.get<string>('PRIVY_APP_SECRET');
-
-    if (!privyAppId || !privyAppSecret) {
-      this.logger.error('Privy credentials not configured');
-      throw new Error('Server configuration error');
+    const privyUser = await this.getPrivyUser(privyUserId);
+    if (!privyUser) {
+      throw new Error('Failed to fetch wallet from Privy');
     }
 
-    try {
-      // Get user's wallets from Privy server API
-      // Privy requires both Basic auth AND privy-app-id header
-      // Base URL should be api.privy.io (not auth.privy.io)
-      const privyResponse = await fetch(
-        `https://api.privy.io/v1/users/${privyUserId}`,
-        {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'privy-app-id': privyAppId,
-            Authorization: `Basic ${Buffer.from(`${privyAppId}:${privyAppSecret}`).toString('base64')}`,
-          },
-        },
-      );
+    const linkedAccounts: any[] = privyUser.linked_accounts || [];
+    this.logger.debug(`Found ${linkedAccounts.length} linked accounts for ${privyUserId}`);
 
-      if (!privyResponse.ok) {
-        const errorText = await privyResponse.text();
-        this.logger.error('Privy API error:', errorText);
-        throw new Error('Failed to fetch wallet from Privy');
-      }
+    const isSolanaAddress = (addr: string) => addr && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr);
 
-      const privyUser = await privyResponse.json();
-      
-    
-      // Find Solana wallet in linked accounts — use same logic as frontend Header so balance matches
-      // Privy API returns snake_case: linked_accounts. Header uses type 'wallet' | 'smart_wallet' + base58.
-      const linkedAccounts = privyUser?.linked_accounts || privyUser?.linkedAccounts || [];
-      this.logger.debug(`Found ${linkedAccounts.length} linked accounts`);
-
-      const isSolanaAddress = (addr: string) => addr && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr);
-
-      // 1) Prefer wallet/smart_wallet with Solana address (same as Header — ensures balance matches)
-      const walletOrSmart = linkedAccounts.find((account: any) => {
-        if (account.type !== 'wallet' && account.type !== 'smart_wallet') return false;
-        return isSolanaAddress(account.address);
-      });
-      if (walletOrSmart?.address) {
-        this.logger.debug(`Using Solana wallet (type=${walletOrSmart.type}): ${walletOrSmart.address.slice(0, 8)}...`);
-        return walletOrSmart.address;
-      }
-
-      // 2) Fallback: solana_embedded_wallet / solana type
-      const embedded = linkedAccounts.find((account: any) =>
-        (account.type === 'solana_embedded_wallet' || account.type === 'solana') && isSolanaAddress(account.address),
-      );
-      if (embedded?.address) {
-        this.logger.debug(`Using Solana embedded wallet: ${embedded.address.slice(0, 8)}...`);
-        return embedded.address;
-      }
-
-      // 3) Fallback: any account with Solana address or chain
-      const solanaWallet = linkedAccounts.find((account: any) => {
-        const address = account?.address;
-        if (isSolanaAddress(address)) return true;
-        const chain =
-          account?.chain_type === 'solana' || account?.chainType === 'solana' ||
-          (String(account?.chain_id || account?.chainId || '').toLowerCase().includes('solana'));
-        return !!chain && address;
-      });
-
-      if (!solanaWallet?.address) {
-        throw new NotFoundException('User has no Solana embedded wallet');
-      }
-
-      return solanaWallet.address;
-    } catch (error: any) {
-      this.logger.error('Error fetching wallet from Privy:', error);
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      throw new Error('Failed to fetch wallet address');
+    // 1) Prefer wallet/smart_wallet with Solana address (matches frontend Header balance display)
+    const walletOrSmart = linkedAccounts.find((account: any) => {
+      if (account.type !== 'wallet' && account.type !== 'smart_wallet') return false;
+      return isSolanaAddress(account.address);
+    });
+    if (walletOrSmart?.address) {
+      this.logger.debug(`Using Solana wallet (type=${walletOrSmart.type}): ${walletOrSmart.address.slice(0, 8)}...`);
+      return walletOrSmart.address;
     }
+
+    // 2) Fallback: solana_embedded_wallet / solana type
+    const embedded = linkedAccounts.find((account: any) =>
+      (account.type === 'solana_embedded_wallet' || account.type === 'solana') && isSolanaAddress(account.address),
+    );
+    if (embedded?.address) {
+      this.logger.debug(`Using Solana embedded wallet: ${embedded.address.slice(0, 8)}...`);
+      return embedded.address;
+    }
+
+    // 3) Fallback: any account with a Solana address or chain
+    const solanaWallet = linkedAccounts.find((account: any) => {
+      const address = account?.address;
+      if (isSolanaAddress(address)) return true;
+      const chain =
+        account?.chain_type === 'solana' || account?.chainType === 'solana' ||
+        (String(account?.chain_id || account?.chainId || '').toLowerCase().includes('solana'));
+      return !!chain && address;
+    });
+
+    if (!solanaWallet?.address) {
+      throw new NotFoundException('User has no Solana embedded wallet');
+    }
+    return solanaWallet.address;
   }
 
   /**
@@ -282,13 +248,17 @@ export class UsersService {
   }
 
   /**
-   * Fetch full Privy user (linked_accounts etc.) for server-side verification
+   * Fetch full Privy user (linked_accounts etc.) with Redis caching.
+   * Delegates to PrivyVerificationService when available; falls back to raw HTTP.
    */
   async getPrivyUser(privyUserId: string): Promise<{ linked_accounts: any[] } | null> {
+    if (this.privyVerification) {
+      return this.privyVerification.getPrivyUser(privyUserId);
+    }
+    // Fallback for when service is not yet injected (e.g. early boot)
     const privyAppId = this.configService.get<string>('PRIVY_APP_ID');
     const privyAppSecret = this.configService.get<string>('PRIVY_APP_SECRET');
     if (!privyAppId || !privyAppSecret) return null;
-
     const res = await fetch(`https://api.privy.io/v1/users/${privyUserId}`, {
       method: 'GET',
       headers: {
@@ -299,8 +269,8 @@ export class UsersService {
     });
     if (!res.ok) return null;
     const data = await res.json();
-    const linkedAccounts = data?.linked_accounts || data?.linkedAccounts || [];
-    return { linked_accounts: linkedAccounts };
+    const linked_accounts = data?.linked_accounts || data?.linkedAccounts || [];
+    return { linked_accounts };
   }
 
   /**

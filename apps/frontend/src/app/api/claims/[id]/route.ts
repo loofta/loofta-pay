@@ -7,6 +7,49 @@ import { extractChainsFromAssets } from "@/lib/assetUtils";
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
 
+/**
+ * Verify the caller via the backend's /users/me endpoint (JWT or cached Privy lookup).
+ * Returns the verified userId, or null if unauthenticated / verification fails.
+ * Mirrors the same helper used in the payments/history route.
+ */
+async function getVerifiedUserId(request: Request): Promise<string | null> {
+  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+
+  const authHeader = request.headers.get("authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    try {
+      const res = await fetch(`${backendUrl}/users/me`, {
+        headers: { authorization: authHeader },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.userId) return data.userId;
+      }
+    } catch (e) {
+      console.warn("[claims/PATCH] Backend JWT verify failed:", e);
+    }
+    return null;
+  }
+
+  const legacyId = request.headers.get("x-privy-user-id");
+  if (legacyId) {
+    try {
+      const res = await fetch(`${backendUrl}/users/me`, {
+        headers: { "x-privy-user-id": legacyId },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.userId) return data.userId;
+      }
+    } catch (e) {
+      console.warn("[claims/PATCH] Backend legacy-ID verify failed:", e);
+    }
+    return null;
+  }
+
+  return null;
+}
+
 export async function GET(_: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
@@ -87,8 +130,9 @@ export async function GET(_: Request, props: { params: Promise<{ id: string }> }
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const claimId = params.id;
-  const userId = request.headers.get("x-privy-user-id") ?? undefined;
-  console.log("[claims/PATCH] Updating claim:", claimId);
+  // Verify identity via backend — never trust the raw header value
+  const userId = await getVerifiedUserId(request) ?? undefined;
+  console.log("[claims/PATCH] Updating claim:", claimId, "verifiedUser:", userId ?? "anonymous");
   
   try {
     const body = await request.json();
@@ -192,7 +236,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       }
     }
     
-    // First check if claim exists and optionally backfill created_by for history
+    // Fetch the existing claim to validate ownership and optionally backfill created_by
     console.log("[claims/PATCH] Checking if claim exists:", claimId);
     const { data: existingClaim, error: checkError } = await supabase
       .from("claims")
@@ -206,7 +250,16 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       console.error("[claims/PATCH] Error checking claim:", checkError);
       return NextResponse.json({ error: checkError.message }, { status: 500 });
     }
-    
+
+    // Ownership check: only the creator can cancel a payment
+    if (status === "CANCELLED" && userId) {
+      const claimCreator = (existingClaim as { created_by?: string | null } | null)?.created_by;
+      if (claimCreator && claimCreator !== userId) {
+        console.warn("[claims/PATCH] Unauthorized CANCELLED attempt:", { userId, claimCreator });
+        return NextResponse.json({ error: "Only the creator can cancel this payment" }, { status: 403 });
+      }
+    }
+
     // When marking SUCCESS, backfill created_by if missing so the payment shows in history
     if (status === "SUCCESS" && userId && existingClaim && !(existingClaim as { created_by?: string | null }).created_by) {
       updateData.created_by = userId;

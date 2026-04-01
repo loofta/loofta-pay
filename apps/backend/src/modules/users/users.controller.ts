@@ -27,6 +27,20 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   /**
+   * Verify auth token and return the caller's Privy user ID.
+   * Used by Next.js API routes (e.g. payment history) to verify tokens server-side
+   * without needing the Privy SDK on the frontend.
+   */
+  @Get('me')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Verify token and return current user ID' })
+  @ApiResponse({ status: 200, schema: { properties: { userId: { type: 'string' } } } })
+  getMe(@PrivyUser() user: { id: string }) {
+    return { userId: user.id };
+  }
+
+  /**
    * Get user by username (NO wallet address returned - privacy)
    */
   @Get('by-username')

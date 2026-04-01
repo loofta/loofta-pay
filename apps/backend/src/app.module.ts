@@ -7,6 +7,7 @@ import { join } from 'path';
 // Core modules
 import { DatabaseModule } from './database/database.module';
 import { RedisModule } from './redis/redis.module';
+import { AuthModule } from './auth/auth.module';
 
 // Feature modules
 import { OrganizationsModule } from './modules/organizations/organizations.module';
@@ -59,6 +60,7 @@ import { SendPaymentModule } from './modules/send-payment/send-payment.module';
     // Core
     DatabaseModule,
     RedisModule,
+    AuthModule,
 
     // Features
     HealthModule,

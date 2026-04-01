@@ -11,6 +11,7 @@ import {
   BadRequestException,
   ServiceUnavailableException,
   UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -19,7 +20,7 @@ import {
   ApiSecurity,
   ApiParam,
 } from '@nestjs/swagger';
-import { AuthGuard } from '@/common/guards';
+import { AuthGuard, OptionalAuthGuard } from '@/common/guards';
 import { ClaimsService } from './claims.service';
 import { DepositService, DepositResult } from './deposit.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
@@ -36,9 +37,11 @@ export class ClaimsController {
   ) {}
 
   /**
-   * Create a new payment claim
+   * Create a new payment claim.
+   * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
   @Post('create')
+  @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Create a new payment claim' })
   @ApiResponse({
     status: 201,
@@ -53,14 +56,17 @@ export class ClaimsController {
   @ApiResponse({ status: 400, description: 'Invalid input' })
   async create(
     @Body() createDto: CreateClaimDto,
+    @Req() req: { user?: { id: string } },
   ): Promise<{ id: string; link: string }> {
-    return this.claimsService.create(createDto);
+    return this.claimsService.create({ ...createDto, userId: req.user?.id });
   }
 
   /**
-   * Create a claim from username (wallet address fetched server-side, never exposed)
+   * Create a claim from username (wallet address fetched server-side, never exposed).
+   * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
   @Post('create-from-username')
+  @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Create claim from username (wallet address stays server-side)' })
   @ApiResponse({
     status: 201,
@@ -75,14 +81,17 @@ export class ClaimsController {
   @ApiResponse({ status: 400, description: 'Invalid input' })
   async createFromUsername(
     @Body() createDto: CreateClaimFromUsernameDto,
+    @Req() req: { user?: { id: string } },
   ): Promise<{ id: string; link: string }> {
-    return this.claimsService.createFromUsername(createDto);
+    return this.claimsService.createFromUsername({ ...createDto, userId: req.user?.id });
   }
 
   /**
    * Create a claim from email. If user exists, use their wallet; otherwise they claim by signing in with this email later.
+   * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
   @Post('create-from-email')
+  @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Create claim from email (recipient may not have an account yet)' })
   @ApiResponse({
     status: 201,
@@ -97,8 +106,9 @@ export class ClaimsController {
   @ApiResponse({ status: 400, description: 'Invalid input' })
   async createFromEmail(
     @Body() createDto: CreateClaimFromEmailDto,
+    @Req() req: { user?: { id: string } },
   ): Promise<{ id: string; link: string }> {
-    return this.claimsService.createFromEmail(createDto);
+    return this.claimsService.createFromEmail({ ...createDto, userId: req.user?.id });
   }
 
   /**
@@ -332,13 +342,19 @@ export class ClaimsController {
   }
 
   /**
-   * Update claim status (public endpoint for payment flow)
+   * Update claim status (payment flow).
+   * CANCELLED requires authentication and creator ownership.
+   * Other transitions (PENDING_DEPOSIT, IN_FLIGHT, SUCCESS) allow unauthenticated callers
+   * to support bridge/webhook flows, but log the caller's identity when present.
    */
   @Post(':id/status')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Update claim status' })
   @ApiParam({ name: 'id', description: 'Claim UUID' })
   @ApiResponse({ status: 200, description: 'Updated claim', type: Claim })
+  @ApiResponse({ status: 401, description: 'Auth required for CANCELLED' })
+  @ApiResponse({ status: 403, description: 'Not the claim creator' })
   @ApiResponse({ status: 404, description: 'Claim not found' })
   async updateStatus(
     @Param('id') id: string,
@@ -350,17 +366,22 @@ export class ClaimsController {
       paidWithToken?: string;
       paidWithChain?: string;
     },
-    @Req() req?: { headers?: { [k: string]: string | string[] | undefined } },
+    @Req() req: { user?: { id: string } },
   ): Promise<Claim> {
-    const userId = req?.headers?.['x-privy-user-id'];
-    const createdByUserId = typeof userId === 'string' ? userId : Array.isArray(userId) ? userId[0] : undefined;
+    const callerUserId = req.user?.id;
+    const status = (body.status || '').toUpperCase();
+
+    if (status === 'CANCELLED' && !callerUserId) {
+      throw new UnauthorizedException('Authentication required to cancel a payment');
+    }
+
     return this.claimsService.updateStatus(id, body.status as any, {
       txHash: body.txHash,
       paidWith: body.paidWith,
       isPrivate: body.isPrivate,
       paidWithToken: body.paidWithToken,
       paidWithChain: body.paidWithChain,
-    }, createdByUserId);
+    }, callerUserId);
   }
 
   /**

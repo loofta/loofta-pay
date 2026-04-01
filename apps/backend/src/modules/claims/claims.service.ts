@@ -549,6 +549,10 @@ export class ClaimsService {
       }
       if (burnerAddr) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = burnerAddr;
     }
+
+    // Never expose the encrypted burner private key to the frontend
+    delete (claim as unknown as Record<string, unknown>)['claim_burner_encrypted_secret'];
+
     return claim;
   }
 
@@ -1487,6 +1491,7 @@ export class ClaimsService {
 
   /**
    * Update claim status. When status is SUCCESS and createdByUserId is provided, backfill created_by if currently null (so payment shows in history).
+   * For CANCELLED: if callerUserId is provided, enforces that only the creator can cancel.
    */
   async updateStatus(id: string, status: ClaimStatus, extra?: { 
     txHash?: string; 
@@ -1495,6 +1500,17 @@ export class ClaimsService {
     paidWithToken?: string;
     paidWithChain?: string;
   }, createdByUserId?: string): Promise<Claim> {
+    // Ownership check for destructive transitions
+    if ((status as string).toUpperCase() === 'CANCELLED' && createdByUserId) {
+      const { data: existing } = await this.supabaseService.claims
+        .select('created_by')
+        .eq('id', id)
+        .maybeSingle();
+      if (existing?.created_by && existing.created_by !== createdByUserId) {
+        throw new ForbiddenException('Only the claim creator can cancel this payment');
+      }
+    }
+
     let effectiveStatus = status;
     const updateData: Record<string, any> = { status: effectiveStatus };
 
@@ -1585,6 +1601,50 @@ export class ClaimsService {
     }
 
     return data || [];
+  }
+
+  /**
+   * Cron-safe burner sweep: find all PRIVATE_TRANSFER_PENDING claims that still have
+   * burner funds and sweep them to the already-resolved recipient_address.
+   * Replaces the in-process setTimeout retries so sweeps survive server restarts.
+   * Only processes claims updated within the last 10 minutes to avoid hammering old stuck claims.
+   */
+  async cronSweepPendingBurners(): Promise<void> {
+    const cutoff = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { data: pendingClaims, error } = await this.supabaseService.claims
+      .select('*')
+      .eq('status', 'PRIVATE_TRANSFER_PENDING')
+      .gte('updated_at', cutoff)
+      .not('claim_burner_address', 'is', null)
+      .not('claim_burner_encrypted_secret', 'is', null);
+
+    if (error) {
+      this.logger.error('[cronSweep] Query error:', error);
+      return;
+    }
+    if (!pendingClaims?.length) return;
+
+    this.logger.log(`[cronSweep] Found ${pendingClaims.length} PRIVATE_TRANSFER_PENDING claims to retry`);
+
+    for (const raw of pendingClaims) {
+      const claim = raw as Claim & { recipient_address?: string };
+      const recipientWallet = (claim.recipient_address || '').trim();
+      if (!recipientWallet || this.isPendingRecipientAddress(recipientWallet)) {
+        this.logger.warn(`[cronSweep] Claim ${claim.id}: recipient not resolved yet, skipping`);
+        continue;
+      }
+      try {
+        const { sweepTxHash } = await this.sweepClaimBurnerToWallet(claim.id, claim, recipientWallet);
+        if (sweepTxHash) {
+          await this.updateStatus(claim.id, 'SUCCESS');
+          this.logger.log(`[cronSweep] Claim ${claim.id}: sweep succeeded → SUCCESS`);
+        } else {
+          this.logger.debug(`[cronSweep] Claim ${claim.id}: burner still empty, will retry next tick`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`[cronSweep] Claim ${claim.id}: sweep error — ${e?.message ?? e}`);
+      }
+    }
   }
 
   /**

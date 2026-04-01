@@ -104,11 +104,17 @@ function extractGifUrl(desc: string): string | null {
   return match ? match[0] : null;
 }
 
-async function fetchPaymentHistory(userId: string): Promise<{ sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[] }> {
-  const r = await fetch("/api/payments/history", {
-    headers: { "x-privy-user-id": userId },
-    cache: "no-store",
-  });
+async function fetchPaymentHistory(
+  userId: string,
+  accessToken?: string | null,
+): Promise<{ sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[] }> {
+  const headers: Record<string, string> = {
+    "x-privy-user-id": userId,
+  };
+  if (accessToken) {
+    headers["authorization"] = `Bearer ${accessToken}`;
+  }
+  const r = await fetch("/api/payments/history", { headers, cache: "no-store" });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
     throw new Error(err?.error || "Failed to load history");
@@ -153,7 +159,7 @@ function paymentCardClass(type: "sent" | "received") {
 
 export default function HistoryPage() {
   const { authenticated, userId } = useAuth();
-  const { login: privyLogin } = usePrivy();
+  const { login: privyLogin, getAccessToken } = usePrivy();
   const {
     data,
     isLoading: loading,
@@ -162,7 +168,10 @@ export default function HistoryPage() {
     isFetching,
   } = useQuery({
     queryKey: ["payments", "history", userId ?? ""],
-    queryFn: () => fetchPaymentHistory(userId!),
+    queryFn: async () => {
+      const token = await getAccessToken().catch(() => null);
+      return fetchPaymentHistory(userId!, token);
+    },
     enabled: Boolean(authenticated && userId),
     staleTime: 0,
     gcTime: PAYMENT_HISTORY_GC_MS,
