@@ -217,11 +217,11 @@ export class ClaimsController {
 
   @Post(':id/build-private-transfer')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(OptionalAuthGuard)
+  @UseGuards(AuthGuard)
   @ApiSecurity('privy-auth')
   @ApiOperation({
     summary:
-      'Build unsigned MagicBlock private USDC transfer (recipient resolved server-side; not in browser network tab). Auth optional for external-wallet pay; when logged in, recipients cannot build.',
+      'Build unsigned MagicBlock private USDC transfer (recipient resolved server-side; not in browser network tab)',
   })
   @ApiParam({ name: 'id', description: 'Claim UUID' })
   @ApiResponse({ status: 200, description: 'Unsigned tx (MagicBlock response shape)' })
@@ -232,6 +232,7 @@ export class ClaimsController {
     @Body() body: { sender_wallet: string },
   ) {
     const privyUserId = req.user?.id;
+    if (!privyUserId) throw new UnauthorizedException('Login required.');
     return this.claimsService.buildPrivateTransferForPayer(id, privyUserId, body.sender_wallet);
   }
 
