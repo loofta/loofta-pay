@@ -653,27 +653,37 @@ export class ClaimsService {
    * Build unsigned MagicBlock private transfer with recipient resolved server-side only
    * (not exposed in browser → MagicBlock requests).
    *
-   * Any authenticated user may call **except** the intended recipient (they claim/sweep, not pay).
+   * Callers without a Privy session may build (external Solana wallet pay). When `privyUserId` is
+   * set, the intended recipient cannot build (they claim/sweep, not pay). Unauthenticated callers
+   * are blocked if `sender_wallet` equals the resolved recipient (same-wallet pay).
    * `created_by` is the payee who created the request link — not the payer — so we must not require
    * `privyUserId === created_by` (that blocked real payers and only allowed the link creator).
    */
   async buildPrivateTransferForPayer(
     claimId: string,
-    privyUserId: string,
+    privyUserId: string | undefined,
     senderWallet: string,
   ): Promise<MagicblockPrivateTransferTxResponse> {
     const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
     const claim = await this.findOneRaw(claimId);
     const row = claim as Claim & { claim_burner_address?: string | null };
-    const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
-    if (isRecipient) {
-      throw new ForbiddenException(
-        'This action is for the payer. Recipients complete payment on the claim side.',
-      );
+    if (privyUserId) {
+      const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
+      if (isRecipient) {
+        throw new ForbiddenException(
+          'This action is for the payer. Recipients complete payment on the claim side.',
+        );
+      }
     }
     const to = this.resolveEffectiveRecipientForPrivatePayment(row);
     if (!to || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(to)) {
       throw new BadRequestException('Recipient is not available for this claim yet.');
+    }
+    const from = senderWallet.trim();
+    if (from === to.trim()) {
+      throw new ForbiddenException(
+        'You cannot pay from the same wallet that receives this payment.',
+      );
     }
     const amountUsd = parseFloat(String(claim.amount || '0'));
     if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
@@ -682,7 +692,7 @@ export class ClaimsService {
     const baseUnits = Math.round(amountUsd * 1_000_000);
     const cluster = isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
     return requestMagicblockPrivateTransfer({
-      from: senderWallet.trim(),
+      from,
       to,
       mint: this.usdcMint.toBase58(),
       amount: baseUnits,

@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { MessageInput } from "@/components/MessageInput";
 import { createClaimFromUsername } from "@/lib/createClaimFromUsername";
 import { createClaimFromEmail } from "@/lib/createClaimFromEmail";
+import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 
 function looksLikeEmail(s: string): boolean {
   const t = (s || "").trim();
@@ -47,6 +48,11 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
   /** When username lookup fails we still allow creating a link (burner); they claim when they sign up. */
   const [usernameNotOnLoofta, setUsernameNotOnLoofta] = useState(false);
 
+  /** App-wide private mode or recipient requires private — sets `isPrivate` on the claim only. */
+  const effectivePrivate = PRIVATE_PAYMENT_ENABLED || requirePrivate;
+  const amountNum = Number(amount);
+  const minAmountUsd = 0.01;
+
   useEffect(() => {
     if (isEmail) {
       setLoadingUser(false);
@@ -81,10 +87,6 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
       toast({ variant: "destructive", title: "Invalid amount", description: "Enter a valid amount." });
       return;
     }
-    if (requirePrivate && Number(amount) < 3) {
-      toast({ variant: "destructive", title: "Minimum $3", description: "Private payments require at least $3." });
-      return;
-    }
     setPreparing(true);
     const fullDescription = [description.trim(), gifUrl].filter(Boolean).join(" ").trim() || undefined;
     try {
@@ -95,7 +97,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           amount,
           userId: user?.id,
           accessToken,
-          isPrivate: requirePrivate,
+          isPrivate: effectivePrivate,
           description: fullDescription,
         });
         await new Promise((r) => setTimeout(r, 300));
@@ -107,7 +109,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           amount,
           userId: user?.id,
           accessToken,
-          isPrivate: requirePrivate,
+          isPrivate: effectivePrivate,
           description: fullDescription,
         });
         await new Promise((r) => setTimeout(r, 300));
@@ -173,7 +175,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           type="number"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
-          min={requirePrivate ? "3" : "0.01"}
+          min="0.01"
           step="0.01"
           placeholder="100"
           className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500"
@@ -195,7 +197,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
 
       <Button
         onClick={handleCreate}
-        disabled={preparing || !amount || Number(amount) < (requirePrivate ? 3 : 0.01)}
+        disabled={preparing || !amount || !Number.isFinite(amountNum) || amountNum < minAmountUsd}
         className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r text-lg from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
       >
         {preparing ? "Creating…" : onClaimCreated ? "Continue to pay" : "Create payment link"}

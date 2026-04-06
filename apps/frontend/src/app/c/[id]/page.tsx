@@ -1680,13 +1680,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           return signed as unknown as Transaction;
         },
       });
-      if (!user?.id) {
-        throw new Error("Log in to pay with your wallet.");
-      }
       const isBurnerWallet = !!((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
-      const walletToken = await getAccessToken();
+      const walletToken = user?.id ? await getAccessToken() : null;
       const sig = await perTransfer(anchorWallet, {
-        privyUserId: user.id,
+        privyUserId: user?.id,
         accessToken: walletToken,
         claimId: claim.id,
         onProgress: setPerTransferPhase,
@@ -4027,7 +4024,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
-                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin border-gray-600" /> : <Wallet className="w-5 h-5 text-gray-900" />}
+                        {payingWithWallet ? <Loader2 className="w-5 h-5 animate-spin border-gray-600" /> : <Wallet className="w-5 h-5 text-black" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <span className="font-semibold text-gray-900 block">Use wallet</span>

@@ -134,7 +134,7 @@ export async function updateClaimStatus(
  */
 export async function buildClaimPrivateTransfer(
   claimId: string,
-  userId: string,
+  userId: string | undefined | null,
   senderWallet: string,
   accessToken?: string | null,
 ): Promise<MagicblockTxResponse> {
