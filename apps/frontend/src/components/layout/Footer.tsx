@@ -22,8 +22,9 @@ export function Footer() {
             <h4 className="text-white font-semibold mb-4">For you</h4>
             <ul className="space-y-2">
               <li><a href="/" className="text-slate-400 hover:text-white transition-colors">Send</a></li>
-              <li><a href="/?tab=receive" className="text-slate-400 hover:text-white transition-colors">Request payment</a></li>
+              <li><a href="/?tab=receive" className="text-slate-400 hover:text-white transition-colors">Receive</a></li>
               <li><a href="/history" className="text-slate-400 hover:text-white transition-colors">History</a></li>
+              <li><a href="/settings" className="text-slate-400 hover:text-white transition-colors">Settings</a></li>
             </ul>
           </div>
 
@@ -36,11 +37,10 @@ export function Footer() {
             </ul>
           </div>
 
-          {/* Swap & Company */}
+          {/* Company */}
           <div>
             <h4 className="text-white font-semibold mb-4">Company</h4>
             <ul className="space-y-2">
-              <li><a href={looftaXyz.swap} className="text-slate-400 hover:text-white transition-colors">Cross-chain swap</a></li>
               <li><a href={looftaXyz.about} className="text-slate-400 hover:text-white transition-colors">About</a></li>
             </ul>
           </div>

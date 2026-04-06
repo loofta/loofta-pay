@@ -5,9 +5,8 @@ const SITE_URL = (process as any)?.env?.NEXT_PUBLIC_SITE_URL || "https://loofta.
 export default function sitemap(): MetadataRoute.Sitemap {
   const urls: string[] = [
     "/",
-    "/swap",
-    "/swap-history",
     "/history",
+    "/settings",
     "/claim",
     "/lottery",
   ];

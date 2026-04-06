@@ -19,7 +19,7 @@ const inter = Inter({
 
 export const revalidate = 0;
 
-const SITE_URL = (process as any)?.env?.NEXT_PUBLIC_SITE_URL || "https://swap.loofta.xyz";
+const SITE_URL = (process as any)?.env?.NEXT_PUBLIC_SITE_URL || "https://loofta.xyz";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

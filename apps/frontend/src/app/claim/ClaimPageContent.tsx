@@ -19,7 +19,6 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { useRouter, usePathname } from "next/navigation";
 import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
-import { looftaXyz } from "@/lib/looftaXyzUrls";
 
 /** Inline Loofta logo SVG (matches pay modal). */
 function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
@@ -360,12 +359,12 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                 <div className="flex-1 flex flex-col justify-center space-y-4">
                   <a href="https://z.cash/pay-with-zcash" target="_blank" rel="noopener noreferrer" className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8] hover:bg-gray-100 transition-colors">
                     <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>1.</span>
-                    <span className="text-slate-700 pt-1">Swap to 120+ tokens on loofta</span>
+                    <span className="text-slate-700 pt-1">Learn about paying with Zcash</span>
 
                   </a>
-                  <a href={looftaXyz.swap} className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8] hover:bg-gray-100 transition-colors">
+                  <a href="/" className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8] hover:bg-gray-100 transition-colors">
                     <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>2.</span>
-                    <span className="text-slate-700 pt-1">Pay at merchants</span>
+                    <span className="text-slate-700 pt-1">Send or receive payments in Loofta Pay</span>
 
                   </a>
                   <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
@@ -688,12 +687,6 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                       </div>
                     </div>
 
-                    {/* Private mode note - same form as standard; settlement via PER */}
-                    {(isPrivateMode || PRIVATE_PAYMENT_ENABLED) && (
-                      <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-sm text-slate-300">
-                        Payment will be processed on Magicblock Private Ephemeral Rollup. You receive in your chosen token below.
-                      </div>
-                    )}
 
                     {/* Token display / selection - same for standard and private */}
                     {authenticated ? (
@@ -848,42 +841,42 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
 
                     {/* Private payment — switch hidden when app defaults to private (PER) */}
                     {!PRIVATE_PAYMENT_ENABLED ? (
-                    <div
-                      className={`p-4 rounded-xl border ${!PRIVATE_PAYMENT_COMING_SOON && isPrivateMode
-                        ? 'bg-amber-500/10 border-amber-400/30'
-                        : 'bg-white/5 border-white/10'
-                        }`}
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-base font-semibold text-white">
-                              🔒 Private payment
-                            </span>
-                            {PRIVATE_PAYMENT_COMING_SOON && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-400/30">
-                                Coming soon
+                      <div
+                        className={`p-4 rounded-xl border ${!PRIVATE_PAYMENT_COMING_SOON && isPrivateMode
+                          ? 'bg-amber-500/10 border-amber-400/30'
+                          : 'bg-white/5 border-white/10'
+                          }`}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-base font-semibold text-white">
+                                🔒 Private payment
                               </span>
-                            )}
+                              {PRIVATE_PAYMENT_COMING_SOON && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                                  Coming soon
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-slate-400">
+                              When on, payment uses MagicBlock PER. You receive in your chosen token (e.g. USDC on Solana); both addresses stay private.
+                            </p>
                           </div>
-                          <p className="text-sm text-slate-400">
-                            When on, payment uses MagicBlock PER. You receive in your chosen token (e.g. USDC on Solana); both addresses stay private.
-                          </p>
+                          <Switch
+                            checked={PRIVATE_PAYMENT_COMING_SOON ? false : isPrivateMode}
+                            onCheckedChange={PRIVATE_PAYMENT_COMING_SOON ? () => { } : (checked) => {
+                              setIsPrivateMode(checked);
+                              if (checked && !hasSeenPrivateTutorial) {
+                                setShowPrivacyInfo(true);
+                                setHasSeenPrivateTutorial(true);
+                              }
+                            }}
+                            disabled={PRIVATE_PAYMENT_COMING_SOON}
+                            className="shrink-0 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
+                          />
                         </div>
-                        <Switch
-                          checked={PRIVATE_PAYMENT_COMING_SOON ? false : isPrivateMode}
-                          onCheckedChange={PRIVATE_PAYMENT_COMING_SOON ? () => { } : (checked) => {
-                            setIsPrivateMode(checked);
-                            if (checked && !hasSeenPrivateTutorial) {
-                              setShowPrivacyInfo(true);
-                              setHasSeenPrivateTutorial(true);
-                            }
-                          }}
-                          disabled={PRIVATE_PAYMENT_COMING_SOON}
-                          className="shrink-0 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
-                        />
                       </div>
-                    </div>
                     ) : (
                       <div className="p-4 rounded-xl border border-amber-400/30 bg-amber-500/10">
                         <p className="text-sm text-slate-200">

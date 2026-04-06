@@ -10,9 +10,12 @@ const log = new Logger('MagicblockPrivateTransfer');
 /**
  * Devnet: MagicBlock applies a random delivery delay in [min, max] so settlement time is not exact on-chain.
  * Mainnet: delays off (0–0) for faster settlement unless we enable them later.
+ *
+ * API constraint: `maxDelayMs` must be ≤ 600_000 (10 minutes) — see MagicBlock Payments `/v1/spl/transfer`.
  */
+export const MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS = 600_000;
 export const MAGICBLOCK_PRIVATE_DEVNET_MIN_DELAY_MS = 30_000;
-export const MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS = 15 * 60 * 1000;
+export const MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS = MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS;
 
 export function magicblockPrivateDelayForCluster(cluster: 'devnet' | 'mainnet'): {
   minDelayMs: string;
