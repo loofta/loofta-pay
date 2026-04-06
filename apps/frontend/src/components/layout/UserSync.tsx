@@ -9,7 +9,7 @@ import { WelcomeOnboarding } from "@/components/WelcomeOnboarding";
 
 /**
  * Syncs authenticated user to store (username) and shows username/onboarding modals.
- * Renders no UI; used when Header is removed so auth state and modals still work.
+ * Renders no UI; keeps auth state and username/onboarding modals working alongside MinimalHeader.
  */
 export function UserSync() {
   const { authenticated, email, userId } = useAuth();

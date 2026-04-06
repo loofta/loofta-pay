@@ -4,7 +4,6 @@ import { type ReactNode, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { Footer } from "./Footer";
 import { BottomNav } from "./BottomNav";
-import { Header } from "./Header";
 import { MinimalHeader } from "./MinimalHeader";
 import { UserSync } from "./UserSync";
 import { HistoryModalProvider, useHistoryModal } from "@/contexts/HistoryModalContext";
@@ -18,8 +17,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   const showHistory = pathname?.startsWith('/swap') === true;
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
   const showBottomNav = !isCheckoutPage && (pathname === '/' || pathname === '/history' || pathname === '/settings' || pathname?.startsWith('/c/'));
-  const isAboutPage = pathname === '/about';
-  const showMinimalHeader = !isCheckoutPage && !isAboutPage;
+  const showMinimalHeader = !isCheckoutPage;
   const showBanner = showMinimalHeader && !bannerDismissed;
   return (
     <>
@@ -52,7 +50,6 @@ function ShellContent({ children }: { children: ReactNode }) {
           </button>
         </div>
       )}
-      {isAboutPage && <Header />}
       {showMinimalHeader && <MinimalHeader />}
       <main className={showBottomNav ? "pb-20 md:pb-0" : undefined}>
         {children}
