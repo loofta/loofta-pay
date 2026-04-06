@@ -84,7 +84,7 @@ export class ClaimsService {
     );
   }
 
-  /** Covers MagicBlock private delivery delay on devnet (up to 15 min) plus buffer; mainnet uses a short window. */
+  /** Covers MagicBlock private delivery delay on devnet (up to 10 min) plus buffer; mainnet uses a short window. */
   private getBurnerInboundBackgroundMaxMs(): number {
     if (isSolanaDevnetFromConfig(this.configService)) {
       return MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS + BURNER_INBOUND_BACKGROUND_BUFFER_MS;
@@ -651,7 +651,11 @@ export class ClaimsService {
 
   /**
    * Build unsigned MagicBlock private transfer with recipient resolved server-side only
-   * (not exposed in browser → MagicBlock requests). Only the claim payer may call.
+   * (not exposed in browser → MagicBlock requests).
+   *
+   * Any authenticated user may call **except** the intended recipient (they claim/sweep, not pay).
+   * `created_by` is the payee who created the request link — not the payer — so we must not require
+   * `privyUserId === created_by` (that blocked real payers and only allowed the link creator).
    */
   async buildPrivateTransferForPayer(
     claimId: string,
@@ -661,8 +665,11 @@ export class ClaimsService {
     const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
     const claim = await this.findOneRaw(claimId);
     const row = claim as Claim & { claim_burner_address?: string | null };
-    if (!row.created_by || row.created_by !== privyUserId) {
-      throw new ForbiddenException('Only the payer can build this private transfer.');
+    const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
+    if (isRecipient) {
+      throw new ForbiddenException(
+        'This action is for the payer. Recipients complete payment on the claim side.',
+      );
     }
     const to = this.resolveEffectiveRecipientForPrivatePayment(row);
     if (!to || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(to)) {

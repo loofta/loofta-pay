@@ -68,6 +68,12 @@ import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 import { usePerPrivateTransfer, type PerTransferProgress } from "@/hooks/usePerPrivateTransfer";
 import { phantomWalletToAnchorWallet, privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
 import { PaymentHistoryClaim } from "@/app/history/page";
+import type { NearToken } from "@/services/nearIntents";
+import {
+  PRIVATE_PAYMENT_ALL_PRIVATE_LINE,
+  privatePaymentFundsAppearCopy,
+  privatePaymentWaitingAfterSenderCopy,
+} from "@/lib/privatePaymentCopy";
 
 function formatPerTransferStepName(step: string): string {
   const labels: Record<string, string> = {
@@ -639,7 +645,39 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const hideAlternateTokenPay = isNonMainnetCluster() || PRIVATE_PAYMENT_ENABLED;
   const { toast } = useToast();
   const { user, logout, login, authenticated, getAccessToken } = usePrivy();
-  const { data: tokens = [], isLoading } = useTokensQuery();
+  const { data: tokensRaw = [], isLoading } = useTokensQuery();
+  /** Devnet/testnet: 1-click token list often only lists mainnet Solana USDC mint. Inject cluster USDC so Pay with + selection resolve. */
+  const tokens = useMemo(() => {
+    const list = tokensRaw;
+    if (!isNonMainnetCluster()) return list;
+    const mint = getUsdcMint().toBase58();
+    const mintLc = mint.toLowerCase();
+    // Remove Solana USDC rows whose mint is not this cluster (e.g. mainnet EPjF… on devnet).
+    const filtered = list.filter((t) => {
+      if (String(t.symbol || "").toUpperCase() !== "USDC") return true;
+      if (!["sol", "solana"].includes(String(t.chain || "").toLowerCase())) return true;
+      const id = String(t.tokenId || t.address || "").toLowerCase();
+      return id === mintLc;
+    });
+    const hasClusterUsdc = filtered.some(
+      (t) =>
+        String(t.symbol || "").toUpperCase() === "USDC" &&
+        ["sol", "solana"].includes(String(t.chain || "").toLowerCase()) &&
+        [String(t.tokenId || "").toLowerCase(), String(t.address || "").toLowerCase()].includes(mintLc),
+    );
+    if (hasClusterUsdc) return filtered;
+    const synthetic: NearToken = {
+      symbol: "USDC",
+      name: "USD Coin",
+      chain: "solana",
+      address: mint,
+      tokenId: mint,
+      decimals: 6,
+      price: 1,
+      logoURI: "/usdt.svg",
+    };
+    return [...filtered, synthetic];
+  }, [tokensRaw]);
   const claimQuery = useQuery({
     queryKey: ["claim", id],
     queryFn: () => fetchClaim(id),
@@ -684,7 +722,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     !!claim?.recipient_pending_username ||
     !!(claim as { recipient_is_registered?: boolean } | null)?.recipient_is_registered;
 
-  // Poll burner USDC balance so the recipient only claims once the payer’s transfer has landed (private leg can take a few minutes).
+  // Poll burner USDC balance so the recipient only claims once the payer’s transfer has landed (private leg can take up to ~10 minutes on devnet).
   const burnerAddr = (claim as { claim_burner_address?: string | null } | null)?.claim_burner_address ?? null;
   const burnerReadyQuery = useQuery({
     queryKey: ["burner-ready", burnerAddr],
@@ -990,7 +1028,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     isCreatorView &&
     isPendingRecipientClaim &&
     ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CLAIMED"].includes(String(status || claim?.status || "").toUpperCase());
-  const hidePaySectionForPendingClaimant = isPendingRecipientClaim && !isCreatorView;
+  /** Only hide payer UI for the intended recipient (pending claim flow). Do not hide for anonymous/other payers when recipient_is_registered is set. */
+  const hidePaySectionForPendingClaimant =
+    isPendingRecipientClaim && isRecipient && !isCreatorView;
 
   // Auto-set private mode when private-only is required globally or by claim.
   useEffect(() => {
@@ -1545,7 +1585,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       });
       console.log("[PrivateTransfer] PER transfer signature:", signature);
 
-      toast({ title: "Transfer submitted!", description: "Your private transfer is processing — funds can take up to 3 minutes to appear." });
+      toast({
+        title: "Transfer submitted!",
+        description: `Your private transfer is processing — ${privatePaymentFundsAppearCopy()}`,
+      });
       await updateClaimStatus(
         claim.id,
         "SUCCESS",
@@ -1681,7 +1724,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       await claimQuery.refetch();
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
       setShowPayNowModal(false);
-      toast({ title: "Transfer submitted!", description: `$${amountUSD.toFixed(2)} USDC sent privately. Funds can take up to 3 minutes to appear.` });
+      toast({
+        title: "Transfer submitted!",
+        description: `$${amountUSD.toFixed(2)} USDC sent privately. ${privatePaymentFundsAppearCopy()}`,
+      });
     } catch (e: any) {
       console.error("[PayWithWallet] Error:", e);
       const message = e?.message || "Could not complete payment with wallet.";
@@ -1796,7 +1842,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       setShowPayNowModal(false);
       toast({
         title: "Transfer submitted!",
-        description: `$${amountUSD.toFixed(2)} USDC sent privately. Funds can take up to 3 minutes to appear.`,
+        description: `$${amountUSD.toFixed(2)} USDC sent privately. ${privatePaymentFundsAppearCopy()}`,
       });
     } catch (e: any) {
       console.error("[PayWithLoofta] Error:", e);
@@ -2086,7 +2132,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                   <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
                     <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>✓</span>
-                    <span className="text-slate-700 pt-1">Swap back to 120+ tokens anytime</span>
+                    <span className="text-slate-700 pt-1">Send or receive again from Loofta Pay anytime</span>
                   </div>
                 </div>
               </div>
@@ -2392,7 +2438,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         <>
                           <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                           <span className="text-gray-500">
-                            Waiting for the payment to land — can take up to 3 minutes after the sender pays.
+                            {privatePaymentWaitingAfterSenderCopy()}
                           </span>
                         </>
                       )}
@@ -2462,7 +2508,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           <>
                             <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                             <span className="text-gray-500">
-                              Waiting for the payment to land — can take up to 3 minutes after the sender pays.
+                              {privatePaymentWaitingAfterSenderCopy()}
                             </span>
                           </>
                         )}
@@ -2896,7 +2942,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     <p className="min-w-0 leading-relaxed">
                       {PRIVATE_PAYMENT_COMING_SOON
                         ? "Private payment — coming soon."
-                        : "All payments are private. Funds can take up to 3 minutes to appear."}
+                        : PRIVATE_PAYMENT_ALL_PRIVATE_LINE}
                     </p>
                   </div>
                 )}
