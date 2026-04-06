@@ -16,12 +16,9 @@ export type PerTransferProgress =
   | { phase: "broadcasting"; step: string; index: number; total: number };
 
 export type PerPrivateTransferOptions = {
-  /**
-   * Privy user id — optional for claim private pay with an external wallet (no Loofta session).
-   * Required for send-payment private transfer.
-   */
-  privyUserId?: string | null;
-  /** Privy access token — preferred over privyUserId for backend auth when logged in. */
+  /** Required — backend authorizes the payer and loads recipient from DB. */
+  privyUserId: string;
+  /** Privy access token — preferred over privyUserId for backend auth. */
   accessToken?: string | null;
   /** Pay a Loofta claim (`/c/[id]`). Recipient is never sent from the browser. */
   claimId?: string;
@@ -44,7 +41,7 @@ export function usePerPrivateTransfer() {
   const transfer = useCallback(
     async (wallet: Wallet, options: PerPrivateTransferOptions): Promise<string> => {
       const { privyUserId, accessToken, claimId, sendPaymentId, onProgress, isBurnerRecipient } = options;
-      if (sendPaymentId && !privyUserId?.trim()) {
+      if (!privyUserId?.trim()) {
         throw new Error("Log in to send a private transfer.");
       }
       if (!claimId && !sendPaymentId) {
@@ -65,8 +62,8 @@ export function usePerPrivateTransfer() {
       );
 
       const txData = claimId
-        ? await buildClaimPrivateTransfer(claimId, privyUserId ?? undefined, sender, accessToken)
-        : await buildSendPaymentPrivateTransfer(sendPaymentId!, privyUserId!, sender, accessToken);
+        ? await buildClaimPrivateTransfer(claimId, privyUserId, sender, accessToken)
+        : await buildSendPaymentPrivateTransfer(sendPaymentId!, privyUserId, sender, accessToken);
 
       const broadcastRpc = txData.sendTo === "ephemeral" ? EPHEMERAL_RPC_URL : getSolanaHttpRpc();
       const broadcastConn =

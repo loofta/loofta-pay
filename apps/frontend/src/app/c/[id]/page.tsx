@@ -1680,10 +1680,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           return signed as unknown as Transaction;
         },
       });
+      if (!user?.id) {
+        throw new Error("Log in to pay with your wallet.");
+      }
       const isBurnerWallet = !!((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
-      const walletToken = user?.id ? await getAccessToken() : null;
+      const walletToken = await getAccessToken();
       const sig = await perTransfer(anchorWallet, {
-        privyUserId: user?.id,
+        privyUserId: user.id,
         accessToken: walletToken,
         claimId: claim.id,
         onProgress: setPerTransferPhase,
