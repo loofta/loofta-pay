@@ -7,8 +7,25 @@ import { Logger } from '@nestjs/common';
 
 const log = new Logger('MagicblockPrivateTransfer');
 
-export const MAGICBLOCK_PRIVATE_MIN_DELAY_MS = '0';
-export const MAGICBLOCK_PRIVATE_MAX_DELAY_MS = '0';
+/**
+ * Devnet: MagicBlock applies a random delivery delay in [min, max] so settlement time is not exact on-chain.
+ * Mainnet: delays off (0–0) for faster settlement unless we enable them later.
+ */
+export const MAGICBLOCK_PRIVATE_DEVNET_MIN_DELAY_MS = 30_000;
+export const MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS = 15 * 60 * 1000;
+
+export function magicblockPrivateDelayForCluster(cluster: 'devnet' | 'mainnet'): {
+  minDelayMs: string;
+  maxDelayMs: string;
+} {
+  if (cluster === 'devnet') {
+    return {
+      minDelayMs: String(MAGICBLOCK_PRIVATE_DEVNET_MIN_DELAY_MS),
+      maxDelayMs: String(MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS),
+    };
+  }
+  return { minDelayMs: '0', maxDelayMs: '0' };
+}
 
 export interface MagicblockPrivateTransferTxResponse {
   kind: string;
@@ -29,6 +46,7 @@ export async function requestMagicblockPrivateTransfer(params: {
   amount: number;
   cluster: 'devnet' | 'mainnet';
 }): Promise<MagicblockPrivateTransferTxResponse> {
+  const { minDelayMs, maxDelayMs } = magicblockPrivateDelayForCluster(params.cluster);
   const body = {
     from: params.from,
     to: params.to,
@@ -41,8 +59,8 @@ export async function requestMagicblockPrivateTransfer(params: {
     initIfMissing: true,
     initAtasIfMissing: true,
     initVaultIfMissing: true,
-    minDelayMs: MAGICBLOCK_PRIVATE_MIN_DELAY_MS,
-    maxDelayMs: MAGICBLOCK_PRIVATE_MAX_DELAY_MS,
+    minDelayMs,
+    maxDelayMs,
   };
 
   log.log(`POST https://payments.magicblock.app/v1/spl/transfer payload=${JSON.stringify(body)}`);

@@ -15,6 +15,7 @@ import { getSolanaBalanceUSD } from "@/services/solanaBalance";
 import { useAuthStore } from "@/store/auth";
 import { useCallback } from "react";
 import { LooftaPayLogoLink } from "@/components/layout/LooftaPayLogoLink";
+import { looftaXyz } from "@/lib/looftaXyzUrls";
 
 export function Header() {
   const { authenticated, email, userId, logout } = useAuth();
@@ -267,7 +268,7 @@ export function Header() {
               <button
                 type="button"
                 onClick={() => setProductMenuOpen((o) => !o)}
-                className={`flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isActive('/swap') || isActive('/b2b') || isActive('/partners')
+                className={`flex items-center gap-1.5 font-medium text-sm px-4 py-2 rounded-lg transition-all ${isActive('/swap') || isActive('/b2b') || isActive('/checkout') || isActive('/partners')
                   ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm'
                   : isDarkPage
                     ? 'text-white/90 hover:text-white hover:bg-white/10'
@@ -282,24 +283,21 @@ export function Header() {
               {productMenuOpen && (
                 <div className={`absolute top-full left-0 mt-1 py-1 min-w-[180px] rounded-xl shadow-lg border ${isDarkPage ? 'bg-slate-900/95 border-white/10' : 'bg-white border-gray-200'}`}>
                   <Link
-                    href="/b2b"
-                    prefetch
+                    href={looftaXyz.checkout}
                     onClick={() => setProductMenuOpen(false)}
                     className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors first:rounded-t-[11px] last:rounded-b-[11px] ${isDarkPage ? 'text-white hover:bg-white/10' : 'text-gray-900 hover:bg-gray-100'}`}
                   >
                     B2B Checkout
                   </Link>
                   <Link
-                    href="/swap"
-                    prefetch
+                    href={looftaXyz.swap}
                     onClick={() => setProductMenuOpen(false)}
                     className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors first:rounded-t-[11px] last:rounded-b-[11px] ${isDarkPage ? 'text-white hover:bg-white/10' : 'text-gray-900 hover:bg-gray-100'}`}
                   >
                     Swaps
                   </Link>
                   <Link
-                    href="/partners"
-                    prefetch
+                    href={looftaXyz.partners}
                     onClick={() => setProductMenuOpen(false)}
                     className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors first:rounded-t-[11px] last:rounded-b-[11px] ${isDarkPage ? 'text-white hover:bg-white/10' : 'text-gray-900 hover:bg-gray-100'}`}
                   >
@@ -499,10 +497,9 @@ export function Header() {
               <nav className="flex flex-col gap-1">
                 <span className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Product</span>
                 <Link
-                  href="/b2b"
-                  prefetch
+                  href={looftaXyz.checkout}
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${isActive('/b2b')
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${isActive('/b2b') || isActive('/checkout')
                     ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
                     : 'text-gray-900 hover:bg-gray-100'
                     }`}
@@ -510,8 +507,7 @@ export function Header() {
                   B2B Checkout
                 </Link>
                 <Link
-                  href="/swap"
-                  prefetch
+                  href={looftaXyz.swap}
                   onClick={() => setIsMobileMenuOpen(false)}
                   className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${isActive('/swap')
                     ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white'
@@ -521,8 +517,7 @@ export function Header() {
                   Swaps
                 </Link>
                 <Link
-                  href="/partners"
-                  prefetch
+                  href={looftaXyz.partners}
                   onClick={() => setIsMobileMenuOpen(false)}
                   className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors ${isActive('/partners')
                     ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white'

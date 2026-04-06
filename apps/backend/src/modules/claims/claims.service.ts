@@ -20,7 +20,10 @@ import { UsersService } from '../users/users.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
-import type { MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import {
+  MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
+  type MagicblockPrivateTransferTxResponse,
+} from '@/common/magicblock-private-transfer';
 
 const DEPOSIT_SEED = 'deposit';
 const VAULT_SEED = 'vault';
@@ -29,12 +32,14 @@ const UNDELEGATE_DISCRIMINATOR = Buffer.from([131, 148, 180, 198, 91, 104, 42, 2
 const MAGIC_PROGRAM_ID = new PublicKey('Magic11111111111111111111111111111111111111');
 const MAGIC_CONTEXT_ID = new PublicKey('MagicContext1111111111111111111111111111111');
 
-/** MagicBlock payer→burner can take up to ~3 min; poll burner ATA until then. */
+/** MagicBlock payer→burner: poll burner ATA on this interval. */
 const BURNER_INBOUND_POLL_MS = 5_000;
 /** Short wait inside a single sweep HTTP call (avoid gateway timeouts). */
 const BURNER_INBOUND_INLINE_MAX_MS = 90_000;
-/** Background poller: keep trying sweep for this long after claim (covers full private delay + buffer). */
-const BURNER_INBOUND_BACKGROUND_MAX_MS = 4 * 60_000;
+/** Mainnet (no MagicBlock delivery delay): background sweep retry window. */
+const BURNER_INBOUND_BACKGROUND_MAX_MS_MAINNET = 4 * 60_000;
+/** Extra time after max private delay before giving up (rollup / base visibility). */
+const BURNER_INBOUND_BACKGROUND_BUFFER_MS = 3 * 60_000;
 
 /** Same as SendPaymentEncryptionService – used when that service is not injected or key not loaded there */
 const ENC_ALGO = 'aes-256-gcm';
@@ -77,6 +82,14 @@ export class ClaimsService {
     this.logger.log(
       `ClaimsService init: encryption=${this.encryption ? (this.encryption.isAvailable() ? 'available' : 'not configured') : 'null'}, claim burner creation=${burnerOk ? 'enabled' : 'disabled (set SEND_PAYMENT_ENC_KEY)'}, sponsor=${this.solanaSponsor.isAvailable()}`,
     );
+  }
+
+  /** Covers MagicBlock private delivery delay on devnet (up to 15 min) plus buffer; mainnet uses a short window. */
+  private getBurnerInboundBackgroundMaxMs(): number {
+    if (isSolanaDevnetFromConfig(this.configService)) {
+      return MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS + BURNER_INBOUND_BACKGROUND_BUFFER_MS;
+    }
+    return BURNER_INBOUND_BACKGROUND_MAX_MS_MAINNET;
   }
 
   /**
@@ -768,8 +781,8 @@ export class ClaimsService {
       await this.updateStatus(claimId, 'SUCCESS', undefined, privyUserId);
       this.logger.log(`Claim ${claimId}: sweep completed immediately, marked SUCCESS`);
     } else {
-      // Funds still in-flight on MagicBlock private leg (up to ~3 min). Mark PRIVATE_TRANSFER_PENDING
-      // and retry sweep after that window.
+      // Funds still in-flight on MagicBlock private leg (devnet: random delay up to ~15 min). Mark
+      // PRIVATE_TRANSFER_PENDING and retry sweep until getBurnerInboundBackgroundMaxMs().
       await this.updateStatus(claimId, 'PRIVATE_TRANSFER_PENDING', undefined, privyUserId);
       this.logger.log(`Claim ${claimId}: burner empty at claim time — marked PRIVATE_TRANSFER_PENDING, scheduling background sweep retry`);
       const rawForRetry = claim as { claim_burner_address?: string | null };
@@ -787,9 +800,10 @@ export class ClaimsService {
    */
   private scheduleBackgroundSweepRetry(claimId: string, wallet: string, privyUserId: string): void {
     const started = Date.now();
+    const backgroundMaxMs = this.getBurnerInboundBackgroundMaxMs();
     const tick = async (): Promise<void> => {
-      if (Date.now() - started > BURNER_INBOUND_BACKGROUND_MAX_MS) {
-        this.logger.warn(`Claim ${claimId}: background sweep poll window exhausted (${BURNER_INBOUND_BACKGROUND_MAX_MS}ms)`);
+      if (Date.now() - started > backgroundMaxMs) {
+        this.logger.warn(`Claim ${claimId}: background sweep poll window exhausted (${backgroundMaxMs}ms)`);
         return;
       }
       try {

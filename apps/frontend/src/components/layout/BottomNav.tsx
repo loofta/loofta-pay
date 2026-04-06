@@ -7,41 +7,41 @@ import { ArrowDown, ArrowUp, Clock, Settings } from "lucide-react";
 type NavKey = 'send' | 'receive' | 'history' | 'settings';
 
 function IconBubble({
-                        active,
-                        children,
-                    }: {
+    active,
+    children,
+}: {
     active: boolean;
     children: React.ReactNode;
 }) {
     return (
         <span className="relative shrink-0 inline-flex h-9 w-9 items-center justify-center rounded-full">
-      <span
-          className={[
-              "absolute inset-0 rounded-full transition-all duration-300",
-              active
-                  ? "bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_10px_24px_rgba(255,122,42,0.22)]"
-                  : "bg-white/[0.06]",
-          ].join(" ")}
-      />
-      <span
-          className={[
-              "relative z-10 flex items-center justify-center",
-              "[&>svg]:h-[18px] [&>svg]:w-[18px] [&>svg]:stroke-[2.25]",
-              active ? "text-white" : "text-slate-300",
-          ].join(" ")}
-      >
-        {children}
-      </span>
-    </span>
+            <span
+                className={[
+                    "absolute inset-0 rounded-full transition-all duration-300",
+                    active
+                        ? "bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_10px_24px_rgba(255,122,42,0.22)]"
+                        : "bg-white/[0.06]",
+                ].join(" ")}
+            />
+            <span
+                className={[
+                    "relative z-10 flex items-center justify-center",
+                    "[&>svg]:h-[18px] [&>svg]:w-[18px] [&>svg]:stroke-[2.25]",
+                    active ? "text-white" : "text-slate-300",
+                ].join(" ")}
+            >
+                {children}
+            </span>
+        </span>
     );
 }
 
 function NavItem({
-                     href,
-                     label,
-                     active,
-                     icon,
-                 }: {
+    href,
+    label,
+    active,
+    icon,
+}: {
     href: string;
     label: string;
     active: boolean;
@@ -84,7 +84,7 @@ export function BottomNav() {
         <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-pb bg-[#0f0f12]/70 backdrop-blur-xl border-t border-white/10 shadow-[0_-10px_30px_rgba(0,0,0,0.35)]">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
 
-            <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-2">
+            <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-2 mt-1 ">
                 <NavItem
                     href="/"
                     label="Send"
