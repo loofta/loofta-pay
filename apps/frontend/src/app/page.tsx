@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -144,11 +144,37 @@ export default function Home() {
     setAmountInputWidthPx(Math.ceil(rect.width));
   }, [displayAmount, amountFontPx]);
 
-  const faqItems = [
-    { question: "What is the network fee?", answer: "All payments with USDC on Solana are free — gas is sponsored. On other networks we apply a small platform fee for the cross-chain transfer (near zero)." },
-    { question: "What is a burner wallet?", answer: "A burner wallet is a temporary deposit address we generate for your payment. You send funds to this address and Loofta Pay routes them to the recipient. You don't need to connect a wallet to pay—just send to the deposit address." },
-    { question: "How do private payments work?", answer: "Private payments use Magicblock Private Ephemeral Rollup so the transfer is secure and private." },
+  const faqItems: { question: string; answer: ReactNode }[] = [
+    { question: "What is the network fee?", answer: "All payments with USDC on Solana are free — gas is sponsored with your loofta pay wallet. On other networks we apply a small platform fee for the cross-chain transfer (near zero)." },
+    {
+      question: "How do private payments work?",
+      answer:
+        "Private payments use MagicBlock's Private Ephemeral Rollup (PER)—infrastructure built for private visibility instead of a typical fully public transfer. That means observers can't see the same payment details they usually could on-chain, so your activity is much harder to follow or link together. It's the option to choose when you care about stronger payment privacy.",
+    },
     { question: "Can I send to someone before they have an account?", answer: "Yes. You can send to a Twitter/X username or email. They'll get a link to sign up and claim the payment. Once they log in with that identity, they can claim the funds." },
+    {
+      question: "How do I retrieve my embedded Loofta Pay wallet?",
+      answer: (
+        <>
+          <p className="mb-3 last:mb-0">
+            Open your account menu, go to <span className="font-medium text-slate-300">Settings</span>, and use{" "}
+            <span className="font-medium text-slate-300">Export Private Key</span> to back up your embedded Loofta Pay wallet. You can also view your Solana address there.
+          </p>
+          <p className="mb-3 last:mb-0">
+            If you import or use that wallet <span className="font-medium text-slate-300">outside</span> Loofta Pay, the privacy and safety assumptions we design for in-app use may no longer apply, and{" "}
+            <span className="font-medium text-slate-300">your privacy may be compromised</span>. We strongly recommend keeping activity inside Loofta Pay.
+          </p>
+          <p className="mb-3 last:mb-0">
+            <span className="font-medium text-slate-300">Do not</span> share your embedded wallet address with people so they can pay you. Share your{" "}
+            <span className="font-medium text-slate-300">Loofta username</span> or <span className="font-medium text-slate-300">email</span> instead—that is how others should send you funds.
+          </p>
+          <p className="mb-0">
+            To move money out, use <span className="font-medium text-slate-300">Withdraw</span> to send USDC to a <span className="font-medium text-slate-300">new</span> Solana wallet you control (free on Solana USDC with sponsored gas)—instead of exposing your embedded address.
+          </p>
+        </>
+      ),
+    },
+    { question: "What is a burner wallet?", answer: "A burner wallet is a temporary deposit address we generate for your payment. You send funds to this address and Loofta Pay routes them to the recipient. You don't need to connect a wallet to pay—just send to the deposit address." },
     { question: "APY on received amount & auto-compound?", answer: "We're building APY in USD on your received balance, with every claimed payment auto-compounding. Coming soon." },
     { question: "Points system", answer: "A points system is coming soon. You'll earn points for receiving and for sending both private and standard payments." },
     {
@@ -550,10 +576,8 @@ export default function Home() {
                       transition={{ duration: 0.3, ease: "easeInOut" }}
                       className="overflow-hidden"
                     >
-                      <div className="px-6 pb-5">
-                        <p className="text-lg text-slate-400">
-                          {item.answer}
-                        </p>
+                      <div className="px-6 pb-5 text-lg text-slate-400 leading-relaxed">
+                        {item.answer}
                       </div>
                     </motion.div>
                   )}

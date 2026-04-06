@@ -8,9 +8,17 @@
 
 const BASE_URL = "https://payments.magicblock.app";
 
-/** Default MagicBlock private delivery window: random delay in [min, max] (30s – 3 min). */
+/** Devnet private leg: random delay in [min, max] (must match backend `magicblock-private-transfer`). */
 export const MAGICBLOCK_PRIVATE_MIN_DELAY_MS = "30000";
-export const MAGICBLOCK_PRIVATE_MAX_DELAY_MS = "180000";
+export const MAGICBLOCK_PRIVATE_MAX_DELAY_MS_DEVNET = String(15 * 60 * 1000);
+
+/** For console logs — actual delay is chosen server-side when building the transfer. */
+export function formatMagicblockPrivateDelayLogMs(apiCluster: "devnet" | "mainnet"): string {
+  if (apiCluster === "devnet") {
+    return `${MAGICBLOCK_PRIVATE_MIN_DELAY_MS}–${MAGICBLOCK_PRIVATE_MAX_DELAY_MS_DEVNET}`;
+  }
+  return "0–0";
+}
 
 export interface MagicblockTxResponse {
   kind: string;

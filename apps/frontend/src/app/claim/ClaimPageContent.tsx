@@ -19,6 +19,7 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { useRouter, usePathname } from "next/navigation";
 import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
+import { looftaXyz } from "@/lib/looftaXyzUrls";
 
 /** Inline Loofta logo SVG (matches pay modal). */
 function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
@@ -362,7 +363,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                     <span className="text-slate-700 pt-1">Swap to 120+ tokens on loofta</span>
 
                   </a>
-                  <a href="/swap" className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8] hover:bg-gray-100 transition-colors">
+                  <a href={looftaXyz.swap} className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8] hover:bg-gray-100 transition-colors">
                     <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>2.</span>
                     <span className="text-slate-700 pt-1">Pay at merchants</span>
 

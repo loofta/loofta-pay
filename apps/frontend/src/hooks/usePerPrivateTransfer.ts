@@ -4,7 +4,7 @@ import { useCallback, useMemo } from "react";
 import type { Wallet } from "@coral-xyz/anchor";
 import { Connection, Transaction, SendTransactionError } from "@solana/web3.js";
 import { getSolanaCluster, getSolanaHttpRpc } from "@/lib/solanaCluster";
-import { MAGICBLOCK_PRIVATE_MAX_DELAY_MS, MAGICBLOCK_PRIVATE_MIN_DELAY_MS } from "@/services/magicblockPaymentsApi";
+import { formatMagicblockPrivateDelayLogMs } from "@/services/magicblockPaymentsApi";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { buildSendPaymentPrivateTransfer } from "@/services/api/sendPayment";
 import { EPHEMERAL_RPC_URL } from "@/lib/per/constants";
@@ -33,7 +33,7 @@ export type PerPrivateTransferOptions = {
  * Private SPL transfer: unsigned tx is built on the **backend** (MagicBlock `/v1/spl/transfer` is server-side only)
  * so the recipient wallet is not visible in the browser network tab.
  *
- * Delivery delay is configured on the server (30s–3min). Claim sweep: burner → recipient uses direct SPL on the backend.
+ * Delivery delay is configured on the server (devnet: 30s–15m; mainnet: none). Claim sweep: burner → recipient uses direct SPL on the backend.
  */
 export function usePerPrivateTransfer() {
   const connection = useMemo(() => new Connection(getSolanaHttpRpc(), "confirmed"), []);
@@ -58,7 +58,7 @@ export function usePerPrivateTransfer() {
       const sender = wallet.publicKey.toBase58();
 
       console.info(
-        `[PrivatePay] ▶ server-built tx | cluster=${apiCluster} claim=${claimId ?? "—"} send=${sendPaymentId ?? "—"} isBurner=${isBurnerRecipient ?? false} delay=${MAGICBLOCK_PRIVATE_MIN_DELAY_MS}–${MAGICBLOCK_PRIVATE_MAX_DELAY_MS}ms`,
+        `[PrivatePay] ▶ server-built tx | cluster=${apiCluster} claim=${claimId ?? "—"} send=${sendPaymentId ?? "—"} isBurner=${isBurnerRecipient ?? false} delayMs=${formatMagicblockPrivateDelayLogMs(apiCluster)}`,
       );
 
       const txData = claimId

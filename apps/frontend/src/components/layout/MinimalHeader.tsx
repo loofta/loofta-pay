@@ -66,7 +66,7 @@ export function MinimalHeader() {
     const interval = setInterval(() => {
       getSolanaBalanceUSD(addr)
         .then((b) => setBalanceUSD(b.toFixed(2)))
-        .catch(() => {});
+        .catch(() => { });
     }, 30000);
     return () => clearInterval(interval);
   }, [authenticated, privyUser]);
@@ -112,11 +112,6 @@ export function MinimalHeader() {
               >
                 <div className="flex flex-col min-w-0">
                   <span className="text-sm font-medium leading-tight">Balance</span>
-                  <span className="text-[10px] text-slate-500 font-normal leading-tight truncate max-w-[8rem] sm:max-w-none">
-                    {isNonMainnetCluster() && solanaClusterTag
-                      ? `${solanaClusterTag} USDC`
-                      : "Mainnet USDC"}
-                  </span>
                 </div>
                 <span className="text-sm font-semibold tabular-nums shrink-0">
                   {loadingBalance ? "…" : `$${balanceUSD}`}

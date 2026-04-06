@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { looftaXyz } from "@/lib/looftaXyzUrls";
 
 export function Footer() {
   return (
@@ -30,8 +31,8 @@ export function Footer() {
           <div>
             <h4 className="text-white font-semibold mb-4">For business</h4>
             <ul className="space-y-2">
-              <li><a href="/checkout" className="text-slate-400 hover:text-white transition-colors">Checkout</a></li>
-              <li><a href="/checkout" className="text-slate-400 hover:text-white transition-colors">Partners</a></li>
+              <li><a href={looftaXyz.checkout} className="text-slate-400 hover:text-white transition-colors">Checkout</a></li>
+              <li><a href={looftaXyz.partners} className="text-slate-400 hover:text-white transition-colors">Partners</a></li>
             </ul>
           </div>
 
@@ -39,8 +40,8 @@ export function Footer() {
           <div>
             <h4 className="text-white font-semibold mb-4">Company</h4>
             <ul className="space-y-2">
-              <li><a href="/swap" className="text-slate-400 hover:text-white transition-colors">Cross-chain swap</a></li>
-              <li><a href="/about" className="text-slate-400 hover:text-white transition-colors">About</a></li>
+              <li><a href={looftaXyz.swap} className="text-slate-400 hover:text-white transition-colors">Cross-chain swap</a></li>
+              <li><a href={looftaXyz.about} className="text-slate-400 hover:text-white transition-colors">About</a></li>
             </ul>
           </div>
 
@@ -49,8 +50,8 @@ export function Footer() {
             <h4 className="text-white font-semibold mb-4">Socials & Docs</h4>
             <ul className="space-y-2">
               <li><a href="https://medium.com/@looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Medium</a></li>
-              <li><a href="https://twitter.com/looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Twitter</a></li>
-              <li><a href="https://t.me/looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Telegram</a></li>
+              <li><a href="https://twitter.com/looftapay" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Twitter</a></li>
+              <li><a href="https://t.me/looftapay" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Telegram</a></li>
               <li><a href="https://loofta.gitbook.io/docs" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Docs</a></li>
             </ul>
           </div>
