@@ -39,9 +39,11 @@ export async function POST(request: Request) {
     const toAsset = destToken.tokenId;
 
     // amount is stored in USD; convert USD -> destination token using provided price
-    // Enforce a minimum effective payout of $3 to avoid very small swaps failing
     const rawAmountUsd = Number(claim.amount || 0);
-    const amountUsd = Number.isFinite(rawAmountUsd) ? Math.max(rawAmountUsd, 3) : 3;
+    if (!Number.isFinite(rawAmountUsd) || rawAmountUsd <= 0) {
+      return NextResponse.json({ error: "Invalid claim amount" }, { status: 400 });
+    }
+    const amountUsd = rawAmountUsd;
     const desiredOutHuman = (Number.isFinite(amountUsd) && Number(destTokenPriceUSD) > 0)
       ? String(amountUsd / Number(destTokenPriceUSD))
       : "0";
