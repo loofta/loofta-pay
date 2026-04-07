@@ -8,6 +8,7 @@ import { formatMagicblockPrivateDelayLogMs } from "@/services/magicblockPayments
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { buildSendPaymentPrivateTransfer } from "@/services/api/sendPayment";
 import { EPHEMERAL_RPC_URL } from "@/lib/per/constants";
+import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
 
 /** UI progress for wallet popups and broadcasting steps. */
 export type PerTransferProgress =
@@ -95,7 +96,11 @@ export function usePerPrivateTransfer() {
           } catch {
             /* ignore */
           }
-          throw new Error(`[PrivatePay] broadcast failed (sendTo=${txData.sendTo}): ${e.message}`);
+          const userMsg = privatePayErrorMessageForUser(e.message, cluster);
+          throw new Error(userMsg);
+        }
+        if (e instanceof Error) {
+          throw new Error(privatePayErrorMessageForUser(e.message, cluster));
         }
         throw e;
       }
