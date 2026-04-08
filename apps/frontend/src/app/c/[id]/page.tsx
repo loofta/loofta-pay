@@ -51,6 +51,7 @@ import {
 } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
+import { getUsdcAtaBalanceBaseUnits } from "@/services/solanaBalance";
 import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { Connection, PublicKey, Transaction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
@@ -722,30 +723,21 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     !!claim?.recipient_pending_username ||
     !!(claim as { recipient_is_registered?: boolean } | null)?.recipient_is_registered;
 
-  // Poll burner USDC balance so the recipient only claims once the payer’s transfer has landed (private leg can take up to ~10 minutes on devnet).
+  // Poll claim burner USDC (per-claim pubkey — not the user’s Privy wallet). Privy cannot surface this; we must read chain state (or a future backend “burner funded” flag).
   const burnerAddr = (claim as { claim_burner_address?: string | null } | null)?.claim_burner_address ?? null;
   const burnerReadyQuery = useQuery({
     queryKey: ["burner-ready", burnerAddr],
     queryFn: async (): Promise<{ balance: number; isReady: boolean }> => {
       if (!burnerAddr) return { balance: 0, isReady: false };
-      try {
-        const conn = new Connection(getSolanaHttpRpc(), "confirmed");
-        const usdcMint = getUsdcMint();
-        const ata = getAssociatedTokenAddressSync(usdcMint, new PublicKey(burnerAddr));
-        const info = await conn.getTokenAccountBalance(ata);
-        const balance = Number(info.value.amount);
-        console.info(
-          `[BurnerReady] claimId=${id} usdcBaseUnits=${balance} (ATA may be missing until first deposit)`,
-        );
-        return { balance, isReady: balance > 0 };
-      } catch {
-        // ATA may not exist yet (token account not initialised)
-        return { balance: 0, isReady: false };
-      }
+      const balance = await getUsdcAtaBalanceBaseUnits(burnerAddr);
+      console.info(
+        `[BurnerReady] claimId=${id} usdcBaseUnits=${balance} (ATA may be missing until first deposit)`,
+      );
+      return { balance, isReady: balance > 0 };
     },
     enabled: !!burnerAddr && !!user?.id && isPendingRecipientClaim,
-    refetchInterval: 5_000,
-    staleTime: 8_000,
+    refetchInterval: 15_000,
+    staleTime: 12_000,
   });
   const burnerIsReady = burnerReadyQuery.data?.isReady ?? false;
   const burnerIsChecking = burnerReadyQuery.isLoading || (!burnerReadyQuery.isFetched && !!burnerAddr);

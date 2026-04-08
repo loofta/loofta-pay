@@ -1,28 +1,35 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
 import { UserMenu } from "@/components/UserMenu";
 import { BalanceModal } from "@/components/BalanceModal";
-import { getSolanaBalanceUSD } from "@/services/solanaBalance";
-import { clusterBadgeLabel, isNonMainnetCluster } from "@/lib/solanaCluster";
 import { LooftaPayLogoLink } from "@/components/layout/LooftaPayLogoLink";
+import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 
 const HEADER_HEIGHT = 64;
 
 export function MinimalHeader() {
-  const solanaClusterTag = clusterBadgeLabel();
   const { authenticated, email, logout } = useAuth();
-  const { login: privyLogin, user: privyUser } = usePrivy();
+  const { login: privyLogin } = usePrivy();
   const username = useAuthStore((s) => s.username ?? null);
   const headerRef = useRef<HTMLElement>(null);
 
   const [showBalanceModal, setShowBalanceModal] = useState(false);
-  const [balanceUSD, setBalanceUSD] = useState<string>("0.00");
-  const [loadingBalance, setLoadingBalance] = useState(false);
-  const [solanaAddress, setSolanaAddress] = useState<string | null>(null);
+
+  const {
+    balanceUSD: balanceNumber,
+    walletAddress: solanaAddress,
+    isLoading: loadingBalance,
+    refetch: refetchEmbeddedBalance,
+  } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated });
+
+  const balanceUSD = useMemo(
+    () => balanceNumber.toFixed(2),
+    [balanceNumber]
+  );
 
   useEffect(() => {
     if (!headerRef.current) return;
@@ -37,51 +44,9 @@ export function MinimalHeader() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!authenticated || !privyUser) {
-      setBalanceUSD("0.00");
-      setSolanaAddress(null);
-      return;
-    }
-    const linkedAccounts = privyUser?.linkedAccounts || [];
-    const linkedWallets = linkedAccounts.filter(
-      (account: any) => account.type === "wallet" || account.type === "smart_wallet"
-    );
-    const solanaLinkedWallet = linkedWallets.find((account: any) => {
-      const address = account.address;
-      return address && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
-    });
-    if (!solanaLinkedWallet) {
-      setBalanceUSD("0.00");
-      setSolanaAddress(null);
-      return;
-    }
-    const addr = (solanaLinkedWallet as { address: string }).address;
-    setSolanaAddress(addr);
-    setLoadingBalance(true);
-    getSolanaBalanceUSD(addr)
-      .then((b) => setBalanceUSD(b.toFixed(2)))
-      .catch(() => setBalanceUSD("0.00"))
-      .finally(() => setLoadingBalance(false));
-    const interval = setInterval(() => {
-      getSolanaBalanceUSD(addr)
-        .then((b) => setBalanceUSD(b.toFixed(2)))
-        .catch(() => { });
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [authenticated, privyUser]);
-
   const refreshBalance = useCallback(async () => {
-    if (solanaAddress) {
-      setLoadingBalance(true);
-      try {
-        const balance = await getSolanaBalanceUSD(solanaAddress);
-        setBalanceUSD(balance.toFixed(2));
-      } finally {
-        setLoadingBalance(false);
-      }
-    }
-  }, [solanaAddress]);
+    await refetchEmbeddedBalance();
+  }, [refetchEmbeddedBalance]);
 
   useEffect(() => {
     const handler = () => {

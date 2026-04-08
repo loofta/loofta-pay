@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   useWallets,
@@ -10,29 +10,16 @@ import {
 } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
 import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSend";
-import { getSolanaBalanceUSD } from "@/services/solanaBalance";
 import { getSolanaHttpRpc, isNonMainnetCluster } from "@/lib/solanaCluster";
+import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
+import {
+  EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS,
+  embeddedSolanaUsdcBalanceQueryKey,
+  fetchEmbeddedSolanaUsdcBalance,
+} from "@/services/solanaBalance";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-
-/** Same wallet resolution as Header so balance is consistent. */
-function deriveSolanaEmbeddedAddress(user: { linked_accounts?: Array<{ type?: string; address?: string }>; linkedAccounts?: Array<{ type?: string; address?: string }> } | null): string | null {
-  if (!user) return null;
-  const linkedAccounts = ((user as any)?.linkedAccounts ?? (user as any)?.linked_accounts ?? []) as Array<{ type?: string; address?: string }>;
-  const base58 = (a: { address?: string }) =>
-    a?.address && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a.address);
-  // Prefer wallet/smart_wallet (same as Header)
-  const walletOrSmart = linkedAccounts.find((a) => (a.type === "wallet" || a.type === "smart_wallet") && base58(a));
-  if (walletOrSmart?.address) return walletOrSmart.address;
-  const embedded = linkedAccounts.find(
-    (a) =>
-      (a.type === "solana_embedded_wallet" || a.type === "solana") && base58(a)
-  );
-  if (embedded?.address) return embedded.address;
-  const wallet = linkedAccounts.find((a) => a.type === "wallet" && base58(a));
-  return wallet?.address ?? null;
-}
 
 export interface SolanaPaymentConfig {
   amount: number;
@@ -51,6 +38,7 @@ export interface UseSolanaPaymentOptions {
  */
 export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
   const { enabled = true } = options;
+  const queryClient = useQueryClient();
   const { getAccessToken, user, authenticated } = usePrivy();
   const { wallets: standardWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
@@ -83,16 +71,25 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
 
       // Non-mainnet: always use same RPC/mint as the rest of the app (backend used to be mainnet-only).
       if (isNonMainnetCluster() && address) {
-        balanceUSD = await getSolanaBalanceUSD(address);
+        const row = await queryClient.fetchQuery({
+          queryKey: embeddedSolanaUsdcBalanceQueryKey(address),
+          queryFn: () => fetchEmbeddedSolanaUsdcBalance(address),
+          staleTime: EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS,
+        });
+        balanceUSD = row.balanceUSD;
         walletAddress = address;
         return { balanceUSD, walletAddress };
       }
 
-      // Mainnet: prefer backend; if zero, try client (e.g. match header).
+      // Mainnet: prefer backend; if zero, try client (shared cache with header hook).
       if (address && balanceUSD === 0) {
-        const clientBalance = await getSolanaBalanceUSD(address);
-        if (clientBalance > 0) {
-          balanceUSD = clientBalance;
+        const row = await queryClient.fetchQuery({
+          queryKey: embeddedSolanaUsdcBalanceQueryKey(address),
+          queryFn: () => fetchEmbeddedSolanaUsdcBalance(address),
+          staleTime: EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS,
+        });
+        if (row.balanceUSD > 0) {
+          balanceUSD = row.balanceUSD;
           walletAddress = walletAddress ?? address;
         }
       }

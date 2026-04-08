@@ -3,7 +3,13 @@
  * Client-side only - fetches directly from Solana RPC
  */
 
-import { getSolanaCluster, getSolanaHttpRpc } from "@/lib/solanaCluster";
+import { Connection, PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import {
+  getSolanaCluster,
+  getSolanaHttpRpc,
+  isNonMainnetCluster,
+} from "@/lib/solanaCluster";
 import { getUsdcMint } from "@/lib/per/constants";
 
 /** @deprecated Prefer getUsdcMint() for cluster-aware mint */
@@ -15,6 +21,50 @@ function rpcUrl(): string {
 
 function usdcMintAddress(): string {
   return getUsdcMint().toBase58();
+}
+
+/** React Query stale time shared by header + pay modal for embedded-wallet USDC reads */
+export const EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS = 60_000;
+
+export type EmbeddedSolanaUsdcBalanceRow = {
+  balanceUSD: number;
+  walletAddress: string;
+};
+
+export function embeddedSolanaUsdcBalanceQueryKey(address: string) {
+  return [
+    "embeddedSolanaUsdcBalance",
+    address,
+    isNonMainnetCluster() ? "dev" : "main",
+  ] as const;
+}
+
+/**
+ * Cached USDC balance row for React Query (same RPC as {@link getSolanaUSDCBalance}).
+ */
+export async function fetchEmbeddedSolanaUsdcBalance(
+  address: string
+): Promise<EmbeddedSolanaUsdcBalanceRow> {
+  const balanceUSD = await getSolanaUSDCBalance(address);
+  return { balanceUSD, walletAddress: address };
+}
+
+/**
+ * USDC balance in raw base units (6 decimals) for a wallet’s USDC ATA.
+ * One `getTokenAccountBalance` RPC — cheaper than {@link getSolanaUSDCBalance} (`getTokenAccountsByOwner`) when you only need “is there USDC yet”.
+ *
+ * Not replaceable with Privy: claim **burner** pubkeys are not embedded wallets; the chain must be read until a backend pushes readiness.
+ */
+export async function getUsdcAtaBalanceBaseUnits(ownerAddress: string): Promise<number> {
+  try {
+    const conn = new Connection(getSolanaHttpRpc(), "confirmed");
+    const usdcMint = getUsdcMint();
+    const ata = getAssociatedTokenAddressSync(usdcMint, new PublicKey(ownerAddress));
+    const info = await conn.getTokenAccountBalance(ata);
+    return Number(info.value.amount);
+  } catch {
+    return 0;
+  }
 }
 
 /**
