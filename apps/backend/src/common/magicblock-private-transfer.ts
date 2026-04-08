@@ -61,7 +61,7 @@ export async function requestMagicblockPrivateTransfer(params: {
     cluster: params.cluster,
     initIfMissing: true,
     initAtasIfMissing: true,
-    initVaultIfMissing: true,
+    initVaultIfMissing: false,
     minDelayMs,
     maxDelayMs,
   };
