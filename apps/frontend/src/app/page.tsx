@@ -175,8 +175,36 @@ export default function Home() {
       ),
     },
     { question: "What is a burner wallet?", answer: "A burner wallet is a temporary deposit address we generate for your payment. You send funds to this address and Loofta Pay routes them to the recipient. You don't need to connect a wallet to pay—just send to the deposit address." },
+    {
+      question: "How does Morpho Vault keep my earnings safe?",
+      answer: (
+        <>
+          <p className="mb-3 last:mb-0">
+            Morpho Vault is the protocol powering yield on your Loofta balance — one of the safest and most audited ways to earn passive income in DeFi.
+          </p>
+          <p className="mb-3 last:mb-0">
+            Unlike yield products that pile risk on top of risk, Morpho operates with transparent, overcollateralized lending markets. Every position is visible on-chain. No hidden strategies, no locked funds, no opaque fund managers. Your USDC earns through verified lending activity — and you can withdraw at any time.
+          </p>
+          <p className="mb-0">
+            Morpho has processed billions of dollars in lending volume with an unblemished security record. When your balance earns, it earns safely.
+          </p>
+        </>
+      ),
+    },
+    {
+      question: "How do Loofta Points work?",
+      answer: (
+        <>
+          <p className="mb-3 last:mb-0">
+            Every payment you receive earns you Loofta Points automatically — no opt-in required. Points accumulate in your account and unlock rewards across Loofta's partner network: discounts on tools and services that creators and freelancers already use.
+          </p>
+          <p className="mb-0">
+            Points scale with usage — the more Loofta Pay is your primary payment layer, the more you earn back. As the partner network grows, so does the value of your points.
+          </p>
+        </>
+      ),
+    },
     { question: "APY on received amount & auto-compound?", answer: "We're building APY in USD on your received balance, with every claimed payment auto-compounding. Coming soon." },
-    { question: "Points system", answer: "A points system is coming soon. You'll earn points for receiving and for sending both private and standard payments." },
     {
       question: "I'm on devnet — how do I get test SOL and USDC?",
       answer: (
