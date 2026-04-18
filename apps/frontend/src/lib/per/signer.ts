@@ -12,10 +12,9 @@ type PhantomLike = {
 export function phantomWalletToAnchorWallet(phantom: PhantomLike): Wallet {
   const publicKey = new PublicKey(phantom.publicKey.toBase58());
   const signTransaction = async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
-    if (tx instanceof VersionedTransaction) {
-      throw new Error("PER flow expects legacy Transaction");
-    }
-    return (await phantom.signTransaction(tx)) as T;
+    // Modern Phantom supports VersionedTransaction under the hood despite the legacy type signature
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (await (phantom as any).signTransaction(tx)) as T;
   };
   return {
     publicKey,
@@ -30,7 +29,7 @@ export function phantomWalletToAnchorWallet(phantom: PhantomLike): Wallet {
   } as Wallet;
 }
 
-/** Privy `ConnectedStandardWallet` — sign legacy `Transaction` for Anchor. */
+/** Privy `ConnectedStandardWallet` — sign legacy or versioned `Transaction` for Anchor. */
 export type PrivySolWallet = {
   address: string;
   signTransaction: (opts: { transaction: Uint8Array }) => Promise<{ signedTransaction: Uint8Array }>;
@@ -40,7 +39,10 @@ export function privyWalletToAnchorWallet(wallet: PrivySolWallet): Wallet {
   const publicKey = new PublicKey(wallet.address);
   const signTransaction = async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
     if (tx instanceof VersionedTransaction) {
-      throw new Error("PER flow expects legacy Transaction");
+      // serialize() with no args works for versioned; Privy signs raw bytes regardless of tx version
+      const serialized = tx.serialize();
+      const { signedTransaction } = await wallet.signTransaction({ transaction: serialized });
+      return VersionedTransaction.deserialize(signedTransaction) as T;
     }
     const serialized = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
     const { signedTransaction } = await wallet.signTransaction({ transaction: serialized });
@@ -77,7 +79,10 @@ export function privyStandardWalletToAnchorWallet(
   const chain = getPrivySolanaChain();
   const signOne = async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
     if (tx instanceof VersionedTransaction) {
-      throw new Error("PER flow expects legacy Transaction");
+      // serialize() with no args works for versioned; Privy signs raw bytes regardless of tx version
+      const serialized = tx.serialize();
+      const { signedTransaction } = await signTransaction({ transaction: serialized, wallet, chain });
+      return VersionedTransaction.deserialize(signedTransaction) as T;
     }
     const serialized = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
     const { signedTransaction } = await signTransaction({
