@@ -8,6 +8,7 @@ import {
   VersionedTransaction,
   Transaction,
   TransactionMessage,
+  AddressLookupTableAccount,
   Connection,
   SystemProgram,
 } from '@solana/web3.js';
@@ -242,6 +243,99 @@ export class SolanaSponsorService {
     }
 
     throw new Error('Unsupported or invalid transaction format');
+  }
+
+  /**
+   * Set our fee payer on the transaction, refresh the blockhash, partially sign with the fee payer
+   * keypair, and return the updated transaction. The user wallet still needs to sign before broadcasting.
+   *
+   * Used on devnet where Privy does not support fee sponsoring: the backend injects the fee payer
+   * partial signature so the frontend only needs the user's wallet signature.
+   */
+  async prepareAndPartialSignTransaction(serializedBase64: string): Promise<{
+    transactionBase64: string;
+    recentBlockhash: string;
+    lastValidBlockHeight: number;
+  }> {
+    if (!this.feePayerKeypair) {
+      throw new Error('Fee payer not configured for sponsoring');
+    }
+    const txBuffer = Buffer.from(serializedBase64, 'base64');
+    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
+    const feePayerPk = this.feePayerKeypair.publicKey;
+
+    // Try legacy first — MagicBlock PER private transfer uses legacy transactions
+    try {
+      const legacy = Transaction.from(txBuffer);
+      const originalFeePayer = legacy.feePayer?.toBase58() ?? 'none';
+      const originalSignerCount = legacy.signatures.length;
+      this.logger.log(
+        `SolanaSponsor[prepareAndPartialSign]: overriding feePayer ${originalFeePayer.slice(0, 8)}... → ${feePayerPk.toBase58().slice(0, 8)}... signers=${originalSignerCount} rpc=${this.connection.rpcEndpoint}`,
+      );
+      legacy.recentBlockhash = blockhash;
+      legacy.feePayer = feePayerPk;
+      legacy.partialSign(this.feePayerKeypair);
+      const serialized = legacy.serialize({ requireAllSignatures: false, verifySignatures: false });
+      this.logger.log(
+        `SolanaSponsor[prepareAndPartialSign]: legacy tx ${serialized.length}b feePayer=${feePayerPk.toBase58().slice(0, 8)}... blockhash=${blockhash.slice(0, 8)}...`,
+      );
+      return {
+        transactionBase64: Buffer.from(serialized).toString('base64'),
+        recentBlockhash: blockhash,
+        lastValidBlockHeight,
+      };
+    } catch {
+      // fall through to versioned
+    }
+
+    // v0 transaction with LUTs (MagicBlock now uses Address Lookup Tables).
+    // MagicBlock builds the tx with the sender as fee payer — we must rebuild it with
+    // our sponsor as fee payer. That requires resolving the LUT accounts from chain first.
+    const originalV0 = VersionedTransaction.deserialize(txBuffer);
+    const vMsg = originalV0.message;
+    const altAccounts: AddressLookupTableAccount[] = [];
+    for (const lookup of vMsg.addressTableLookups) {
+      const result = await this.connection.getAddressLookupTable(lookup.accountKey);
+      if (result.value) altAccounts.push(result.value);
+    }
+    this.logger.log(
+      `SolanaSponsor[prepareAndPartialSign]: v0 tx | ALTs=${vMsg.addressTableLookups.length} resolved=${altAccounts.length} sender=${vMsg.staticAccountKeys[0]?.toBase58().slice(0, 8)}... newFeePayer=${feePayerPk.toBase58().slice(0, 8)}...`,
+    );
+    const decompiledMsg = TransactionMessage.decompile(vMsg, { addressLookupTableAccounts: altAccounts });
+
+    // The MagicBlock program does a CPI SystemProgram.transfer FROM the sender's wallet to
+    // create the ephemeral shuttle account (~2039280 lamports rent). The sender may have 0 SOL,
+    // so we prepend a top-up from our fee payer so the sender can cover that internal transfer.
+    const senderPk = vMsg.staticAccountKeys[0];
+    const SHUTTLE_TOPUP_LAMPORTS = 3_000_000; // 0.003 SOL — covers 2039280 rent + buffer
+    const senderBalance = await this.connection.getBalance(senderPk);
+    const prefundIxs: ReturnType<typeof SystemProgram.transfer>[] = [];
+    if (senderBalance < SHUTTLE_TOPUP_LAMPORTS) {
+      const topUp = SHUTTLE_TOPUP_LAMPORTS - senderBalance;
+      prefundIxs.push(
+        SystemProgram.transfer({ fromPubkey: feePayerPk, toPubkey: senderPk, lamports: topUp }),
+      );
+      this.logger.log(
+        `SolanaSponsor[prepareAndPartialSign]: sender has ${senderBalance} lamports — prepending +${topUp} lamports shuttle top-up`,
+      );
+    }
+
+    const newMsg = new TransactionMessage({
+      payerKey: feePayerPk,
+      recentBlockhash: blockhash,
+      instructions: [...prefundIxs, ...decompiledMsg.instructions],
+    }).compileToV0Message(altAccounts);
+    const newV0 = new VersionedTransaction(newMsg);
+    newV0.sign([this.feePayerKeypair]);
+    const ser = newV0.serialize();
+    this.logger.log(
+      `SolanaSponsor[prepareAndPartialSign]: v0 rebuilt | ${ser.length}b prefunded=${prefundIxs.length > 0} blockhash=${blockhash.slice(0, 8)}...`,
+    );
+    return {
+      transactionBase64: Buffer.from(ser).toString('base64'),
+      recentBlockhash: blockhash,
+      lastValidBlockHeight,
+    };
   }
 
   /**

@@ -681,13 +681,41 @@ export class ClaimsService {
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
     const cluster = isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
-    return requestMagicblockPrivateTransfer({
+    const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
       mint: this.usdcMint.toBase58(),
       amount: baseUnits,
       cluster,
     });
+
+    // On devnet Privy doesn't support fee sponsoring — inject our fee payer so the
+    // user's wallet only needs to provide one signature (theirs), not pay the fee.
+    if (cluster === 'devnet' && this.solanaSponsor.isAvailable()) {
+      this.logger.log(
+        `[PrivatePay] Devnet fee sponsor: applying to MagicBlock tx | requiredSigners=[${txResponse.requiredSigners.join(', ')}] blockhash=${txResponse.recentBlockhash?.slice(0, 8)}...`,
+      );
+      try {
+        const sponsored = await this.solanaSponsor.prepareAndPartialSignTransaction(
+          txResponse.transactionBase64,
+        );
+        this.logger.log(
+          `[PrivatePay] Devnet fee sponsor applied: feePayer=${this.solanaSponsor.getFeePayerAddress()?.slice(0, 8)}... newBlockhash=${sponsored.recentBlockhash.slice(0, 8)}...`,
+        );
+        return {
+          ...txResponse,
+          transactionBase64: sponsored.transactionBase64,
+          recentBlockhash: sponsored.recentBlockhash,
+          lastValidBlockHeight: sponsored.lastValidBlockHeight,
+        };
+      } catch (e) {
+        this.logger.warn(
+          `[PrivatePay] Devnet fee sponsor failed, returning unsponsored tx: ${String(e)}`,
+        );
+      }
+    }
+
+    return txResponse;
   }
 
   /** Same routing as frontend getEffectiveRecipient: pending → burner, else wallet. */

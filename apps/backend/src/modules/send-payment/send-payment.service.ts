@@ -14,7 +14,7 @@ import { decryptWithPassphrase } from './vault/vault-crypto';
 import type { PassphraseEncryptedPayload } from './vault/vault-crypto';
 import { CreateSendPaymentDto, ClaimSendPaymentDto } from './dto';
 import { SendPaymentLink, SendPaymentLinkPublic, SendPaymentLinkStatus } from './entities/send-payment-link.entity';
-import { Keypair, Connection, PublicKey } from '@solana/web3.js';
+import { Keypair, Connection, PublicKey, Transaction, AddressLookupTableAccount, SystemProgram } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
   createTransferInstruction,
@@ -124,13 +124,88 @@ export class SendPaymentService {
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
     const cluster = isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
-    return requestMagicblockPrivateTransfer({
+    const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
       mint: this.usdcMint.toBase58(),
       amount: baseUnits,
       cluster,
     });
+
+    // On devnet Privy doesn't support fee sponsoring — inject our fee payer so the
+    // user's wallet only needs to provide one signature (theirs), not pay the fee.
+    if (cluster === 'devnet' && this.feePayerKeypair) {
+      this.logger.log(
+        `[SendPayment] Devnet fee sponsor: applying to MagicBlock tx | requiredSigners=[${txResponse.requiredSigners.join(', ')}] blockhash=${txResponse.recentBlockhash?.slice(0, 8)}...`,
+      );
+      try {
+        const rpcUrl =
+          this.configService.get<string>('SOLANA_RPC_URL')?.trim() ||
+          'https://api.devnet.solana.com';
+        const sponsorConn = new Connection(rpcUrl, 'confirmed');
+        const { blockhash, lastValidBlockHeight } = await sponsorConn.getLatestBlockhash('confirmed');
+        const txBuffer = Buffer.from(txResponse.transactionBase64, 'base64');
+        let serialized: Uint8Array;
+        // Try legacy first; fall back to v0 with ALT resolution (MagicBlock now uses LUTs)
+        try {
+          const legacy = Transaction.from(txBuffer);
+          legacy.recentBlockhash = blockhash;
+          legacy.feePayer = this.feePayerKeypair.publicKey;
+          legacy.partialSign(this.feePayerKeypair);
+          serialized = legacy.serialize({ requireAllSignatures: false, verifySignatures: false });
+        } catch {
+          const v0 = VersionedTransaction.deserialize(txBuffer);
+          const vMsg = v0.message;
+          const altAccounts: AddressLookupTableAccount[] = [];
+          for (const lookup of vMsg.addressTableLookups) {
+            const result = await sponsorConn.getAddressLookupTable(lookup.accountKey);
+            if (result.value) altAccounts.push(result.value);
+          }
+          this.logger.log(
+            `[SendPayment] Devnet fee sponsor: v0 tx | ALTs=${vMsg.addressTableLookups.length} resolved=${altAccounts.length}`,
+          );
+          const decompiledMsg = TransactionMessage.decompile(vMsg, { addressLookupTableAccounts: altAccounts });
+          // MagicBlock internally transfers SOL from the sender's wallet to create the
+          // ephemeral shuttle account. Prepend a top-up if the sender has insufficient SOL.
+          const senderPk = vMsg.staticAccountKeys[0];
+          const SHUTTLE_TOPUP_LAMPORTS = 3_000_000;
+          const senderBalance = await sponsorConn.getBalance(senderPk);
+          const prefundIxs: ReturnType<typeof SystemProgram.transfer>[] = [];
+          if (senderBalance < SHUTTLE_TOPUP_LAMPORTS) {
+            const topUp = SHUTTLE_TOPUP_LAMPORTS - senderBalance;
+            prefundIxs.push(
+              SystemProgram.transfer({ fromPubkey: this.feePayerKeypair.publicKey, toPubkey: senderPk, lamports: topUp }),
+            );
+            this.logger.log(
+              `[SendPayment] Devnet fee sponsor: prefunding sender ${senderPk.toBase58().slice(0, 8)}... +${topUp} lamports (was ${senderBalance})`,
+            );
+          }
+          const newMsg = new TransactionMessage({
+            payerKey: this.feePayerKeypair.publicKey,
+            recentBlockhash: blockhash,
+            instructions: [...prefundIxs, ...decompiledMsg.instructions],
+          }).compileToV0Message(altAccounts);
+          const newV0 = new VersionedTransaction(newMsg);
+          newV0.sign([this.feePayerKeypair]);
+          serialized = newV0.serialize();
+        }
+        this.logger.log(
+          `[SendPayment] Devnet fee sponsor applied: feePayer=${this.feePayerKeypair.publicKey.toBase58().slice(0, 8)}... newBlockhash=${blockhash.slice(0, 8)}... txBytes=${serialized.length}`,
+        );
+        return {
+          ...txResponse,
+          transactionBase64: Buffer.from(serialized).toString('base64'),
+          recentBlockhash: blockhash,
+          lastValidBlockHeight,
+        };
+      } catch (e) {
+        this.logger.warn(
+          `[SendPayment] Devnet fee sponsor failed, returning unsponsored tx: ${String(e)}`,
+        );
+      }
+    }
+
+    return txResponse;
   }
 
   /**

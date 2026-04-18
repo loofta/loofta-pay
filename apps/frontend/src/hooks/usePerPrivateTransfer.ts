@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import type { Wallet } from "@coral-xyz/anchor";
-import { Connection, Transaction, SendTransactionError } from "@solana/web3.js";
+import { Connection, Transaction, VersionedTransaction, SendTransactionError } from "@solana/web3.js";
 import { getSolanaCluster, getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { formatMagicblockPrivateDelayLogMs } from "@/services/magicblockPaymentsApi";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
@@ -76,15 +76,80 @@ export function usePerPrivateTransfer() {
       );
 
       const txBytes = Buffer.from(txData.transactionBase64, "base64");
-      const tx = Transaction.from(txBytes);
+
+      // MagicBlock may return a v0 versioned tx; backend converts to legacy when applying fee
+      // sponsorship, but fall back to VersionedTransaction if it comes through as v0.
+      let tx: Transaction | VersionedTransaction;
+      let txIsLegacy: boolean;
+      try {
+        tx = Transaction.from(txBytes);
+        txIsLegacy = true;
+      } catch {
+        tx = VersionedTransaction.deserialize(txBytes);
+        txIsLegacy = false;
+        console.warn("[PrivatePay] tx is versioned (v0) — fee sponsor may not be applied");
+      }
+
+      // Log fee sponsor state: fee payer + which signers already have a signature (sponsor partial-signs on devnet)
+      let feePayerPk: string;
+      let alreadySigned: string[];
+      let stillNeeded: string[];
+      if (txIsLegacy) {
+        const legacyTx = tx as Transaction;
+        feePayerPk = legacyTx.feePayer?.toBase58() ?? "none";
+        const sigStates = legacyTx.signatures.map((s) => ({
+          signer: s.publicKey.toBase58().slice(0, 8) + "…",
+          signed: s.signature !== null,
+        }));
+        alreadySigned = sigStates.filter((s) => s.signed).map((s) => s.signer);
+        stillNeeded = sigStates.filter((s) => !s.signed).map((s) => s.signer);
+      } else {
+        const vTx = tx as VersionedTransaction;
+        // Signers are always in staticAccountKeys (never in ALTs) — safe to read without resolving LUTs
+        const staticKeys = vTx.message.staticAccountKeys;
+        feePayerPk = staticKeys[0]?.toBase58() ?? "none";
+        const sigStates = vTx.signatures.map((sig, i) => ({
+          signer: (staticKeys[i]?.toBase58().slice(0, 8) ?? `acct${i}`) + "…",
+          signed: sig.some((b) => b !== 0),
+        }));
+        alreadySigned = sigStates.filter((s) => s.signed).map((s) => s.signer);
+        stillNeeded = sigStates.filter((s) => !s.signed).map((s) => s.signer);
+      }
+      console.info(
+        `[PrivatePay] tx deserialized | version=${txIsLegacy ? "legacy" : "v0"} feePayer=${feePayerPk.slice(0, 8)}… walletPubkey=${sender.slice(0, 8)}… ` +
+          `alreadySigned=[${alreadySigned.join(", ") || "none"}] stillNeeded=[${stillNeeded.join(", ") || "none"}]`,
+      );
 
       onProgress?.({ phase: "awaiting_signature", walletTransactionCount: 1 });
-      const [signedTx] = await wallet.signAllTransactions([tx]);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const [signedTx] = await wallet.signAllTransactions([tx] as any);
+
+      // Confirm all required signatures are present after user signs
+      let missingAfterSign: string[];
+      if (signedTx instanceof Transaction) {
+        missingAfterSign = signedTx.signatures
+          .filter((s) => !s.signature)
+          .map((s) => s.publicKey.toBase58().slice(0, 8) + "…");
+      } else {
+        const vSigned = signedTx as VersionedTransaction;
+        const staticKeys = vSigned.message.staticAccountKeys;
+        missingAfterSign = vSigned.signatures
+          .map((sig, i) => ({ signer: (staticKeys[i]?.toBase58().slice(0, 8) ?? `acct${i}`) + "…", signed: sig.some((b) => b !== 0) }))
+          .filter((s) => !s.signed)
+          .map((s) => s.signer);
+      }
+      console.info(
+        `[PrivatePay] user signed | allSigned=${missingAfterSign.length === 0} missing=[${missingAfterSign.join(", ") || "none"}]`,
+      );
 
       onProgress?.({ phase: "broadcasting", step: "privateTransfer", index: 1, total: 1 });
       let signature: string;
       try {
-        signature = await broadcastConn.sendRawTransaction(signedTx.serialize(), {
+        const serialized =
+          signedTx instanceof Transaction
+            ? signedTx.serialize()
+            : (signedTx as VersionedTransaction).serialize();
+        signature = await broadcastConn.sendRawTransaction(serialized, {
           skipPreflight: false,
           preflightCommitment: "confirmed",
         });
