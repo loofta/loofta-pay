@@ -59,15 +59,9 @@ export const metadata: Metadata = {
       "Send and receive private payments. Non-custodial payment requests and settlement across the chains and assets you already use.",
     images: [
       {
-        url: "/api/og",
+        url: "/og-image.png",
         width: 1200,
         height: 630,
-        alt: "Loofta Pay — Send & Receive Private Payments.",
-      },
-      {
-        url: "/api/og?variant=twitter",
-        width: 1200,
-        height: 600,
         alt: "Loofta Pay — Send & Receive Private Payments.",
       },
     ],
@@ -80,7 +74,7 @@ export const metadata: Metadata = {
     title: "Loofta Pay — Send & receive private payments",
     description:
       "Send and receive private payments. Non-custodial payment requests and settlement across the chains and assets you already use.",
-    images: ["/api/og?variant=twitter"],
+    images: ["/og-image.png"],
   },
   robots: {
     index: true,
