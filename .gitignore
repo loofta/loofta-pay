@@ -43,3 +43,7 @@ apps/frontend/.next
 
 # Vercel
 .vercel
+
+# Claude Code
+.claude/
+claude-session.jsonl
