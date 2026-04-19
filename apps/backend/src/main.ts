@@ -3,9 +3,14 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
+import { loadKmsSecrets } from './common/kms-secrets';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
+
+  // Decrypt KMS-protected secrets into process.env before NestJS reads config
+  await loadKmsSecrets();
+
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'log', 'debug', 'verbose'],
   });

@@ -51,7 +51,7 @@ import {
 } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
-import { getUsdcAtaBalanceBaseUnits } from "@/services/solanaBalance";
+import { getUsdcAtaBalanceBaseUnits, embeddedSolanaUsdcBalanceQueryKey } from "@/services/solanaBalance";
 import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { Connection, PublicKey, Transaction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
@@ -831,6 +831,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       queryClient.invalidateQueries({ queryKey: ["claim", id] });
       queryClient.invalidateQueries({ queryKey: ["claim", id, "recipient-check", user?.id] });
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
+      // Wait for RPC to index the sweep tx before refetching balance.
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+        queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
+        queryClient.refetchQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+        queryClient.refetchQueries({ queryKey: ["solanaPaymentBalance"] });
+      }, 2000);
     },
     onError: (error: unknown) => {
       const message = error instanceof Error ? error.message : "Claim failed";
@@ -1831,6 +1838,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
       await claimQuery.refetch();
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
+      // Wait for the RPC to index the confirmed tx before refetching balance,
+      // otherwise we'd get the stale pre-transfer amount back.
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+        queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
+        queryClient.refetchQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+        queryClient.refetchQueries({ queryKey: ["solanaPaymentBalance"] });
+      }, 2000);
       setShowPayNowModal(false);
       toast({
         title: "Transfer submitted!",
@@ -2333,7 +2348,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               >
                                 {retrySweepLoading ? "Retrying..." : "Retry claim sweep"}
                               </button>
-                              {claim?.created_by === user.id && (
+                              {isClaimPageLocalhost && claim?.created_by === user.id && (
                                 <button
                                   type="button"
                                   onClick={reclaimBySender}
@@ -2757,7 +2772,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               >
                                 {retrySweepLoading ? "Retrying..." : "Retry claim sweep"}
                               </button>
-                              {claim?.created_by === user.id && (
+                              {isClaimPageLocalhost && claim?.created_by === user.id && (
                                 <button
                                   type="button"
                                   onClick={reclaimBySender}

@@ -32,6 +32,8 @@
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
     "@defuse-protocol/one-click-sdk-typescript": "0.1.1",
+    "@google-cloud/kms": "^5.4.0",
+    "@google-cloud/secret-manager": "^6.1.1",
     "@lightprotocol/hasher.rs": "^0.2.1",
     "@magicblock-labs/ephemeral-rollups-sdk": "^0.10.1",
     "@magicblock-labs/gum-sdk": "^3.0.10",
