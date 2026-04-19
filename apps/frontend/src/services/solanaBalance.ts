@@ -60,8 +60,14 @@ export async function getUsdcAtaBalanceBaseUnits(ownerAddress: string): Promise<
     const conn = new Connection(getSolanaHttpRpc(), "confirmed");
     const usdcMint = getUsdcMint();
     const ata = getAssociatedTokenAddressSync(usdcMint, new PublicKey(ownerAddress));
-    const info = await conn.getTokenAccountBalance(ata);
-    return Number(info.value.amount);
+    // Use getAccountInfo instead of getTokenAccountBalance — the latter returns
+    // an RPC error ("could not find account") when the ATA doesn't exist yet,
+    // while getAccountInfo returns null silently.
+    const acctInfo = await conn.getAccountInfo(ata);
+    if (!acctInfo || acctInfo.data.length < 72) return 0;
+    // SPL Token account layout: amount is a u64 at offset 64
+    const amount = acctInfo.data.readBigUInt64LE(64);
+    return Number(amount);
   } catch {
     return 0;
   }

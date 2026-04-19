@@ -1,0 +1,111 @@
+import { Logger } from '@nestjs/common';
+import { KeyManagementServiceClient } from '@google-cloud/kms';
+import { writeFileSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+
+const logger = new Logger('KmsSecrets');
+
+/**
+ * KMS-encrypted secrets bootstrap for Railway deployment.
+ *
+ * Required env vars in Railway:
+ *   GCP_PROJECT_ID                    = your GCP project id (e.g. "loofta")
+ *   GCP_SA_KEY_BASE64                 = base64-encoded service account JSON key
+ *   KMS_SOLANA_FEE_PAYER_PRIVATE_KEY  = base64-encoded ciphertext
+ *   KMS_SEND_PAYMENT_ENC_KEY          = base64-encoded ciphertext
+ *
+ * Optional:
+ *   KMS_KEY_RING   = keyring name (default: "looftapay")
+ *   KMS_LOCATION   = location (default: "global")
+ *
+ * Call this BEFORE NestFactory.create() in main.ts.
+ */
+
+const KMS_SECRETS = [
+  'SOLANA_FEE_PAYER_PRIVATE_KEY',
+  'SEND_PAYMENT_ENC_KEY',
+] as const;
+
+export async function loadKmsSecrets(): Promise<void> {
+  const hasAnyKmsSecret = KMS_SECRETS.some(
+    (name) => !!process.env[`KMS_${name}`],
+  );
+
+  if (!hasAnyKmsSecret) {
+    logger.log(
+      'No KMS_* env vars found — skipping KMS decryption (using plain env vars)',
+    );
+    return;
+  }
+
+  // On Railway: write the service account JSON from base64 env var to a temp file
+  // so the GCP SDK can authenticate
+  let tmpKeyPath: string | null = null;
+  const saKeyBase64 = process.env.GCP_SA_KEY_BASE64;
+  if (saKeyBase64) {
+    tmpKeyPath = join(tmpdir(), `gcp-sa-${process.pid}.json`);
+    writeFileSync(tmpKeyPath, Buffer.from(saKeyBase64, 'base64'));
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = tmpKeyPath;
+    logger.log('GCP service account credentials loaded from GCP_SA_KEY_BASE64');
+  }
+
+  const client = new KeyManagementServiceClient();
+
+  // Build key name from convenience vars or per-secret override
+  const project = process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
+  const location = process.env.KMS_LOCATION || 'global';
+  const keyRing = process.env.KMS_KEY_RING || 'looftapay';
+
+  for (const secretName of KMS_SECRETS) {
+    const ciphertextBase64 = process.env[`KMS_${secretName}`];
+    if (!ciphertextBase64) continue;
+
+    // Full resource name — either explicit or built from parts
+    const keyName =
+      process.env[`KMS_${secretName}_KEY_NAME`] ||
+      (project
+        ? client.cryptoKeyPath(project, location, keyRing, secretName)
+        : null);
+
+    if (!keyName) {
+      logger.error(
+        `KMS_${secretName} is set but cannot build key path — set GCP_PROJECT_ID or KMS_${secretName}_KEY_NAME`,
+      );
+      continue;
+    }
+
+    try {
+      const ciphertext = Buffer.from(ciphertextBase64, 'base64');
+      const [result] = await client.decrypt({
+        name: keyName,
+        ciphertext,
+      });
+
+      const plaintext =
+        result.plaintext instanceof Uint8Array
+          ? Buffer.from(result.plaintext).toString('utf8')
+          : (result.plaintext as string);
+
+      process.env[secretName] = plaintext;
+      logger.log(
+        `Decrypted ${secretName} via KMS (key: ...${keyName.slice(-40)})`,
+      );
+    } catch (err) {
+      logger.error(
+        `Failed to decrypt ${secretName} from KMS: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  client.close();
+
+  // Clean up temp credentials file
+  if (tmpKeyPath) {
+    try {
+      unlinkSync(tmpKeyPath);
+    } catch {
+      // ignore
+    }
+  }
+}
