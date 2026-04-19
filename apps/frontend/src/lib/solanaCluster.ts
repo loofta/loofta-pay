@@ -46,14 +46,15 @@ export function getPrivySolanaChain(): PrivySolanaChain {
 
 /** HTTP RPC for @solana/web3.js Connection (falls back by cluster). */
 export function getSolanaHttpRpc(): string {
-  const explicit = process.env.NEXT_PUBLIC_SOLANA_RPC_URL?.trim();
-  if (explicit) return explicit;
   const cluster = getSolanaCluster();
-  if (cluster === "devnet") return "https://solana-devnet.g.alchemy.com/v2/KXLQJosl-B-y-awxxYRv8";
+  if (cluster === "devnet") {
+    return process.env.NEXT_PUBLIC_SOLANA_DEVNET_RPC_URL?.trim() || "https://api.devnet.solana.com";
+  }
   if (cluster === "testnet") return "https://api.testnet.solana.com";
-  return process.env.NEXT_PUBLIC_HELIUS_API_KEY
-    ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-    : "https://api.mainnet-beta.solana.com";
+  return process.env.NEXT_PUBLIC_SOLANA_RPC_URL?.trim()
+    || (process.env.NEXT_PUBLIC_HELIUS_API_KEY
+      ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
+      : "https://api.mainnet-beta.solana.com");
 }
 
 export function getSolanaWsRpc(): string {

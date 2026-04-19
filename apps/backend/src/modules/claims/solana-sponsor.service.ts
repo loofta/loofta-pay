@@ -154,28 +154,35 @@ export class SolanaSponsorService {
   }
 
   private resolveSolanaRpcUrl(): string {
-    const explicit =
+    const isDevnet = isSolanaDevnetFromConfig(this.config) || (() => {
+      const cluster =
+        this.config.get<string>('SOLANA_CLUSTER')?.trim() ||
+        process.env.SOLANA_CLUSTER?.trim() ||
+        getEnvFromFile('SOLANA_CLUSTER')?.trim() ||
+        this.config.get<string>('NEXT_PUBLIC_SOLANA_CLUSTER')?.trim() ||
+        process.env.NEXT_PUBLIC_SOLANA_CLUSTER?.trim() ||
+        getEnvFromFile('NEXT_PUBLIC_SOLANA_CLUSTER')?.trim();
+      return cluster === 'devnet' || cluster === 'testnet';
+    })();
+
+    if (isDevnet) {
+      const devnetRpc =
+        this.config.get<string>('SOLANA_DEVNET_RPC_URL') ??
+        process.env.SOLANA_DEVNET_RPC_URL ??
+        getEnvFromFile('SOLANA_DEVNET_RPC_URL');
+      return devnetRpc?.trim() || 'https://api.devnet.solana.com';
+    }
+
+    // Mainnet: explicit RPC > Helius > public fallback
+    const mainnetRpc =
       this.config.get<string>('SOLANA_RPC_URL') ??
       process.env.SOLANA_RPC_URL ??
       getEnvFromFile('SOLANA_RPC_URL');
-    if (explicit?.trim()) return explicit.trim();
-    if (isSolanaDevnetFromConfig(this.config)) {
-      return 'https://api.devnet.solana.com';
-    }
-    const cluster =
-      this.config.get<string>('SOLANA_CLUSTER')?.trim() ||
-      process.env.SOLANA_CLUSTER?.trim() ||
-      getEnvFromFile('SOLANA_CLUSTER')?.trim() ||
-      this.config.get<string>('NEXT_PUBLIC_SOLANA_CLUSTER')?.trim() ||
-      process.env.NEXT_PUBLIC_SOLANA_CLUSTER?.trim() ||
-      getEnvFromFile('NEXT_PUBLIC_SOLANA_CLUSTER')?.trim();
-    if (cluster === 'devnet' || cluster === 'testnet') {
-      return 'https://api.devnet.solana.com';
-    }
+    if (mainnetRpc?.trim()) return mainnetRpc.trim();
+
     const helius = this.config.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
-    if (helius) {
-      return `https://mainnet.helius-rpc.com/?api-key=${helius}`;
-    }
+    if (helius) return `https://mainnet.helius-rpc.com/?api-key=${helius}`;
+
     return 'https://api.mainnet-beta.solana.com';
   }
 
