@@ -9,6 +9,7 @@ import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { buildSendPaymentPrivateTransfer } from "@/services/api/sendPayment";
 import { EPHEMERAL_RPC_URL } from "@/lib/per/constants";
 import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
+import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 
 /** UI progress for wallet popups and broadcasting steps. */
 export type PerTransferProgress =
@@ -170,17 +171,7 @@ export function usePerPrivateTransfer() {
         throw e;
       }
 
-      const confirmResult = await broadcastConn.confirmTransaction(
-        {
-          signature,
-          blockhash: txData.recentBlockhash,
-          lastValidBlockHeight: txData.lastValidBlockHeight,
-        },
-        "confirmed",
-      );
-      if (confirmResult.value.err) {
-        throw new Error(`[PrivatePay] transaction failed on-chain: ${JSON.stringify(confirmResult.value.err)}`);
-      }
+      await waitForSignatureConfirmation(broadcastConn, signature, 120_000, 1500, "privateTransfer");
       const explorerUrl = `https://explorer.solana.com/tx/${signature}?cluster=${apiCluster === "mainnet" ? "mainnet-beta" : "devnet"}`;
       console.info(`[PrivatePay] ✅ Confirmed | sig=${signature} | ${explorerUrl}`);
 
