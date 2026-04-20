@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Req,
@@ -384,6 +385,24 @@ export class ClaimsController {
       paidWithToken: body.paidWithToken,
       paidWithChain: body.paidWithChain,
     }, callerUserId);
+  }
+
+  /**
+   * Save the Solana tx signature immediately after broadcast, before on-chain confirmation.
+   * Allows recovery if confirmation polling fails due to RPC issues.
+   */
+  @Patch(':id/tx-hash')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(OptionalAuthGuard)
+  @ApiOperation({ summary: 'Save broadcast tx hash for recovery' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Saved' })
+  async saveTxHash(
+    @Param('id') id: string,
+    @Body() body: { txHash: string },
+  ): Promise<void> {
+    if (!body.txHash?.trim()) throw new BadRequestException('txHash is required');
+    await this.claimsService.saveBroadcastTxHash(id, body.txHash.trim());
   }
 
   /**

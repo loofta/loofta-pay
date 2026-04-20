@@ -67,6 +67,7 @@ import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddress
 import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 import { usePerPrivateTransfer, type PerTransferProgress } from "@/hooks/usePerPrivateTransfer";
+import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { phantomWalletToAnchorWallet, privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
 import { PaymentHistoryClaim } from "@/app/history/page";
 import type { NearToken } from "@/services/nearIntents";
@@ -404,7 +405,7 @@ async function fetchClaim(id: string) {
         isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
       });
       return {
-        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null },
         latestIntent: data.intent ? {
           depositAddress: data.intent.deposit_address || null,
           memo: data.intent.memo ?? null,
@@ -434,7 +435,7 @@ async function fetchClaim(id: string) {
     isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
-    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string },
+    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -1576,14 +1577,62 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       });
       console.log("[PrivateTransfer] Calling private transfer…", { isBurnerRecipient });
       const perToken = await getAccessToken();
-      const signature = await perTransfer(anchorWallet, {
-        privyUserId: user.id,
-        accessToken: perToken,
-        claimId: claim.id,
-        isBurnerRecipient,
-      });
-      console.log("[PrivateTransfer] PER transfer signature:", signature);
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const authHeader: Record<string, string> = perToken
+        ? { Authorization: `Bearer ${perToken}` }
+        : { "x-privy-user-id": user.id };
 
+      // Saved immediately after sendRawTransaction, before confirmation polling.
+      let broadcastedSignature: string | null = null;
+
+      let signature: string;
+      try {
+        signature = await perTransfer(anchorWallet, {
+          privyUserId: user.id,
+          accessToken: perToken,
+          claimId: claim.id,
+          isBurnerRecipient,
+          onSignature: async (sig) => {
+            broadcastedSignature = sig;
+            // Fire-and-forget — don't block the confirmation flow
+            fetch(`${backendUrl}/claims/${claim.id}/tx-hash`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", ...authHeader },
+              body: JSON.stringify({ txHash: sig }),
+            }).catch((e) => console.warn("[PrivateTransfer] Failed to save tx hash early:", e));
+          },
+        });
+      } catch (confirmErr: any) {
+        // If the tx was broadcast but RPC confirmation failed, the signature is already saved
+        // in the backend. Mark the claim as pending instead of showing a hard failure.
+        if (broadcastedSignature) {
+          console.warn("[PrivateTransfer] Confirmation polling failed but tx was broadcast — marking as pending:", confirmErr?.message);
+          toast({
+            title: "Transfer submitted!",
+            description: "Your payment was sent. Confirmation is taking longer than usual — it will update automatically.",
+          });
+          await updateClaimStatus(
+            claim.id,
+            "PRIVATE_TRANSFER_PENDING",
+            {
+              txHash: broadcastedSignature,
+              paidWith: "USDC (Private)",
+              isPrivate: true,
+              paidWithToken: "USDC",
+              paidWithChain: "solana",
+            },
+            user?.id,
+            perToken,
+          );
+          setStatus("PRIVATE_TRANSFER_PENDING");
+          useClaimPayStore.getState().setStatus(id, "PRIVATE_TRANSFER_PENDING");
+          await claimQuery.refetch();
+          return;
+        }
+        throw confirmErr;
+      }
+
+      console.log("[PrivateTransfer] PER transfer signature:", signature);
       toast({
         title: "Transfer submitted!",
         description: `Your private transfer is processing — ${privatePaymentFundsAppearCopy()}`,
@@ -1877,6 +1926,40 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // In the old SDK flow this triggered onPayPrivately (which required Phantom) from the recipient side.
   // In the new flow, claimAsRecipientMutation (above) handles recipient claiming automatically.
   // Keeping this comment so the intent is clear: do NOT re-enable without updating onPayPrivately.
+
+  // Recovery: if the claim loaded with PRIVATE_TRANSFER_PENDING and a saved sender_tx_hash,
+  // poll the RPC once to check if the tx actually confirmed (handles the case where the browser
+  // closed or the RPC timed out before updateClaimStatus(SUCCESS) was called).
+  const txHashRecoveryRef = React.useRef<string | null>(null);
+  useEffect(() => {
+    const txHash = claim?.sender_tx_hash;
+    const claimStatus = String(claim?.status || "").toUpperCase();
+    if (!txHash || claimStatus !== "PRIVATE_TRANSFER_PENDING") return;
+    if (txHashRecoveryRef.current === txHash) return; // already tried this hash
+    txHashRecoveryRef.current = txHash;
+
+    const conn = new Connection(getSolanaHttpRpc(), "confirmed");
+    console.info(`[TxRecovery] Polling on-chain for saved tx hash ${txHash.slice(0, 12)}…`);
+
+    waitForSignatureConfirmation(conn, txHash, 60_000, 2000, "recovery")
+      .then(async () => {
+        console.info(`[TxRecovery] tx confirmed — upgrading claim ${id} to SUCCESS`);
+        const perToken = await getAccessToken().catch(() => null);
+        await updateClaimStatus(id, "SUCCESS", {
+          txHash,
+          paidWith: "USDC (Private)",
+          isPrivate: true,
+          paidWithToken: "USDC",
+          paidWithChain: "solana",
+        }, user?.id, perToken);
+        setStatus("SUCCESS");
+        useClaimPayStore.getState().setStatus(id, "SUCCESS");
+        await claimQuery.refetch();
+      })
+      .catch((e) => {
+        console.warn(`[TxRecovery] tx not yet confirmed for ${txHash.slice(0, 12)}… — leaving as PRIVATE_TRANSFER_PENDING:`, e?.message);
+      });
+  }, [claim?.sender_tx_hash, claim?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function onPayNow() {
     if (!claim || !selectedFrom || !destToken) return;

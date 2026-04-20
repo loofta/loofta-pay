@@ -5,6 +5,7 @@ import { ClaimProcessorService, ProcessingResult } from './claim-processor.servi
 import { LotteryProcessorService, LotteryProcessingResult } from './lottery-processor.service';
 import { ClaimCompanionProcessorService, ClaimCompanionResult } from './claim-companion-processor.service';
 import { SwapProcessorService, SwapProcessingResult } from './swap-processor.service';
+import { SolanaTxVerifierService, TxVerifierResult } from './solana-tx-verifier.service';
 @ApiTags('cron')
 @Controller('cron')
 export class CronController {
@@ -13,6 +14,7 @@ export class CronController {
     private readonly lotteryProcessorService: LotteryProcessorService,
     private readonly claimCompanionProcessorService: ClaimCompanionProcessorService,
     private readonly swapProcessorService: SwapProcessorService,
+    private readonly solanaTxVerifierService: SolanaTxVerifierService,
   ) {}
 
   /**
@@ -85,6 +87,24 @@ export class CronController {
   }
 
   /**
+   * Verify PRIVATE_TRANSFER_PENDING claims that have a saved sender_tx_hash against the Solana RPC.
+   * Upgrades to SUCCESS if the tx is confirmed on-chain.
+   */
+  @Get('verify-solana-txs')
+  @UseGuards(CronGuard)
+  @ApiSecurity('Bearer')
+  @ApiOperation({ summary: 'Verify pending Solana tx hashes and upgrade confirmed claims to SUCCESS' })
+  @ApiResponse({ status: 200, description: 'Verification results' })
+  async verifySolanaTxs(): Promise<{
+    success: boolean;
+    processed: number;
+    results: TxVerifierResult[];
+  }> {
+    const { processed, results } = await this.solanaTxVerifierService.triggerProcessing();
+    return { success: true, processed, results };
+  }
+
+  /**
    * Process ALL pending operations
    */
   @Post('process-all')
@@ -99,12 +119,14 @@ export class CronController {
     lottery: { processed: number; results: LotteryProcessingResult[] };
     claimCompanions: { processed: number; results: ClaimCompanionResult[] };
     swaps: { processed: number; results: SwapProcessingResult[] };
+    solanaTxs: { processed: number; results: TxVerifierResult[] };
   }> {
-    const [intents, lottery, claimCompanions, swaps] = await Promise.all([
+    const [intents, lottery, claimCompanions, swaps, solanaTxs] = await Promise.all([
       this.claimProcessorService.triggerProcessing(),
       this.lotteryProcessorService.triggerProcessing(),
       this.claimCompanionProcessorService.triggerProcessing(),
       this.swapProcessorService.triggerProcessing(),
+      this.solanaTxVerifierService.triggerProcessing(),
     ]);
 
     return {
@@ -114,6 +136,7 @@ export class CronController {
       lottery,
       claimCompanions,
       swaps,
+      solanaTxs,
     };
   }
 
