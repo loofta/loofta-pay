@@ -29,6 +29,11 @@ export type PerPrivateTransferOptions = {
   onProgress?: (p: PerTransferProgress) => void;
   /** Informational (e.g. logging). */
   isBurnerRecipient?: boolean;
+  /**
+   * Called immediately after sendRawTransaction returns a signature, before confirmation polling.
+   * Use this to persist the signature to the backend so it can be recovered if RPC polling fails.
+   */
+  onSignature?: (signature: string) => void | Promise<void>;
 };
 
 /**
@@ -42,7 +47,7 @@ export function usePerPrivateTransfer() {
 
   const transfer = useCallback(
     async (wallet: Wallet, options: PerPrivateTransferOptions): Promise<string> => {
-      const { privyUserId, accessToken, claimId, sendPaymentId, onProgress, isBurnerRecipient } = options;
+      const { privyUserId, accessToken, claimId, sendPaymentId, onProgress, isBurnerRecipient, onSignature } = options;
       if (!privyUserId?.trim()) {
         throw new Error("Log in to send a private transfer.");
       }
@@ -171,7 +176,18 @@ export function usePerPrivateTransfer() {
         throw e;
       }
 
-      await waitForSignatureConfirmation(broadcastConn, signature, 120_000, 1500, "privateTransfer");
+      // Persist the signature immediately — before confirmation polling — so the backend
+      // can recover the payment if RPC polling times out or fails.
+      try {
+        await onSignature?.(signature);
+      } catch (e) {
+        console.warn("[PrivatePay] onSignature callback failed (non-fatal):", e);
+      }
+
+      // For ephemeral (MagicBlock PER) transactions, the tx settles on the base Solana chain.
+      // Poll the base connection as fallback in case the ephemeral RPC doesn't index statuses.
+      const fallbackConn = txData.sendTo === "ephemeral" ? connection : undefined;
+      await waitForSignatureConfirmation(broadcastConn, signature, 120_000, 1500, "privateTransfer", fallbackConn);
       const explorerUrl = `https://explorer.solana.com/tx/${signature}?cluster=${apiCluster === "mainnet" ? "mainnet-beta" : "devnet"}`;
       console.info(`[PrivatePay] ✅ Confirmed | sig=${signature} | ${explorerUrl}`);
 

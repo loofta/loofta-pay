@@ -1651,6 +1651,11 @@ export class ClaimsService {
     if (extra?.paidWithChain) {
       updateData.paid_with_chain = extra.paidWithChain;
     }
+
+    // Persist the transaction signature for audit and recovery
+    if (extra?.txHash) {
+      updateData.sender_tx_hash = extra.txHash;
+    }
     
     const { data, error } = await this.supabaseService.claims
       .update(updateData)
@@ -1665,6 +1670,37 @@ export class ClaimsService {
 
     this.logger.log(`Updated claim ${id} status to ${effectiveStatus}${extra?.isPrivate ? ' (private)' : ''}`);
     return data;
+  }
+
+  /**
+   * Returns claims that are PRIVATE_TRANSFER_PENDING with a saved sender_tx_hash.
+   * Used by the cron verifier to poll on-chain and auto-upgrade to SUCCESS.
+   */
+  async getPendingTxHashClaims(): Promise<{ id: string; sender_tx_hash: string; created_at: string }[]> {
+    const { data, error } = await this.supabaseService.claims
+      .select('id, sender_tx_hash, created_at')
+      .eq('status', 'PRIVATE_TRANSFER_PENDING')
+      .not('sender_tx_hash', 'is', null);
+    if (error) {
+      this.logger.error('Failed to query pending tx hash claims:', error);
+      return [];
+    }
+    return (data || []).filter((c) => !!c.sender_tx_hash) as { id: string; sender_tx_hash: string; created_at: string }[];
+  }
+
+  /**
+   * Save the broadcast transaction signature immediately after sendRawTransaction, before
+   * confirmation polling completes. Enables recovery if the RPC polling times out.
+   */
+  async saveBroadcastTxHash(id: string, txHash: string): Promise<void> {
+    const { error } = await this.supabaseService.claims
+      .update({ sender_tx_hash: txHash })
+      .eq('id', id);
+    if (error) {
+      this.logger.error(`Failed to save broadcast tx hash for claim ${id}:`, error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+    this.logger.log(`Saved broadcast tx hash for claim ${id}: ${txHash.slice(0, 12)}...`);
   }
 
   /**
