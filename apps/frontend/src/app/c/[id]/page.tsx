@@ -3181,11 +3181,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         const requestedAmount = parseFloat(claim?.amount || "0");
                         const isUSDCSelected = selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain;
 
-                        // Estimate gross-up for private payments (0.002 SOL gas + 0.1% MagicBlock fee)
+                        // Estimate gross-up: 0.2% (10 bps MagicBlock + 10 bps Loofta) + 0.002 SOL gas at ~$170 with 20% buffer
                         const estimatePrivateTotal = (usd: number) => {
                           const net = Math.round(usd * 1_000_000);
                           const gas = Math.ceil(0.002 * 170 * 1.20 * 1_000_000);
-                          const gross = Math.ceil(((net + gas) * 10_000) / (10_000 - 10));
+                          const gross = Math.ceil(((net + gas) * 10_000) / (10_000 - 20));
                           return { total: gross / 1_000_000, fee: (gross - net) / 1_000_000 };
                         };
 
@@ -3200,7 +3200,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   <span className="font-semibold font-sans text-gray-900">${requestedAmount.toFixed(2)}</span>
                                 </div>
                                 <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">MagicBlock fee (0.1% + gas)</span>
+                                  <span className="text-gray-600">Privacy fee (0.2%)</span>
                                   <span className="font-medium text-gray-700">~${fee.toFixed(2)}</span>
                                 </div>
                                 <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
@@ -3361,9 +3361,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       ) : selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain ? (
                         (() => {
                           const amt = parseFloat(claim?.amount || "0") || 0;
-                          const gas = Math.ceil(0.002 * 170 * 1.20 * 1_000_000);
                           const net = Math.round(amt * 1_000_000);
-                          const gross = Math.ceil(((net + gas) * 10_000) / (10_000 - 10));
+                          const gas = Math.ceil(0.002 * 170 * 1.20 * 1_000_000);
+                          const gross = Math.ceil(((net + gas) * 10_000) / (10_000 - 20));
                           const fee = (gross - net) / 1_000_000;
                           const total = gross / 1_000_000;
                           return (
@@ -3375,7 +3375,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   <span className="font-semibold text-gray-900">${amt.toFixed(2)}</span>
                                 </div>
                                 <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">MagicBlock fee (0.1% + gas)</span>
+                                  <span className="text-gray-600">Privacy fee (0.2%)</span>
                                   <span className="font-medium text-gray-700">~${fee.toFixed(2)}</span>
                                 </div>
                                 <div className="pt-2 border-t border-gray-200 flex items-center justify-between">

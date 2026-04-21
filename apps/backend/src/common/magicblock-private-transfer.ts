@@ -9,14 +9,16 @@ const log = new Logger('MagicblockPrivateTransfer');
 
 /**
  * MagicBlock pricing (Solana Mainnet): fixed 0.002 SOL + 0.1% volume fee deducted from the transferred amount.
- * We gross up the sender's amount to cover both:
- *   1. MagicBlock's 0.1% volume fee  → recipient gets exact claimed amount
- *   2. Our sponsored 0.002 SOL gas fee converted to USDC → Loofta recoups gas cost
+ * Loofta charges an additional 0.1% (10 bps) volume fee + recovers the 0.002 SOL gas cost converted to USDC.
+ * The gas conversion uses a 20% buffer to cover SOL price moves between calculation and settlement.
+ * Recipient always receives the exact requested amount.
  */
-export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // 0.1%
+export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // 0.1% — deducted by MagicBlock
+export const LOOFTA_VOLUME_FEE_BPS = 10;     // 0.1% — Loofta protocol fee
+export const TOTAL_FEE_BPS = MAGICBLOCK_VOLUME_FEE_BPS + LOOFTA_VOLUME_FEE_BPS; // 0.2%
 export const MAGICBLOCK_SPONSORED_GAS_SOL = 0.002;
-/** 20% buffer on top of gas fee to cover SOL price moves between calculation and settlement. */
-const GAS_FEE_BUFFER_PCT = 1.20;
+/** 20% buffer on gas fee to cover SOL price moves between calculation and settlement. */
+export const GAS_FEE_BUFFER_PCT = 1.20;
 /** Conservative SOL fallback price used when the price API is unavailable. */
 const SOL_PRICE_FALLBACK_USD = 180;
 /** Cache TTL: 60 seconds — price doesn't need to be real-time for fee estimation. */
@@ -49,14 +51,15 @@ export async function fetchSolPriceUsd(): Promise<number> {
 }
 
 /**
- * Returns the gross USDC base units the sender must transfer so that after MagicBlock's 0.1% cut:
- *   - Recipient gets exactly `netBaseUnits`
- *   - Loofta recoups the 0.002 SOL gas fee (buffered by 20% for price volatility)
+ * Returns the gross USDC base units the sender must transfer so that after:
+ *   - MagicBlock's 0.1% volume fee
+ *   - Loofta's 0.1% volume fee
+ *   - 0.002 SOL gas fee (buffered 20%) converted to USDC
+ * …the recipient receives exactly `netBaseUnits`.
  */
 export function grossUpForMagicblockFee(netBaseUnits: number, solPriceUsd: number): number {
   const gasFeeBaseUnits = Math.ceil(MAGICBLOCK_SPONSORED_GAS_SOL * solPriceUsd * GAS_FEE_BUFFER_PCT * 1_000_000);
-  // Gross up so that after MagicBlock's cut, destination receives net + gas fee
-  return Math.ceil(((netBaseUnits + gasFeeBaseUnits) * 10_000) / (10_000 - MAGICBLOCK_VOLUME_FEE_BPS));
+  return Math.ceil(((netBaseUnits + gasFeeBaseUnits) * 10_000) / (10_000 - TOTAL_FEE_BPS));
 }
 
 /**

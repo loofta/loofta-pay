@@ -150,11 +150,10 @@ export default function Home() {
       answer: (
         <>
           <p className="mb-3 last:mb-0">
-            Standard USDC payments on Solana are <span className="font-medium text-slate-300">free</span> — gas is sponsored by Loofta Pay.
+            Private payments on Loofta Pay carry a flat <span className="font-medium text-slate-300">0.2%</span> fee charged to the sender — <span className="font-medium text-slate-300">0.1%</span> goes to MagicBlock&apos;s privacy infrastructure and <span className="font-medium text-slate-300">0.1%</span> to Loofta, which covers the sponsored gas. The recipient always receives the exact amount requested.
           </p>
           <p className="mb-0">
-            Private payments use MagicBlock&apos;s infrastructure and include a small fee charged to the <span className="font-medium text-slate-300">sender</span>:{" "}
-            <span className="font-medium text-slate-300">0.002 SOL</span> fixed fee + <span className="font-medium text-slate-300">0.1%</span> of the transfer amount. The recipient always receives the exact amount requested.
+            Compared to other privacy tools on Solana (Umbra, Privacy Cash, Houdini Swap) which charge 0.4%–4.4%+ at small amounts, Loofta&apos;s flat 0.2% is consistently the lowest across all transfer sizes.
           </p>
         </>
       ),
