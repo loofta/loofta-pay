@@ -9,12 +9,54 @@ const log = new Logger('MagicblockPrivateTransfer');
 
 /**
  * MagicBlock pricing (Solana Mainnet): fixed 0.002 SOL + 0.1% volume fee deducted from the transferred amount.
- * Gross up the USDC amount so the recipient gets the exact claimed value and the sender absorbs the fee.
+ * We gross up the sender's amount to cover both:
+ *   1. MagicBlock's 0.1% volume fee  → recipient gets exact claimed amount
+ *   2. Our sponsored 0.002 SOL gas fee converted to USDC → Loofta recoups gas cost
  */
 export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // 0.1%
+export const MAGICBLOCK_SPONSORED_GAS_SOL = 0.002;
+/** 20% buffer on top of gas fee to cover SOL price moves between calculation and settlement. */
+const GAS_FEE_BUFFER_PCT = 1.20;
+/** Conservative SOL fallback price used when the price API is unavailable. */
+const SOL_PRICE_FALLBACK_USD = 180;
+/** Cache TTL: 60 seconds — price doesn't need to be real-time for fee estimation. */
+const SOL_PRICE_CACHE_TTL_MS = 60_000;
 
-export function grossUpForMagicblockFee(netBaseUnits: number): number {
-  return Math.ceil((netBaseUnits * 10_000) / (10_000 - MAGICBLOCK_VOLUME_FEE_BPS));
+let _solPriceCached: number | null = null;
+let _solPriceCachedAt = 0;
+
+/** Fetch current SOL/USD price from Jupiter. Caches result for 60s. Falls back to a conservative estimate on error. */
+export async function fetchSolPriceUsd(): Promise<number> {
+  const now = Date.now();
+  if (_solPriceCached !== null && now - _solPriceCachedAt < SOL_PRICE_CACHE_TTL_MS) {
+    return _solPriceCached;
+  }
+  try {
+    const res = await fetch(
+      'https://lite-api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112',
+      { signal: AbortSignal.timeout(3_000) },
+    );
+    const data = await res.json() as { data?: { So11111111111111111111111111111111111111112?: { price?: string } } };
+    const price = Number(data?.data?.['So11111111111111111111111111111111111111112']?.price);
+    if (Number.isFinite(price) && price > 0) {
+      _solPriceCached = price;
+      _solPriceCachedAt = now;
+      return price;
+    }
+  } catch { /* fall through to fallback */ }
+  log.warn(`fetchSolPriceUsd: Jupiter price API failed — using fallback $${SOL_PRICE_FALLBACK_USD}`);
+  return SOL_PRICE_FALLBACK_USD;
+}
+
+/**
+ * Returns the gross USDC base units the sender must transfer so that after MagicBlock's 0.1% cut:
+ *   - Recipient gets exactly `netBaseUnits`
+ *   - Loofta recoups the 0.002 SOL gas fee (buffered by 20% for price volatility)
+ */
+export function grossUpForMagicblockFee(netBaseUnits: number, solPriceUsd: number): number {
+  const gasFeeBaseUnits = Math.ceil(MAGICBLOCK_SPONSORED_GAS_SOL * solPriceUsd * GAS_FEE_BUFFER_PCT * 1_000_000);
+  // Gross up so that after MagicBlock's cut, destination receives net + gas fee
+  return Math.ceil(((netBaseUnits + gasFeeBaseUnits) * 10_000) / (10_000 - MAGICBLOCK_VOLUME_FEE_BPS));
 }
 
 /**

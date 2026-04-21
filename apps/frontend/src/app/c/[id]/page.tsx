@@ -3181,8 +3181,16 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         const requestedAmount = parseFloat(claim?.amount || "0");
                         const isUSDCSelected = selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain;
 
-                        // If requiresPrivate is true, recipient pays fees - payer pays amount (payment FREE)
+                        // Estimate gross-up for private payments (0.002 SOL gas + 0.1% MagicBlock fee)
+                        const estimatePrivateTotal = (usd: number) => {
+                          const net = Math.round(usd * 1_000_000);
+                          const gas = Math.ceil(0.002 * 170 * 1.20 * 1_000_000);
+                          const gross = Math.ceil(((net + gas) * 10_000) / (10_000 - 10));
+                          return { total: gross / 1_000_000, fee: (gross - net) / 1_000_000 };
+                        };
+
                         if (requiresPrivate && isUSDCSelected) {
+                          const { total, fee } = estimatePrivateTotal(requestedAmount);
                           return (
                             <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                               <div className="text-md font-medium font-sans text-gray-700 mb-2">Payment breakdown</div>
@@ -3192,19 +3200,19 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   <span className="font-semibold font-sans text-gray-900">${requestedAmount.toFixed(2)}</span>
                                 </div>
                                 <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Fee</span>
-                                  <span className="font-medium text-green-600">FREE</span>
+                                  <span className="text-gray-600">MagicBlock fee (0.1% + gas)</span>
+                                  <span className="font-medium text-gray-700">~${fee.toFixed(2)}</span>
                                 </div>
                                 <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                                   <span className="font-medium font-sans text-md text-gray-900">Total to pay (USDC)</span>
-                                  <span className="font-semibold font-sans text-lg text-gray-900">${requestedAmount.toFixed(2)}</span>
+                                  <span className="font-semibold font-sans text-lg text-gray-900">~${total.toFixed(2)}</span>
                                 </div>
                               </div>
+                              <p className="mt-2 text-xs text-gray-400">Fee estimate — final amount depends on live SOL price.</p>
                             </div>
                           );
                         }
 
-                        // Optional private payment - payer covers (payment FREE)
                         if (isUSDCSelected && !requiresPrivate) {
                           return (
                             <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
@@ -3216,7 +3224,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                 </div>
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-600">Fee</span>
-                                  <span className="font-medium text-green-600">FREE</span>
+                                  <span className="font-medium text-gray-700">$0.00 <span className="text-gray-400 font-normal">(gas sponsored)</span></span>
                                 </div>
                                 <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                                   <span className="font-medium text-gray-900">Total to pay (USDC)</span>
@@ -3351,23 +3359,34 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           </div>
                         </motion.div>
                       ) : selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain ? (
-                        <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                          <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
-                          <div className="space-y-1.5 text-sm">
-                            <div className="flex items-center justify-between">
-                              <span className="text-gray-600">Amount to recipient</span>
-                              <span className="font-semibold text-gray-900">${(parseFloat(claim?.amount || "0") || 0).toFixed(2)}</span>
+                        (() => {
+                          const amt = parseFloat(claim?.amount || "0") || 0;
+                          const gas = Math.ceil(0.002 * 170 * 1.20 * 1_000_000);
+                          const net = Math.round(amt * 1_000_000);
+                          const gross = Math.ceil(((net + gas) * 10_000) / (10_000 - 10));
+                          const fee = (gross - net) / 1_000_000;
+                          const total = gross / 1_000_000;
+                          return (
+                            <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                              <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
+                              <div className="space-y-1.5 text-sm">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-gray-600">Amount to recipient</span>
+                                  <span className="font-semibold text-gray-900">${amt.toFixed(2)}</span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-gray-600">MagicBlock fee (0.1% + gas)</span>
+                                  <span className="font-medium text-gray-700">~${fee.toFixed(2)}</span>
+                                </div>
+                                <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
+                                  <span className="font-medium text-gray-900">Total to pay (USDC)</span>
+                                  <span className="font-semibold text-lg text-gray-900">~${total.toFixed(2)}</span>
+                                </div>
+                              </div>
+                              <p className="mt-2 text-xs text-gray-400">Fee estimate — final amount depends on live SOL price.</p>
                             </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-gray-600">Fee</span>
-                              <span className="font-medium text-green-600">FREE</span>
-                            </div>
-                            <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
-                              <span className="font-medium text-gray-900">Total to pay (USDC)</span>
-                              <span className="font-semibold text-lg text-gray-900">${(parseFloat(claim?.amount || "0") || 0).toFixed(2)}</span>
-                            </div>
-                          </div>
-                        </div>
+                          );
+                        })()
                       ) : null}
                     </>
                   )}
