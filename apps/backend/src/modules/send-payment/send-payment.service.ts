@@ -124,6 +124,7 @@ export class SendPaymentService {
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
     const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
+    this.logger.log(`[SendPayment] amount=${amountUsd} baseUnits=${baseUnits}`);
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
