@@ -6,7 +6,7 @@ import { isNonMainnetCluster } from "@/lib/solanaCluster";
 
 export async function POST(request: Request) {
   try {
-    const { amount, toSel, recipient, userId } = await request.json();
+    const { amount, toSel, recipient, userId, description } = await request.json();
     if (!amount || !toSel?.symbol || !toSel?.chain || !recipient) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
@@ -22,6 +22,7 @@ export async function POST(request: Request) {
         creator_email: null,
         status: "OPEN",
         is_devnet: isNonMainnetCluster(),
+        description: description ? String(description).slice(0, 1000) : null,
       })
       .select("id")
       .single();
