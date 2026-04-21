@@ -17,7 +17,7 @@ export const MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS = 600_000;
 export const MAGICBLOCK_PRIVATE_DEVNET_MIN_DELAY_MS = 30_000;
 export const MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS = MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS;
 
-export function magicblockPrivateDelayForCluster(cluster: 'devnet' | 'mainnet'): {
+export function magicblockPrivateDelayForCluster(cluster: 'devnet' | 'mainnet' | 'localhost'): {
   minDelayMs: string;
   maxDelayMs: string;
 } {
@@ -47,7 +47,7 @@ export async function requestMagicblockPrivateTransfer(params: {
   to: string;
   mint: string;
   amount: number;
-  cluster: 'devnet' | 'mainnet';
+  cluster: 'devnet' | 'mainnet' | 'localhost';
 }): Promise<MagicblockPrivateTransferTxResponse> {
   const { minDelayMs, maxDelayMs } = magicblockPrivateDelayForCluster(params.cluster);
   const body = {
