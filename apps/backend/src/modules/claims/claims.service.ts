@@ -22,6 +22,7 @@ import { SolanaSponsorService } from './solana-sponsor.service';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 import {
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
+  grossUpForMagicblockFee,
   type MagicblockPrivateTransferTxResponse,
 } from '@/common/magicblock-private-transfer';
 
@@ -680,13 +681,14 @@ export class ClaimsService {
       throw new BadRequestException('Invalid claim amount');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
+    const grossUnits = grossUpForMagicblockFee(baseUnits);
     const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
-    this.logger.log(`[PrivatePay] claim=${claimId} amount=${amountUsd} baseUnits=${baseUnits}`);
+    this.logger.log(`[PrivatePay] claim=${claimId} amount=${amountUsd} net=${baseUnits} gross=${grossUnits}`);
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
       mint: this.usdcMint.toBase58(),
-      amount: baseUnits,
+      amount: grossUnits,
       cluster,
     });
 
