@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { grossUpForMagicblockFee, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import { fetchSolPriceUsd, grossUpForMagicblockFee, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
@@ -123,9 +123,10 @@ export class SendPaymentService {
       throw new BadRequestException('Invalid amount');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
-    const grossUnits = grossUpForMagicblockFee(baseUnits);
+    const solPrice = await fetchSolPriceUsd();
+    const grossUnits = grossUpForMagicblockFee(baseUnits, solPrice);
     const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
-    this.logger.log(`[SendPayment] amount=${amountUsd} net=${baseUnits} gross=${grossUnits}`);
+    this.logger.log(`[SendPayment] amount=${amountUsd} net=${baseUnits} gross=${grossUnits} solPrice=${solPrice}`);
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
