@@ -63,14 +63,18 @@ export function grossUpForMagicblockFee(netBaseUnits: number, solPriceUsd: numbe
 }
 
 /**
- * Devnet: MagicBlock applies a random delivery delay in [min, max] so settlement time is not exact on-chain.
- * Mainnet: delays off (0–0) for faster settlement unless we enable them later.
+ * Delivery delays break timing correlation between send and receive events.
+ * API constraint: `maxDelayMs` must be ≤ 600_000 (10 minutes).
  *
- * API constraint: `maxDelayMs` must be ≤ 600_000 (10 minutes) — see MagicBlock Payments `/v1/spl/transfer`.
+ * Mainnet: 10s–60s random window — enough to break timing analysis, short enough UX is fine.
+ * Devnet:  30s–600s (wider window for testing the full delay range).
+ * Localhost: no delay.
  */
 export const MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS = 600_000;
 export const MAGICBLOCK_PRIVATE_DEVNET_MIN_DELAY_MS = 30_000;
 export const MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS = MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS;
+export const MAGICBLOCK_PRIVATE_MAINNET_MIN_DELAY_MS = 10_000;  // 10s
+export const MAGICBLOCK_PRIVATE_MAINNET_MAX_DELAY_MS = 60_000;  // 60s
 
 export function magicblockPrivateDelayForCluster(cluster: 'devnet' | 'mainnet' | 'localhost'): {
   minDelayMs: string;
@@ -80,6 +84,12 @@ export function magicblockPrivateDelayForCluster(cluster: 'devnet' | 'mainnet' |
     return {
       minDelayMs: String(MAGICBLOCK_PRIVATE_DEVNET_MIN_DELAY_MS),
       maxDelayMs: String(MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS),
+    };
+  }
+  if (cluster === 'mainnet') {
+    return {
+      minDelayMs: String(MAGICBLOCK_PRIVATE_MAINNET_MIN_DELAY_MS),
+      maxDelayMs: String(MAGICBLOCK_PRIVATE_MAINNET_MAX_DELAY_MS),
     };
   }
   return { minDelayMs: '0', maxDelayMs: '0' };
