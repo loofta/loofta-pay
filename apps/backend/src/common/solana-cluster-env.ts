@@ -14,3 +14,12 @@ export function isSolanaDevnetFromConfig(configService: ConfigService): boolean 
   if (rpc.includes('devnet') || rpc.includes('testnet')) return true;
   return false;
 }
+
+export function isSolanaLocalhostFromConfig(configService: ConfigService): boolean {
+  const cluster =
+    configService.get<string>('SOLANA_CLUSTER')?.trim() ||
+    configService.get<string>('NEXT_PUBLIC_SOLANA_CLUSTER')?.trim();
+  if (cluster === 'localnet' || cluster === 'localhost') return true;
+  const rpc = (configService.get<string>('SOLANA_RPC_URL') || '').toLowerCase();
+  return rpc.includes('localhost') || rpc.includes('127.0.0.1');
+}

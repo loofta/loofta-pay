@@ -22,7 +22,7 @@ import {
   getAccount,
 } from '@solana/spl-token';
 import { TransactionMessage, VersionedTransaction } from '@solana/web3.js';
-import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
+import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const bs58Module = require('bs58');
 const bs58 = bs58Module?.default ?? bs58Module;
@@ -123,7 +123,7 @@ export class SendPaymentService {
       throw new BadRequestException('Invalid amount');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
-    const cluster = isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
+    const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,

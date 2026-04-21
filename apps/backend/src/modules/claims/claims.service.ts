@@ -19,7 +19,7 @@ import { Claim, ClaimIntent, ClaimStatus } from './entities/claim.entity';
 import { UsersService } from '../users/users.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
-import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
+import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 import {
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
   type MagicblockPrivateTransferTxResponse,
@@ -680,7 +680,7 @@ export class ClaimsService {
       throw new BadRequestException('Invalid claim amount');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
-    const cluster = isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
+    const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,

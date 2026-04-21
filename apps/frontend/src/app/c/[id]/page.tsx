@@ -2354,7 +2354,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                 </div>
                 <ClaimDescriptionMessageBox description={claim?.description} />
-                <div className="mb-6 p-3 rounded-lg bg-gray-50 border border-gray-200 space-y-2">
+                <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200 space-y-2">
                   {claim?.created_at && (
                     <div className="flex items-center justify-between">
                       <span className="text-gray-600 text-sm">Created</span>
@@ -2370,6 +2370,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                   )}
                 </div>
+                {claim?.is_private && (
+                  <div className="mb-6 flex items-start gap-3 rounded-xl border border-orange-500/20 bg-gradient-to-b from-white/[0.08] to-white/[0.03] backdrop-blur-sm px-4 py-3 shadow-[0_0_16px_0_rgba(255,80,0,0.12)]">
+                    <span className="mt-0.5 text-base">🔒</span>
+                    <p className="text-sm text-white/70 leading-snug">
+                      This is a private payment. It may take <span className="font-medium text-white/90">a few minutes</span> for the balance to reflect and become available to withdraw.
+                    </p>
+                  </div>
+                )}
                 {isClaimPageLocalhost &&
                   !!(claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.claim_burner_address) && (
                     <div className="mt-4 rounded-xl border border-amber-300/60 bg-amber-50/40 p-4">
