@@ -170,9 +170,9 @@ export default function HistoryPage() {
       return fetchPaymentHistory(userId!, token);
     },
     enabled: Boolean(authenticated && userId),
-    staleTime: 0,
+    staleTime: 30_000,
     gcTime: PAYMENT_HISTORY_GC_MS,
-    refetchOnMount: "always",
+    refetchOnMount: true,
     refetchOnWindowFocus: true,
   });
   const sent = data?.sent ?? [];
