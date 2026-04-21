@@ -8,6 +8,16 @@ import { Logger } from '@nestjs/common';
 const log = new Logger('MagicblockPrivateTransfer');
 
 /**
+ * MagicBlock pricing (Solana Mainnet): fixed 0.002 SOL + 0.1% volume fee deducted from the transferred amount.
+ * Gross up the USDC amount so the recipient gets the exact claimed value and the sender absorbs the fee.
+ */
+export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // 0.1%
+
+export function grossUpForMagicblockFee(netBaseUnits: number): number {
+  return Math.ceil((netBaseUnits * 10_000) / (10_000 - MAGICBLOCK_VOLUME_FEE_BPS));
+}
+
+/**
  * Devnet: MagicBlock applies a random delivery delay in [min, max] so settlement time is not exact on-chain.
  * Mainnet: delays off (0–0) for faster settlement unless we enable them later.
  *

@@ -681,6 +681,7 @@ export class ClaimsService {
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
     const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
+    this.logger.log(`[PrivatePay] claim=${claimId} amount=${amountUsd} baseUnits=${baseUnits}`);
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
