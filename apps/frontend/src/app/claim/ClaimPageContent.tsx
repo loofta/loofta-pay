@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, type SVGProps, useRef, useEffect } from "react";
+import React, { useState, useMemo, type SVGProps, useRef, useEffect } from "react";
 import Image from "next/image";
 import { useAuth } from "@/hooks/useAuth";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
@@ -19,6 +19,8 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { useRouter, usePathname } from "next/navigation";
 import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
+import { isNonMainnetCluster } from "@/lib/solanaCluster";
+import { MessageInput } from "@/components/MessageInput";
 
 /** Inline Loofta logo SVG (matches pay modal). */
 function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
@@ -50,6 +52,7 @@ async function createClaim(formData: {
   recipient: string;
   userId?: string;
   isPrivate?: boolean;
+  description?: string;
 }): Promise<{ id: string; link: string }> {
   const r = await fetch("/api/claims/create", {
     method: "POST",
@@ -90,13 +93,21 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
     if (isStandaloneClaim) router.replace("/?tab=receive&create=1");
   }, [isStandaloneClaim, router]);
 
-  const { data: tokens = [] } = useTokensQuery();
+  const { data: rawTokens = [] } = useTokensQuery();
+  const tokens = useMemo(
+    () => isNonMainnetCluster()
+      ? rawTokens.filter(t => ['solana', 'sol'].includes(t.chain?.toLowerCase() ?? '') && t.symbol?.toUpperCase() === 'USDC')
+      : rawTokens,
+    [rawTokens],
+  );
   const [toSel, setToSel] = useState<TokenSelection | undefined>(undefined);
   const [amount, setAmount] = useState<string>("");
   const [recipient, setRecipient] = useState<string>("");
   const [recipientPrefilled, setRecipientPrefilled] = useState(false);
   const [receiveDestination, setReceiveDestination] = useState<"loofta" | "other">("loofta");
   const [creating, setCreating] = useState(false);
+  const [message, setMessage] = useState<string>("");
+  const [gifUrl, setGifUrl] = useState<string>("");
   const [amountMode, setAmountMode] = useState<"USD" | "TOKEN">("USD");
   const [showConfetti, setShowConfetti] = useState<boolean>(false);
   const { isPrivateMode, setIsPrivateMode, createdLink, setCreatedLink, clearLink, hydrated: claimHydrated } = useClaimStore();
@@ -280,12 +291,14 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         const usd = parseFloat(amount) * price;
         amountUsdStr = toFixedTrim(usd, 2);
       }
+      const combinedDescription = [message.trim(), gifUrl].filter(Boolean).join(" ").trim() || undefined;
       const res = await createClaim({
         amount: amountUsdStr,
         toSel: { symbol: finalToSel.symbol, chain: finalToSel.chain },
         recipient: finalRecipient,
         userId: authenticated ? userId : undefined,
         isPrivate: PRIVATE_PAYMENT_COMING_SOON ? false : PRIVATE_PAYMENT_ENABLED || isPrivateMode,
+        description: combinedDescription,
       });
       setCreatedLink(res.link);
       setShowConfetti(true);
@@ -725,7 +738,8 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                             onClick={() => {
                               setReceiveDestination("other");
                               setRecipient("");
-                              setToSel(undefined);
+                              const usdcSol = tokens.find(t => t.symbol?.toUpperCase() === 'USDC' && ['solana', 'sol'].includes(t.chain?.toLowerCase() ?? ''));
+                              setToSel(usdcSol ? { symbol: usdcSol.symbol, chain: usdcSol.chain } : undefined);
                             }}
                             className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "other" ? "border-orange-400/50 bg-orange-500/20" : "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20"}`}
                           >
@@ -886,6 +900,20 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                       </div>
                     )}
 
+                    {/* Message + GIF */}
+                    <div>
+                      <label className="text-gray-600 mb-1 block text-sm">Message <span className="text-gray-400">(optional)</span></label>
+                      <MessageInput
+                        value={message}
+                        onChange={setMessage}
+                        placeholder="Add a note…"
+                        maxLength={300}
+                        gifUrl={gifUrl || null}
+                        onGifChange={(url) => setGifUrl(url ?? "")}
+                        className="mt-1 [&_input]:h-11 [&_input]:bg-white/5 [&_input]:border-white/10 [&_input]:text-white [&_input]:placeholder:text-slate-500"
+                      />
+                    </div>
+
                     {/* Create Button - same for standard and private */}
                     {authenticated && !showAccessRequested ? (
                       <GradientActionButton
@@ -903,10 +931,10 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         {!PRIVATE_PAYMENT_COMING_SOON && (isPrivateMode || PRIVATE_PAYMENT_ENABLED) ? (
                           <>
                             <ShieldIcon className="w-5 h-5" />
-                            Create private payment link
+                            Create payment link
                           </>
                         ) : (
-                          "Create Payment"
+                          "Create payment link"
                         )}
                       </GradientActionButton>
                     ) : (
