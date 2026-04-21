@@ -46,4 +46,14 @@ apps/frontend/.next
 
 # Claude Code
 .claude/
+.agents/
 claude-session.jsonl
+
+
+# Remotions
+apps/video/
+apps/video/*
+
+
+# Magicblock Logos
+Magicblock Logos/
