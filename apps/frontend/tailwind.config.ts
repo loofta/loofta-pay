@@ -20,15 +20,9 @@ const config = {
     extend: {
      
       fontFamily: {
-        sans: [
-          'Clash Display',
-          'sans-serif'
-        ],
-        display:  [
-          'Clash Grotesk',
-          'sans-serif'
-        ],
-       
+        sans: ['Clash Grotesk', 'sans-serif'],
+        display: ['Clash Display', 'sans-serif'],
+        grotesk: ['Clash Grotesk', 'sans-serif'],
       },
       colors: {
         border: "hsl(var(--border))",

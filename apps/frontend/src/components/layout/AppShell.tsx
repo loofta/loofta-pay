@@ -12,9 +12,11 @@ function ShellContent({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
-  const showBottomNav = !isCheckoutPage && (pathname === '/' || pathname === '/history' || pathname === '/settings' || pathname?.startsWith('/c/'));
-  const showMinimalHeader = !isCheckoutPage;
+  const isHomePage = pathname === '/home';
+  const showBottomNav = !isCheckoutPage && !isHomePage && (pathname === '/' || pathname === '/history' || pathname === '/settings' || pathname?.startsWith('/c/'));
+  const showMinimalHeader = !isCheckoutPage && !isHomePage;
   const showBanner = showMinimalHeader && !bannerDismissed;
+  const showFooter = !isCheckoutPage && !isHomePage;
   return (
     <>
       <UserSync />
@@ -50,7 +52,7 @@ function ShellContent({ children }: { children: ReactNode }) {
       <main className={showBottomNav ? "pb-20 md:pb-0" : undefined}>
         {children}
       </main>
-      {!isCheckoutPage && <Footer />}
+      {showFooter && <Footer />}
       {showBottomNav && <BottomNav />}
     </>
   );
