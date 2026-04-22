@@ -100,11 +100,10 @@ function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
 
   return (
     <header
-      className={`fixed inset-x-0 top-0 z-50 flex items-center justify-between transition-all duration-300 ${
-        scrolled
-          ? "border-b border-white/5 bg-[#0c0c0e]/70 px-8 py-3.5 backdrop-blur-xl"
-          : "border-b border-transparent px-10 py-5"
-      }`}
+      className={`fixed inset-x-0 top-0 z-50 flex items-center justify-between transition-all duration-300 ${scrolled
+        ? "border-b border-white/5 bg-[#0c0c0e]/70 px-8 py-3.5 backdrop-blur-xl"
+        : "border-b border-transparent px-10 py-5"
+        }`}
     >
       <div className="flex items-center gap-10">
         <Link href="/">
@@ -113,11 +112,11 @@ function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
         <nav className="hidden gap-1 md:flex">
           {([
             { label: "Pay & Receive", href: "#pay-receive" },
-            { label: "Features",      href: "#features" },
-            { label: "Privacy",       href: "#privacy" },
-            { label: "Earn",          href: "#earn" },
-            { label: "Business",      href: "#business" },
-            { label: "Stack",         href: "#stack" },
+            { label: "Features", href: "#features" },
+            { label: "Privacy", href: "#privacy" },
+            { label: "Earn", href: "#earn" },
+            { label: "Business", href: "#business" },
+            { label: "Stack", href: "#stack" },
           ] as const).map((item) => (
             <a
               key={item.label}
@@ -242,18 +241,18 @@ function HeroReceiptCard({
 
 function HeroStack({ mode }: { mode: Mode }) {
   const receiveCards: HeroCard[] = [
-    { amount: "$2,500", person: "Solana Foundation", sub: "Hackathon prize",   meta: "Congrats on winning Radar 🏆",     status: "RECEIVED", statusColor: "#34D399", time: "just now", avatarLetter: "◎", avatarBg: "linear-gradient(135deg, #14F195, #9945FF)" },
-    { amount: "$890",   person: "Stripe",             sub: "Payout · bank 🏦",  meta: "October subscriptions invoice",    status: "RECEIVED", statusColor: "#34D399", time: "18s ago",  avatarLetter: "S", avatarBg: "linear-gradient(135deg, #635BFF, #00D4FF)" },
-    { amount: "$75",    person: "@jpegmafia",         sub: "Tipped on X",       meta: "loved the logo redesign 🔥",       status: "RECEIVED", statusColor: "#34D399", time: "1m ago",   avatarLetter: "𝕏", avatarBg: "linear-gradient(135deg, #0F172A, #475569)" },
-    { amount: "€450",   person: "Helena Bauer 🇩🇪",   sub: "Paid from Revolut", meta: "Community manager — Week 42",      status: "RECEIVED", statusColor: "#34D399", time: "3m ago",   avatarLetter: "H", avatarBg: "linear-gradient(135deg, #3B82F6, #8B5CF6)" },
-    { amount: "$1,200", person: "Mirror.xyz",         sub: "Video collab on X", meta: "Sponsored post + edit",            status: "RECEIVED", statusColor: "#34D399", time: "5m ago",   avatarLetter: "M", avatarBg: "linear-gradient(135deg, #F59E0B, #EF4444)" },
+    { amount: "$2,500", person: "XYZ Foundation", sub: "Hackathon prize", meta: "Congrats on winning Radar 🏆", status: "RECEIVED", statusColor: "#34D399", time: "just now", avatarLetter: "◎", avatarBg: "linear-gradient(135deg, #14F195, #9945FF)" },
+    { amount: "$890", person: "Straipe", sub: "Payout · bank 🏦", meta: "October subscription", status: "RECEIVED", statusColor: "#34D399", time: "18s ago", avatarLetter: "S", avatarBg: "linear-gradient(135deg, #635BFF, #00D4FF)" },
+    { amount: "$75", person: "@jpegmafia", sub: "Tipped on X", meta: "loved your latest post 🔥", status: "RECEIVED", statusColor: "#34D399", time: "1m ago", avatarLetter: "𝕏", avatarBg: "linear-gradient(135deg, #0F172A, #475569)" },
+    { amount: "€450", person: "Helena Bauer 🇩🇪", sub: "Paid from Revolut", meta: "Community manager — Week 42", status: "RECEIVED", statusColor: "#34D399", time: "3m ago", avatarLetter: "H", avatarBg: "linear-gradient(135deg, #3B82F6, #8B5CF6)" },
+    { amount: "$1,200", person: "Mirror.xyz", sub: "Video collab on X", meta: "Sponsored post + edit", status: "RECEIVED", statusColor: "#34D399", time: "5m ago", avatarLetter: "M", avatarBg: "linear-gradient(135deg, #F59E0B, #EF4444)" },
   ];
   const sendCards: HeroCard[] = [
-    { amount: "€180",   person: "Léa Martin 🇫🇷",     sub: "Sent to Revolut",             meta: "Community mod bonus",              status: "SENT",    statusColor: "#60A5FA", time: "just now", avatarLetter: "L", avatarBg: "linear-gradient(135deg, #60A5FA, #3B82F6)" },
-    { amount: "$420",   person: "@motiondesigner",    sub: "Sent via X DM",               meta: "launch video — amazing work 🎬",   status: "SENT",    statusColor: "#60A5FA", time: "20s ago",  avatarLetter: "𝕏", avatarBg: "linear-gradient(135deg, #A855F7, #EC4899)" },
-    { amount: "£95",    person: "Tom Ellis 🇬🇧",      sub: "Sent to Wise",                meta: "logo redesign · round 2",          status: "SENT",    statusColor: "#60A5FA", time: "1m ago",   avatarLetter: "T", avatarBg: "linear-gradient(135deg, #14F195, #06B6D4)" },
-    { amount: "$1,500", person: "winner@radar.so",    sub: "Hackathon prize · unclaimed", meta: "🏆 Congrats! Claim within 7 days", status: "PENDING", statusColor: "#EAB308", time: "3m ago",   avatarLetter: "@", avatarBg: "linear-gradient(135deg, #F59E0B, #EF4444)" },
-    { amount: "$35",    person: "@mia",               sub: "Sent to Venmo",               meta: "coffee on me ☕",                  status: "SENT",    statusColor: "#60A5FA", time: "5m ago",   avatarLetter: "V", avatarBg: "linear-gradient(135deg, #3B82F6, #1E40AF)" },
+    { amount: "€180", person: "Léa Martin 🇫🇷", sub: "Sent to Revolut", meta: "Community mod bonus", status: "SENT", statusColor: "#60A5FA", time: "just now", avatarLetter: "L", avatarBg: "linear-gradient(135deg, #60A5FA, #3B82F6)" },
+    { amount: "$420", person: "@motiondesigner", sub: "Sent via X handle", meta: "launch video — amazing work 🎬", status: "SENT", statusColor: "#60A5FA", time: "20s ago", avatarLetter: "𝕏", avatarBg: "linear-gradient(135deg, #A855F7, #EC4899)" },
+    { amount: "£95", person: "Tom Ellis 🇬🇧", sub: "Sent to Wise", meta: "logo redesign · round 2", status: "SENT", statusColor: "#60A5FA", time: "1m ago", avatarLetter: "T", avatarBg: "linear-gradient(135deg, #14F195, #06B6D4)" },
+    { amount: "$1,500", person: "winner@radar.so", sub: "Hackathon prize · unclaimed", meta: "🏆 Congrats! Claim within 7 days", status: "PENDING", statusColor: "#EAB308", time: "3m ago", avatarLetter: "@", avatarBg: "linear-gradient(135deg, #F59E0B, #EF4444)" },
+    { amount: "$35", person: "@mia", sub: "Sent to Venmo", meta: "coffee on me ☕", status: "SENT", statusColor: "#60A5FA", time: "5m ago", avatarLetter: "V", avatarBg: "linear-gradient(135deg, #3B82F6, #1E40AF)" },
   ];
   const cards = mode === "send" ? sendCards : receiveCards;
 
@@ -432,11 +431,10 @@ function Hero({ onHowItWorks }: { onHowItWorks: () => void }) {
                 <button
                   key={o.k}
                   onClick={() => setMode(o.k)}
-                  className={`rounded-full px-[18px] py-2.5 transition-all duration-200 ${
-                    mode === o.k
-                      ? `text-white shadow-[0_10px_30px_-10px_rgba(255,19,1,0.5)] ${BRAND_GRADIENT}`
-                      : "text-slate-400"
-                  }`}
+                  className={`rounded-full px-[18px] py-2.5 transition-all duration-200 ${mode === o.k
+                    ? `text-white shadow-[0_10px_30px_-10px_rgba(255,19,1,0.5)] ${BRAND_GRADIENT}`
+                    : "text-slate-400"
+                    }`}
                 >
                   {o.label}
                 </button>
@@ -550,32 +548,32 @@ function Pill({ children, icon }: { children: React.ReactNode; icon?: React.Reac
 function Chains() {
   const payRow = [
     { name: "Ethereum", src: "/static/icons/network/ethereum.svg" },
-    { name: "Solana",   src: "/static/icons/network/solana.svg" },
-    { name: "Base",     src: "/static/icons/network/base.svg" },
+    { name: "Solana", src: "/static/icons/network/solana.svg" },
+    { name: "Base", src: "/static/icons/network/base.svg" },
     { name: "Arbitrum", src: "/static/icons/network/arbitrum.svg" },
-    { name: "BNB Chain",src: "/static/icons/network/bsc.svg" },
-    { name: "Avalanche",src: "/static/icons/network/avalanche.svg" },
-    { name: "Bitcoin",  src: "/static/icons/network/btc.svg" },
-    { name: "Cardano",  src: "/static/icons/network/cardano.svg" },
+    { name: "BNB Chain", src: "/static/icons/network/bsc.svg" },
+    { name: "Avalanche", src: "/static/icons/network/avalanche.svg" },
+    { name: "Bitcoin", src: "/static/icons/network/btc.svg" },
+    { name: "Cardano", src: "/static/icons/network/cardano.svg" },
     { name: "Dogecoin", src: "/static/icons/network/dogecoin.svg" },
   ];
   type ReceiveItem = { name: string; emoji?: string; src?: string };
   const receiveRow: ReceiveItem[] = [
-    { name: "USD",      emoji: "🇺🇸" },
-    { name: "EUR",      emoji: "🇪🇺" },
-    { name: "GBP",      emoji: "🇬🇧" },
-    { name: "JPY",      emoji: "🇯🇵" },
-    { name: "CAD",      emoji: "🇨🇦" },
-    { name: "AUD",      emoji: "🇦🇺" },
-    { name: "Revolut",  src: "/static/icons/apps/revolut.svg" },
-    { name: "Venmo",    src: "/static/icons/apps/venmo.svg" },
+    { name: "USD", emoji: "🇺🇸" },
+    { name: "EUR", emoji: "🇪🇺" },
+    { name: "GBP", emoji: "🇬🇧" },
+    { name: "JPY", emoji: "🇯🇵" },
+    { name: "CAD", emoji: "🇨🇦" },
+    { name: "AUD", emoji: "🇦🇺" },
+    { name: "Revolut", src: "/static/icons/apps/revolut.svg" },
+    { name: "Venmo", src: "/static/icons/apps/venmo.svg" },
     { name: "Cash App", src: "/static/icons/apps/cashapp.svg" },
-    { name: "Wise",     src: "/static/icons/apps/wise.svg" },
+    { name: "Wise", src: "/static/icons/apps/wise.svg" },
     { name: "Any bank", emoji: "🏦" },
-    { name: "USDC",     src: "/images/usdm.png" },
-    { name: "USDT",     src: "/images/usdt.svg" },
-    { name: "SOL",      src: "/static/icons/network/solana.svg" },
-    { name: "BTC",      src: "/static/icons/network/btc.svg" },
+    { name: "USDC", src: "/images/usdm.png" },
+    { name: "USDT", src: "/images/usdt.svg" },
+    { name: "SOL", src: "/static/icons/network/solana.svg" },
+    { name: "BTC", src: "/static/icons/network/btc.svg" },
   ];
   const pay = [...payRow, ...payRow, ...payRow];
   const rec = [...receiveRow, ...receiveRow, ...receiveRow];
@@ -777,9 +775,8 @@ function Privacy() {
                     <div key={k} className="flex justify-between font-grotesk text-[15px]">
                       <span className="text-slate-500">{k}</span>
                       <span
-                        className={`${color ?? "text-white"} ${
-                          k === "Amount" || k === "From" ? "font-mono" : ""
-                        } transition-all duration-300`}
+                        className={`${color ?? "text-white"} ${k === "Amount" || k === "From" ? "font-mono" : ""
+                          } transition-all duration-300`}
                         style={{ filter: blur ? "blur(3px)" : "none" }}
                       >
                         {v}
@@ -882,9 +879,8 @@ function Earn() {
               {["1D", "1W", "1M", "ALL"].map((t) => (
                 <button
                   key={t}
-                  className={`rounded-full px-3.5 py-1.5 font-grotesk text-[13px] transition-colors ${
-                    t === "1W" ? "bg-white/[0.08] text-white" : "text-slate-500 hover:text-white"
-                  }`}
+                  className={`rounded-full px-3.5 py-1.5 font-grotesk text-[13px] transition-colors ${t === "1W" ? "bg-white/[0.08] text-white" : "text-slate-500 hover:text-white"
+                    }`}
                 >
                   {t}
                 </button>
@@ -905,8 +901,8 @@ function Earn() {
 function Business() {
   const schedule = [
     { day: "TUE", date: "14", label: "Payroll · November", amt: "$42,800", status: "in 3 days", active: true },
-    { day: "FRI", date: "17", label: "Contractor batch",   amt: "$8,900",  status: "queued" },
-    { day: "MON", date: "20", label: "Mod bonuses",        amt: "€2,400",  status: "queued" },
+    { day: "FRI", date: "17", label: "Contractor batch", amt: "$8,900", status: "queued" },
+    { day: "MON", date: "20", label: "Mod bonuses", amt: "€2,400", status: "queued" },
   ];
 
   const recurringBars = [1, 1, 1, 1, 1, 0.7, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4];
@@ -920,46 +916,46 @@ function Business() {
     meta: string;
     opacity?: number;
   }> = [
-    {
-      icon: <Check className="h-[14px] w-[14px]" strokeWidth={2.5} />,
-      iconBg: "bg-emerald-400/15 text-emerald-400",
-      border: "border-emerald-400/25",
-      bg: "bg-emerald-400/[0.06]",
-      name: "Verified · Helena B.",
-      meta: "Passport 🇩🇪 · $2,500 released",
-    },
-    {
-      icon: <span className="text-sm">🪪</span>,
-      iconBg: "bg-yellow-500/15",
-      border: "border-yellow-500/25",
-      bg: "bg-yellow-500/[0.05]",
-      name: "Pending KYC · winner@...",
-      meta: "Funds held · claim in 7d",
-    },
-    {
-      icon: <span className="text-[13px]">⏳</span>,
-      iconBg: "bg-white/[0.06]",
-      border: "border-white/[0.06]",
-      bg: "bg-white/[0.02]",
-      name: "Awaiting review · Tom E.",
-      meta: "Submitted 2h ago",
-      opacity: 0.55,
-    },
-  ];
+      {
+        icon: <Check className="h-[14px] w-[14px]" strokeWidth={2.5} />,
+        iconBg: "bg-emerald-400/15 text-emerald-400",
+        border: "border-emerald-400/25",
+        bg: "bg-emerald-400/[0.06]",
+        name: "Verified · Helena B.",
+        meta: "Passport 🇩🇪 · $2,500 released",
+      },
+      {
+        icon: <span className="text-sm">🪪</span>,
+        iconBg: "bg-yellow-500/15",
+        border: "border-yellow-500/25",
+        bg: "bg-yellow-500/[0.05]",
+        name: "Pending KYC · winner@...",
+        meta: "Funds held · claim in 7d",
+      },
+      {
+        icon: <span className="text-[13px]">⏳</span>,
+        iconBg: "bg-white/[0.06]",
+        border: "border-white/[0.06]",
+        bg: "bg-white/[0.02]",
+        name: "Awaiting review · Tom E.",
+        meta: "Submitted 2h ago",
+        opacity: 0.55,
+      },
+    ];
 
   const invoiceRows = [
-    { label: "Design retainer",  amt: "$4,800" },
+    { label: "Design retainer", amt: "$4,800" },
     { label: "Additional scope", amt: "$1,200" },
-    { label: "Tax",              amt: "$540",  muted: true },
+    { label: "Tax", amt: "$540", muted: true },
   ];
 
   const bulkRows = [
     { flag: "🇩🇪", name: "Helena B.", method: "Revolut", amt: "€450" },
-    { flag: "🇫🇷", name: "Léa M.",    method: "USDC",    amt: "$380" },
-    { flag: "🇬🇧", name: "Tom E.",    method: "Wise",    amt: "£420" },
-    { flag: "🇺🇸", name: "Jordan K.", method: "Venmo",   amt: "$520" },
-    { flag: "🇯🇵", name: "Aiko T.",   method: "🏦 bank", amt: "¥62,000" },
-    { flag: "🇨🇦", name: "Marcus L.", method: "USDC",    amt: "$410" },
+    { flag: "🇫🇷", name: "Léa M.", method: "USDC", amt: "$380" },
+    { flag: "🇬🇧", name: "Tom E.", method: "Wise", amt: "£420" },
+    { flag: "🇺🇸", name: "Jordan K.", method: "Venmo", amt: "$520" },
+    { flag: "🇯🇵", name: "Aiko T.", method: "🏦 bank", amt: "¥62,000" },
+    { flag: "🇨🇦", name: "Marcus L.", method: "USDC", amt: "$410" },
   ];
 
   const features = [
@@ -972,21 +968,18 @@ function Business() {
           {schedule.map((r, i) => (
             <div
               key={i}
-              className={`flex items-center gap-3 rounded-[10px] px-3 py-2.5 ${
-                r.active
-                  ? "border border-[rgba(255,19,1,0.25)] bg-[rgba(255,19,1,0.08)]"
-                  : "border border-white/[0.05] bg-white/[0.03]"
-              }`}
+              className={`flex items-center gap-3 rounded-[10px] px-3 py-2.5 ${r.active
+                ? "border border-[rgba(255,19,1,0.25)] bg-[rgba(255,19,1,0.08)]"
+                : "border border-white/[0.05] bg-white/[0.03]"
+                }`}
             >
               <div
-                className={`flex h-9 w-9 flex-col items-center justify-center rounded-lg ${
-                  r.active ? BRAND_GRADIENT : "bg-white/[0.06]"
-                }`}
+                className={`flex h-9 w-9 flex-col items-center justify-center rounded-lg ${r.active ? BRAND_GRADIENT : "bg-white/[0.06]"
+                  }`}
               >
                 <div
-                  className={`font-grotesk text-[8px] font-semibold tracking-[0.08em] ${
-                    r.active ? "text-white/80" : "text-slate-500"
-                  }`}
+                  className={`font-grotesk text-[8px] font-semibold tracking-[0.08em] ${r.active ? "text-white/80" : "text-slate-500"
+                    }`}
                 >
                   {r.day}
                 </div>
@@ -1028,8 +1021,8 @@ function Business() {
                     h === 1
                       ? "linear-gradient(90deg, #FF1301, #EAB308)"
                       : h > 0.5
-                      ? "rgba(255,255,255,.25)"
-                      : "rgba(255,255,255,.08)",
+                        ? "rgba(255,255,255,.25)"
+                        : "rgba(255,255,255,.08)",
                 }}
               />
             ))}
@@ -1149,7 +1142,7 @@ function Business() {
               Pay 200 people in one signature.
             </h3>
             <p className="mb-6 max-w-[440px] font-grotesk text-[1.05rem] leading-[1.6] text-slate-400">
-              Upload a CSV or paste a list. Pay your community managers, hackathon winners, or an entire payroll — in any mix of currencies they each want to receive.
+              Upload a CSV or paste a list. Pay your freelancers, creators, hackathon winners, or an entire payroll — in any mix of currencies they each want to receive.
             </p>
             <div className="inline-flex items-center gap-2.5 rounded-full border border-[rgba(255,19,1,0.3)] bg-[rgba(255,19,1,0.1)] px-3.5 py-2">
               <span className="h-1.5 w-1.5 rounded-full bg-[#FF1301] shadow-[0_0_8px_#FF1301]" />
@@ -1174,9 +1167,8 @@ function Business() {
             {bulkRows.map((r, i) => (
               <div
                 key={i}
-                className={`grid grid-cols-[auto_1fr_auto_auto] items-center gap-3.5 px-[18px] py-[11px] font-grotesk text-xs ${
-                  i < bulkRows.length - 1 ? "border-b border-white/[0.04]" : ""
-                }`}
+                className={`grid grid-cols-[auto_1fr_auto_auto] items-center gap-3.5 px-[18px] py-[11px] font-grotesk text-xs ${i < bulkRows.length - 1 ? "border-b border-white/[0.04]" : ""
+                  }`}
               >
                 <span className="w-5 text-center text-base">{r.flag}</span>
                 <span className="text-white">{r.name}</span>
@@ -1259,10 +1251,10 @@ function Business() {
 
 function BuiltOn() {
   const specs = [
-    { label: "Settlement",    value: "Solana L1",        sub: "~400ms finality" },
-    { label: "Privacy layer", value: "MagicBlock PER",   sub: "Private Ephemeral Rollup" },
-    { label: "Stable asset",  value: "USDC",             sub: "Circle-native on Solana" },
-    { label: "Custody",       value: "Non-custodial",    sub: "Keys never leave your device" },
+    { label: "Settlement", value: "Solana L1", sub: "~400ms finality" },
+    { label: "Privacy layer", value: "MagicBlock PER", sub: "Private Ephemeral Rollup" },
+    { label: "Stable asset", value: "USDC", sub: "Circle-native on Solana" },
+    { label: "Custody", value: "Non-custodial", sub: "Keys never leave your device" },
   ];
 
   return (
