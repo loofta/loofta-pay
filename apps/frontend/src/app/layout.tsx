@@ -16,8 +16,6 @@ const inter = Inter({
   variable: "--font-inter",
 });
 
-export const revalidate = 0;
-
 const SITE_URL = (process as any)?.env?.NEXT_PUBLIC_SITE_URL || "https://loofta.xyz";
 
 export const metadata: Metadata = {
