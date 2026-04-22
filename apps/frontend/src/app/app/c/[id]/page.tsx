@@ -69,7 +69,7 @@ import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 import { usePerPrivateTransfer, type PerTransferProgress } from "@/hooks/usePerPrivateTransfer";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { phantomWalletToAnchorWallet, privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
-import { PaymentHistoryClaim } from "@/app/history/page";
+import { PaymentHistoryClaim } from "@/app/app/history/page";
 import type { NearToken } from "@/services/nearIntents";
 import {
   PRIVATE_PAYMENT_ALL_PRIVATE_LINE,
