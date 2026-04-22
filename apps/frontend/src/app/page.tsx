@@ -719,7 +719,7 @@ function Privacy() {
       <div className="mx-auto max-w-[1320px]">
         <motion.div
           {...fadeUp}
-          className="relative overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-b from-[#1e0f0a]/40 to-[#0f0f12]/40 px-[72px] py-20"
+          className="relative overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-b from-[#1e0f0a]/40 to-[#0f0f12]/40 px-6 py-12 sm:px-12 sm:py-16 lg:px-[72px] lg:py-20"
         >
           <div
             aria-hidden
@@ -1126,7 +1126,7 @@ function Business() {
         <motion.div
           {...fadeUp}
           transition={{ ...fadeUp.transition, delay: 0.1 }}
-          className="relative mb-6 grid grid-cols-1 items-center gap-14 overflow-hidden rounded-[28px] border border-white/10 bg-gradient-to-b from-[#221612]/55 to-[#0f0f12]/70 p-16 lg:grid-cols-[1fr_1.1fr]"
+          className="relative mb-6 grid grid-cols-1 items-center gap-10 overflow-hidden rounded-[28px] border border-white/10 bg-gradient-to-b from-[#221612]/55 to-[#0f0f12]/70 p-6 sm:p-10 lg:p-16 lg:grid-cols-[1fr_1.1fr] lg:gap-14"
         >
           <div
             aria-hidden
@@ -1189,7 +1189,7 @@ function Business() {
               key={f.title}
               {...fadeUp}
               transition={{ ...fadeUp.transition, delay: 0.12 + i * 0.08 }}
-              className="flex h-full flex-col gap-6 rounded-3xl border border-white/[0.08] bg-gradient-to-b from-[#18181c]/60 to-[#0f0f12]/60 p-9 transition-all duration-300 hover:-translate-y-[3px] hover:border-white/[0.16]"
+              className="flex h-full flex-col gap-6 rounded-3xl border border-white/[0.08] bg-gradient-to-b from-[#18181c]/60 to-[#0f0f12]/60 p-6 sm:p-9 transition-all duration-300 hover:-translate-y-[3px] hover:border-white/[0.16]"
             >
               <div>
                 <div className="mb-4 text-[28px] leading-none">{f.icon}</div>
