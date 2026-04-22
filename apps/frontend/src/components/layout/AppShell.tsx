@@ -12,11 +12,10 @@ function ShellContent({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
-  const isHomePage = pathname === '/home';
-  const showBottomNav = !isCheckoutPage && !isHomePage && (pathname === '/' || pathname === '/history' || pathname === '/settings' || pathname?.startsWith('/c/'));
-  const showMinimalHeader = !isCheckoutPage && !isHomePage;
+  const showBottomNav = !isCheckoutPage && (pathname === '/' || pathname === '/history' || pathname === '/settings' || pathname?.startsWith('/c/'));
+  const showMinimalHeader = !isCheckoutPage;
   const showBanner = showMinimalHeader && !bannerDismissed;
-  const showFooter = !isCheckoutPage && !isHomePage;
+  const showFooter = !isCheckoutPage;
   return (
     <>
       <UserSync />
