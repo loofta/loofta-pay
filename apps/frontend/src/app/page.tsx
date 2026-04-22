@@ -601,7 +601,7 @@ function Chains() {
               key={`pay-${i}`}
               className="flex flex-shrink-0 items-center gap-3.5 rounded-full border border-white/10 bg-white/[0.03] px-7 py-3"
             >
-              <Image src={c.src} alt={c.name} width={26} height={26} />
+              <Image src={c.src} alt={c.name} width={26} height={26} unoptimized />
               <span className="font-display text-[18px] font-medium text-white">{c.name}</span>
             </div>
           ))}
@@ -621,7 +621,7 @@ function Chains() {
                   {c.emoji}
                 </span>
               ) : (
-                <Image src={c.src!} alt={c.name} width={26} height={26} className="rounded-md" />
+                <Image src={c.src!} alt={c.name} width={26} height={26} className="rounded-md" unoptimized />
               )}
               <span className="font-display text-[18px] font-medium text-white">{c.name}</span>
             </div>
