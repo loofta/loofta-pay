@@ -10,6 +10,7 @@ const BRAND_GRADIENT = "bg-gradient-to-r from-[#FF1301] to-[#EAB308]";
 const AT = String.fromCharCode(64);
 const CONTACT_EMAIL = `hello${AT}loofta.xyz`;
 const BRAND_GRADIENT_DIAG = "bg-gradient-to-br from-[#FF1301] via-[#FF6A00] to-[#EAB308]";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "/app";
 
 const easeBrand = [0.16, 1, 0.3, 1] as const;
 
@@ -130,7 +131,7 @@ function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
       </div>
       <div className="flex items-center gap-3">
         <Link
-          href="/"
+          href={APP_URL}
           className={`group inline-flex items-center gap-2.5 rounded-full px-5 py-3 font-display text-sm font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] ${BRAND_GRADIENT}`}
         >
           Get your link
@@ -492,7 +493,7 @@ function Hero({ onHowItWorks }: { onHowItWorks: () => void }) {
             className="flex flex-wrap gap-3"
           >
             <Link
-              href="/"
+              href={APP_URL}
               className={`inline-flex items-center gap-2.5 rounded-full font-display font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] px-8 py-[18px] text-[17px] ${BRAND_GRADIENT}`}
             >
               {mode === "receive" ? "Create your link" : "Send a payment"}{" "}
@@ -508,7 +509,7 @@ function Hero({ onHowItWorks }: { onHowItWorks: () => void }) {
               </button>
             ) : (
               <Link
-                href="/"
+                href={APP_URL}
                 className="inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-[30px] py-[17px] text-[17px]"
               >
                 Pay by email
@@ -1116,7 +1117,7 @@ function Business() {
             href="https://t.me/looftapay"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-sm"
+            className="inline-flex shrink-0 items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-sm whitespace-nowrap"
           >
             Book a business demo <ArrowRight className="h-[15px] w-[15px]" strokeWidth={2} />
           </a>
@@ -1227,7 +1228,7 @@ function Business() {
           </div>
           <div className="relative flex flex-wrap gap-3">
             <Link
-              href="/"
+              href={APP_URL}
               className={`inline-flex items-center gap-2.5 rounded-full font-display font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] px-8 py-[18px] text-[17px] ${BRAND_GRADIENT}`}
             >
               Contact sales <ArrowRight className="h-[18px] w-[18px]" strokeWidth={2} />
@@ -1455,13 +1456,13 @@ function CTA() {
         </p>
         <div className="flex flex-wrap justify-center gap-3.5">
           <Link
-            href="/"
+            href={APP_URL}
             className={`inline-flex items-center gap-2.5 rounded-full font-display font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] px-8 py-[18px] text-[17px] ${BRAND_GRADIENT}`}
           >
             Create your payment link <ArrowRight className="h-[18px] w-[18px]" strokeWidth={2} />
           </Link>
           <Link
-            href="/"
+            href={APP_URL}
             className="inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-[30px] py-[17px] text-[17px]"
           >
             Send a payment
