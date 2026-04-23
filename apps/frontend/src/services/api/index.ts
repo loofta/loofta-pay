@@ -26,7 +26,6 @@ export * from './tokens';
 export * from './lottery';
 export * from './checkout';
 export * from './adminClaims';
-export * from './payroll';
 export * from './sendPayment';
 
 // Import for unified API object
@@ -37,7 +36,6 @@ import { tokensApi } from './tokens';
 import { lotteryApi } from './lottery';
 import { checkoutApi } from './checkout';
 import { adminClaimsApi } from './adminClaims';
-import { payrollApi } from './payroll';
 import * as sendPaymentApi from './sendPayment';
 import { BACKEND_URL, fetchApi } from './client';
 
@@ -52,7 +50,6 @@ export const api = {
   lottery: lotteryApi,
   checkout: checkoutApi,
   adminClaims: adminClaimsApi,
-  payroll: payrollApi,
   sendPayment: sendPaymentApi,
   // Direct access
   fetch: fetchApi,

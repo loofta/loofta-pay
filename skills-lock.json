@@ -6,6 +6,11 @@
       "sourceType": "github",
       "computedHash": "7859139478a5276c63a6114f0c3f9899ca4a30b5e4239825d16b92e8744e9e07"
     },
+    "nestjs-best-practices": {
+      "source": "xirothedev/agent-skills",
+      "sourceType": "github",
+      "computedHash": "97f34f89328df63724a95d5cda36420e15ac1bbb1e338be112c37e66a7d6e380"
+    },
     "remotion-best-practices": {
       "source": "remotion-dev/skills",
       "sourceType": "github",

@@ -17,7 +17,6 @@ import { TokensModule } from './modules/tokens/tokens.module';
 import { LotteryModule } from './modules/lottery/lottery.module';
 import { CronModule } from './modules/cron/cron.module';
 import { HealthModule } from './modules/health/health.module';
-import { PayrollModule } from './modules/payroll/payroll.module';
 import { UsersModule } from './modules/users/users.module';
 import { SendPaymentModule } from './modules/send-payment/send-payment.module';
 
@@ -70,7 +69,6 @@ import { SendPaymentModule } from './modules/send-payment/send-payment.module';
     TokensModule,
     LotteryModule,
     CronModule,
-    PayrollModule,
     UsersModule,
     SendPaymentModule,
   ],

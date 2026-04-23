@@ -242,76 +242,6 @@ export type Database = {
           updated_at?: string | null;
         };
       };
-      payroll_batches: {
-        Row: {
-          id: string;
-          org_id: string;
-          name: string | null;
-          total_amount: string;
-          token_symbol: string;
-          token_chain: string;
-          status: PayrollStatus;
-          created_by: string;
-          created_at: string;
-          updated_at: string | null;
-        };
-        Insert: {
-          id?: string;
-          org_id: string;
-          name?: string | null;
-          total_amount: string;
-          token_symbol: string;
-          token_chain: string;
-          status?: PayrollStatus;
-          created_by: string;
-          created_at?: string;
-          updated_at?: string | null;
-        };
-        Update: {
-          id?: string;
-          org_id?: string;
-          name?: string | null;
-          total_amount?: string;
-          token_symbol?: string;
-          token_chain?: string;
-          status?: PayrollStatus;
-          created_by?: string;
-          created_at?: string;
-          updated_at?: string | null;
-        };
-      };
-      payroll_recipients: {
-        Row: {
-          id: string;
-          batch_id: string;
-          email: string | null;
-          wallet_address: string;
-          amount: string;
-          claim_id: string | null;
-          status: string;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          batch_id: string;
-          email?: string | null;
-          wallet_address: string;
-          amount: string;
-          claim_id?: string | null;
-          status?: string;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          batch_id?: string;
-          email?: string | null;
-          wallet_address?: string;
-          amount?: string;
-          claim_id?: string | null;
-          status?: string;
-          created_at?: string;
-        };
-      };
     };
     Views: {
       public_claims: {
@@ -332,7 +262,6 @@ export type Database = {
       claim_status: ClaimStatus;
       checkout_status: CheckoutStatus;
       user_role: UserRole;
-      payroll_status: PayrollStatus;
     };
   };
 };
@@ -350,8 +279,6 @@ export type ClaimStatus =
 export type CheckoutStatus = 'active' | 'inactive' | 'pending';
 
 export type UserRole = 'user' | 'admin' | 'super_admin';
-
-export type PayrollStatus = 'draft' | 'pending' | 'processing' | 'completed' | 'failed';
 
 // Helper types for easier usage
 export type Tables<T extends keyof Database['public']['Tables']> =
@@ -378,5 +305,3 @@ export type User = Tables<'users'>;
 export type UserInsert = InsertTables<'users'>;
 export type UserUpdate = UpdateTables<'users'>;
 
-export type PayrollBatch = Tables<'payroll_batches'>;
-export type PayrollRecipient = Tables<'payroll_recipients'>;
