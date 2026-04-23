@@ -21,9 +21,23 @@ export function proxy(request: NextRequest) {
     hostname === "pay.loofta.xyz" ||
     hostname.startsWith("pay.");
 
-  // pay.loofta.xyz → transparently rewrite to /app/*
+  const isLocalhost =
+    hostname === "localhost" || hostname.startsWith("localhost:");
+
+  // On localhost, / clashes with the app shell — push it to /home instead
+  if (isLocalhost && pathname === "/") {
+    return NextResponse.redirect(new URL("/home", request.url));
+  }
+
+  const marketingPaths = new Set(["/home", "/home-white", "/brand"]);
+  const isLocalAppPath =
+    isLocalhost &&
+    !marketingPaths.has(pathname) &&
+    !pathname.startsWith("/app");
+
+  // pay.loofta.xyz or localhost non-marketing path → transparently rewrite to /app/*
   // URL in the browser stays the same; only Next.js routing changes
-  if (isAppDomain) {
+  if (isAppDomain || isLocalAppPath) {
     const rewritten = new URL(
       `/app${pathname === "/" ? "" : pathname}`,
       request.url
@@ -34,4 +48,8 @@ export function proxy(request: NextRequest) {
   // loofta.xyz → serve marketing pages as-is (root page.tsx)
   return NextResponse.next();
 }
+
+export const config = {
+  matcher: ["/((?!_next|api|static|images|videos|.*\\..*).*)" ],
+};
 
