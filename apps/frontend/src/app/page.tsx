@@ -134,7 +134,7 @@ function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
           href={APP_URL}
           className={`group inline-flex items-center gap-2.5 rounded-full px-5 py-3 font-display text-sm font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] ${BRAND_GRADIENT}`}
         >
-          Get your link
+          Launch app
           <ArrowRight className="h-[15px] w-[15px]" strokeWidth={2} />
         </Link>
       </div>
@@ -1481,9 +1481,14 @@ function Footer() {
         <span className="font-grotesk text-[13px] text-slate-600">Non-custodial · Private · Devnet</span>
       </div>
       <div className="flex gap-6">
-        {["Twitter", "Discord", "Docs", "Privacy"].map((l) => (
-          <a key={l} href="#" className="font-grotesk text-[13px] text-slate-400 hover:text-white">
-            {l}
+        {[
+          { label: "Twitter", href: "https://x.com/looftaxyz" },
+          { label: "Telegram", href: "https://t.me/looftapay" },
+          { label: "Medium", href: "https://medium.com/@looftaxyz" },
+          { label: "Privacy", href: "#" },
+        ].map((l) => (
+          <a key={l.label} href={l.href} target="_blank" rel="noopener noreferrer" className="font-grotesk text-[13px] text-slate-400 hover:text-white">
+            {l.label}
           </a>
         ))}
         <Link href="/brand" className="font-grotesk text-[13px] text-slate-400 hover:text-white">
