@@ -1486,6 +1486,9 @@ function Footer() {
             {l}
           </a>
         ))}
+        <Link href="/brand" className="font-grotesk text-[13px] text-slate-400 hover:text-white">
+          Brand
+        </Link>
       </div>
     </footer>
   );
