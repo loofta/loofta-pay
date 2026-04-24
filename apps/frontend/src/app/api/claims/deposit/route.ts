@@ -45,14 +45,6 @@ export async function POST(request: Request) {
     const claim = claimData;
     console.log('[claims/deposit] Using claim data from request:', claim.id);
 
-    // Enforce private payment if claim requires it
-    if (claim.is_private === true) {
-      return NextResponse.json({ 
-        error: "This payment link requires private payments only. Please use the private payment option.",
-        code: "PRIVATE_PAYMENT_REQUIRED"
-      }, { status: 400 });
-    }
-
     // For private cross-chain payments, forward to backend to create Privy wallet
     const originChain = String(fromToken.chain || '').toLowerCase();
     const destChain = String(claim.to_chain || '').toLowerCase();
@@ -516,27 +508,49 @@ export async function POST(request: Request) {
     }
     const q = (raw as any)?.quote || raw || {};
 
-    // Upsert claim_intents with deposit info
+    // Insert into payment_intents; fall back to claim_intents for legacy records
     try {
-      const ins = await supabase
-        .from("claim_intents")
-        .insert({
-          claim_id: claimId,
-          quote_id: q?.id || q?.quoteId || null,
-          deposit_address: q?.depositAddress || q?.address || null,
-          memo: q?.memo ?? null,
-          deadline: q?.deadline ? new Date(q.deadline).toISOString() : null,
-          time_estimate: typeof q?.timeEstimate === "number" ? q.timeEstimate : null,
-          status: "PENDING_DEPOSIT",
-          last_status_payload: null,
-          // Store route information for timing analysis
-          from_chain: String(fromToken?.chain || "").toLowerCase() || null,
-          to_chain: String(claim.to_chain || "").toLowerCase() || null,
-        })
+      // Try payments table first
+      const { data: existingPayment } = await supabase
+        .from("payments")
         .select("id")
-        .single();
-      // Also set parent claim status to PENDING_DEPOSIT
-      await supabase.from("claims").update({ status: "PENDING_DEPOSIT" }).eq("id", claimId);
+        .eq("id", claimId)
+        .maybeSingle();
+
+      if (existingPayment) {
+        await supabase
+          .from("payment_intents")
+          .insert({
+            payment_id: claimId,
+            quote_id: q?.id || q?.quoteId || null,
+            deposit_address: q?.depositAddress || q?.address || null,
+            memo: q?.memo ?? null,
+            deadline: q?.deadline ? new Date(q.deadline).toISOString() : null,
+            time_estimate: typeof q?.timeEstimate === "number" ? q.timeEstimate : null,
+            status: "PENDING_DEPOSIT",
+            last_status_payload: null,
+            from_chain: String(fromToken?.chain || "").toLowerCase() || null,
+            to_chain: "solana",
+          });
+        await supabase.from("payments").update({ status: "PENDING_DEPOSIT" }).eq("id", claimId);
+      } else {
+        // Legacy: write to claim_intents / claims
+        await supabase
+          .from("claim_intents")
+          .insert({
+            claim_id: claimId,
+            quote_id: q?.id || q?.quoteId || null,
+            deposit_address: q?.depositAddress || q?.address || null,
+            memo: q?.memo ?? null,
+            deadline: q?.deadline ? new Date(q.deadline).toISOString() : null,
+            time_estimate: typeof q?.timeEstimate === "number" ? q.timeEstimate : null,
+            status: "PENDING_DEPOSIT",
+            last_status_payload: null,
+            from_chain: String(fromToken?.chain || "").toLowerCase() || null,
+            to_chain: String(claim.to_chain || "solana").toLowerCase() || null,
+          });
+        await supabase.from("claims").update({ status: "PENDING_DEPOSIT" }).eq("id", claimId);
+      }
     } catch {}
     
     // Round UP the minAmountIn to avoid INCOMPLETE_DEPOSIT issues

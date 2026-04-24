@@ -9,13 +9,12 @@ const log = new Logger('MagicblockPrivateTransfer');
 
 /**
  * MagicBlock pricing (Solana Mainnet): fixed 0.002 SOL + 0.1% volume fee deducted from the transferred amount.
- * Loofta charges an additional 0.1% (10 bps) volume fee + recovers the 0.002 SOL gas cost converted to USDC.
+ * Loofta passes through MagicBlock's fee exactly — no additional markup.
  * The gas conversion uses a 20% buffer to cover SOL price moves between calculation and settlement.
  * Recipient always receives the exact requested amount.
  */
 export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // 0.1% — deducted by MagicBlock
-export const LOOFTA_VOLUME_FEE_BPS = 10;     // 0.1% — Loofta protocol fee
-export const TOTAL_FEE_BPS = MAGICBLOCK_VOLUME_FEE_BPS + LOOFTA_VOLUME_FEE_BPS; // 0.2%
+export const TOTAL_FEE_BPS = MAGICBLOCK_VOLUME_FEE_BPS; // 0.1% total
 export const MAGICBLOCK_SPONSORED_GAS_SOL = 0.002;
 /** 20% buffer on gas fee to cover SOL price moves between calculation and settlement. */
 export const GAS_FEE_BUFFER_PCT = 1.20;
@@ -53,7 +52,6 @@ export async function fetchSolPriceUsd(): Promise<number> {
 /**
  * Returns the gross USDC base units the sender must transfer so that after:
  *   - MagicBlock's 0.1% volume fee
- *   - Loofta's 0.1% volume fee
  *   - 0.002 SOL gas fee (buffered 20%) converted to USDC
  * …the recipient receives exactly `netBaseUnits`.
  */

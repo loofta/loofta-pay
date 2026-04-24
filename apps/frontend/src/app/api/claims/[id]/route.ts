@@ -7,11 +7,6 @@ import { extractChainsFromAssets } from "@/lib/assetUtils";
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
 
-/**
- * Verify the caller via the backend's /users/me endpoint (JWT or cached Privy lookup).
- * Returns the verified userId, or null if unauthenticated / verification fails.
- * Mirrors the same helper used in the payments/history route.
- */
 async function getVerifiedUserId(request: Request): Promise<string | null> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
@@ -26,7 +21,7 @@ async function getVerifiedUserId(request: Request): Promise<string | null> {
         if (data.userId) return data.userId;
       }
     } catch (e) {
-      console.warn("[claims/PATCH] Backend JWT verify failed:", e);
+      console.warn("[payments/PATCH] Backend JWT verify failed:", e);
     }
     return null;
   }
@@ -42,7 +37,7 @@ async function getVerifiedUserId(request: Request): Promise<string | null> {
         if (data.userId) return data.userId;
       }
     } catch (e) {
-      console.warn("[claims/PATCH] Backend legacy-ID verify failed:", e);
+      console.warn("[payments/PATCH] Backend legacy-ID verify failed:", e);
     }
     return null;
   }
@@ -50,106 +45,156 @@ async function getVerifiedUserId(request: Request): Promise<string | null> {
   return null;
 }
 
+/**
+ * Adds backward-compat aliases to a payments row so the payment page
+ * (which still references to_symbol, to_chain, claim_burner_address) keeps working.
+ */
+function normalisePayment(raw: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...raw,
+    // Destination is always USDC on Solana (real columns in payments, compat alias for UI)
+    to_symbol: "USDC",
+    // Alias burner_address → claim_burner_address for legacy UI code
+    claim_burner_address: raw.burner_address ?? null,
+    // Compat aliases for old field names still consumed by page.tsx
+    paid_with_chain: raw.from_chain ?? null,
+    paid_with_token: raw.from_token ?? null,
+    // Removed fields — default to null so UI doesn't break
+    is_private: null,
+    creator_email: null,
+  };
+}
+
 export async function GET(_: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
-  try {
-    const supabase = getSupabaseAdmin();
-    
-    const { data: rawClaim, error: claimError } = await supabase
+  const supabase = getSupabaseAdmin();
+
+  // Try payments table first; fall back to legacy claims
+  let rawPayment: Record<string, unknown> | null = null;
+  let isLegacy = false;
+
+  const { data: paymentRow, error: paymentError } = await supabase
+    .from("payments")
+    .select("id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id")
+    .eq("id", params.id)
+    .maybeSingle();
+
+  if (paymentRow) {
+    rawPayment = normalisePayment(paymentRow as Record<string, unknown>);
+  } else {
+    // Fall back to legacy claims table
+    const { data: claimRow, error: claimError } = await supabase
       .from("claims")
-      .select("id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_address, recipient_username, claim_burner_address, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description")
+      .select("id, amount, to_symbol, to_chain, status, created_at, updated_at, paid_at, recipient_address, recipient_username, claim_burner_address, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description, is_devnet, sender_tx_hash")
       .eq("id", params.id)
-      .single();
-    
-    if (claimError) return NextResponse.json({ error: claimError.message }, { status: 404 });
+      .maybeSingle();
 
-    const claimStatus = String((rawClaim as { status?: string })?.status || "").toUpperCase();
-    if (claimStatus === "DELETED") {
-      return NextResponse.json({ error: "This payment doesn't exist." }, { status: 404 });
+    if (claimError || !claimRow) {
+      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
     }
-
-    let creator_username: string | null = null;
-    if (rawClaim?.created_by && typeof rawClaim.created_by === 'string' && rawClaim.created_by.includes('did:privy:')) {
-      const { data: appUser } = await supabase
-        .from("app_users")
-        .select("username")
-        .eq("privy_user_id", rawClaim.created_by)
-        .maybeSingle();
-      creator_username = appUser?.username ?? null;
-    }
-    
-    // Mirror the backend findOne() masking: never expose the real recipient wallet to the public.
-    // Only expose pending-* flags, burner address (payment intermediary), and registered flag.
-    const ra = (rawClaim?.recipient_address ?? "").trim();
-    const claim: Record<string, unknown> = {
-      ...rawClaim,
-      creator_username: creator_username ?? null,
+    rawPayment = {
+      ...claimRow as Record<string, unknown>,
+      direction: "from_sender",
     };
-    if (ra.startsWith(PENDING_EMAIL_PREFIX)) {
-      claim.recipient_address = undefined;
-      claim.recipient_pending_email = true;
-      const burner = (rawClaim as { claim_burner_address?: string | null })?.claim_burner_address;
-      if (burner) claim.claim_burner_address = burner;
-      console.log("[api/claims GET] Pending-email claim:", params.id, "hasBurner:", !!burner);
-    } else if (ra.startsWith(PENDING_USERNAME_PREFIX)) {
-      claim.recipient_address = undefined;
-      claim.recipient_pending_username = true;
-      claim.recipient_pending_username_value = ra.slice(PENDING_USERNAME_PREFIX.length).trim();
-      const burner = (rawClaim as { claim_burner_address?: string | null })?.claim_burner_address;
-      if (burner) claim.claim_burner_address = burner;
-      console.log("[api/claims GET] Pending-username claim:", params.id, "hasBurner:", !!burner);
-    } else if (ra) {
-      // Registered recipient: strip real wallet, expose only the burner and a flag.
-      claim.recipient_address = undefined;
-      claim.recipient_is_registered = true;
-      const burner = (rawClaim as { claim_burner_address?: string | null })?.claim_burner_address;
-      if (burner) claim.claim_burner_address = burner;
-      console.log("[api/claims GET] Registered recipient claim:", params.id, "hasBurner:", !!burner);
+    isLegacy = true;
+  }
+
+  const status = String((rawPayment?.status as string) || "").toUpperCase();
+  if (status === "DELETED") {
+    return NextResponse.json({ error: "This payment doesn't exist." }, { status: 404 });
+  }
+
+  let creator_username: string | null = null;
+  const createdBy = rawPayment?.created_by;
+  if (typeof createdBy === 'string' && createdBy.includes('did:privy:')) {
+    const { data: appUser } = await supabase
+      .from("app_users")
+      .select("username")
+      .eq("privy_user_id", createdBy)
+      .maybeSingle();
+    creator_username = appUser?.username ?? null;
+  }
+
+  const claim: Record<string, unknown> = {
+    ...rawPayment,
+    creator_username: creator_username ?? null,
+  };
+
+  // Mask recipient wallet — never expose the real address to the public
+  const ra = String(rawPayment?.recipient_address ?? "").trim();
+  const burner = String(
+    isLegacy
+      ? (rawPayment as Record<string, unknown>)?.claim_burner_address ?? ""
+      : (rawPayment as Record<string, unknown>)?.burner_address ?? ""
+  ).trim();
+
+  if (ra.startsWith(PENDING_EMAIL_PREFIX)) {
+    claim.recipient_address = undefined;
+    claim.recipient_pending_email = true;
+    if (burner) claim.claim_burner_address = burner;
+  } else if (ra.startsWith(PENDING_USERNAME_PREFIX)) {
+    claim.recipient_address = undefined;
+    claim.recipient_pending_username = true;
+    claim.recipient_pending_username_value = ra.slice(PENDING_USERNAME_PREFIX.length).trim();
+    if (burner) claim.claim_burner_address = burner;
+  } else if (ra) {
+    claim.recipient_is_registered = true;
+    if (burner) {
+      claim.claim_burner_address = burner;
+      delete claim.recipient_address;
     }
-    // Always strip the real recipient wallet — belt-and-suspenders
+    // No burner: keep recipient_address in the response — it IS the payment destination for direct-wallet links
+  } else {
     delete claim.recipient_address;
-    
-    // Also get latest intent data (for hydration)
-    const { data: intent } = await supabase
+  }
+
+  // Fetch latest intent (payment_intents for new records, claim_intents for legacy)
+  let intent: Record<string, unknown> | null = null;
+  if (isLegacy) {
+    const { data } = await supabase
       .from("claim_intents")
       .select("deposit_address, memo, deadline, time_estimate, quote_id, status, deposit_received_at")
       .eq("claim_id", params.id)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    
-    return NextResponse.json({ 
-      claim,
-      latestIntent: intent ? {
-        depositAddress: intent.deposit_address || null,
-        memo: intent.memo ?? null,
-        deadline: intent.deadline || null,
-        timeEstimate: typeof intent.time_estimate === "number" ? intent.time_estimate : null,
-        quoteId: intent.quote_id || null,
-        status: intent.status || null,
-        depositReceivedAt: intent.deposit_received_at || null,
-      } : null
-    }, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Failed to fetch claim" }, { status: 500 });
+    intent = data as Record<string, unknown> | null;
+  } else {
+    const { data } = await supabase
+      .from("payment_intents")
+      .select("deposit_address, memo, deadline, time_estimate, quote_id, status")
+      .eq("payment_id", params.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    intent = data as Record<string, unknown> | null;
   }
+
+  return NextResponse.json({
+    claim,
+    latestIntent: intent ? {
+      depositAddress: intent.deposit_address || null,
+      memo: intent.memo ?? null,
+      deadline: intent.deadline || null,
+      timeEstimate: typeof intent.time_estimate === "number" ? intent.time_estimate : null,
+      quoteId: intent.quote_id || null,
+      status: intent.status || null,
+      depositReceivedAt: intent.deposit_received_at || null,
+    } : null
+  }, { status: 200 });
 }
 
-// Update claim status (for payment flow)
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
-  const claimId = params.id;
-  // Verify identity via backend — never trust the raw header value
+  const paymentId = params.id;
   const userId = await getVerifiedUserId(request) ?? undefined;
-  console.log("[claims/PATCH] Updating claim:", claimId, "verifiedUser:", userId ?? "anonymous");
-  
+  console.log("[payments/PATCH] Updating payment:", paymentId, "verifiedUser:", userId ?? "anonymous");
+
   try {
     const body = await request.json();
-    console.log("[claims/PATCH] Request body:", body);
-    const { status: inputStatus, txHash, paidWith, depositReceivedAt, originAsset, destinationAsset, isPrivate } = body || {};
-    
-    // Map legacy status names to database-valid values
-    // Database constraint: 'OPEN', 'PENDING_DEPOSIT', 'IN_FLIGHT', 'SUCCESS', 'REFUNDED', 'EXPIRED', 'CANCELLED'
+    console.log("[payments/PATCH] Request body:", body);
+    const { status: inputStatus, txHash, paidWith, depositReceivedAt, originAsset, destinationAsset } = body || {};
+
     const statusMap: Record<string, string> = {
       "PROCESSING": "IN_FLIGHT",
       "FAILED": "REFUNDED",
@@ -161,211 +206,192 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       "CANCELLED": "CANCELLED",
       "OPEN": "OPEN",
     };
-    
+
     const status = statusMap[inputStatus?.toUpperCase()] || inputStatus;
-    
-    // Validate status against database constraint
+
     const allowedStatuses = ["OPEN", "PENDING_DEPOSIT", "IN_FLIGHT", "SUCCESS", "REFUNDED", "EXPIRED", "CANCELLED"];
     if (!status || !allowedStatuses.includes(status)) {
       return NextResponse.json({ error: `Invalid status: ${inputStatus}. Allowed: ${allowedStatuses.join(", ")}` }, { status: 400 });
     }
 
     const supabase = getSupabaseAdmin();
-    
-    // Update claim status
-    const updateData: Record<string, any> = { status };
-    
-    // Set is_private flag if provided (for private payments)
-    if (isPrivate !== undefined) {
-      updateData.is_private = isPrivate;
+
+    const updateData: Record<string, unknown> = { status };
+
+    if (status === "SUCCESS") {
+      updateData.paid_at = new Date().toISOString();
     }
-    
-    // Parse paidWith string to extract token and chain
-    // Format examples: "USDC (Solana)", "USDC (Solana wallet)", "ETH on base", "USDC on sol"
+
+    if (txHash) {
+      updateData.sender_tx_hash = txHash;
+    }
+
+    // from_chain / from_token: extract from paidWith string (e.g. "USDC (Solana wallet)" or "USDC on Solana")
     if (paidWith) {
-      // Try to parse formats like "USDC (Solana)" or "USDC (Solana wallet)"
       const parenMatch = paidWith.match(/^([^(]+)\s*\(([^)]+)\)/);
       if (parenMatch) {
-        const token = parenMatch[1].trim();
-        let chain = parenMatch[2].trim();
-        // Remove "wallet" suffix if present
-        chain = chain.replace(/\s+wallet$/i, "");
-        updateData.paid_with_token = token;
-        updateData.paid_with_chain = chain.toLowerCase();
+        const token = parenMatch[1].trim().split(/\s+/)[0]; // first word is the token symbol
+        const chain = parenMatch[2].trim().replace(/\s+wallet$/i, "").split(/\s+/)[0];
+        updateData.from_chain = chain.toLowerCase();
+        if (token) updateData.from_token = token.toUpperCase();
       } else {
-        // Try to parse formats like "USDC on sol" or "ETH on base"
         const onMatch = paidWith.match(/^([^on]+)\s+on\s+(.+)$/i);
         if (onMatch) {
-          updateData.paid_with_token = onMatch[1].trim();
-          updateData.paid_with_chain = onMatch[2].trim().toLowerCase();
-        } else {
-          // Fallback: try to extract token symbol (first word)
-          const parts = paidWith.trim().split(/\s+/);
-          if (parts.length > 0) {
-            updateData.paid_with_token = parts[0];
-            // Try to find chain in remaining parts
-            const chainKeywords = ['solana', 'sol', 'base', 'arbitrum', 'arb', 'ethereum', 'eth', 'polygon', 'poly'];
-            const foundChain = parts.find((p: string) => chainKeywords.includes(p.toLowerCase()));
-            if (foundChain) {
-              updateData.paid_with_chain = foundChain.toLowerCase();
-            }
-          }
+          const token = onMatch[1].trim().split(/\s+/)[0];
+          updateData.from_chain = onMatch[2].trim().toLowerCase();
+          if (token) updateData.from_token = token.toUpperCase();
         }
       }
     }
-    
-    // Set paid_at timestamp when status becomes SUCCESS
-    if (status === "SUCCESS") {
-      updateData.paid_at = new Date().toISOString();
-      
-      // Collect timing data for analytics
-      // Get deposit_received_at from claim_intents
-      const { data: intent } = await supabase
-        .from("claim_intents")
-        .select("deposit_received_at, from_chain, to_chain")
-        .eq("claim_id", params.id)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      
-      if (intent?.deposit_received_at) {
-        // Calculate and store payment duration
-        const depositTime = new Date(intent.deposit_received_at).getTime();
-        const paidTime = new Date().getTime();
-        const duration = Math.floor((paidTime - depositTime) / 1000);
-        
-        // Update claim_intents with duration
-        await supabase
-          .from("claim_intents")
-          .update({ 
-            payment_duration: duration,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("claim_id", params.id);
+
+    // Try payments table first
+    const { data: existingPayment } = await supabase
+      .from("payments")
+      .select("id, status, created_by, direction, sender_user_id, recipient_user_id")
+      .eq("id", paymentId)
+      .maybeSingle();
+
+    let useLegacy = !existingPayment;
+
+    if (!useLegacy) {
+      const ep = existingPayment as { created_by?: string | null; direction?: string; sender_user_id?: string | null; recipient_user_id?: string | null };
+
+      // Ownership check for CANCELLED
+      if (status === "CANCELLED" && userId) {
+        if (ep.created_by && ep.created_by !== userId) {
+          return NextResponse.json({ error: "Only the creator can cancel this payment" }, { status: 403 });
+        }
       }
+
+      if (status === "SUCCESS" && userId) {
+        if (!ep.created_by) updateData.created_by = userId;
+        // Set sender_user_id when payer completes a from_recipient request link
+        if (ep.direction === "from_recipient" && !ep.sender_user_id) updateData.sender_user_id = userId;
+        // Set sender_user_id for from_sender payments too if missing
+        if (ep.direction !== "from_recipient" && !ep.sender_user_id) updateData.sender_user_id = userId;
+      }
+
+      const { data, error } = await supabase
+        .from("payments")
+        .update(updateData)
+        .eq("id", paymentId)
+        .select("id, status, created_at, paid_at")
+        .single();
+
+      if (error) {
+        console.error("[payments/PATCH] Error updating payment:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      // Update payment_intents for routing analytics
+      if (status === "IN_FLIGHT" || status === "SUCCESS" || status === "REFUNDED") {
+        try {
+          const intentUpdate: Record<string, unknown> = {
+            status,
+            updated_at: new Date().toISOString(),
+          };
+
+          if (status === "IN_FLIGHT" && (originAsset || destinationAsset)) {
+            const { fromChain, toChain } = extractChainsFromAssets(originAsset, destinationAsset);
+            const { data: existingIntent } = await supabase
+              .from("payment_intents")
+              .select("from_chain, to_chain")
+              .eq("payment_id", paymentId)
+              .maybeSingle();
+            if (fromChain && !existingIntent?.from_chain) intentUpdate.from_chain = fromChain;
+            if (toChain && !existingIntent?.to_chain) intentUpdate.to_chain = toChain;
+          }
+
+          await supabase
+            .from("payment_intents")
+            .update(intentUpdate)
+            .eq("payment_id", paymentId);
+        } catch (e) {
+          console.error("[payments/PATCH] Error updating payment_intent:", e);
+        }
+      }
+
+      return NextResponse.json({ ok: true, claim: data }, { status: 200 });
     }
-    
-    // Fetch the existing claim to validate ownership and optionally backfill created_by
-    console.log("[claims/PATCH] Checking if claim exists:", claimId);
+
+    // Legacy: fall back to claims table
     const { data: existingClaim, error: checkError } = await supabase
       .from("claims")
       .select("id, status, created_by")
-      .eq("id", claimId)
+      .eq("id", paymentId)
       .maybeSingle();
-    
-    console.log("[claims/PATCH] Existing claim check:", { existingClaim, checkError });
-    
-    if (checkError) {
-      console.error("[claims/PATCH] Error checking claim:", checkError);
-      return NextResponse.json({ error: checkError.message }, { status: 500 });
+
+    if (checkError || !existingClaim) {
+      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
     }
 
-    // Ownership check: only the creator can cancel a payment
     if (status === "CANCELLED" && userId) {
-      const claimCreator = (existingClaim as { created_by?: string | null } | null)?.created_by;
-      if (claimCreator && claimCreator !== userId) {
-        console.warn("[claims/PATCH] Unauthorized CANCELLED attempt:", { userId, claimCreator });
+      const creator = (existingClaim as { created_by?: string | null })?.created_by;
+      if (creator && creator !== userId) {
         return NextResponse.json({ error: "Only the creator can cancel this payment" }, { status: 403 });
       }
     }
 
-    // When marking SUCCESS, backfill created_by if missing so the payment shows in history
-    if (status === "SUCCESS" && userId && existingClaim && !(existingClaim as { created_by?: string | null }).created_by) {
+    if (status === "SUCCESS" && userId && !(existingClaim as { created_by?: string | null }).created_by) {
       updateData.created_by = userId;
     }
-    
-    if (!existingClaim) {
-      console.error("[claims/PATCH] Claim not found in database:", claimId);
-      // Try to list all claims to debug
-      const { data: allClaims } = await supabase
-        .from("claims")
-        .select("id")
-        .limit(5);
-      console.log("[claims/PATCH] Sample claim IDs:", allClaims);
-      return NextResponse.json({ error: "Claim not found" }, { status: 404 });
-    }
-    
-    console.log("[claims/PATCH] Claim exists, updating with:", updateData);
-    // Update claim status
+
+    const legacyUpdate: Record<string, unknown> = { status };
+    if (updateData.paid_at) legacyUpdate.paid_at = updateData.paid_at;
+    if (updateData.sender_tx_hash) legacyUpdate.sender_tx_hash = updateData.sender_tx_hash;
+    // Legacy claims table uses paid_with_chain/paid_with_token instead of from_chain/from_token
+    if (updateData.from_chain) legacyUpdate.paid_with_chain = updateData.from_chain;
+    if (updateData.created_by) legacyUpdate.created_by = updateData.created_by;
+
     const { data, error } = await supabase
       .from("claims")
-      .update(updateData)
-      .eq("id", claimId)
+      .update(legacyUpdate)
+      .eq("id", paymentId)
       .select("id, status, created_at, paid_at")
       .single();
-    
-    console.log("[claims/PATCH] Update result:", { data, error });
-      
+
     if (error) {
-      console.error("[claims/PATCH] Error updating claim:", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
-    
-    if (!data) {
-      console.error("[claims/PATCH] No data returned after update:", params.id);
-      return NextResponse.json({ error: "Failed to update claim" }, { status: 500 });
-    }
-    
-    const updatedClaim = data;
-    
-    // Update claim_intent status (only update status-related fields, preserve deposit_address etc.)
+
     if (status === "IN_FLIGHT" || status === "SUCCESS" || status === "REFUNDED") {
       try {
-        // Check if deposit_received_at should be set (first time status becomes IN_FLIGHT)
-        let updateData: Record<string, any> = {
+        const intentUpdate: Record<string, unknown> = {
           status,
-          tx_hash: txHash || null,
-          paid_with: paidWith || null,
           updated_at: new Date().toISOString(),
         };
-        
-        // Set deposit_received_at when status first becomes IN_FLIGHT
+
         if (status === "IN_FLIGHT") {
-          // Check if deposit_received_at is not already set
           const { data: existingIntent } = await supabase
             .from("claim_intents")
             .select("deposit_received_at, from_chain, to_chain")
-            .eq("claim_id", params.id)
+            .eq("claim_id", paymentId)
             .maybeSingle();
-          
+
           if (existingIntent && !existingIntent.deposit_received_at) {
-            // Use provided depositReceivedAt if available (from client), otherwise use current time
-            updateData.deposit_received_at = depositReceivedAt || new Date().toISOString();
+            intentUpdate.deposit_received_at = depositReceivedAt || new Date().toISOString();
           }
-          
-          // Extract and store route information from asset IDs if not already stored
+
           if (originAsset || destinationAsset) {
             const { fromChain, toChain } = extractChainsFromAssets(originAsset, destinationAsset);
-            
-            // Only update if not already set
-            if (fromChain && !existingIntent?.from_chain) {
-              updateData.from_chain = fromChain;
-            }
-            if (toChain && !existingIntent?.to_chain) {
-              updateData.to_chain = toChain;
-            }
+            if (fromChain && !existingIntent?.from_chain) intentUpdate.from_chain = fromChain;
+            if (toChain && !existingIntent?.to_chain) intentUpdate.to_chain = toChain;
           }
         }
-        
-        // Use update instead of upsert to preserve existing deposit_address
-        const { error: intentError } = await supabase
+
+        await supabase
           .from("claim_intents")
-          .update(updateData)
-          .eq("claim_id", params.id);
-        
-        if (intentError) {
-          console.error("[claims/PATCH] Error updating claim_intent:", intentError);
-        }
-      } catch (intentError) {
-        // Non-critical, just log
-        console.error("[claims/PATCH] Error updating claim_intent:", intentError);
+          .update(intentUpdate)
+          .eq("claim_id", paymentId);
+      } catch (e) {
+        console.error("[payments/PATCH] Error updating claim_intent:", e);
       }
     }
-    
-    return NextResponse.json({ ok: true, claim: updatedClaim }, { status: 200 });
+
+    return NextResponse.json({ ok: true, claim: data }, { status: 200 });
   } catch (e: any) {
-    console.error("[claims/PATCH] Error:", e);
-    return NextResponse.json({ error: e?.message || "Failed to update claim" }, { status: 500 });
+    console.error("[payments/PATCH] Error:", e);
+    return NextResponse.json({ error: e?.message || "Failed to update payment" }, { status: 500 });
   }
 }
 
@@ -373,47 +399,65 @@ const DELETABLE_STATUSES = ["OPEN", "PENDING_DEPOSIT"];
 
 export async function DELETE(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
-  const claimId = params.id;
+  const paymentId = params.id;
   const userId = await getVerifiedUserId(request);
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
     const supabase = getSupabaseAdmin();
+
+    // Try payments first
+    const { data: payment } = await supabase
+      .from("payments")
+      .select("id, status, created_by")
+      .eq("id", paymentId)
+      .maybeSingle();
+
+    if (payment) {
+      const status = String((payment as { status?: string }).status || "").toUpperCase();
+      const createdBy = (payment as { created_by?: string | null }).created_by;
+      if (createdBy !== userId) {
+        return NextResponse.json({ error: "Only the creator can delete this payment" }, { status: 403 });
+      }
+      if (!DELETABLE_STATUSES.includes(status)) {
+        return NextResponse.json({ error: "Only open or pending payments can be deleted" }, { status: 400 });
+      }
+      const { error } = await supabase
+        .from("payments")
+        .update({ status: "DELETED" })
+        .eq("id", paymentId);
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ ok: true }, { status: 200 });
+    }
+
+    // Fall back to legacy claims
     const { data: claim, error: fetchError } = await supabase
       .from("claims")
       .select("id, status, created_by")
-      .eq("id", claimId)
+      .eq("id", paymentId)
       .maybeSingle();
 
     if (fetchError || !claim) {
-      return NextResponse.json({ error: "Claim not found" }, { status: 404 });
+      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
     }
     const status = String((claim as { status?: string }).status || "").toUpperCase();
     const createdBy = (claim as { created_by?: string | null }).created_by;
     if (createdBy !== userId) {
-      return NextResponse.json({ error: "Only the creator can delete this claim" }, { status: 403 });
+      return NextResponse.json({ error: "Only the creator can delete this payment" }, { status: 403 });
     }
     if (!DELETABLE_STATUSES.includes(status)) {
-      return NextResponse.json(
-        { error: "Only open or pending claims can be deleted" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Only open or pending payments can be deleted" }, { status: 400 });
     }
-
     const { error: updateError } = await supabase
       .from("claims")
       .update({ status: "DELETED" })
-      .eq("id", claimId);
-
-    if (updateError) {
-      console.error("[claims/DELETE] Update error:", updateError);
-      return NextResponse.json({ error: updateError.message }, { status: 500 });
-    }
+      .eq("id", paymentId);
+    if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 });
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to delete claim";
-    console.error("[claims/DELETE]", message);
+    const message = e instanceof Error ? e.message : "Failed to delete payment";
+    console.error("[payments/DELETE]", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

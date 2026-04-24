@@ -42,13 +42,15 @@ interface WelcomeOnboardingProps {
 const TOTAL_STEPS = 5; // welcome, username, pay friend, top up, share
 
 export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEditUsername }: WelcomeOnboardingProps) {
-  const { user: privyUser } = usePrivy();
+  const { user: privyUser, refreshUser } = usePrivy();
   const [emailLinkError, setEmailLinkError] = useState<"already_linked" | null>(null);
   const { linkEmail } = useLinkAccount({
-    onSuccess: (arg: { linkedAccount?: { type?: string }; linkMethod?: string } | undefined) => {
+    onSuccess: async (arg: { linkedAccount?: { type?: string }; linkMethod?: string } | undefined) => {
       const isEmail = arg?.linkedAccount?.type === "email" || arg?.linkMethod === "email";
       if (isEmail) {
         setEmailLinkError(null);
+        // Force Privy to re-fetch the user so linkedAccounts is immediately up to date.
+        try { await refreshUser(); } catch { /* non-critical */ }
         setEmailStepDone(true);
       }
     },
