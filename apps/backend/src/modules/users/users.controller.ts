@@ -20,6 +20,7 @@ import {
 import { UsersService } from './users.service';
 import { PrivyAuthGuard } from '../../auth/privy-auth.guard';
 import { PrivyUser } from '../../auth/privy-user.decorator';
+import { AdminGuard } from '@/common/guards';
 
 @ApiTags('users')
 @Controller('users')
@@ -185,10 +186,9 @@ export class UsersController {
     );
   }
 
-  /**
-   * Get user by email (for Send flow: resolve email to username)
-   */
   @Get('by-email')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get user by email (returns username for /link redirect)' })
   @ApiQuery({ name: 'email', description: 'User email' })
   @ApiResponse({ status: 200, description: 'User info (no wallet)' })
@@ -198,10 +198,9 @@ export class UsersController {
     return { user };
   }
 
-  /**
-   * Search usernames by prefix (for Send autocomplete)
-   */
   @Get('search')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Search usernames by prefix' })
   @ApiQuery({ name: 'q', description: 'Search query (min 2 chars)' })
   @ApiResponse({ status: 200, description: 'List of matching usernames' })
@@ -209,11 +208,9 @@ export class UsersController {
     return this.usersService.searchUsernames(q || '', 10);
   }
 
-  /**
-   * Debug endpoint to list all usernames (remove in production)
-   */
   @Get('debug/list-usernames')
-  @ApiOperation({ summary: 'Debug: List all usernames' })
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: 'Admin: List all usernames' })
   async listUsernames() {
     return this.usersService.listAllUsernames();
   }

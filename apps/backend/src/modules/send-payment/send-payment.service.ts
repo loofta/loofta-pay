@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { fetchSolPriceUsd, grossUpForMagicblockFee, TOTAL_FEE_BPS, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import { fetchSolPriceUsd, grossUpForMagicblockFee, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
@@ -126,10 +126,10 @@ export class SendPaymentService {
     const solPrice = await fetchSolPriceUsd();
     const grossUnits = grossUpForMagicblockFee(baseUnits, solPrice);
     const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
-    // On devnet/localhost MagicBlock passes amount straight to recipient (no fee deduction).
-    // Apply 10 BPS gross-up so the surplus lands in the tx; mainnet uses full gross (10 BPS + gas).
-    const devnetUnits = Math.ceil((baseUnits * 10_000) / (10_000 - TOTAL_FEE_BPS));
-    const transferUnits = cluster === 'mainnet' ? grossUnits : devnetUnits;
+    // On devnet/localhost MagicBlock has no fees — amount goes straight to recipient.
+    // Use baseUnits so recipient gets exactly the requested amount; mainnet uses grossUnits so
+    // MagicBlock can deduct its 0.1% + 0.002 SOL and still deliver baseUnits to the recipient.
+    const transferUnits = cluster === 'mainnet' ? grossUnits : baseUnits;
     this.logger.log(`[SendPayment] amount=${amountUsd} net=${baseUnits} gross=${grossUnits} transfer=${transferUnits} cluster=${cluster} solPrice=${solPrice}`);
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),

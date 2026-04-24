@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, MaxLength, IsBoolean } from 'class-validator';
 
+
 export class TokenSelectionDto {
   @ApiProperty({ description: 'Token symbol', example: 'USDC' })
   @IsString()
@@ -28,13 +29,12 @@ export class CreateClaimDto {
   @MaxLength(100)
   recipient: string;
 
-  @ApiPropertyOptional({ description: 'Privy user ID who created the claim (used to resolve username for display)' })
-  @IsOptional()
-  @IsString()
-  userId?: string;
-
   @ApiPropertyOptional({ description: 'When true, payment must use Privacy Cash (private payment)' })
   @IsOptional()
   @IsBoolean()
   isPrivate?: boolean;
+
+  // Server-side only — stripped from request body by ValidationPipe whitelist,
+  // then re-injected from the verified auth token in the controller.
+  userId?: string;
 }
