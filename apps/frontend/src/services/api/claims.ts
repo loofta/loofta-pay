@@ -1,10 +1,8 @@
 /**
- * Claims API Service
- * 
- * Handles claim-related operations:
- * - Creating payment claims
- * - Fetching claim details
- * - Managing claim intents
+ * Claims/Payments API Service
+ *
+ * Handles payment-related operations.
+ * New records live in the `payments` table; legacy records remain in `claims`.
  */
 
 import { fetchApi } from './client';
@@ -24,24 +22,41 @@ export type ClaimStatus =
   | 'EXPIRED'
   | 'CANCELLED';
 
+export type PaymentDirection = 'from_sender' | 'from_recipient';
+
+/**
+ * Unified payment shape returned by API routes.
+ * New payments use the `payments` table; legacy claims are normalised to this same shape.
+ * Backward-compat aliases (to_symbol, to_chain, claim_burner_address) are added by the
+ * GET /api/claims/[id] route so the payment page doesn't need changes.
+ */
 export interface Claim {
   id: string;
   amount: string;
-  to_symbol: string;
-  to_chain: string;
-  recipient_address: string;
+  direction: PaymentDirection;
+  // Backward-compat aliases injected by the API layer for legacy UI code
+  to_symbol: string;   // always "USDC" for new payments
+  to_chain: string;    // always "solana" for new payments
+  recipient_address?: string;
+  recipient_username?: string | null;
+  recipient_email?: string | null;
   created_by: string | null;
-  creator_email: string | null;
-  creator_username?: string | null;
-  notify_email_to: string | null;
   status: ClaimStatus;
   paid_at: string | null;
-  org_referral: string | null;
-  is_private: boolean | null;
-  paid_with_token: string | null;
+  is_private: boolean | null;   // deprecated — always null for new payments
+  paid_with_token: string | null; // deprecated — always null for new payments
   paid_with_chain: string | null;
+  description: string | null;
   created_at: string;
   updated_at: string;
+  is_devnet?: boolean;
+  sender_tx_hash?: string | null;
+  // Burner (compat alias: claim_burner_address = burner_address)
+  burner_address?: string | null;
+  claim_burner_address?: string | null;
+  // Creator display helpers (enriched by API)
+  creator_email?: string | null;   // deprecated — maps to recipient_email for legacy
+  creator_username?: string | null;
 }
 
 export interface ClaimIntent {
@@ -53,11 +68,9 @@ export interface ClaimIntent {
   deadline: string | null;
   time_estimate: number | null;
   status: string | null;
-  from_symbol: string | null;
   from_chain: string | null;
   to_chain: string | null;
   paid_amount: string | null;
-  companion_address: string | null;
   last_status_payload: unknown;
   created_at: string;
   updated_at: string;
@@ -72,15 +85,13 @@ export interface CreateClaimInput {
   recipient: string;
   userId?: string;
   orgReferral?: string;
+  direction?: PaymentDirection;
 }
 
 // ===========================================
 // API Functions
 // ===========================================
 
-/**
- * Create a new payment claim
- */
 export async function createClaim(data: CreateClaimInput): Promise<{ claim: Claim }> {
   return fetchApi<{ claim: Claim }>('/claims', {
     method: 'POST',
@@ -88,32 +99,20 @@ export async function createClaim(data: CreateClaimInput): Promise<{ claim: Clai
   });
 }
 
-/**
- * Get claim by ID
- */
 export async function getClaimById(id: string): Promise<{ claim: Claim }> {
   return fetchApi<{ claim: Claim }>(`/claims/${id}`);
 }
 
-/**
- * Get claim with its latest intent
- */
 export async function getClaimWithLatestIntent(
   id: string
 ): Promise<{ claim: Claim; intent: ClaimIntent | null }> {
   return fetchApi<{ claim: Claim; intent: ClaimIntent | null }>(`/claims/${id}/latest-intent`);
 }
 
-/**
- * Get claims by user (requires auth)
- */
 export async function getClaimsByUser(userId: string, accessToken?: string | null): Promise<{ claims: Claim[] }> {
   return fetchApi<{ claims: Claim[] }>('/claims/user', { userId, accessToken });
 }
 
-/**
- * Update claim status (internal use)
- */
 export async function updateClaimStatus(
   id: string,
   status: ClaimStatus,
@@ -128,10 +127,6 @@ export async function updateClaimStatus(
   });
 }
 
-/**
- * Build unsigned MagicBlock private transfer — recipient is resolved on the server only
- * (not visible in the browser network tab).
- */
 export async function buildClaimPrivateTransfer(
   claimId: string,
   userId: string,

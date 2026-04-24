@@ -51,7 +51,7 @@ async function createClaim(formData: {
   toSel: TokenSelection;
   recipient: string;
   userId?: string;
-  isPrivate?: boolean;
+  direction?: "from_sender" | "from_recipient";
   description?: string;
 }): Promise<{ id: string; link: string }> {
   const r = await fetch("/api/claims/create", {
@@ -297,7 +297,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         toSel: { symbol: finalToSel.symbol, chain: finalToSel.chain },
         recipient: finalRecipient,
         userId: authenticated ? userId : undefined,
-        isPrivate: PRIVATE_PAYMENT_COMING_SOON ? false : PRIVATE_PAYMENT_ENABLED || isPrivateMode,
+        direction: "from_recipient",
         description: combinedDescription,
       });
       setCreatedLink(res.link);

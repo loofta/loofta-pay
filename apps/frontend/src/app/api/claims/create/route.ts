@@ -6,21 +6,26 @@ import { isNonMainnetCluster } from "@/lib/solanaCluster";
 
 export async function POST(request: Request) {
   try {
-    const { amount, toSel, recipient, userId, description } = await request.json();
-    if (!amount || !toSel?.symbol || !toSel?.chain || !recipient) {
+    const { amount, toSel, recipient, userId, description, direction } = await request.json();
+    if (!amount || !recipient) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
     const supabase = getSupabaseAdmin();
+    const isFromRecipient = direction === 'from_recipient';
+    const uid = userId ? String(userId) : null;
     const { data, error } = await supabase
-      .from("claims")
+      .from("payments")
       .insert({
-        amount: String(amount),
-        to_symbol: String(toSel.symbol),
-        to_chain: String(toSel.chain),
+        amount: Number(amount),
+        direction: isFromRecipient ? 'from_recipient' : 'from_sender',
         recipient_address: String(recipient),
-        created_by: userId ? String(userId) : null,
-        creator_email: null,
+        created_by: uid,
+        sender_user_id: isFromRecipient ? null : uid,
+        recipient_user_id: isFromRecipient ? uid : null,
         status: "OPEN",
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        to_chain: "solana",
+        to_token: "USDC",
         is_devnet: isNonMainnetCluster(),
         description: description ? String(description).slice(0, 1000) : null,
       })
@@ -34,8 +39,6 @@ export async function POST(request: Request) {
     const link = `${origin}/c/${id}`;
     return NextResponse.json({ id, link }, { status: 200 });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Failed to create claim" }, { status: 500 });
+    return NextResponse.json({ error: e?.message || "Failed to create payment" }, { status: 500 });
   }
 }
-
-

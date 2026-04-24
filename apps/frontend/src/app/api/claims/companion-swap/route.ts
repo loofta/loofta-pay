@@ -259,14 +259,21 @@ export async function POST(request: NextRequest) {
     
     console.log("[claims/companion-swap] Companion data stored in Redis");
     
-    // Update claim status in Supabase
+    // Update payment status (try payments first, fall back to claims)
     try {
       const supabase = getSupabaseAdmin();
-      await supabase.from("claims").update({ 
-        status: "PENDING_DEPOSIT",
-      }).eq("id", claimId);
+      const { data: existing } = await supabase
+        .from("payments")
+        .select("id")
+        .eq("id", claimId)
+        .maybeSingle();
+      if (existing) {
+        await supabase.from("payments").update({ status: "PENDING_DEPOSIT" }).eq("id", claimId);
+      } else {
+        await supabase.from("claims").update({ status: "PENDING_DEPOSIT" }).eq("id", claimId);
+      }
     } catch (e) {
-      console.error("[claims/companion-swap] Failed to update claim status:", e);
+      console.error("[claims/companion-swap] Failed to update payment status:", e);
     }
     
     // Calculate amount user needs to deposit

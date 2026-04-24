@@ -14,15 +14,19 @@ const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
 export type PaymentHistoryClaim = {
   id: string;
   amount: string;
+  direction: "from_sender" | "from_recipient";
+  // Compat aliases — always present (new payments hard-code USDC/solana)
   to_symbol: string;
   to_chain: string;
   status: string;
   created_at: string;
   paid_at: string | null;
-  recipient_address: string;
+  recipient_address?: string;
   recipient_username?: string | null;
+  recipient_email?: string | null;
   creator_email: string | null;
   creator_username?: string | null;
+  sender_username?: string | null;
   created_by: string | null;
   paid_with_token: string | null;
   paid_with_chain: string | null;
@@ -31,8 +35,12 @@ export type PaymentHistoryClaim = {
   is_devnet?: boolean;
 };
 
-/** For received: sender label = @username → email → Anonymous */
+/** For received: sender label — for from_recipient payments use sender_username, otherwise creator */
 function getSenderDisplay(claim: PaymentHistoryClaim): string {
+  if (claim.direction === "from_recipient") {
+    if (claim.sender_username) return `@${claim.sender_username}`;
+    return "Anonymous";
+  }
   if (claim.creator_username) return `@${claim.creator_username}`;
   if (claim.creator_email) return claim.creator_email;
   return "Anonymous";

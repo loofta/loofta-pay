@@ -391,11 +391,12 @@ function getPhantomProvider(): { connect: () => Promise<{ publicKey: PublicKey }
 // Check demo mode at module level for consistent behavior
 const DEMO_MODE = isDemoMode();
 
-async function fetchClaim(id: string) {
+async function fetchClaim(id: string, authToken?: string | null) {
   // Try backend API first (more reliable for newly created claims)
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  const authHeaders = authToken ? { Authorization: `Bearer ${authToken}` } : {};
   try {
-    const r = await fetch(`${backendUrl}/claims/${id}/latest-intent`);
+    const r = await fetch(`${backendUrl}/claims/${id}/latest-intent`, { headers: authHeaders });
     if (r.ok) {
       const data = await r.json();
       const c = data.claim || {};
@@ -443,10 +444,10 @@ async function fetchClaim(id: string) {
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
 
-/** Always route payments through the burner wallet — never expose or use the real recipient address. */
-function getEffectiveRecipient(claim: { claim_burner_address?: string } | null): string {
+function getEffectiveRecipient(claim: { claim_burner_address?: string; recipient_address?: string } | null): string {
   if (!claim) return "";
-  return ((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
+  const c = claim as { claim_burner_address?: string; recipient_address?: string };
+  return (c.claim_burner_address || c.recipient_address || "").trim();
 }
 
 async function prepareDeposit(input: {
@@ -681,8 +682,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     return [...filtered, synthetic];
   }, [tokensRaw]);
   const claimQuery = useQuery({
-    queryKey: ["claim", id],
-    queryFn: () => fetchClaim(id),
+    queryKey: ["claim", id, user?.id],
+    queryFn: async () => {
+      const token = user?.id ? await getAccessToken() : null;
+      return fetchClaim(id, token);
+    },
     staleTime: 60_000,
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: false,
@@ -745,6 +749,28 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   /** Logged-in pending recipient cannot claim until burner USDC ATA has a balance (or burner address is missing). */
   const waitingForBurnerFunds =
     !!user?.id && isPendingRecipientClaim && (!burnerAddr || !burnerIsReady);
+
+  const solPriceQuery = useQuery({
+    queryKey: ["sol-price"],
+    queryFn: async (): Promise<number> => {
+      const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "";
+      const apiKey = rpcUrl.split("/").pop() ?? "";
+      const r = await fetch(`https://api.g.alchemy.com/prices/v1/${apiKey}/tokens/by-symbol?symbols=SOL`);
+      const json = await r.json();
+      return parseFloat(json?.data?.[0]?.prices?.find((p: { currency: string }) => p.currency === "usd")?.value ?? "0");
+    },
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+  const solPrice = solPriceQuery.data ?? 0;
+
+  const estimatePrivateTotal = (usd: number) => {
+    const net = Math.round(usd * 1_000_000);
+    const gross = Math.ceil((net * 10_000) / (10_000 - 10));
+    const protocolFee = (gross - net) / 1_000_000;
+    const gasFee = 0.002 * solPrice;
+    return { total: gross / 1_000_000 + gasFee, protocolFee, gasFee };
+  };
 
   useEffect(() => {
     if (!isPendingRecipientClaim) return;
@@ -1148,12 +1174,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     return tokens.find(t => t.symbol.toUpperCase() === 'USDC' && (t.chain === 'solana' || t.chain === 'sol'));
   }, [tokens]);
 
-  // Auto-select USDC on Solana when private mode is enabled
-  useEffect(() => {
-    if (isPrivateMode && usdcSolanaToken) {
-      setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
-    }
-  }, [isPrivateMode, usdcSolanaToken]);
   // Rhinestone and Biconomy are not used — only USDC on Solana (Pay with Loofta / Use wallet) is supported
   const swapProviderEligible = false;
   // Derive payer token from status originAsset if available, or from claim.is_private for private payments
@@ -1511,11 +1531,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       return;
     }
 
-    // Private payment: always route through the burner — never use the real recipient wallet.
+    // For registered recipients, the backend resolves the real wallet server-side (no burner stored).
+    // For pending recipients, the burner holds funds until they sign up and claim.
     const burnerAddr = ((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
-    const recipient = burnerAddr;
+    const isRegisteredRecipient = !!(claim as { recipient_is_registered?: boolean }).recipient_is_registered;
     const isBurnerRecipient = !!burnerAddr;
-    if (!recipient) {
+    const hasRecipient = isBurnerRecipient || isRegisteredRecipient;
+    if (!hasRecipient) {
       console.log("[PrivateTransfer] Early exit: no recipient");
       toast({ variant: "destructive", title: "Missing recipient", description: "Recipient address is not available for this claim." });
       return;
@@ -1669,8 +1691,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // This is USDC only (backend uses getTokenAccountsByOwner for USDC mint).
   // Note: Privy’s confirm modal shows the wallet’s SOL balance (for gas), not USDC — so you may see "$0.00" there even when you have USDC; gas sponsorship covers fees.
   const claimAmountUSD = parseFloat(claim?.amount || "0") || 0;
+  const { total: privatePayTotal, protocolFee: privatePayProtocolFee } = estimatePrivateTotal(claimAmountUSD);
   const looftaBalanceUSD = solanaPayment.balanceUSD;
-  const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(claimAmountUSD);
+  // Sender owes gross USDC (base + privacy fee); check that, not just base.
+  const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(claimAmountUSD + privatePayProtocolFee);
   const balanceData = solanaPayment.isBalanceLoading ? undefined : { balanceUSD: looftaBalanceUSD };
 
   /** Phantom payment path. Pending recipients use burner ATA escrow; registered users use PER. */
@@ -2492,21 +2516,28 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               })()
             ) : claim?.recipient_pending_email && !(user?.id && claim?.created_by === user.id) ? (
               <div className="mt-6 text-center py-12 px-4">
-                <div className="mb-4 text-6xl">🎁</div>
                 {!user?.id ? (
-                  <>
-                    <h3 className="text-2xl font-semibold text-gray-900 mb-2">You received a payment</h3>
-                    <p className="text-gray-500 text-base mb-5">
-                      Sign in with the email this link was sent to to claim.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => login({ loginMethods: ["email"], disableSignup: false })}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-                    >
-                      Sign in to claim
-                    </button>
-                  </>
+                  (() => {
+                    const senderHasPaid = ["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(
+                      String(claim?.status || "").toUpperCase()
+                    );
+                    return senderHasPaid ? (
+                      <>
+                        <div className="mb-4 text-6xl">🎁</div>
+                        <h3 className="text-2xl font-semibold text-gray-900 mb-2">You received a payment</h3>
+                        <p className="text-gray-500 text-base mb-5">
+                          Sign in with the email this link was sent to to claim.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => login({ loginMethods: ["email"], disableSignup: false })}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                        >
+                          Sign in to claim
+                        </button>
+                      </>
+                    ) : null;
+                  })()
                 ) : (
                   <>
                     <div className={"text-6xl font-sans font-semibold"}>
@@ -3181,15 +3212,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         const requestedAmount = parseFloat(claim?.amount || "0");
                         const isUSDCSelected = selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain;
 
-                        // 20 BPS (0.20%) protocol fee gross-up
-                        const estimatePrivateTotal = (usd: number) => {
-                          const net = Math.round(usd * 1_000_000);
-                          const gross = Math.ceil((net * 10_000) / (10_000 - 20));
-                          return { total: gross / 1_000_000, fee: (gross - net) / 1_000_000 };
-                        };
-
-                        if (requiresPrivate && isUSDCSelected) {
-                          const { total, fee } = estimatePrivateTotal(requestedAmount);
+                        if (privatePayActive && isUSDCSelected) {
+                          const { total, protocolFee, gasFee } = estimatePrivateTotal(requestedAmount);
                           return (
                             <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                               <div className="text-md font-medium font-sans text-gray-700 mb-2">Payment breakdown</div>
@@ -3199,20 +3223,19 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   <span className="font-semibold font-sans text-gray-900">${requestedAmount.toFixed(2)}</span>
                                 </div>
                                 <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Privacy fee (0.20%)</span>
-                                  <span className="font-medium text-gray-700">~${fee.toFixed(2)}</span>
+                                  <span className="text-gray-600">Protocol fee</span>
+                                  <span className="font-medium text-gray-700">{solPrice > 0 ? `~$${(protocolFee + gasFee).toFixed(3)}` : "..."}</span>
                                 </div>
                                 <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                                   <span className="font-medium font-sans text-md text-gray-900">Total to pay (USDC)</span>
-                                  <span className="font-semibold font-sans text-lg text-gray-900">~${total.toFixed(2)}</span>
+                                  <span className="font-semibold font-sans text-lg text-gray-900">{solPrice > 0 ? `$${total.toFixed(2)}` : "..."}</span>
                                 </div>
                               </div>
-                              <p className="mt-2 text-xs text-gray-400">Fee estimate — final amount depends on live SOL price.</p>
                             </div>
                           );
                         }
 
-                        if (isUSDCSelected && !requiresPrivate) {
+                        if (isUSDCSelected && !privatePayActive) {
                           return (
                             <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                               <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
@@ -3360,10 +3383,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       ) : selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain ? (
                         (() => {
                           const amt = parseFloat(claim?.amount || "0") || 0;
-                          const net = Math.round(amt * 1_000_000);
-                          const gross = Math.ceil((net * 10_000) / (10_000 - 20));
-                          const fee = (gross - net) / 1_000_000;
-                          const total = gross / 1_000_000;
+                          const { total: amt2Total, protocolFee: amt2ProtocolFee, gasFee: amt2GasFee } = estimatePrivateTotal(amt);
                           return (
                             <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                               <div className="text-sm font-medium text-gray-700 mb-2">Payment breakdown</div>
@@ -3373,15 +3393,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   <span className="font-semibold text-gray-900">${amt.toFixed(2)}</span>
                                 </div>
                                 <div className="flex items-center justify-between">
-                                  <span className="text-gray-600">Privacy fee (0.20%)</span>
-                                  <span className="font-medium text-gray-700">~${fee.toFixed(2)}</span>
+                                  <span className="text-gray-600">Protocol fee</span>
+                                  <span className="font-medium text-gray-700">{solPrice > 0 ? `~$${(amt2ProtocolFee + amt2GasFee).toFixed(3)}` : "..."}</span>
                                 </div>
                                 <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                                   <span className="font-medium text-gray-900">Total to pay (USDC)</span>
-                                  <span className="font-semibold text-lg text-gray-900">~${total.toFixed(2)}</span>
+                                  <span className="font-semibold text-lg text-gray-900">{solPrice > 0 ? `$${amt2Total.toFixed(2)}` : "..."}</span>
                                 </div>
                               </div>
-                              <p className="mt-2 text-xs text-gray-400">Fee estimate — final amount depends on live SOL price.</p>
                             </div>
                           );
                         })()
@@ -3472,10 +3491,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           })()}
                         >
                           {(() => {
-                            const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
-                              selectedFrom?.chain === usdcSolanaToken?.chain;
+                            const isUSDCOnSolana = !selectedFrom || (
+                              selectedFrom.symbol === usdcSolanaToken?.symbol &&
+                              selectedFrom.chain === usdcSolanaToken?.chain
+                            );
                             if (!authenticated && !isUSDCOnSolana) return "Login to pay";
-                            if (requiresPrivate && !isPrivateMode) return "Private payment required";
                             if (isUSDCOnSolana) return "Pay now";
                             return "Get deposit address";
                           })()}
@@ -4002,7 +4022,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               : perTransferPhase
                 ? "Payment in progress"
                 : claim?.amount
-                  ? `Pay $${claimAmountUSD.toFixed(2)}`
+                  ? `Pay $${solPrice > 0 ? privatePayTotal.toFixed(2) : claimAmountUSD.toFixed(2)}`
                   : "Pay now"}
           </DialogTitle>
           {confirmingTxSignature ? (
@@ -4104,7 +4124,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   <div className="text-6xl mb-4" aria-hidden>💳</div>
                 </div>
                 <h2 className="text-6xl font-semibold font-sans text-gray-900 tracking-tight text-center">
-                  {claim?.amount ? `$${claimAmountUSD.toFixed(2)}` : "Pay now"}
+                  {claim?.amount
+                    ? `$${solPrice > 0 ? privatePayTotal.toFixed(2) : claimAmountUSD.toFixed(2)}`
+                    : "Pay now"}
                 </h2>
                 <DialogDescription className="pt-2 text-lg text-center text-slate-400">Choose how you'd like to pay</DialogDescription>
               </DialogHeader>
@@ -4164,7 +4186,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       type="button"
                       disabled={(balanceData !== undefined && !hasEnoughLooftaBalance) || payingWithLoofta}
                       onClick={() => payWithLooftaBalance()}
-                      title={balanceData !== undefined && !hasEnoughLooftaBalance ? `Need $${claimAmountUSD.toFixed(2)} (you have $${looftaBalanceUSD.toFixed(2)})` : undefined}
+                      title={balanceData !== undefined && !hasEnoughLooftaBalance ? `Need $${(claimAmountUSD + privatePayProtocolFee).toFixed(2)} (you have $${looftaBalanceUSD.toFixed(2)})` : undefined}
                       className="flex items-center gap-3 w-full p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-orange-50 hover:border-orange-200 transition-all text-left disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-gray-50 disabled:hover:border-gray-200"
                     >
                       <div className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center shrink-0 p-1.5">

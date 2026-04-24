@@ -169,6 +169,144 @@ export type Database = {
           payload?: Json | null;
         };
       };
+      payments: {
+        Row: {
+          id: string;
+          created_at: string;
+          updated_at: string;
+          created_by: string | null;
+          amount: string; // NUMERIC returned as string by PostgREST
+          direction: PaymentDirection;
+          recipient_address: string | null;
+          recipient_username: string | null;
+          recipient_email: string | null;
+          burner_address: string | null;
+          burner_encrypted_secret: string | null;
+          status: PaymentStatus;
+          paid_at: string | null;
+          sender_tx_hash: string | null;
+          sweep_tx_hash: string | null;
+          description: string | null;
+          paid_with_chain: string | null;
+          is_devnet: boolean;
+          legacy_claim_id: string | null;
+        };
+        Insert: {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+          created_by?: string | null;
+          amount: number | string;
+          direction?: PaymentDirection;
+          recipient_address?: string | null;
+          recipient_username?: string | null;
+          recipient_email?: string | null;
+          burner_address?: string | null;
+          burner_encrypted_secret?: string | null;
+          status?: PaymentStatus;
+          paid_at?: string | null;
+          sender_tx_hash?: string | null;
+          sweep_tx_hash?: string | null;
+          description?: string | null;
+          paid_with_chain?: string | null;
+          is_devnet?: boolean;
+          legacy_claim_id?: string | null;
+        };
+        Update: {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+          created_by?: string | null;
+          amount?: number | string;
+          direction?: PaymentDirection;
+          recipient_address?: string | null;
+          recipient_username?: string | null;
+          recipient_email?: string | null;
+          burner_address?: string | null;
+          burner_encrypted_secret?: string | null;
+          status?: PaymentStatus;
+          paid_at?: string | null;
+          sender_tx_hash?: string | null;
+          sweep_tx_hash?: string | null;
+          description?: string | null;
+          paid_with_chain?: string | null;
+          is_devnet?: boolean;
+          legacy_claim_id?: string | null;
+        };
+      };
+      payment_intents: {
+        Row: {
+          id: string;
+          payment_id: string;
+          created_at: string;
+          updated_at: string;
+          quote_id: string | null;
+          deposit_address: string | null;
+          memo: string | null;
+          deadline: string | null;
+          time_estimate: number | null;
+          status: string | null;
+          from_chain: string | null;
+          to_chain: string | null;
+          paid_amount: string | null;
+          last_status_payload: Json | null;
+        };
+        Insert: {
+          id?: string;
+          payment_id: string;
+          created_at?: string;
+          updated_at?: string;
+          quote_id?: string | null;
+          deposit_address?: string | null;
+          memo?: string | null;
+          deadline?: string | null;
+          time_estimate?: number | null;
+          status?: string | null;
+          from_chain?: string | null;
+          to_chain?: string | null;
+          paid_amount?: string | null;
+          last_status_payload?: Json | null;
+        };
+        Update: {
+          id?: string;
+          payment_id?: string;
+          created_at?: string;
+          updated_at?: string;
+          quote_id?: string | null;
+          deposit_address?: string | null;
+          memo?: string | null;
+          deadline?: string | null;
+          time_estimate?: number | null;
+          status?: string | null;
+          from_chain?: string | null;
+          to_chain?: string | null;
+          paid_amount?: string | null;
+          last_status_payload?: Json | null;
+        };
+      };
+      payment_events: {
+        Row: {
+          id: number;
+          payment_id: string;
+          created_at: string;
+          type: string;
+          payload: Json | null;
+        };
+        Insert: {
+          id?: number;
+          payment_id: string;
+          created_at?: string;
+          type: string;
+          payload?: Json | null;
+        };
+        Update: {
+          id?: number;
+          payment_id?: string;
+          created_at?: string;
+          type?: string;
+          payload?: Json | null;
+        };
+      };
       organizations: {
         Row: {
           id: string;
@@ -276,6 +414,20 @@ export type ClaimStatus =
   | 'EXPIRED'
   | 'CANCELLED';
 
+export type PaymentStatus =
+  | 'OPEN'
+  | 'PENDING_DEPOSIT'
+  | 'IN_FLIGHT'
+  | 'FUNDED'
+  | 'PRIVATE_TRANSFER_PENDING'
+  | 'SUCCESS'
+  | 'REFUNDED'
+  | 'EXPIRED'
+  | 'CANCELLED'
+  | 'DELETED';
+
+export type PaymentDirection = 'from_sender' | 'from_recipient';
+
 export type CheckoutStatus = 'active' | 'inactive' | 'pending';
 
 export type UserRole = 'user' | 'admin' | 'super_admin';
@@ -296,6 +448,14 @@ export type ClaimUpdate = UpdateTables<'claims'>;
 export type ClaimIntent = Tables<'claim_intents'>;
 export type ClaimIntentInsert = InsertTables<'claim_intents'>;
 export type ClaimIntentUpdate = UpdateTables<'claim_intents'>;
+
+export type Payment = Tables<'payments'>;
+export type PaymentInsert = InsertTables<'payments'>;
+export type PaymentUpdate = UpdateTables<'payments'>;
+
+export type PaymentIntent = Tables<'payment_intents'>;
+export type PaymentIntentInsert = InsertTables<'payment_intents'>;
+export type PaymentIntentUpdate = UpdateTables<'payment_intents'>;
 
 export type Organization = Tables<'organizations'>;
 export type OrganizationInsert = InsertTables<'organizations'>;

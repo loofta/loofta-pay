@@ -22,6 +22,7 @@ import { SolanaSponsorService } from './solana-sponsor.service';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 import {
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
+  TOTAL_FEE_BPS,
   fetchSolPriceUsd,
   grossUpForMagicblockFee,
   type MagicblockPrivateTransferTxResponse,
@@ -98,22 +99,21 @@ export class ClaimsService {
    * Create a new payment claim
    */
   async create(dto: CreateClaimDto): Promise<{ id: string; link: string }> {
-    const { amount, toSel, recipient, userId, isPrivate } = dto;
+    const { amount, toSel, recipient, userId } = dto;
 
     if (!amount || !toSel?.symbol || !toSel?.chain || !recipient) {
       throw new BadRequestException('Missing required fields');
     }
 
-    const { data, error } = await this.supabaseService.claims
+    const { data, error } = await this.supabaseService.payments
       .insert({
-        amount: String(amount),
-        to_symbol: String(toSel.symbol),
-        to_chain: String(toSel.chain),
+        amount: Number(amount),
+        direction: 'from_sender',
         recipient_address: String(recipient),
         created_by: userId ? String(userId) : null,
-        creator_email: null,
-        status: 'OPEN' as ClaimStatus,
-        is_private: isPrivate === true,
+        status: 'OPEN',
+        to_chain: 'solana',
+        to_token: 'USDC',
         is_devnet: isSolanaDevnetFromConfig(this.configService),
       })
       .select('id')
@@ -155,27 +155,22 @@ export class ClaimsService {
       }
       recipientAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
 
-      // Always create a burner for registered recipients so the sender never sends
-      // directly to the recipient's wallet (privacy: real wallet stays server-side only).
-      const registeredBurner = this.createClaimBurner();
-      if (!registeredBurner) {
-        this.logger.warn('Creating registered-recipient claim without burner: SEND_PAYMENT_ENC_KEY may be missing.');
-      }
-
-      const { data: claim, error: claimError } = await this.supabaseService.claims
+      // No burner for registered recipients — MagicBlock PER handles the private transfer
+      // directly to their real wallet (resolved server-side). Burners are only needed when
+      // the recipient hasn't signed up yet and funds must be held until they claim.
+      const { data: claim, error: claimError } = await this.supabaseService.payments
         .insert({
-          amount: String(amount),
-          to_symbol: 'USDC',
-          to_chain: 'solana',
+          amount: Number(amount),
+          direction: 'from_sender',
           recipient_address: recipientAddress,
           recipient_username: cleanUsername,
+          recipient_user_id: user.privyUserId,
           created_by: userId ? String(userId) : null,
-          creator_email: null,
-          status: 'OPEN' as ClaimStatus,
-          is_private: finalIsPrivate,
+          status: 'OPEN',
           description: description || null,
+          to_chain: 'solana',
+          to_token: 'USDC',
           is_devnet: isSolanaDevnetFromConfig(this.configService),
-          ...(registeredBurner ? { claim_burner_address: registeredBurner.claim_burner_address, claim_burner_encrypted_secret: registeredBurner.claim_burner_encrypted_secret } : {}),
         })
         .select('id')
         .single();
@@ -201,19 +196,18 @@ export class ClaimsService {
       this.logger.warn('Creating pending-username claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Pay-with-Loofta will fail until the key is set.');
     }
 
-    const { data: claim, error: claimError } = await this.supabaseService.claims
+    const { data: claim, error: claimError } = await this.supabaseService.payments
       .insert({
-        amount: String(amount),
-        to_symbol: 'USDC',
-        to_chain: 'solana',
+        amount: Number(amount),
+        direction: 'from_sender',
         recipient_address: recipientAddress,
         created_by: userId ? String(userId) : null,
-        creator_email: null,
-        status: 'OPEN' as ClaimStatus,
-        is_private: isPrivate,
+        status: 'OPEN',
         description: description || null,
+        to_chain: 'solana',
+        to_token: 'USDC',
         is_devnet: isSolanaDevnetFromConfig(this.configService),
-        ...(burner ? { claim_burner_address: burner.claim_burner_address, claim_burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
+        ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id')
       .single();
@@ -237,6 +231,61 @@ export class ClaimsService {
   private isPendingRecipientAddress(addr?: string | null): boolean {
     const v = (addr || '').trim();
     return v.startsWith(ClaimsService.PENDING_EMAIL_PREFIX) || v.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
+  }
+
+  /** Normalize a payment_intents row so it looks like a claim_intents row (claim_id alias). */
+  private normalizeIntent(row: Record<string, unknown>): Record<string, unknown> {
+    return { ...row, claim_id: row.payment_id ?? row.claim_id ?? null };
+  }
+
+  /** Map a payments-table row to the internal shape used by this service (claims field names). */
+  private normalizeFromPayments(row: Record<string, unknown>): Record<string, unknown> {
+    return {
+      ...row,
+      claim_burner_address: row.burner_address ?? null,
+      claim_burner_encrypted_secret: row.burner_encrypted_secret ?? null,
+      to_symbol: 'USDC',
+      // compat aliases for legacy field names still consumed by page.tsx / admin UI
+      paid_with_chain: row.from_chain ?? null,
+      paid_with_token: row.from_token ?? null,
+      is_private: null,
+      creator_email: null,
+    };
+  }
+
+  /** Fetch raw row by ID: tries payments first (normalized), falls back to claims. */
+  private async fetchRawRow(
+    id: string,
+  ): Promise<{ row: Record<string, unknown>; table: 'payments' | 'claims' } | null> {
+    const { data: pr } = await this.supabaseService.payments
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (pr) return { row: this.normalizeFromPayments(pr as Record<string, unknown>), table: 'payments' };
+    const { data: cr } = await this.supabaseService.claims
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (cr) return { row: cr as Record<string, unknown>, table: 'claims' };
+    return null;
+  }
+
+  /** Update a field set on whichever table holds this ID. Tries payments first. */
+  private async updateRow(
+    id: string,
+    paymentsData: Record<string, unknown>,
+    claimsData: Record<string, unknown>,
+  ): Promise<{ error: string | null }> {
+    const { data, error } = await (this.supabaseService.payments as any)
+      .update(paymentsData)
+      .eq('id', id)
+      .select('id')
+      .maybeSingle();
+    if (!error && data) return { error: null };
+    const { error: claimErr } = await (this.supabaseService.claims as any)
+      .update(claimsData)
+      .eq('id', id);
+    return { error: claimErr ? String(claimErr.message) : null };
   }
 
   private formatError(error: unknown): string {
@@ -461,7 +510,6 @@ export class ClaimsService {
     try {
       const user = await this.usersService.findByEmail(cleanEmail);
       requiresPrivate = user.requirePrivatePayments || false;
-      const finalIsPrivate = requiresPrivate ? true : isPrivate;
       if (requiresPrivate && !isPrivate) {
         throw new BadRequestException(
           'This user requires private payments only. Please enable privacy when creating the payment link.',
@@ -469,17 +517,17 @@ export class ClaimsService {
       }
       recipientAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
 
-      const { data: claim, error: claimError } = await this.supabaseService.claims
+      const { data: claim, error: claimError } = await this.supabaseService.payments
         .insert({
-          amount: String(amount),
-          to_symbol: 'USDC',
-          to_chain: 'solana',
+          amount: Number(amount),
+          direction: 'from_sender',
           recipient_address: recipientAddress,
+          recipient_user_id: user.privyUserId,
           created_by: userId ? String(userId) : null,
-          creator_email: null,
-          status: 'OPEN' as ClaimStatus,
-          is_private: finalIsPrivate,
+          status: 'OPEN',
           description: description || null,
+          to_chain: 'solana',
+          to_token: 'USDC',
           is_devnet: isSolanaDevnetFromConfig(this.configService),
         })
         .select('id')
@@ -506,19 +554,19 @@ export class ClaimsService {
       this.logger.warn('Creating pending-email claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Pay-with-Loofta will fail until the key is set.');
     }
 
-    const { data: claim, error: claimError } = await this.supabaseService.claims
+    const { data: claim, error: claimError } = await this.supabaseService.payments
       .insert({
-        amount: String(amount),
-        to_symbol: 'USDC',
-        to_chain: 'solana',
+        amount: Number(amount),
+        direction: 'from_sender',
         recipient_address: recipientAddress,
+        recipient_email: cleanEmail,
         created_by: userId ? String(userId) : null,
-        creator_email: null,
-        status: 'OPEN' as ClaimStatus,
-        is_private: isPrivate,
+        status: 'OPEN',
         description: description || null,
+        to_chain: 'solana',
+        to_token: 'USDC',
         is_devnet: isSolanaDevnetFromConfig(this.configService),
-        ...(burner ? { claim_burner_address: burner.claim_burner_address, claim_burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
+        ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id')
       .single();
@@ -537,17 +585,14 @@ export class ClaimsService {
   /**
    * Get claim by ID
    */
-  async findOne(id: string): Promise<Claim> {
-    const { data, error } = await this.supabaseService.claims
-      .select('*')
-      .eq('id', id)
-      .single();
+  async findOne(id: string, requestingUserId?: string): Promise<Claim> {
+    const result = await this.fetchRawRow(id);
 
-    if (error || !data) {
+    if (!result) {
       throw new NotFoundException(`Claim with ID ${id} not found`);
     }
 
-    const claim = data as Claim;
+    const claim = result.row as unknown as Claim;
     if ((claim.status || '').toUpperCase() === 'DELETED') {
       throw new NotFoundException('This payment doesn\'t exist.');
     }
@@ -560,12 +605,13 @@ export class ClaimsService {
       const pendingEmail = claim.recipient_address.slice(ClaimsService.PENDING_EMAIL_PREFIX.length).trim().toLowerCase();
       (claim as Claim & { recipient_address?: string; recipient_pending_email?: boolean }).recipient_address = undefined;
       (claim as Claim & { recipient_pending_email?: boolean }).recipient_pending_email = true;
-      (claim as Claim & { recipient_pending_email_value?: string }).recipient_pending_email_value = this.maskEmail(pendingEmail);
-      const dataWithBurner = data as { claim_burner_address?: string | null };
+      const isCreator = requestingUserId && claim.created_by && requestingUserId === claim.created_by;
+      (claim as Claim & { recipient_pending_email_value?: string }).recipient_pending_email_value = isCreator ? pendingEmail : this.maskEmail(pendingEmail);
+      const claimWithBurner = claim as unknown as { claim_burner_address?: string | null };
       this.logger.log(
-        `[findOne] Pending-email claim ${id}: burner=${dataWithBurner.claim_burner_address ? 'present' : 'missing'}`,
+        `[findOne] Pending-email claim ${id}: burner=${claimWithBurner.claim_burner_address ? 'present' : 'missing'}`,
       );
-      let burnerAddr = dataWithBurner.claim_burner_address?.trim() || null;
+      let burnerAddr = claimWithBurner.claim_burner_address?.trim() || null;
       if (!burnerAddr) {
         burnerAddr = await this.backfillBurnerForClaim(id);
       }
@@ -577,34 +623,28 @@ export class ClaimsService {
       (claim as Claim & { recipient_address?: string }).recipient_address = undefined;
       (claim as Claim & { recipient_pending_username?: boolean }).recipient_pending_username = true;
       (claim as Claim & { recipient_pending_username_value?: string }).recipient_pending_username_value = pendingUsername;
-      const dataWithBurner = data as { claim_burner_address?: string | null };
+      const claimWithBurner = claim as unknown as { claim_burner_address?: string | null };
       this.logger.log(
-        `[findOne] Pending-username claim ${id}: burner=${dataWithBurner.claim_burner_address ? 'present' : 'missing'}`,
+        `[findOne] Pending-username claim ${id}: burner=${claimWithBurner.claim_burner_address ? 'present' : 'missing'}`,
       );
-      let burnerAddr = dataWithBurner.claim_burner_address?.trim() || null;
+      let burnerAddr = claimWithBurner.claim_burner_address?.trim() || null;
       if (!burnerAddr) {
         burnerAddr = await this.backfillBurnerForClaim(id);
       }
       if (burnerAddr) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = burnerAddr;
     }
-    // Registered recipient: strip real wallet from response, backfill burner if missing so sender
-    // always sends to an intermediary and never sees the recipient's actual wallet address.
     else if (claim.recipient_address?.trim()) {
-      const dataWithBurner = data as { claim_burner_address?: string | null };
-      let burnerAddr = dataWithBurner.claim_burner_address?.trim() || null;
-      if (!burnerAddr) {
-        burnerAddr = await this.backfillBurnerForClaim(id);
-      }
-      if (burnerAddr) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = burnerAddr;
-      // Mark as registered so the frontend knows the recipient already has an account
       (claim as Claim & { recipient_is_registered?: boolean }).recipient_is_registered = true;
-      // Never expose the real recipient wallet to the public API
-      delete (claim as unknown as Record<string, unknown>)['recipient_address'];
+      const claimWithBurner = claim as unknown as { claim_burner_address?: string | null };
+      if (claimWithBurner.claim_burner_address?.trim()) {
+        // Burner exists: payment routes through it — hide the real recipient address
+        delete (claim as unknown as Record<string, unknown>)['recipient_address'];
+      }
+      // No burner: recipient_address IS the payment destination for direct-wallet links — keep it
     }
 
-    // Never expose the encrypted burner private key or real recipient wallet to the frontend
+    // Never expose the encrypted burner private key to the frontend
     delete (claim as unknown as Record<string, unknown>)['claim_burner_encrypted_secret'];
-    delete (claim as unknown as Record<string, unknown>)['recipient_address'];
 
     return claim;
   }
@@ -619,12 +659,11 @@ export class ClaimsService {
       this.logger.warn(`[findOne] Cannot backfill burner for claim ${claimId}: SEND_PAYMENT_ENC_KEY not available`);
       return null;
     }
-    const { error } = await this.supabaseService.claims
-      .update({
-        claim_burner_address: burner.claim_burner_address,
-        claim_burner_encrypted_secret: burner.claim_burner_encrypted_secret,
-      })
-      .eq('id', claimId);
+    const { error } = await this.updateRow(
+      claimId,
+      { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret },
+      { claim_burner_address: burner.claim_burner_address, claim_burner_encrypted_secret: burner.claim_burner_encrypted_secret },
+    );
     if (error) {
       this.logger.error(`[findOne] Failed to backfill burner for claim ${claimId}:`, error);
       return null;
@@ -637,14 +676,11 @@ export class ClaimsService {
    * Get claim by ID without masking (internal use e.g. recipient-check)
    */
   async findOneRaw(id: string): Promise<Claim & { recipient_address?: string }> {
-    const { data, error } = await this.supabaseService.claims
-      .select('*')
-      .eq('id', id)
-      .single();
-    if (error || !data) {
+    const result = await this.fetchRawRow(id);
+    if (!result) {
       throw new NotFoundException(`Claim with ID ${id} not found`);
     }
-    const row = data as Claim & { recipient_address?: string };
+    const row = result.row as unknown as Claim & { recipient_address?: string };
     if ((row.status || '').toUpperCase() === 'DELETED') {
       throw new NotFoundException('This payment doesn\'t exist.');
     }
@@ -685,12 +721,16 @@ export class ClaimsService {
     const solPrice = await fetchSolPriceUsd();
     const grossUnits = grossUpForMagicblockFee(baseUnits, solPrice);
     const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
-    this.logger.log(`[PrivatePay] claim=${claimId} amount=${amountUsd} net=${baseUnits} gross=${grossUnits} solPrice=${solPrice}`);
+    // On devnet/localhost MagicBlock passes amount straight to recipient (no fee deduction).
+    // Apply 10 BPS gross-up so the surplus lands in the tx; mainnet uses full gross (10 BPS + gas).
+    const devnetUnits = Math.ceil((baseUnits * 10_000) / (10_000 - TOTAL_FEE_BPS));
+    const transferUnits = cluster === 'mainnet' ? grossUnits : devnetUnits;
+    this.logger.log(`[PrivatePay] claim=${claimId} amount=${amountUsd} net=${baseUnits} gross=${grossUnits} transfer=${transferUnits} cluster=${cluster} solPrice=${solPrice}`);
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
       mint: this.usdcMint.toBase58(),
-      amount: grossUnits,
+      amount: transferUnits,
       cluster,
     });
 
@@ -805,11 +845,11 @@ export class ClaimsService {
 
     // For pending claims we need to record the real wallet; for registered recipients it's already set.
     if (isPendingEmail || isPendingUsername) {
-      const { error } = await this.supabaseService.claims
-        .update({ recipient_address: wallet.trim() })
-        .eq('id', claimId)
-        .select()
-        .single();
+      const { error } = await this.updateRow(
+        claimId,
+        { recipient_address: wallet.trim(), recipient_user_id: privyUserId },
+        { recipient_address: wallet.trim() },
+      );
       if (error) {
         this.logger.error('Failed to claim payment:', error);
         throw new BadRequestException('Failed to claim payment.');
@@ -1415,9 +1455,11 @@ export class ClaimsService {
       throw new BadRequestException(reclaimBlockedReason);
     }
 
-    const { error } = await this.supabaseService.claims
-      .update({ status: 'CANCELLED' })
-      .eq('id', claimId);
+    const { error } = await this.updateRow(
+      claimId,
+      { status: 'CANCELLED' },
+      { status: 'CANCELLED' },
+    );
 
     if (error) {
       this.logger.error('Failed to cancel claim:', error);
@@ -1576,40 +1618,41 @@ export class ClaimsService {
   /**
    * Get claim with latest intent
    */
-  async findWithLatestIntent(id: string): Promise<{
+  async findWithLatestIntent(id: string, requestingUserId?: string): Promise<{
     claim: Claim;
     intent: ClaimIntent | null;
   }> {
-    const claim = await this.findOne(id);
+    const claim = await this.findOne(id, requestingUserId);
 
-    const { data: intent } = await this.supabaseService.claimIntents
+    const { data: intent } = await this.supabaseService.paymentIntents
       .select('*')
-      .eq('claim_id', id)
+      .eq('payment_id', id)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    return { claim, intent };
+    return {
+      claim,
+      intent: intent ? (this.normalizeIntent(intent as Record<string, unknown>) as unknown as ClaimIntent) : null,
+    };
   }
 
   /**
    * Update claim status. When status is SUCCESS and createdByUserId is provided, backfill created_by if currently null (so payment shows in history).
    * For CANCELLED: if callerUserId is provided, enforces that only the creator can cancel.
    */
-  async updateStatus(id: string, status: ClaimStatus, extra?: { 
-    txHash?: string; 
-    paidWith?: string; 
+  async updateStatus(id: string, status: ClaimStatus, extra?: {
+    txHash?: string;
+    paidWith?: string;
     isPrivate?: boolean;
     paidWithToken?: string;
     paidWithChain?: string;
+    fromToken?: string;
   }, createdByUserId?: string): Promise<Claim> {
     // Ownership check for destructive transitions
     if ((status as string).toUpperCase() === 'CANCELLED' && createdByUserId) {
-      const { data: existing } = await this.supabaseService.claims
-        .select('created_by')
-        .eq('id', id)
-        .maybeSingle();
-      if (existing?.created_by && existing.created_by !== createdByUserId) {
+      const result = await this.fetchRawRow(id);
+      if (result?.row.created_by && result.row.created_by !== createdByUserId) {
         throw new ForbiddenException('Only the claim creator can cancel this payment');
       }
     }
@@ -1619,62 +1662,54 @@ export class ClaimsService {
 
     // For unresolved recipients, sender-funded does not mean recipient-claimed yet.
     if (status === 'SUCCESS') {
-      const { data: existingClaim } = await this.supabaseService.claims
-        .select('recipient_address')
-        .eq('id', id)
-        .maybeSingle();
-      if (existingClaim && this.isPendingRecipientAddress(existingClaim.recipient_address)) {
+      const result = await this.fetchRawRow(id);
+      if (result && this.isPendingRecipientAddress(result.row.recipient_address as string)) {
         effectiveStatus = 'PRIVATE_TRANSFER_PENDING';
         updateData.status = effectiveStatus;
       }
     }
-    
+
     // Set paid_at timestamp when status becomes SUCCESS
     if (status === 'SUCCESS') {
       updateData.paid_at = new Date().toISOString();
-      // Backfill created_by when missing so the payment appears in history
       if (createdByUserId) {
-        const { data: existing } = await this.supabaseService.claims
-          .select('created_by')
-          .eq('id', id)
-          .maybeSingle();
-        if (existing && !existing.created_by) {
+        const result = await this.fetchRawRow(id);
+        if (result && !result.row.created_by) {
           updateData.created_by = createdByUserId;
         }
       }
     }
-    
-    // Set is_private flag if provided (for private payments)
-    if (extra?.isPrivate !== undefined) {
-      updateData.is_private = extra.isPrivate;
-    }
-    
-    // Save payment information (what token/chain was used to pay)
-    if (extra?.paidWithToken) {
-      updateData.paid_with_token = extra.paidWithToken;
-    }
+
+    // from_chain / from_token stored on payments; legacy claims fallback uses paid_with_chain
     if (extra?.paidWithChain) {
-      updateData.paid_with_chain = extra.paidWithChain;
+      updateData.from_chain = extra.paidWithChain;
+    }
+    if (extra?.fromToken ?? extra?.paidWithToken) {
+      updateData.from_token = extra.fromToken ?? extra.paidWithToken;
     }
 
     // Persist the transaction signature for audit and recovery
     if (extra?.txHash) {
       updateData.sender_tx_hash = extra.txHash;
     }
-    
-    const { data, error } = await this.supabaseService.claims
-      .update(updateData)
-      .eq('id', id)
-      .select()
-      .single();
+
+    // Legacy claims table uses paid_with_chain instead of from_chain/from_token
+    const legacyUpdateData: Record<string, unknown> = { ...updateData };
+    if (legacyUpdateData.from_chain !== undefined) {
+      legacyUpdateData.paid_with_chain = legacyUpdateData.from_chain;
+      delete legacyUpdateData.from_chain;
+    }
+    delete legacyUpdateData.from_token;
+
+    const { error } = await this.updateRow(id, updateData, legacyUpdateData);
 
     if (error) {
       this.logger.error('Failed to update claim status:', error);
-      throw new Error(`Database error: ${error.message}`);
+      throw new Error(`Database error: ${error}`);
     }
 
-    this.logger.log(`Updated claim ${id} status to ${effectiveStatus}${extra?.isPrivate ? ' (private)' : ''}`);
-    return data;
+    this.logger.log(`Updated claim ${id} status to ${effectiveStatus}`);
+    return { id, status: effectiveStatus } as unknown as Claim;
   }
 
   /**
@@ -1682,7 +1717,7 @@ export class ClaimsService {
    * Used by the cron verifier to poll on-chain and auto-upgrade to SUCCESS.
    */
   async getPendingTxHashClaims(): Promise<{ id: string; sender_tx_hash: string; created_at: string }[]> {
-    const { data, error } = await this.supabaseService.claims
+    const { data, error } = await this.supabaseService.payments
       .select('id, sender_tx_hash, created_at')
       .eq('status', 'PRIVATE_TRANSFER_PENDING')
       .not('sender_tx_hash', 'is', null);
@@ -1690,7 +1725,7 @@ export class ClaimsService {
       this.logger.error('Failed to query pending tx hash claims:', error);
       return [];
     }
-    return (data || []).filter((c) => !!c.sender_tx_hash) as { id: string; sender_tx_hash: string; created_at: string }[];
+    return (data || []).filter((c) => !!(c as any).sender_tx_hash) as { id: string; sender_tx_hash: string; created_at: string }[];
   }
 
   /**
@@ -1698,12 +1733,14 @@ export class ClaimsService {
    * confirmation polling completes. Enables recovery if the RPC polling times out.
    */
   async saveBroadcastTxHash(id: string, txHash: string): Promise<void> {
-    const { error } = await this.supabaseService.claims
-      .update({ sender_tx_hash: txHash })
-      .eq('id', id);
+    const { error } = await this.updateRow(
+      id,
+      { sender_tx_hash: txHash },
+      { sender_tx_hash: txHash },
+    );
     if (error) {
       this.logger.error(`Failed to save broadcast tx hash for claim ${id}:`, error);
-      throw new Error(`Database error: ${error.message}`);
+      throw new Error(`Database error: ${error}`);
     }
     this.logger.log(`Saved broadcast tx hash for claim ${id}: ${txHash.slice(0, 12)}...`);
   }
@@ -1712,7 +1749,7 @@ export class ClaimsService {
    * Get all claims for a user
    */
   async findByUser(userId: string): Promise<Claim[]> {
-    const { data, error } = await this.supabaseService.claims
+    const { data, error } = await this.supabaseService.payments
       .select('*')
       .eq('created_by', userId)
       .order('created_at', { ascending: false });
@@ -1722,14 +1759,14 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
-    return data || [];
+    return (data || []).map((r) => this.normalizeFromPayments(r as Record<string, unknown>) as unknown as Claim);
   }
 
   /**
    * Get claims by status (for cron processing)
    */
   async findByStatus(status: ClaimStatus): Promise<Claim[]> {
-    const { data, error } = await this.supabaseService.claims
+    const { data, error } = await this.supabaseService.payments
       .select('*')
       .eq('status', status)
       .order('created_at', { ascending: true });
@@ -1739,7 +1776,7 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
-    return data || [];
+    return (data || []).map((r) => this.normalizeFromPayments(r as Record<string, unknown>) as unknown as Claim);
   }
 
   /**
@@ -1750,12 +1787,12 @@ export class ClaimsService {
    */
   async cronSweepPendingBurners(): Promise<void> {
     const cutoff = new Date(Date.now() - 10 * 60_000).toISOString();
-    const { data: pendingClaims, error } = await this.supabaseService.claims
+    const { data: pendingClaims, error } = await this.supabaseService.payments
       .select('*')
       .eq('status', 'PRIVATE_TRANSFER_PENDING')
       .gte('updated_at', cutoff)
-      .not('claim_burner_address', 'is', null)
-      .not('claim_burner_encrypted_secret', 'is', null);
+      .not('burner_address', 'is', null)
+      .not('burner_encrypted_secret', 'is', null);
 
     if (error) {
       this.logger.error('[cronSweep] Query error:', error);
@@ -1766,7 +1803,7 @@ export class ClaimsService {
     this.logger.log(`[cronSweep] Found ${pendingClaims.length} PRIVATE_TRANSFER_PENDING claims to retry`);
 
     for (const raw of pendingClaims) {
-      const claim = raw as Claim & { recipient_address?: string };
+      const claim = this.normalizeFromPayments(raw as Record<string, unknown>) as unknown as Claim & { recipient_address?: string };
       const recipientWallet = (claim.recipient_address || '').trim();
       if (!recipientWallet || this.isPendingRecipientAddress(recipientWallet)) {
         this.logger.warn(`[cronSweep] Claim ${claim.id}: recipient not resolved yet, skipping`);
@@ -1800,9 +1837,9 @@ export class ClaimsService {
     toChain?: string;
     status?: string;
   }): Promise<ClaimIntent> {
-    const { data, error } = await this.supabaseService.claimIntents
+    const { data, error } = await this.supabaseService.paymentIntents
       .insert({
-        claim_id: params.claimId,
+        payment_id: params.claimId,
         quote_id: params.quoteId || null,
         deposit_address: params.depositAddress || null,
         memo: params.memo || null,
@@ -1822,7 +1859,7 @@ export class ClaimsService {
     // Update claim status
     await this.updateStatus(params.claimId, 'PENDING_DEPOSIT');
 
-    return data;
+    return this.normalizeIntent(data as Record<string, unknown>) as unknown as ClaimIntent;
   }
 
   /**
@@ -1841,7 +1878,7 @@ export class ClaimsService {
     if (updates.lastStatusPayload !== undefined) updateData.last_status_payload = updates.lastStatusPayload;
     if (updates.paidAmount !== undefined) updateData.paid_amount = updates.paidAmount;
 
-    const { data, error } = await this.supabaseService.claimIntents
+    const { data, error } = await this.supabaseService.paymentIntents
       .update(updateData)
       .eq('id', intentId)
       .select()
@@ -1852,7 +1889,7 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
-    return data;
+    return this.normalizeIntent(data as Record<string, unknown>) as unknown as ClaimIntent;
   }
 
   /**
@@ -1864,11 +1901,11 @@ export class ClaimsService {
     const oneMonthAgo = new Date();
     oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
 
-    const { data, error } = await this.supabaseService.claimIntents
+    const { data, error } = await this.supabaseService.paymentIntents
       .select('*')
       .in('status', ['PENDING_DEPOSIT', 'IN_FLIGHT'])
-      .gt('deadline', now) // Only intents with future deadlines
-      .gt('created_at', oneMonthAgo.toISOString()) // Only intents from last month
+      .gt('deadline', now)
+      .gt('created_at', oneMonthAgo.toISOString())
       .order('created_at', { ascending: true });
 
     if (error) {
@@ -1876,7 +1913,7 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
-    return data || [];
+    return (data || []).map((r) => this.normalizeIntent(r as Record<string, unknown>) as unknown as ClaimIntent);
   }
 
   /**
@@ -1884,17 +1921,13 @@ export class ClaimsService {
    */
   async findAll(options?: {
     status?: ClaimStatus;
-    org_referral?: string;
     limit?: number;
     offset?: number;
   }): Promise<{ claims: Claim[]; total: number }> {
-    let query = this.supabaseService.claims.select('*', { count: 'exact' });
+    let query = this.supabaseService.payments.select('*', { count: 'exact' });
 
     if (options?.status) {
       query = query.eq('status', options.status);
-    }
-    if (options?.org_referral) {
-      query = query.eq('org_referral', options.org_referral);
     }
 
     query = query.order('created_at', { ascending: false });
@@ -1913,31 +1946,26 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
-    return { claims: data || [], total: count || 0 };
+    return {
+      claims: (data || []).map((r) => this.normalizeFromPayments(r as Record<string, unknown>) as unknown as Claim),
+      total: count || 0,
+    };
   }
 
   /**
    * Delete a claim and its intents (admin)
    */
   async delete(id: string): Promise<void> {
-    // First delete all intents for this claim
-    const { error: intentError } = await this.supabaseService.claimIntents
-      .delete()
-      .eq('claim_id', id);
+    // payment_intents cascade-deletes via FK; also clean up claim_intents for legacy records
+    await this.supabaseService.claimIntents.delete().eq('claim_id', id);
 
-    if (intentError) {
-      this.logger.error('Failed to delete claim intents:', intentError);
-      throw new Error(`Database error: ${intentError.message}`);
-    }
-
-    // Then delete the claim
-    const { error } = await this.supabaseService.claims
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      this.logger.error('Failed to delete claim:', error);
-      throw new Error(`Database error: ${error.message}`);
+    const { error: pErr } = await this.supabaseService.payments.update({ status: 'DELETED' }).eq('id', id);
+    if (pErr) {
+      const { error } = await this.supabaseService.claims.delete().eq('id', id);
+      if (error) {
+        this.logger.error('Failed to delete claim:', error);
+        throw new Error(`Database error: ${error.message}`);
+      }
     }
 
     this.logger.log(`Deleted claim: ${id}`);
@@ -1970,9 +1998,9 @@ export class ClaimsService {
   }> {
     const claim = await this.findOne(id);
 
-    const { data: intents, error } = await this.supabaseService.claimIntents
+    const { data: intents, error } = await this.supabaseService.paymentIntents
       .select('*')
-      .eq('claim_id', id)
+      .eq('payment_id', id)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -1980,7 +2008,10 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
-    return { claim, intents: intents || [] };
+    return {
+      claim,
+      intents: (intents || []).map((r) => this.normalizeIntent(r as Record<string, unknown>) as unknown as ClaimIntent),
+    };
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -2014,10 +2045,10 @@ export class ClaimsService {
 
     this.logger.log('[rotateBurnerKeys] Starting key rotation scan…');
 
-    const { data: rows, error } = await this.supabaseService.claims
-      .select('id, claim_burner_address, claim_burner_encrypted_secret')
-      .not('claim_burner_address', 'is', null)
-      .not('claim_burner_encrypted_secret', 'is', null);
+    const { data: rows, error } = await this.supabaseService.payments
+      .select('id, burner_address, burner_encrypted_secret')
+      .not('burner_address', 'is', null)
+      .not('burner_encrypted_secret', 'is', null);
 
     if (error) throw new Error(`DB fetch failed: ${error.message}`);
 
@@ -2026,8 +2057,8 @@ export class ClaimsService {
 
     for (const row of rows ?? []) {
       stats.total++;
-      const ciphertext: string = (row as any).claim_burner_encrypted_secret;
-      const burnerAddress: string = (row as any).claim_burner_address;
+      const ciphertext: string = (row as any).burner_encrypted_secret;
+      const burnerAddress: string = (row as any).burner_address;
 
       if (ciphertext.startsWith(V2_PREFIX)) {
         stats.alreadyV2++;
@@ -2035,21 +2066,19 @@ export class ClaimsService {
       }
 
       try {
-        // Decrypt with old key (handled internally by EncryptionService fallback)
         const secret = this.encryption.decrypt(ciphertext, undefined);
-        // Re-encrypt with new key + per-payment HKDF
         const newCiphertext = this.encryption.encrypt(secret, burnerAddress);
 
-        const { error: updateError } = await this.supabaseService.claims
-          .update({ claim_burner_encrypted_secret: newCiphertext })
+        const { error: updateError } = await this.supabaseService.payments
+          .update({ burner_encrypted_secret: newCiphertext })
           .eq('id', (row as any).id);
 
         if (updateError) throw new Error(updateError.message);
         stats.migrated++;
       } catch (e: any) {
         stats.failed++;
-        stats.errors.push(`claim ${(row as any).id}: ${e?.message ?? e}`);
-        this.logger.error(`[rotateBurnerKeys] Failed for claim ${(row as any).id}: ${e?.message}`);
+        stats.errors.push(`payment ${(row as any).id}: ${e?.message ?? e}`);
+        this.logger.error(`[rotateBurnerKeys] Failed for payment ${(row as any).id}: ${e?.message}`);
       }
     }
 

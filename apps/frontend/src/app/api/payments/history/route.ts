@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { isNonMainnetCluster } from "@/lib/solanaCluster";
 
-// Only these fields are returned — recipient_address is excluded to protect privacy
-const CLAIM_SELECT =
-  "id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_username, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description, is_devnet";
+// Only safe fields — recipient_address excluded to protect privacy
+const PAYMENT_SELECT =
+  "id, amount, direction, status, created_at, paid_at, recipient_username, sender_user_id, recipient_user_id, recipient_email, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet";
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -13,18 +13,26 @@ const OPEN_PAYMENT_EXPIRY_DAYS = 7;
 export type PaymentHistoryClaim = {
   id: string;
   amount: string;
-  to_symbol: string;
+  direction: "from_sender" | "from_recipient";
+  // What sender paid with
+  from_chain: string | null;
+  from_token: string | null;
+  // What recipient receives
   to_chain: string;
+  to_token: string;
+  // Compat aliases
+  to_symbol: string;
+  paid_with_chain: string | null;
+  paid_with_token: string | null;
+  is_private: boolean | null;
   status: string;
   created_at: string;
   paid_at: string | null;
   recipient_username?: string | null;
+  recipient_email?: string | null;
   creator_email: string | null;
   creator_username?: string | null;
   created_by: string | null;
-  paid_with_token: string | null;
-  paid_with_chain: string | null;
-  is_private: boolean | null;
   description: string | null;
   is_devnet?: boolean;
 };
@@ -32,22 +40,43 @@ export type PaymentHistoryClaim = {
 const TERMINAL_STATUSES = ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CANCELLED", "REFUNDED", "EXPIRED", "DELETED"];
 const RECEIVED_VISIBLE_STATUSES = ["SUCCESS", "PRIVATE_TRANSFER_PENDING"];
 
-function isExpiredOpenPayment(claim: PaymentHistoryClaim): boolean {
-  const status = String(claim.status || "").toUpperCase();
+function isExpiredOpenPayment(p: PaymentHistoryClaim): boolean {
+  const status = String(p.status || "").toUpperCase();
   if (TERMINAL_STATUSES.includes(status)) return false;
   const cutoff = Date.now() - OPEN_PAYMENT_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
-  return new Date(claim.created_at).getTime() < cutoff;
+  return new Date(p.created_at).getTime() < cutoff;
 }
 
-/**
- * Verify the caller's identity by calling the backend's /users/me endpoint.
- * This is the secure path — the backend verifies the JWT and returns the real userId.
- * Falls back to x-privy-user-id for local dev only (when backend not configured for JWT).
- */
+/** Normalise a payments row to the shared PaymentHistoryClaim shape. */
+function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim {
+  return {
+    id: String(row.id ?? ""),
+    amount: String(row.amount ?? "0"),
+    direction: (row.direction as "from_sender" | "from_recipient") ?? "from_sender",
+    to_symbol: "USDC",
+    to_chain: (row.to_chain as string) || "solana",
+    to_token: (row.to_token as string) || "USDC",
+    from_chain: (row.from_chain as string | null) ?? null,
+    from_token: (row.from_token as string | null) ?? null,
+    // compat aliases
+    paid_with_chain: (row.from_chain as string | null) ?? null,
+    paid_with_token: (row.from_token as string | null) ?? null,
+    status: String(row.status ?? ""),
+    created_at: String(row.created_at ?? ""),
+    paid_at: (row.paid_at as string | null) ?? null,
+    recipient_username: (row.recipient_username as string | null) ?? null,
+    recipient_email: (row.recipient_email as string | null) ?? null,
+    creator_email: null,
+    created_by: (row.created_by as string | null) ?? null,
+    is_private: null,
+    description: (row.description as string | null) ?? null,
+    is_devnet: Boolean(row.is_devnet),
+  };
+}
+
 async function getVerifiedUserId(request: Request): Promise<string | null> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
-  // Preferred: Authorization: Bearer <privy_access_token>
   const authHeader = request.headers.get("authorization");
   if (authHeader?.startsWith("Bearer ")) {
     try {
@@ -61,11 +90,9 @@ async function getVerifiedUserId(request: Request): Promise<string | null> {
     } catch (e) {
       console.warn("[payments/history] Backend verify failed:", e);
     }
-    // Token was sent but couldn't be verified — reject
     return null;
   }
 
-  // Legacy: x-privy-user-id header — pass through to backend for user-existence check
   const legacyId = request.headers.get("x-privy-user-id");
   if (legacyId) {
     try {
@@ -91,20 +118,17 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Pagination
     const { searchParams } = new URL(request.url);
     const rawLimit = parseInt(searchParams.get("limit") ?? String(DEFAULT_PAGE_LIMIT), 10);
     const limit = Math.min(Math.max(rawLimit, 1), MAX_PAGE_LIMIT);
     const page = Math.max(parseInt(searchParams.get("page") ?? "1", 10), 1);
     const offset = (page - 1) * limit;
 
-    // Optional date filter: only show payments from the last N days (default: all)
     const daysBack = parseInt(searchParams.get("days") ?? "0", 10);
     const dateFilter = daysBack > 0
       ? new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString()
       : null;
 
-    // Wallet address(es) for received query — passed by client or resolved from backend
     let walletAddresses: string[] = (searchParams.get("walletAddresses") || "")
       .split(",")
       .map((a) => a.trim())
@@ -133,59 +157,162 @@ export async function GET(request: Request) {
     const supabase = getSupabaseAdmin();
     const devnetOnly = isNonMainnetCluster();
 
-    // Sent: claims created by this user
-    let sentQuery = supabase
-      .from("claims")
-      .select(CLAIM_SELECT)
-      .eq("created_by", userId)
+    // ── payments table (new records) ──────────────────────────────────────
+    // Sent: payments where this user is the sender (new schema)
+    let sentPaymentsQuery = supabase
+      .from("payments")
+      .select(PAYMENT_SELECT)
+      .eq("sender_user_id", userId)
       .eq("is_devnet", devnetOnly)
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
+    if (dateFilter) sentPaymentsQuery = sentPaymentsQuery.gte("created_at", dateFilter);
+    const { data: sentPaymentRows } = await sentPaymentsQuery;
 
-    if (dateFilter) sentQuery = sentQuery.gte("created_at", dateFilter);
+    // Legacy fallback: payments created by user where sender_user_id not yet backfilled
+    let legacySentQuery = supabase
+      .from("payments")
+      .select(PAYMENT_SELECT)
+      .eq("created_by", userId)
+      .is("sender_user_id", null)
+      .not("direction", "eq", "from_recipient")
+      .eq("is_devnet", devnetOnly)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (dateFilter) legacySentQuery = legacySentQuery.gte("created_at", dateFilter);
+    const { data: legacySentRows } = await legacySentQuery;
 
-    const { data: sentRows, error: sentError } = await sentQuery;
+    // Open/pending payment request links (from_recipient, not yet paid → sender_user_id is null)
+    let pendingRequestsQuery = supabase
+      .from("payments")
+      .select(PAYMENT_SELECT)
+      .eq("created_by", userId)
+      .eq("direction", "from_recipient")
+      .not("status", "in", `(${RECEIVED_VISIBLE_STATUSES.join(",")})`)
+      .eq("is_devnet", devnetOnly)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (dateFilter) pendingRequestsQuery = pendingRequestsQuery.gte("created_at", dateFilter);
+    const { data: pendingRequestRows } = await pendingRequestsQuery;
 
-    if (sentError) {
-      console.error("[payments/history] Sent query error:", sentError);
-      return NextResponse.json({ error: sentError.message }, { status: 500 });
-    }
+    // Received: payments where this user is the recipient (by stable ID or by wallet address)
+    let recByIdQuery = supabase
+      .from("payments")
+      .select(PAYMENT_SELECT)
+      .eq("recipient_user_id", userId)
+      .in("status", RECEIVED_VISIBLE_STATUSES)
+      .eq("is_devnet", devnetOnly)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (dateFilter) recByIdQuery = recByIdQuery.gte("created_at", dateFilter);
+    const { data: recByIdRows } = await recByIdQuery;
 
-    // Received: claims where user is the recipient
-    let receivedRows: PaymentHistoryClaim[] = [];
+    let receivedPaymentRows: Record<string, unknown>[] = (recByIdRows || []) as Record<string, unknown>[];
     if (walletAddresses.length > 0) {
-      let recQuery = supabase
-        .from("claims")
-        .select(CLAIM_SELECT)
+      let recByWalletQuery = supabase
+        .from("payments")
+        .select(PAYMENT_SELECT)
         .in("recipient_address", walletAddresses)
         .in("status", RECEIVED_VISIBLE_STATUSES)
         .eq("is_devnet", devnetOnly)
         .order("created_at", { ascending: false })
         .range(offset, offset + limit - 1);
-
-      if (dateFilter) recQuery = recQuery.gte("created_at", dateFilter);
-
-      const { data: received, error: recError } = await recQuery;
-      if (recError) {
-        console.error("[payments/history] Received query error:", recError);
-      } else {
-        receivedRows = (received || []) as PaymentHistoryClaim[];
+      if (dateFilter) recByWalletQuery = recByWalletQuery.gte("created_at", dateFilter);
+      const { data: recByWallet } = await recByWalletQuery;
+      const seen = new Set(receivedPaymentRows.map((r) => r.id as string));
+      for (const r of (recByWallet || []) as Record<string, unknown>[]) {
+        if (!seen.has(r.id as string)) receivedPaymentRows.push(r);
       }
     }
 
-    const sentRaw = (sentRows || []) as PaymentHistoryClaim[];
-    const allClaims = [...sentRaw, ...receivedRows];
+    // Ids already in payments (to skip duplicates from legacy claims query)
+    const paymentIds = new Set([
+      ...(sentPaymentRows || []).map((r) => (r as Record<string, unknown>).id as string),
+      ...(legacySentRows || []).map((r) => (r as Record<string, unknown>).id as string),
+      ...(pendingRequestRows || []).map((r) => (r as Record<string, unknown>).id as string),
+      ...receivedPaymentRows.map((r) => r.id as string),
+    ]);
 
-    // Enrich with creator usernames in a single batch query
-    const creatorIds = [...new Set(allClaims.map((c) => c.created_by).filter(Boolean))] as string[];
-    let creatorUsernameMap: Record<string, string> = {};
-    if (creatorIds.length > 0) {
+    // ── legacy claims table (backward compat) ─────────────────────────────
+    const LEGACY_CLAIM_SELECT =
+      "id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_username, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description, is_devnet";
+
+    let sentClaimsQuery = supabase
+      .from("claims")
+      .select(LEGACY_CLAIM_SELECT)
+      .eq("created_by", userId)
+      .eq("is_devnet", devnetOnly)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (dateFilter) sentClaimsQuery = sentClaimsQuery.gte("created_at", dateFilter);
+    const { data: sentClaimRows } = await sentClaimsQuery;
+
+    let receivedClaimRows: Record<string, unknown>[] = [];
+    if (walletAddresses.length > 0) {
+      let recQuery = supabase
+        .from("claims")
+        .select(LEGACY_CLAIM_SELECT)
+        .in("recipient_address", walletAddresses)
+        .in("status", RECEIVED_VISIBLE_STATUSES)
+        .eq("is_devnet", devnetOnly)
+        .order("created_at", { ascending: false })
+        .range(offset, offset + limit - 1);
+      if (dateFilter) recQuery = recQuery.gte("created_at", dateFilter);
+      const { data: received } = await recQuery;
+      receivedClaimRows = (received || []) as Record<string, unknown>[];
+    }
+
+    // Normalise and merge; deduplicate by ID (payments table takes precedence)
+    const normPaymentReceived = receivedPaymentRows.map((r) => normalisePayment(r));
+    const sentIds = new Set((sentPaymentRows || []).map((r) => (r as Record<string, unknown>).id as string));
+    const normPaymentSent = [
+      ...(sentPaymentRows || []).map((r) => normalisePayment(r as Record<string, unknown>)),
+      // Legacy: created_by match, sender_user_id not yet backfilled
+      ...(legacySentRows || [])
+        .filter((r) => !sentIds.has((r as Record<string, unknown>).id as string))
+        .map((r) => normalisePayment(r as Record<string, unknown>)),
+      // Open/pending request links (sender_user_id null until paid)
+      ...(pendingRequestRows || [])
+        .filter((r) => !sentIds.has((r as Record<string, unknown>).id as string))
+        .map((r) => normalisePayment(r as Record<string, unknown>)),
+    ];
+
+    const normClaimSent = (sentClaimRows || [])
+      .filter((r) => !paymentIds.has((r as Record<string, unknown>).id as string))
+      .map((r) => ({
+        ...(r as Record<string, unknown>),
+        direction: "from_sender" as const,
+        recipient_email: (r as Record<string, unknown>).creator_email ?? null,
+        paid_with_token: (r as Record<string, unknown>).paid_with_token ?? null,
+      }) as unknown as PaymentHistoryClaim);
+
+    const normClaimReceived = receivedClaimRows
+      .filter((r) => !paymentIds.has(r.id as string))
+      .map((r) => ({
+        ...r,
+        direction: "from_sender" as const,
+        recipient_email: r.creator_email ?? null,
+        paid_with_token: r.paid_with_token ?? null,
+      }) as unknown as PaymentHistoryClaim);
+
+    const allItems = [
+      ...normPaymentSent, ...normClaimSent,
+      ...normPaymentReceived, ...normClaimReceived,
+    ];
+
+    // Enrich with usernames — collect both created_by and sender_user_id in one batch
+    const allUserIds = [...new Set([
+      ...allItems.map((c) => c.created_by),
+      ...allItems.map((c) => (c as PaymentHistoryClaim & { sender_user_id?: string | null }).sender_user_id ?? null),
+    ].filter(Boolean))] as string[];
+    let usernameMap: Record<string, string> = {};
+    if (allUserIds.length > 0) {
       const { data: users } = await supabase
         .from("app_users")
         .select("privy_user_id, username")
-        .in("privy_user_id", creatorIds);
+        .in("privy_user_id", allUserIds);
       if (users) {
-        creatorUsernameMap = Object.fromEntries(
+        usernameMap = Object.fromEntries(
           users
             .filter((u) => u.privy_user_id && u.username != null)
             .map((u) => [u.privy_user_id!, u.username!]),
@@ -193,16 +320,20 @@ export async function GET(request: Request) {
       }
     }
 
-    const enrich = (c: PaymentHistoryClaim) => ({
-      ...c,
-      creator_username: (c.created_by && creatorUsernameMap[c.created_by]) || null,
-    });
+    const enrich = (c: PaymentHistoryClaim) => {
+      const senderUserId = (c as PaymentHistoryClaim & { sender_user_id?: string | null }).sender_user_id;
+      return {
+        ...c,
+        creator_username: (c.created_by && usernameMap[c.created_by]) || null,
+        sender_username: (senderUserId && usernameMap[senderUserId]) || null,
+      };
+    };
 
-    const sent = sentRaw
+    const sent = [...normPaymentSent, ...normClaimSent]
       .map(enrich)
       .filter((c) => !isExpiredOpenPayment(c) && String(c.status || "").toUpperCase() !== "DELETED");
 
-    const received = receivedRows
+    const received = [...normPaymentReceived, ...normClaimReceived]
       .map(enrich)
       .filter((c) => RECEIVED_VISIBLE_STATUSES.includes(String(c.status || "").toUpperCase()));
 

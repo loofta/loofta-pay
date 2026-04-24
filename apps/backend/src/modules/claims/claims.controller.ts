@@ -282,12 +282,13 @@ export class ClaimsController {
    * Get claim by ID
    */
   @Get(':id')
+  @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Get claim details' })
   @ApiParam({ name: 'id', description: 'Claim UUID' })
   @ApiResponse({ status: 200, description: 'Claim details', type: Claim })
   @ApiResponse({ status: 404, description: 'Claim not found' })
-  async findOne(@Param('id') id: string): Promise<{ claim: Claim }> {
-    const claim = await this.claimsService.findOne(id);
+  async findOne(@Param('id') id: string, @Req() req: any): Promise<{ claim: Claim }> {
+    const claim = await this.claimsService.findOne(id, req.user?.id);
     return { claim };
   }
 
@@ -295,6 +296,7 @@ export class ClaimsController {
    * Get claim with latest intent
    */
   @Get(':id/latest-intent')
+  @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Get claim with latest intent' })
   @ApiParam({ name: 'id', description: 'Claim UUID' })
   @ApiResponse({
@@ -307,11 +309,11 @@ export class ClaimsController {
       },
     },
   })
-  async getWithLatestIntent(@Param('id') id: string): Promise<{
+  async getWithLatestIntent(@Param('id') id: string, @Req() req: any): Promise<{
     claim: Claim;
     intent: ClaimIntent | null;
   }> {
-    return this.claimsService.findWithLatestIntent(id);
+    return this.claimsService.findWithLatestIntent(id, req.user?.id);
   }
 
   /**

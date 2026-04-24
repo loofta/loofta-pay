@@ -127,6 +127,24 @@ export class SwapProcessorService {
   }
 
   /**
+   * Expire open payment links past their expires_at — runs every hour
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async expireOpenPayments() {
+    try {
+      const { error } = await this.supabaseService.payments
+        .update({ status: 'EXPIRED' })
+        .eq('status', 'OPEN')
+        .lt('expires_at', new Date().toISOString());
+      if (error) {
+        this.logger.error('Failed to expire open payments:', error.message);
+      }
+    } catch (e: any) {
+      this.logger.error('expireOpenPayments error:', e?.message);
+    }
+  }
+
+  /**
    * Get SDK instance
    */
   private getSDK(): RhinestoneSDK {
@@ -274,11 +292,8 @@ export class SwapProcessorService {
         await this.redisService.set(redisKey, JSON.stringify(data));
         await this.redisService.sRem(pendingKey, redisKey);
 
-        // Update claim status if it's a claim
         if (type === 'claim' && data.claimId) {
-          await this.supabaseService.claims
-            .update({ status: 'EXPIRED' })
-            .eq('id', data.claimId);
+          await this.supabaseService.payments.update({ status: 'EXPIRED' }).eq('id', data.claimId);
         }
 
         return { id, type, status: 'expired' };
@@ -312,19 +327,18 @@ export class SwapProcessorService {
         await this.redisService.set(redisKey, JSON.stringify(data));
         await this.redisService.sRem(pendingKey, redisKey);
 
-        // Update claim status – private claims or unresolved recipients stay
-        // PRIVATE_TRANSFER_PENDING until funds are swept to recipient wallet.
+        // Update claim status – unresolved recipients stay PRIVATE_TRANSFER_PENDING
+        // until funds are swept to recipient wallet.
         if (type === 'claim' && data.claimId) {
-          const { data: claim } = await this.supabaseService.claims
-            .select('is_private, recipient_address')
+          const { data: payment } = await this.supabaseService.payments
+            .select('recipient_address')
             .eq('id', data.claimId)
-            .single();
-          const recipientAddress = (claim?.recipient_address || '').trim();
+            .maybeSingle();
+          const recipientAddress = (payment?.recipient_address || '').trim();
           const hasPendingRecipient =
             recipientAddress.startsWith('PENDING_EMAIL:') || recipientAddress.startsWith('PENDING_USERNAME:');
-          const newStatus =
-            claim?.is_private === true || hasPendingRecipient ? 'PRIVATE_TRANSFER_PENDING' : 'SUCCESS';
-          await this.supabaseService.claims
+          const newStatus = hasPendingRecipient ? 'PRIVATE_TRANSFER_PENDING' : 'SUCCESS';
+          await this.supabaseService.payments
             .update({ status: newStatus })
             .eq('id', data.claimId);
         }
@@ -338,11 +352,8 @@ export class SwapProcessorService {
         await this.redisService.set(redisKey, JSON.stringify(data));
         await this.redisService.sRem(pendingKey, redisKey);
 
-        // Update claim status
         if (type === 'claim' && data.claimId) {
-          await this.supabaseService.claims
-            .update({ status: 'REFUNDED' })
-            .eq('id', data.claimId);
+          await this.supabaseService.payments.update({ status: 'REFUNDED' }).eq('id', data.claimId);
         }
 
         return { id, type, status: 'failed', error: result.error };

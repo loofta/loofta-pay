@@ -107,9 +107,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [twitterLinkedOptimistic, setTwitterLinkedOptimistic] = useState(false);
   const [linkingMethod, setLinkingMethod] = useState<"twitter" | "email" | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
+  const { ready: privyReady, authenticated, user: privyUser, getAccessToken, refreshUser } = usePrivy();
   const { linkTwitter, linkEmail } = useLinkAccount({
-    onSuccess: (arg: { linkedAccount?: { type?: string }; linkMethod?: string } | undefined) => {
+    onSuccess: async (arg: { linkedAccount?: { type?: string }; linkMethod?: string } | undefined) => {
       const linkedType = arg?.linkedAccount?.type;
       const didLinkTwitter =
         linkedType === "twitter_oauth" ||
@@ -118,10 +118,11 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         arg?.linkMethod === "twitter" ||
         linkingMethod === "twitter";
       if (didLinkTwitter) {
-        // Keep UI stable until Privy user object refreshes.
         setTwitterLinkedOptimistic(true);
       }
       setLinkingMethod(null);
+      // Force Privy to re-fetch the user so linkedAccounts is immediately up to date.
+      try { await refreshUser(); } catch { /* non-critical */ }
       toast({ title: "Account linked", description: "Sign-in method added successfully." });
     },
     onError: (err: unknown) => {

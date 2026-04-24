@@ -51,13 +51,11 @@ export class AdminClaimsController {
   })
   async findAll(
     @Query('status') status?: ClaimStatus,
-    @Query('org_referral') org_referral?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ): Promise<{ claims: Claim[]; total: number }> {
     return this.claimsService.findAll({
       status,
-      org_referral: org_referral?.trim() || undefined,
       limit: limit ? parseInt(limit, 10) : 50,
       offset: offset ? parseInt(offset, 10) : 0,
     });

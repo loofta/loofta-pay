@@ -51,6 +51,14 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('claim_intents');
   }
 
+  get payments() {
+    return this.client.from('payments');
+  }
+
+  get paymentIntents() {
+    return this.client.from('payment_intents');
+  }
+
   get users() {
     return this.client.from('users');
   }
