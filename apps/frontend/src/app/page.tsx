@@ -1114,7 +1114,7 @@ function Business() {
             </p>
           </div>
           <a
-            href="https://t.me/looftapay"
+            href="https://calendly.com/lisa-bechina"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex shrink-0 items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-sm whitespace-nowrap"

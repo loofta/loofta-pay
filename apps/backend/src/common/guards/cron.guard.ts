@@ -15,9 +15,8 @@ export class CronGuard implements CanActivate {
     const authHeader = request.headers['authorization'];
     const cronSecret = this.configService.get<string>('CRON_SECRET');
 
-    // If no cron secret configured, allow all (development mode)
     if (!cronSecret) {
-      return true;
+      throw new UnauthorizedException('CRON_SECRET is not configured');
     }
 
     if (authHeader !== `Bearer ${cronSecret}`) {

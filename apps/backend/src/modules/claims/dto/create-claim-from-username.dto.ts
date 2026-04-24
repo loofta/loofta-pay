@@ -12,11 +12,6 @@ export class CreateClaimFromUsernameDto {
   @Min(0.01)
   amount: number;
 
-  @ApiPropertyOptional({ description: 'Privy user ID who created the claim (used to resolve username for display)' })
-  @IsOptional()
-  @IsString()
-  userId?: string;
-
   @ApiPropertyOptional({ description: 'Whether this is a private payment', default: false })
   @IsOptional()
   @IsBoolean()
@@ -26,4 +21,7 @@ export class CreateClaimFromUsernameDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  // Server-side only — stripped from request body by ValidationPipe whitelist.
+  userId?: string;
 }

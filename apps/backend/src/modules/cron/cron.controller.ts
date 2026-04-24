@@ -140,10 +140,9 @@ export class CronController {
     };
   }
 
-  /**
-   * Get processing status
-   */
   @Get('status')
+  @UseGuards(CronGuard)
+  @ApiSecurity('Bearer')
   @ApiOperation({ summary: 'Get cron processing status' })
   @ApiResponse({ status: 200, description: 'Processing status' })
   getStatus(): { isProcessing: boolean } {

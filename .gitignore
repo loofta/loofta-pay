@@ -12,6 +12,7 @@ target/
 # Environment files
 .env.*
 .env
+env.template
 
 # IDE
 .DS_Store

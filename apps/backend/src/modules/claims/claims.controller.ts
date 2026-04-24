@@ -22,6 +22,9 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { AuthGuard, OptionalAuthGuard } from '@/common/guards';
+
+// All payment-mutating endpoints require authentication (create, pay, status, tx-hash).
+// Read-only claim endpoints (GET /:id, /:id/latest-intent) remain public via OptionalAuthGuard.
 import { ClaimsService } from './claims.service';
 import { ConfigService } from '@nestjs/config';
 import { DepositService, DepositResult } from './deposit.service';
@@ -44,7 +47,8 @@ export class ClaimsController {
    * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
   @Post('create')
-  @UseGuards(OptionalAuthGuard)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Create a new payment claim' })
   @ApiResponse({
     status: 201,
@@ -69,7 +73,8 @@ export class ClaimsController {
    * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
   @Post('create-from-username')
-  @UseGuards(OptionalAuthGuard)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Create claim from username (wallet address stays server-side)' })
   @ApiResponse({
     status: 201,
@@ -94,7 +99,8 @@ export class ClaimsController {
    * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
   @Post('create-from-email')
-  @UseGuards(OptionalAuthGuard)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Create claim from email (recipient may not have an account yet)' })
   @ApiResponse({
     status: 201,
@@ -321,6 +327,8 @@ export class ClaimsController {
    */
   @Post('deposit')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Request deposit address for claim payment' })
   @ApiResponse({
     status: 200,
@@ -346,19 +354,14 @@ export class ClaimsController {
     return this.depositService.requestDeposit(depositDto);
   }
 
-  /**
-   * Update claim status (payment flow).
-   * CANCELLED requires authentication and creator ownership.
-   * Other transitions (PENDING_DEPOSIT, IN_FLIGHT, SUCCESS) allow unauthenticated callers
-   * to support bridge/webhook flows, but log the caller's identity when present.
-   */
   @Post(':id/status')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(OptionalAuthGuard)
-  @ApiOperation({ summary: 'Update claim status' })
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Update claim status (login required for all transitions)' })
   @ApiParam({ name: 'id', description: 'Claim UUID' })
   @ApiResponse({ status: 200, description: 'Updated claim', type: Claim })
-  @ApiResponse({ status: 401, description: 'Auth required for CANCELLED' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
   @ApiResponse({ status: 403, description: 'Not the claim creator' })
   @ApiResponse({ status: 404, description: 'Claim not found' })
   async updateStatus(
@@ -373,20 +376,13 @@ export class ClaimsController {
     },
     @Req() req: { user?: { id: string } },
   ): Promise<Claim> {
-    const callerUserId = req.user?.id;
-    const status = (body.status || '').toUpperCase();
-
-    if (status === 'CANCELLED' && !callerUserId) {
-      throw new UnauthorizedException('Authentication required to cancel a payment');
-    }
-
     return this.claimsService.updateStatus(id, body.status as any, {
       txHash: body.txHash,
       paidWith: body.paidWith,
       isPrivate: body.isPrivate,
       paidWithToken: body.paidWithToken,
       paidWithChain: body.paidWithChain,
-    }, callerUserId);
+    }, req.user!.id);
   }
 
   /**
@@ -395,7 +391,8 @@ export class ClaimsController {
    */
   @Patch(':id/tx-hash')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(OptionalAuthGuard)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Save broadcast tx hash for recovery' })
   @ApiParam({ name: 'id', description: 'Claim UUID' })
   @ApiResponse({ status: 200, description: 'Saved' })
