@@ -295,6 +295,10 @@ export default function Home() {
   const handleSendContinue = async () => {
     const trimmed = recipient.replace(/^@/, "").trim();
     if (!trimmed) return;
+    if (!authenticated) {
+      privyLogin({ loginMethods: ["email"], disableSignup: false });
+      return;
+    }
     let resolvedUsername = trimmed.toLowerCase();
     if (trimmed.includes("@")) {
       try {
@@ -358,20 +362,6 @@ export default function Home() {
                 />
               ) : (
                 <>
-                  {!authenticated && (
-                    <div className="rounded-2xl bg-gradient-to-r from-amber-500/10 to-red-500/10 border border-white/10 px-4 py-3 mb-6">
-                      <p className="text-base text-slate-300">
-                        Log in to keep track of this payment and reclaim your money if needed.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => privyLogin({ loginMethods: ["email"], disableSignup: false })}
-                        className="inline-block mt-2 text-base font-medium text-amber-400 hover:text-amber-300"
-                      >
-                        Sign in →
-                      </button>
-                    </div>
-                  )}
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
                     <div ref={wrapperRef} className="relative">
                       <Label className="text-slate-300 text-xl font-sans font-medium mb-5">Send</Label>
@@ -472,7 +462,7 @@ export default function Home() {
                       disabled={!recipient.trim()}
                       className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
                     >
-                      Continue
+                      {authenticated ? "Continue" : "Sign in to continue"}
                     </Button>
                   </div>
                 </>
