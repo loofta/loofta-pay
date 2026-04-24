@@ -394,7 +394,7 @@ const DEMO_MODE = isDemoMode();
 async function fetchClaim(id: string, authToken?: string | null) {
   // Try backend API first (more reliable for newly created claims)
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-  const authHeaders = authToken ? { Authorization: `Bearer ${authToken}` } : {};
+  const authHeaders: Record<string, string> = authToken ? { Authorization: `Bearer ${authToken}` } : {};
   try {
     const r = await fetch(`${backendUrl}/claims/${id}/latest-intent`, { headers: authHeaders });
     if (r.ok) {
@@ -3447,13 +3447,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <>
                         <GradientActionButton
                           onClick={() => {
-                            const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
-                              selectedFrom?.chain === usdcSolanaToken?.chain;
-                            if (!authenticated && !isUSDCOnSolana) {
+                            if (!authenticated) {
                               login();
                               return;
                             }
-                            // USDC on Solana = Pay now → show modal (Login to Loofta or Use wallet / Pay with Loofta or Use wallet)
+                            const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                              selectedFrom?.chain === usdcSolanaToken?.chain;
                             if (isUSDCOnSolana) {
                               setPayWithLooftaError(null);
                               setPayWithWalletError(null);
@@ -3468,37 +3467,39 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           disabled={
                             requiresPrivate && !isPrivateMode
                               ? true
-                              : (() => {
-                                const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
-                                  selectedFrom?.chain === usdcSolanaToken?.chain;
-                                if (privatePayActive) {
+                              : !authenticated
+                                ? false
+                                : (() => {
+                                  const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                                    selectedFrom?.chain === usdcSolanaToken?.chain;
+                                  if (privatePayActive) {
+                                    return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
+                                  }
+                                  if (isUSDCOnSolana) {
+                                    return (!usdcSolanaToken || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
+                                  }
                                   return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
-                                }
-                                if (!authenticated && !isUSDCOnSolana) return false;
-                                if (isUSDCOnSolana) {
-                                  return (!usdcSolanaToken || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
-                                }
-                                return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
-                              })()
+                                })()
                           }
                           loading={preparing}
                           loadingText={(() => {
+                            if (privatePayActive) return "Processing private payment…";
                             const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
                               selectedFrom?.chain === usdcSolanaToken?.chain;
-                            if (privatePayActive) return "Processing private payment…";
                             if (isUSDCOnSolana) return "Opening…";
                             return "Preparing…";
                           })()}
                         >
-                          {(() => {
-                            const isUSDCOnSolana = !selectedFrom || (
-                              selectedFrom.symbol === usdcSolanaToken?.symbol &&
-                              selectedFrom.chain === usdcSolanaToken?.chain
-                            );
-                            if (!authenticated && !isUSDCOnSolana) return "Login to pay";
-                            if (isUSDCOnSolana) return "Pay now";
-                            return "Get deposit address";
-                          })()}
+                          {!authenticated
+                            ? "Sign in to pay"
+                            : (() => {
+                              const isUSDCOnSolana = !selectedFrom || (
+                                selectedFrom.symbol === usdcSolanaToken?.symbol &&
+                                selectedFrom.chain === usdcSolanaToken?.chain
+                              );
+                              if (isUSDCOnSolana) return "Pay now";
+                              return "Get deposit address";
+                            })()}
                         </GradientActionButton>
                       </>
                     )}

@@ -35,7 +35,7 @@ export interface SendFlowInAppProps {
 
 export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, onClaimCreated }: SendFlowInAppProps) {
   const router = useRouter();
-  const { user, getAccessToken } = usePrivy();
+  const { user, getAccessToken, login, authenticated } = usePrivy();
   const { toast } = useToast();
   const [amount, setAmount] = useState(initialAmount || "100");
   const [description, setDescription] = useState("");
@@ -83,6 +83,10 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
   }, [recipientUsername, initialAmount, isEmail]);
 
   const handleCreate = async () => {
+    if (!authenticated) {
+      login({ loginMethods: ["email"], disableSignup: false });
+      return;
+    }
     if (!amount || Number(amount) <= 0) {
       toast({ variant: "destructive", title: "Invalid amount", description: "Enter a valid amount." });
       return;
@@ -197,10 +201,14 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
 
       <Button
         onClick={handleCreate}
-        disabled={preparing || !amount || !Number.isFinite(amountNum) || amountNum < minAmountUsd}
+        disabled={authenticated && (preparing || !amount || !Number.isFinite(amountNum) || amountNum < minAmountUsd)}
         className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r text-lg from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
       >
-        {preparing ? "Creating…" : onClaimCreated ? "Continue to pay" : "Create payment link"}
+        {!authenticated
+          ? "Sign in to continue"
+          : preparing
+            ? "Creating…"
+            : onClaimCreated ? "Continue to pay" : "Create payment link"}
       </Button>
     </div>
   );
