@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Checkbox } from "@/components/ui/checkbox";
-import { usePrivy, useLinkAccount } from "@privy-io/react-auth";
+import { usePrivy, useUser, useLinkAccount } from "@privy-io/react-auth";
 
 const LOO_PREFIX = "loo-";
 const EMAIL_SKIP_KEY = "loofta_email_step_skip_until";
@@ -42,7 +42,8 @@ interface WelcomeOnboardingProps {
 const TOTAL_STEPS = 5; // welcome, username, pay friend, top up, share
 
 export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEditUsername }: WelcomeOnboardingProps) {
-  const { user: privyUser, refreshUser } = usePrivy();
+  const { user: privyUser } = usePrivy();
+  const { refreshUser } = useUser();
   const [emailLinkError, setEmailLinkError] = useState<"already_linked" | null>(null);
   const { linkEmail } = useLinkAccount({
     onSuccess: async (arg: { linkedAccount?: { type?: string }; linkMethod?: string } | undefined) => {
