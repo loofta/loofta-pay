@@ -57,6 +57,7 @@ export interface Claim {
   // Creator display helpers (enriched by API)
   creator_email?: string | null;   // deprecated — maps to recipient_email for legacy
   creator_username?: string | null;
+  org_referral?: string | null;
 }
 
 export interface ClaimIntent {
