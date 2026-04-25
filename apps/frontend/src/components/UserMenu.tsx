@@ -107,7 +107,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [twitterLinkedOptimistic, setTwitterLinkedOptimistic] = useState(false);
   const [linkingMethod, setLinkingMethod] = useState<"twitter" | "email" | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const { ready: privyReady, authenticated, user: privyUser, getAccessToken, refreshUser } = usePrivy();
+  const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
+  const { refreshUser } = useUser();
   const { linkTwitter, linkEmail } = useLinkAccount({
     onSuccess: async (arg: { linkedAccount?: { type?: string }; linkMethod?: string } | undefined) => {
       const linkedType = arg?.linkedAccount?.type;
