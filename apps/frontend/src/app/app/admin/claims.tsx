@@ -461,7 +461,7 @@ export function ClaimsManager() {
                         {claim.to_symbol} / {claim.to_chain}
                       </td>
                       <td className="p-4 text-sm font-mono">
-                        {claim.recipient_address.slice(0, 6)}...{claim.recipient_address.slice(-4)}
+                        {claim.recipient_address ? `${claim.recipient_address.slice(0, 6)}...${claim.recipient_address.slice(-4)}` : '—'}
                       </td>
                       <td className="p-4">
                         <Select

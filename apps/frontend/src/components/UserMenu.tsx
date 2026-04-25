@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { usePrivy, useWallets, useLinkAccount } from "@privy-io/react-auth";
+import { usePrivy, useUser, useWallets, useLinkAccount } from "@privy-io/react-auth";
 import { useExportWallet } from "@privy-io/react-auth/solana";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
