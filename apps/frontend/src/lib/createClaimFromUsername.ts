@@ -27,8 +27,6 @@ export async function createClaimFromUsername(input: {
     body: JSON.stringify({
       username: input.username,
       amount: Number(input.amount),
-      userId: input.userId,
-      userEmail: input.userEmail,
       isPrivate: input.isPrivate ?? false,
       description: input.description ?? undefined,
     }),

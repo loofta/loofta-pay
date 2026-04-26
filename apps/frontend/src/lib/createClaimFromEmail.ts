@@ -25,7 +25,6 @@ export async function createClaimFromEmail(input: {
     body: JSON.stringify({
       email: input.email.trim().toLowerCase(),
       amount: Number(input.amount),
-      userId: input.userId,
       isPrivate: input.isPrivate ?? false,
       description: input.description ?? undefined,
     }),
