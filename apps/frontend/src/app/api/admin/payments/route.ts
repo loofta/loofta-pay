@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdmin } from "@/lib/admin";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 const CUTOFF = "2026-04-25T00:00:00.000Z";
 
@@ -11,7 +12,7 @@ const VALID_STATUSES = new Set([
 ]);
 
 export async function GET(request: NextRequest) {
-  const privyUserId = request.headers.get("x-privy-user-id");
+  const privyUserId = await getVerifiedUserId(request);
   if (!privyUserId || !(await isAdmin(privyUserId))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
