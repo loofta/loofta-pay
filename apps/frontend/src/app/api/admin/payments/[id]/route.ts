@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdmin } from "@/lib/admin";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 const VALID_STATUSES = [
   "OPEN", "PENDING_DEPOSIT", "IN_FLIGHT", "FUNDED",
@@ -13,7 +14,7 @@ const EDITABLE_FIELDS = ["status", "expires_at", "description", "paid_at", "reci
 type Props = { params: Promise<{ id: string }> };
 
 async function authorize(request: NextRequest): Promise<string | null> {
-  const privyUserId = request.headers.get("x-privy-user-id");
+  const privyUserId = await getVerifiedUserId(request);
   if (!privyUserId || !(await isAdmin(privyUserId))) return null;
   return privyUserId;
 }

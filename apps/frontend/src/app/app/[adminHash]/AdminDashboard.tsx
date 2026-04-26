@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { usePrivy } from "@privy-io/react-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -407,6 +408,7 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
 
 export default function AdminDashboard() {
   const { authenticated, userId, login, ready } = useAuth();
+  const { getAccessToken } = usePrivy();
   const { toast } = useToast();
 
   // Auth
@@ -441,26 +443,34 @@ export default function AdminDashboard() {
   const userIdRef = useRef(userId);
   useEffect(() => { userIdRef.current = userId; }, [userId]);
 
+  // Build auth headers — prefer Bearer JWT, fall back to legacy header
+  const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
+    const token = await getAccessToken().catch(() => null);
+    if (token) return { authorization: `Bearer ${token}` };
+    const uid = userIdRef.current;
+    return uid ? { "x-privy-user-id": uid } : {};
+  }, [getAccessToken]);
+
   // ── Auth check ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!ready || !authenticated || !userId) {
       setCheckingAuth(false);
       return;
     }
-    fetch("/api/admin/check", { headers: { "x-privy-user-id": userId } })
+    authHeaders()
+      .then((headers) => fetch("/api/admin/check", { headers }))
       .then((r) => r.json())
       .then((d) => setIsAuthorized(d.isAdmin ?? false))
       .catch(() => setIsAuthorized(false))
       .finally(() => setCheckingAuth(false));
-  }, [ready, authenticated, userId]);
+  }, [ready, authenticated, userId, authHeaders]);
 
   // ── Fetch payments ──────────────────────────────────────────────────────────
   const fetchPayments = useCallback(async (
     page: number,
     opts: { search: string; devnet: "all" | "devnet" | "mainnet"; status: string },
   ) => {
-    const uid = userIdRef.current;
-    if (!uid) return;
+    if (!userIdRef.current) return;
     setLoading(true);
     try {
       const qs = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
@@ -468,7 +478,7 @@ export default function AdminDashboard() {
       if (opts.devnet !== "all") qs.set("devnet", opts.devnet === "devnet" ? "true" : "false");
       if (opts.status !== "all") qs.set("status", opts.status);
 
-      const res = await fetch(`/api/admin/payments?${qs}`, { headers: { "x-privy-user-id": uid } });
+      const res = await fetch(`/api/admin/payments?${qs}`, { headers: await authHeaders() });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setPayments(data.payments ?? []);
@@ -479,7 +489,7 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, authHeaders]);
 
   // Auto-fetch on filter change (but NOT on search input change — only on applied search)
   useEffect(() => {
@@ -503,7 +513,7 @@ export default function AdminDashboard() {
     setLoadingDetail(true);
     try {
       const res = await fetch(`/api/admin/payments/${id}`, {
-        headers: { "x-privy-user-id": userIdRef.current! },
+        headers: await authHeaders(),
       });
       if (!res.ok) throw new Error(await res.text());
       setExpandedDetail(await res.json());
@@ -548,7 +558,7 @@ export default function AdminDashboard() {
       }
       const res = await fetch(`/api/admin/payments/${editTarget.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", "x-privy-user-id": userIdRef.current! },
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -558,9 +568,9 @@ export default function AdminDashboard() {
       if (expandedId === editTarget.id) {
         setExpandedDetail(null);
         setLoadingDetail(true);
-        fetch(`/api/admin/payments/${editTarget.id}`, {
-          headers: { "x-privy-user-id": userIdRef.current! },
-        }).then((r) => r.json()).then(setExpandedDetail).finally(() => setLoadingDetail(false));
+        authHeaders().then((h) =>
+          fetch(`/api/admin/payments/${editTarget.id}`, { headers: h })
+        ).then((r) => r.json()).then(setExpandedDetail).finally(() => setLoadingDetail(false));
       }
       refresh();
     } catch (err: any) {
