@@ -42,7 +42,18 @@ export function proxy(request: NextRequest) {
       `/app${pathname === "/" ? "" : pathname}`,
       request.url
     );
-    return NextResponse.rewrite(rewritten);
+    const response = NextResponse.rewrite(rewritten);
+
+    // Suppress indexing for the secret admin path
+    const secretPath = process.env.ADMIN_SECRET_PATH;
+    if (secretPath) {
+      const adminSegment = `/${secretPath}`;
+      if (pathname === adminSegment || pathname.startsWith(`${adminSegment}/`)) {
+        response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+      }
+    }
+
+    return response;
   }
 
   // loofta.xyz → serve marketing pages as-is (root page.tsx)
