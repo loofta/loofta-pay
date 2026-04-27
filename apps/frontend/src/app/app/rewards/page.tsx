@@ -209,7 +209,7 @@ export default function RewardsPage() {
     refetchOnWindowFocus: false,
   });
 
-  const maxSparks = 200 + 200 + 500 + 1500 + 2000 + 5000; // 9400
+  const maxSparks = 250 + 250 + 500 + 2000 + 2000 + 5000; // 9400
 
   if (!authenticated) {
     return (
