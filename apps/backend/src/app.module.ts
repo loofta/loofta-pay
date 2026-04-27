@@ -20,6 +20,7 @@ import { CronModule } from './modules/cron/cron.module';
 import { HealthModule } from './modules/health/health.module';
 import { UsersModule } from './modules/users/users.module';
 import { SendPaymentModule } from './modules/send-payment/send-payment.module';
+import { RewardsModule } from './modules/rewards/rewards.module';
 
 @Module({
   imports: [
@@ -72,6 +73,7 @@ import { SendPaymentModule } from './modules/send-payment/send-payment.module';
     CronModule,
     UsersModule,
     SendPaymentModule,
+    RewardsModule,
   ],
   providers: [
     {
