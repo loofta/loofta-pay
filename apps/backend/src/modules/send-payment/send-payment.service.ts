@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { fetchSolPriceUsd, grossUpForMagicblockFee, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import { appendLooftaFeeInstruction, grossUpForMagicblockFee, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
@@ -123,21 +123,37 @@ export class SendPaymentService {
       throw new BadRequestException('Invalid amount');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
-    const solPrice = await fetchSolPriceUsd();
-    const grossUnits = grossUpForMagicblockFee(baseUnits, solPrice);
+    // Gross up so recipient gets baseUnits after MagicBlock's 10 BPS volume fee deduction.
+    const grossUnits = grossUpForMagicblockFee(baseUnits);
     const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
-    // On devnet/localhost MagicBlock has no fees — amount goes straight to recipient.
-    // Use baseUnits so recipient gets exactly the requested amount; mainnet uses grossUnits so
-    // MagicBlock can deduct its 0.1% + 0.002 SOL and still deliver baseUnits to the recipient.
-    const transferUnits = cluster === 'mainnet' ? grossUnits : baseUnits;
-    this.logger.log(`[SendPayment] amount=${amountUsd} net=${baseUnits} gross=${grossUnits} transfer=${transferUnits} cluster=${cluster} solPrice=${solPrice}`);
+    this.logger.log(`[SendPayment] amount=${amountUsd} net=${baseUnits} gross=${grossUnits} cluster=${cluster}`);
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
       mint: this.usdcMint.toBase58(),
-      amount: transferUnits,
+      amount: grossUnits,
       cluster,
     });
+
+    // Append Loofta's 10 BPS USDC fee instruction (sender → fee payer wallet).
+    let txBase64 = txResponse.transactionBase64;
+    if (this.feePayerKeypair) {
+      try {
+        const rpcUrl = this.configService.get<string>('SOLANA_RPC_URL')?.trim() || 'https://api.devnet.solana.com';
+        const conn = new Connection(rpcUrl, 'confirmed');
+        txBase64 = await appendLooftaFeeInstruction(
+          txBase64,
+          senderWallet.trim(),
+          this.feePayerKeypair.publicKey.toBase58(),
+          baseUnits,
+          this.usdcMint,
+          conn,
+          this.feePayerKeypair.publicKey,
+        );
+      } catch (e) {
+        this.logger.warn(`[SendPayment] Fee instruction append failed (non-fatal): ${String(e)}`);
+      }
+    }
 
     // On devnet Privy doesn't support fee sponsoring — inject our fee payer so the
     // user's wallet only needs to provide one signature (theirs), not pay the fee.
@@ -151,7 +167,7 @@ export class SendPaymentService {
           'https://api.devnet.solana.com';
         const sponsorConn = new Connection(rpcUrl, 'confirmed');
         const { blockhash, lastValidBlockHeight } = await sponsorConn.getLatestBlockhash('confirmed');
-        const txBuffer = Buffer.from(txResponse.transactionBase64, 'base64');
+        const txBuffer = Buffer.from(txBase64, 'base64');
         let serialized: Uint8Array;
         // Try legacy first; fall back to v0 with ALT resolution (MagicBlock now uses LUTs)
         try {
@@ -212,7 +228,7 @@ export class SendPaymentService {
       }
     }
 
-    return txResponse;
+    return { ...txResponse, transactionBase64: txBase64 };
   }
 
   /**

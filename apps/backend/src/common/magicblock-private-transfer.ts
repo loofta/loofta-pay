@@ -4,23 +4,31 @@
  */
 
 import { Logger } from '@nestjs/common';
+import { PublicKey, Transaction } from '@solana/web3.js';
+import {
+  createTransferInstruction,
+  createAssociatedTokenAccountInstruction,
+  getAssociatedTokenAddress,
+  getAccount,
+} from '@solana/spl-token';
+import type { Connection } from '@solana/web3.js';
 
 const log = new Logger('MagicblockPrivateTransfer');
 
 /**
- * MagicBlock pricing (Solana Mainnet): fixed 0.002 SOL + 0.1% volume fee deducted from the transferred amount.
- * Loofta passes through MagicBlock's fee exactly — no additional markup.
- * The gas conversion uses a 20% buffer to cover SOL price moves between calculation and settlement.
- * Recipient always receives the exact requested amount.
+ * CONFIRMED fee mechanics (from live devnet test):
+ *  - `amount` = gross USDC taken from sender. MagicBlock deducts 10 BPS before routing to recipient.
+ *  - 0.002 SOL flat fee is charged in native SOL from the sender's wallet (mainnet only, separate ix).
+ *  - Loofta appends its own 10 BPS USDC transfer instruction to the same transaction.
+ *
+ * Gross-up formula: to ensure recipient gets exactly N units, send ceil(N * 10000 / 9990).
  */
-export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // 0.1% — deducted by MagicBlock
-export const TOTAL_FEE_BPS = MAGICBLOCK_VOLUME_FEE_BPS; // 0.1% total
-export const MAGICBLOCK_SPONSORED_GAS_SOL = 0.002;
-/** 20% buffer on gas fee to cover SOL price moves between calculation and settlement. */
-export const GAS_FEE_BUFFER_PCT = 1.20;
+export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // deducted from USDC amount by MagicBlock
+export const LOOFTA_FEE_BPS = 10;            // Loofta fee via appended ix (10 BPS of net)
+export const MAGICBLOCK_GAS_SOL = 0.002;     // flat SOL fee charged by MagicBlock (mainnet only)
 /** Conservative SOL fallback price used when the price API is unavailable. */
 const SOL_PRICE_FALLBACK_USD = 180;
-/** Cache TTL: 60 seconds — price doesn't need to be real-time for fee estimation. */
+/** Cache TTL: 60 seconds. */
 const SOL_PRICE_CACHE_TTL_MS = 60_000;
 
 let _solPriceCached: number | null = null;
@@ -50,14 +58,13 @@ export async function fetchSolPriceUsd(): Promise<number> {
 }
 
 /**
- * Returns the gross USDC base units the sender must transfer so that after:
- *   - MagicBlock's 0.1% volume fee
- *   - 0.002 SOL gas fee (buffered 20%) converted to USDC
- * …the recipient receives exactly `netBaseUnits`.
+ * Gross-up USDC base units so the recipient receives exactly `netBaseUnits` after
+ * MagicBlock deducts their 10 BPS volume fee from `amount`.
+ * The 0.002 SOL flat fee is charged in native SOL by MagicBlock — not included here.
  */
-export function grossUpForMagicblockFee(netBaseUnits: number, solPriceUsd: number): number {
-  const gasFeeBaseUnits = Math.ceil(MAGICBLOCK_SPONSORED_GAS_SOL * solPriceUsd * GAS_FEE_BUFFER_PCT * 1_000_000);
-  return Math.ceil(((netBaseUnits + gasFeeBaseUnits) * 10_000) / (10_000 - TOTAL_FEE_BPS));
+export function grossUpForMagicblockFee(netBaseUnits: number): number {
+  // +1 extra unit ($0.000001) as a rounding buffer in case MagicBlock rounds their fee up.
+  return Math.ceil((netBaseUnits * 10_000) / (10_000 - MAGICBLOCK_VOLUME_FEE_BPS)) + 1;
 }
 
 /**
@@ -155,4 +162,54 @@ export async function requestMagicblockPrivateTransfer(params: {
   );
 
   return data as MagicblockPrivateTransferTxResponse;
+}
+
+/**
+ * Appends a USDC SPL transfer instruction to the MagicBlock transaction so Loofta
+ * collects its 10 BPS fee directly from the sender in the same atomic transaction.
+ *
+ * `amount` passed to MagicBlock must be `baseUnits` (what recipient gets).
+ * This ix transfers `ceil(baseUnits * LOOFTA_FEE_BPS / 10_000)` from sender → feeCollector.
+ *
+ * If the tx is versioned (v0) we cannot easily append instructions, so we log a warning
+ * and return the transaction unchanged.
+ */
+export async function appendLooftaFeeInstruction(
+  transactionBase64: string,
+  senderWallet: string,
+  feeCollectorWallet: string,
+  netBaseUnits: number,
+  usdcMint: PublicKey,
+  connection: Connection,
+  feePayer: PublicKey,
+): Promise<string> {
+  const feeUnits = Math.ceil(netBaseUnits * LOOFTA_FEE_BPS / 10_000);
+  if (feeUnits <= 0) return transactionBase64;
+
+  const txBytes = Buffer.from(transactionBase64, 'base64');
+  let tx: Transaction;
+  try {
+    tx = Transaction.from(txBytes);
+  } catch {
+    log.warn('[FeeCollector] MagicBlock returned a versioned (v0) tx — cannot append fee ix, skipping');
+    return transactionBase64;
+  }
+
+  const sender = new PublicKey(senderWallet);
+  const feeCollector = new PublicKey(feeCollectorWallet);
+  const senderAta = await getAssociatedTokenAddress(usdcMint, sender);
+  const feeCollectorAta = await getAssociatedTokenAddress(usdcMint, feeCollector);
+
+  // Create the fee collector ATA if it doesn't exist yet (fee payer covers the rent).
+  try {
+    await getAccount(connection, feeCollectorAta);
+  } catch {
+    log.log(`[FeeCollector] Creating USDC ATA for fee collector ${feeCollector.toBase58().slice(0, 8)}…`);
+    tx.add(createAssociatedTokenAccountInstruction(feePayer, feeCollectorAta, feeCollector, usdcMint));
+  }
+
+  tx.add(createTransferInstruction(senderAta, feeCollectorAta, sender, feeUnits));
+
+  log.log(`[FeeCollector] Appended ${feeUnits} USDC fee units (${LOOFTA_FEE_BPS} BPS of ${netBaseUnits}) → ${feeCollector.toBase58().slice(0, 8)}…`);
+  return tx.serialize({ requireAllSignatures: false }).toString('base64');
 }

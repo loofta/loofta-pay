@@ -27,7 +27,7 @@ export default function Home() {
   const router = useRouter();
   const { authenticated } = useAuth();
   const username = useAuthStore((s) => s.username ?? null);
-  const { login: privyLogin } = usePrivy();
+  const { login: privyLogin, getAccessToken } = usePrivy();
   const [activeTab, setActiveTabState] = useState<"send" | "receive">(() => {
     const fromUrl = searchParams.get("tab") === "receive" ? "receive" : null;
     if (fromUrl) return fromUrl;
@@ -259,7 +259,10 @@ export default function Home() {
       try {
         if (isExactEmail(searchQuery)) {
           // Only resolve by exact email – no partial email search (privacy)
-          const r = await fetch(`/api/users/resolve-recipient?q=${encodeURIComponent(searchQuery)}`);
+          const token = await getAccessToken().catch(() => null);
+          const r = await fetch(`/api/users/resolve-recipient?q=${encodeURIComponent(searchQuery)}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          });
           const data = await r.json();
           const list = data?.username ? [data.username] : [];
           setSuggestions(list);
@@ -302,7 +305,10 @@ export default function Home() {
     let resolvedUsername = trimmed.toLowerCase();
     if (trimmed.includes("@")) {
       try {
-        const r = await fetch(`/api/users/resolve-recipient?q=${encodeURIComponent(trimmed)}`);
+        const token = await getAccessToken().catch(() => null);
+        const r = await fetch(`/api/users/resolve-recipient?q=${encodeURIComponent(trimmed)}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
         const data = await r.json();
         if (data?.username) resolvedUsername = data.username;
       } catch {

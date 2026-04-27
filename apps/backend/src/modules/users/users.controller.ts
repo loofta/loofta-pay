@@ -21,6 +21,7 @@ import { UsersService } from './users.service';
 import { PrivyAuthGuard } from '../../auth/privy-auth.guard';
 import { PrivyUser } from '../../auth/privy-user.decorator';
 import { AdminGuard } from '@/common/guards';
+import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('users')
 @Controller('users')
@@ -188,6 +189,7 @@ export class UsersController {
 
   @Get('by-email')
   @UseGuards(PrivyAuthGuard)
+  @Throttle({ short: { ttl: 60000, limit: 20 } })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get user by email (returns username for /link redirect)' })
   @ApiQuery({ name: 'email', description: 'User email' })

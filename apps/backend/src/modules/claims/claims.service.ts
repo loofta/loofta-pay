@@ -22,7 +22,7 @@ import { SolanaSponsorService } from './solana-sponsor.service';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 import {
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
-  fetchSolPriceUsd,
+  appendLooftaFeeInstruction,
   grossUpForMagicblockFee,
   type MagicblockPrivateTransferTxResponse,
 } from '@/common/magicblock-private-transfer';
@@ -717,21 +717,37 @@ export class ClaimsService {
       throw new BadRequestException('Invalid claim amount');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
-    const solPrice = await fetchSolPriceUsd();
-    const grossUnits = grossUpForMagicblockFee(baseUnits, solPrice);
+    // Gross up so recipient gets baseUnits after MagicBlock's 10 BPS volume fee deduction.
+    const grossUnits = grossUpForMagicblockFee(baseUnits);
     const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
-    // On devnet/localhost MagicBlock has no fees — amount goes straight to recipient.
-    // Use baseUnits so recipient gets exactly the claimed amount; mainnet uses grossUnits so
-    // MagicBlock can deduct its 0.1% + 0.002 SOL and still deliver baseUnits to the recipient.
-    const transferUnits = cluster === 'mainnet' ? grossUnits : baseUnits;
-    this.logger.log(`[PrivatePay] claim=${claimId} amount=${amountUsd} net=${baseUnits} gross=${grossUnits} transfer=${transferUnits} cluster=${cluster} solPrice=${solPrice}`);
+    this.logger.log(`[PrivatePay] claim=${claimId} amount=${amountUsd} net=${baseUnits} gross=${grossUnits} cluster=${cluster}`);
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
       mint: this.usdcMint.toBase58(),
-      amount: transferUnits,
+      amount: grossUnits,
       cluster,
     });
+
+    // Append Loofta's 10 BPS USDC fee instruction (sender → fee payer wallet).
+    const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
+    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+    let txBase64 = txResponse.transactionBase64;
+    if (feePayerAddress && feePayerKp) {
+      try {
+        txBase64 = await appendLooftaFeeInstruction(
+          txBase64,
+          senderWallet.trim(),
+          feePayerAddress,
+          baseUnits,
+          this.usdcMint,
+          this.solanaSponsor.getConnection(),
+          feePayerKp.publicKey,
+        );
+      } catch (e) {
+        this.logger.warn(`[PrivatePay] Fee instruction append failed (non-fatal): ${String(e)}`);
+      }
+    }
 
     // On devnet Privy doesn't support fee sponsoring — inject our fee payer so the
     // user's wallet only needs to provide one signature (theirs), not pay the fee.
@@ -740,9 +756,7 @@ export class ClaimsService {
         `[PrivatePay] Devnet fee sponsor: applying to MagicBlock tx | requiredSigners=[${txResponse.requiredSigners.join(', ')}] blockhash=${txResponse.recentBlockhash?.slice(0, 8)}...`,
       );
       try {
-        const sponsored = await this.solanaSponsor.prepareAndPartialSignTransaction(
-          txResponse.transactionBase64,
-        );
+        const sponsored = await this.solanaSponsor.prepareAndPartialSignTransaction(txBase64);
         this.logger.log(
           `[PrivatePay] Devnet fee sponsor applied: feePayer=${this.solanaSponsor.getFeePayerAddress()?.slice(0, 8)}... newBlockhash=${sponsored.recentBlockhash.slice(0, 8)}...`,
         );
@@ -759,7 +773,7 @@ export class ClaimsService {
       }
     }
 
-    return txResponse;
+    return { ...txResponse, transactionBase64: txBase64 };
   }
 
   /** Same routing as frontend getEffectiveRecipient: pending → burner, else wallet. */
