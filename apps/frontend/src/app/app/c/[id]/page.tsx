@@ -590,7 +590,7 @@ async function updateClaimStatus(
 function ClaimDescriptionMessageBox({ description }: { description?: string | null }) {
   if (!description?.trim()) return null;
   const desc = description;
-  const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
+  const gifUrlPattern = /(https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\/[^\s]*)/gi;
   const parts: string[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -2744,7 +2744,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       {(() => {
                         const desc = claim.description || '';
                         // Check if description contains GIF URLs (common patterns including Giphy)
-                        const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
+                        const gifUrlPattern = /(https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\/[^\s]*)/gi;
                         const parts: string[] = [];
                         let lastIndex = 0;
                         let match;
@@ -2774,7 +2774,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
                         return parts.map((part, idx) => {
                           // Check if this part is a GIF URL
-                          if (gifUrlPattern.test(part) || part.match(/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i)) {
+                          if (gifUrlPattern.test(part) || part.match(/https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\//i)) {
                             // Convert Giphy URL to direct image URL if needed
                             let imageUrl = part;
                             if (part.includes('giphy.com') && !part.endsWith('.gif')) {
@@ -2957,7 +2957,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       {(() => {
                         const desc = claim.description || '';
                         // Check if description contains GIF URLs (common patterns including Giphy)
-                        const gifUrlPattern = /(https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)[^\s]*)/gi;
+                        const gifUrlPattern = /(https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\/[^\s]*)/gi;
                         const parts: string[] = [];
                         let lastIndex = 0;
                         let match;
@@ -2987,7 +2987,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
                         return parts.map((part, idx) => {
                           // Check if this part is a GIF URL
-                          if (gifUrlPattern.test(part) || part.match(/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i)) {
+                          if (gifUrlPattern.test(part) || part.match(/https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\//i)) {
                             // Convert Giphy URL to direct image URL if needed
                             let imageUrl = part;
                             if (part.includes('giphy.com') && !part.endsWith('.gif')) {

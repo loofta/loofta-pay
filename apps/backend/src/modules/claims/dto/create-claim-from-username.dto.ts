@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, IsBoolean, MaxLength } from 'class-validator';
 
 export class CreateClaimFromUsernameDto {
   @ApiProperty({ description: 'Username (with or without @ prefix)', example: 'looftaxyz' })
@@ -20,6 +20,7 @@ export class CreateClaimFromUsernameDto {
   @ApiPropertyOptional({ description: 'Payment description/message (supports emojis and GIFs)', example: '🍕 Pizza party! 🎉' })
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   description?: string;
 
   // Server-side only — stripped from request body by ValidationPipe whitelist.
