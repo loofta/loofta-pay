@@ -27,6 +27,14 @@ export interface RewardsData {
   tasks: TaskStatus[];
 }
 
+export interface UserRewardsSummary {
+  privyUserId: string;
+  username: string | null;
+  email: string | null;
+  totalSparks: number;
+  tasks: TaskStatus[];
+}
+
 const TASK_SPARKS: Record<TaskKey, number> = {
   connect_email: 250,
   connect_twitter: 250,
@@ -37,6 +45,7 @@ const TASK_SPARKS: Record<TaskKey, number> = {
 };
 
 const TWITTER_TYPES = ['twitter_oauth', 'twitter', 'x'];
+const PENDING_PREFIXES = ['PENDING_EMAIL:', 'PENDING_USERNAME:'];
 
 @Injectable()
 export class RewardsService {
@@ -58,28 +67,47 @@ export class RewardsService {
     return data;
   }
 
-  /** Invalidate cache for a user (call after task-completing events). */
+  async getAllUsersRewards(): Promise<UserRewardsSummary[]> {
+    const { data: users, error } = await this.supabase.appUsers
+      .select('privy_user_id, username, email')
+      .not('privy_user_id', 'is', null);
+
+    if (error || !users?.length) return [];
+
+    const results = await Promise.all(
+      users.map(async (u: any) => {
+        const rewards = await this.getRewards(u.privy_user_id);
+        return {
+          privyUserId: u.privy_user_id,
+          username: u.username ?? null,
+          email: u.email ?? null,
+          totalSparks: rewards.totalSparks,
+          tasks: rewards.tasks,
+        };
+      }),
+    );
+
+    return results.sort((a, b) => b.totalSparks - a.totalSparks);
+  }
+
   invalidate(privyUserId: string) {
     this.cache.delete(privyUserId);
   }
 
   private async computeRewards(privyUserId: string): Promise<RewardsData> {
-    const [linkedAccounts, sendStats, claimStats] = await Promise.all([
+    const [linkedAccounts, paymentStats] = await Promise.all([
       this.getLinkedAccounts(privyUserId),
-      this.getSendPaymentStats(privyUserId),
-      this.getClaimStats(privyUserId),
+      this.getPaymentStats(privyUserId),
     ]);
 
     const hasEmail = linkedAccounts.some(
-      (a: any) =>
-        a.type === 'email' || a.type === 'google' || a.type === 'apple',
+      (a: any) => a.type === 'email' || a.type === 'google' || a.type === 'apple',
     );
     const hasTwitter = linkedAccounts.some((a: any) =>
       TWITTER_TYPES.includes((a.type || '').toLowerCase()),
     );
 
-    const completedSendPayments = sendStats.claimedCount;
-    const hasPaymentToUnregistered = sendStats.hasUnregisteredPayment;
+    const { successfulSentCount, hasPaymentToUnregistered, hasLinkPaid } = paymentStats;
 
     const tasks: TaskStatus[] = [
       {
@@ -101,12 +129,12 @@ export class RewardsService {
         label: 'Make your first payment',
         description: 'Send a payment to anyone',
         sparks: TASK_SPARKS.first_payment,
-        completed: completedSendPayments >= 1,
+        completed: successfulSentCount >= 1,
       },
       {
         key: 'payment_to_unregistered',
         label: 'Pay someone not yet on Loofta',
-        description: 'Send a payment to an email or X handle not yet registered',
+        description: 'Send a payment to someone who has not signed up yet',
         sparks: TASK_SPARKS.payment_to_unregistered,
         completed: hasPaymentToUnregistered,
       },
@@ -115,15 +143,15 @@ export class RewardsService {
         label: 'Create a link and get paid',
         description: 'Share your payment link and receive a payment through it',
         sparks: TASK_SPARKS.payment_link_paid,
-        completed: claimStats.hasPaidClaim,
+        completed: hasLinkPaid,
       },
       {
         key: 'ten_payments',
         label: 'Make 10 payments',
-        description: 'Send a total of 10 payments',
+        description: 'Send a total of 10 successful payments',
         sparks: TASK_SPARKS.ten_payments,
-        completed: completedSendPayments >= 10,
-        progress: Math.min(completedSendPayments, 10),
+        completed: successfulSentCount >= 10,
+        progress: Math.min(successfulSentCount, 10),
         total: 10,
       },
     ];
@@ -145,55 +173,65 @@ export class RewardsService {
     }
   }
 
-  private async getSendPaymentStats(
-    privyUserId: string,
-  ): Promise<{ claimedCount: number; hasUnregisteredPayment: boolean }> {
+  /**
+   * Mirrors exactly what the history page counts as "sent" payments:
+   * 1. sender_user_id = user (canonical)
+   * 2. Legacy: created_by = user AND sender_user_id IS NULL AND direction != from_recipient
+   */
+  private async getPaymentStats(privyUserId: string): Promise<{
+    successfulSentCount: number;
+    hasPaymentToUnregistered: boolean;
+    hasLinkPaid: boolean;
+  }> {
     try {
-      const { data, error } = await this.supabase
-        .getClient()
-        .from('send_payment_links')
-        .select('id, recipient_type, status')
+      const db = this.supabase.getClient();
+
+      // Primary: sender_user_id column (new rows)
+      const { data: bysender } = await db
+        .from('payments')
+        .select('id, recipient_user_id, recipient_address')
         .eq('sender_user_id', privyUserId)
-        .eq('status', 'CLAIMED');
+        .eq('status', 'SUCCESS')
+        .neq('direction', 'from_recipient');
 
-      if (error) {
-        this.logger.warn(`Error querying send_payment_links: ${error.message}`);
-        return { claimedCount: 0, hasUnregisteredPayment: false };
-      }
+      // Legacy fallback: created_by without sender_user_id
+      const { data: byCreator } = await db
+        .from('payments')
+        .select('id, recipient_user_id, recipient_address')
+        .eq('created_by', privyUserId)
+        .is('sender_user_id', null)
+        .eq('status', 'SUCCESS')
+        .neq('direction', 'from_recipient');
 
-      const rows = data ?? [];
-      const hasUnregisteredPayment = rows.some(
-        (r: any) => r.recipient_type === 'email' || r.recipient_type === 'twitter',
-      );
+      const sentByIdSet = new Set((byCreator ?? []).map((r: any) => r.id));
+      const allSent = [
+        ...(byCreator ?? []),
+        ...(bysender ?? []).filter((r: any) => !sentByIdSet.has(r.id)),
+      ];
 
-      return { claimedCount: rows.length, hasUnregisteredPayment };
-    } catch (e) {
-      this.logger.warn(`getSendPaymentStats error: ${(e as Error)?.message}`);
-      return { claimedCount: 0, hasUnregisteredPayment: false };
-    }
-  }
+      const hasPaymentToUnregistered = allSent.some((r: any) => {
+        if (!r.recipient_user_id) return true;
+        const addr = String(r.recipient_address || '');
+        return PENDING_PREFIXES.some((p) => addr.startsWith(p));
+      });
 
-  private async getClaimStats(
-    privyUserId: string,
-  ): Promise<{ hasPaidClaim: boolean }> {
-    try {
-      const { data, error } = await this.supabase
-        .getClient()
-        .from('claims')
+      // Payment request link created by user and paid by someone else
+      const { data: linkRows } = await db
+        .from('payments')
         .select('id')
         .eq('created_by', privyUserId)
+        .eq('direction', 'from_recipient')
         .eq('status', 'SUCCESS')
         .limit(1);
 
-      if (error) {
-        this.logger.warn(`Error querying claims: ${error.message}`);
-        return { hasPaidClaim: false };
-      }
-
-      return { hasPaidClaim: (data ?? []).length > 0 };
+      return {
+        successfulSentCount: allSent.length,
+        hasPaymentToUnregistered,
+        hasLinkPaid: (linkRows ?? []).length > 0,
+      };
     } catch (e) {
-      this.logger.warn(`getClaimStats error: ${(e as Error)?.message}`);
-      return { hasPaidClaim: false };
+      this.logger.warn(`getPaymentStats error: ${(e as Error)?.message}`);
+      return { successfulSentCount: 0, hasPaymentToUnregistered: false, hasLinkPaid: false };
     }
   }
 }
