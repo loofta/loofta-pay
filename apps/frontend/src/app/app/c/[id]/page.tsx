@@ -766,10 +766,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
   const estimatePrivateTotal = (usd: number) => {
     const net = Math.round(usd * 1_000_000);
-    const gross = Math.ceil((net * 10_000) / (10_000 - 10));
-    const protocolFee = (gross - net) / 1_000_000;
+    // MagicBlock gross-up: 10 BPS deducted from amount before recipient gets it
+    const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
+    const mbFee = (mbGross - net) / 1_000_000;
+    // Loofta 10 BPS fee (separate appended instruction on net amount)
+    const looftaFee = Math.ceil(net * 10 / 10_000) / 1_000_000;
+    // MagicBlock 0.002 SOL flat fee — charged in native SOL from sender (mainnet only)
     const gasFee = 0.002 * solPrice;
-    return { total: gross / 1_000_000 + gasFee, protocolFee, gasFee };
+    return { total: mbGross / 1_000_000 + looftaFee + gasFee, protocolFee: mbFee + looftaFee, gasFee };
   };
 
   useEffect(() => {
