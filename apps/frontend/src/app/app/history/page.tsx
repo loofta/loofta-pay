@@ -92,7 +92,7 @@ function getStatusBadgeClass(status: string): string {
 }
 
 const GIF_URL_REGEX = new RegExp(
-  "https?://[^\\s]+(?:\\.gif|giphy\\.com|tenor\\.com|gfycat\\.com|media\\.giphy\\.com)[^\\s]*",
+  "https?://(?:[^\\s/]+\\.)?(?:giphy\\.com|tenor\\.com|gfycat\\.com)/[^\\s]*",
   "gi"
 );
 const WHITESPACE_REGEX = new RegExp("\\s+", "g");
