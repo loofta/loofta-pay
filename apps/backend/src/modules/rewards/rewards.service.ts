@@ -31,7 +31,7 @@ const TASK_SPARKS: Record<TaskKey, number> = {
   connect_email: 250,
   connect_twitter: 250,
   first_payment: 500,
-  payment_to_unregistered: 2500,
+  payment_to_unregistered: 2000,
   payment_link_paid: 2000,
   ten_payments: 5000,
 };
