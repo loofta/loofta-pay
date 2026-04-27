@@ -84,7 +84,7 @@ export function BottomNav() {
         <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-pb bg-[#0f0f12]/70 backdrop-blur-xl border-t border-white/10 shadow-[0_-10px_30px_rgba(0,0,0,0.35)]">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
 
-            <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-2 mt-1 ">
+            <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-1 mt-1">
                 <NavItem
                     href="/"
                     label="Send"
