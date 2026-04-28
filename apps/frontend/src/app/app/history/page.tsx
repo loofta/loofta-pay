@@ -58,7 +58,7 @@ function getPayeeDisplay(claim: PaymentHistoryClaim): string {
 
 const STATUS_LABELS: Record<string, string> = {
   SUCCESS: "Paid",
-  PRIVATE_TRANSFER_PENDING: "Paid",
+  PRIVATE_TRANSFER_PENDING: "Unclaimed",
   CANCELLED: "Cancelled",
   OPEN: "Open",
   PENDING_DEPOSIT: "Pending",
@@ -84,6 +84,8 @@ function getStatusBadgeClass(status: string): string {
       return "bg-blue-500/20 text-blue-400 border-blue-500/30";
     case "IN_FLIGHT":
       return "bg-violet-500/20 text-violet-400 border-violet-500/30";
+    case "PRIVATE_TRANSFER_PENDING":
+      return "bg-amber-500/20 text-amber-400 border-amber-500/30";
     case "REFUNDED":
       return "bg-orange-500/20 text-orange-400 border-orange-500/30";
     case "EXPIRED":
