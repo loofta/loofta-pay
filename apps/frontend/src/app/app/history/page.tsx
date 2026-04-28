@@ -52,11 +52,13 @@ function getPayeeDisplay(claim: PaymentHistoryClaim): string {
   const ra = (claim.recipient_address || "").trim();
   if (ra.startsWith(PENDING_USERNAME_PREFIX)) return `@${ra.slice(PENDING_USERNAME_PREFIX.length).trim()}`;
   if (ra.startsWith(PENDING_EMAIL_PREFIX)) return ra.slice(PENDING_EMAIL_PREFIX.length).trim();
+  if (claim.recipient_email) return claim.recipient_email;
   return "Anonymous";
 }
 
 const STATUS_LABELS: Record<string, string> = {
   SUCCESS: "Paid",
+  PRIVATE_TRANSFER_PENDING: "Paid",
   CANCELLED: "Cancelled",
   OPEN: "Open",
   PENDING_DEPOSIT: "Pending",
