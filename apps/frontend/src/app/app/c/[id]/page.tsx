@@ -2696,12 +2696,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   <div className="mt-6 text-center py-12 px-4">
                     <div className="mb-4 text-6xl">🎁</div>
                     <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                      Payment for @{claim.recipient_pending_username_value || "username"}
+                      A payment is waiting
                     </h3>
                     <p className="text-gray-600 text-sm mb-5">
                       {senderHasPaid
-                        ? `$${parseFloat(claim?.amount || "0").toFixed(2)} is waiting. Sign up with @${claim.recipient_pending_username_value || "username"} on Loofta to claim it.`
-                        : `They can claim $${parseFloat(claim?.amount || "0").toFixed(2)} when they sign up with this username on Loofta.`}
+                        ? "Sign in to see if this payment is for you."
+                        : "Someone will be able to claim this payment after signing up on Loofta."}
                     </p>
                     {senderHasPaid && (
                       <button
