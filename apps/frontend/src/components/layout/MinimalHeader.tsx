@@ -37,6 +37,7 @@ function MobileMenu({
 
   const navLinks = [
     { href: "/rewards", label: "Sparks ⚡", description: "Earn Sparks for your activity" },
+    { href: "/app/waitlist", label: "Waitlist", description: "Request mainnet early access" },
     { href: "/app/settings", label: "Profile", description: null },
   ];
 
@@ -209,6 +210,19 @@ export function MinimalHeader() {
                 >
                   <span>⚡</span>
                   <span>Sparks</span>
+                </Link>
+
+                {/* Desktop: Waitlist link */}
+                <Link
+                  href="/app/waitlist"
+                  className={[
+                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    pathname === "/app/waitlist"
+                      ? "text-green-300 bg-green-500/10"
+                      : "text-slate-300 hover:text-white hover:bg-white/10",
+                  ].join(" ")}
+                >
+                  <span>Waitlist</span>
                 </Link>
 
                 {/* Desktop: Balance button */}
