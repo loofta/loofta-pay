@@ -647,7 +647,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   /** USDC-only pay UX on devnet / testnet or when private payment is enabled. */
   const hideAlternateTokenPay = isNonMainnetCluster() || PRIVATE_PAYMENT_ENABLED;
   const { toast } = useToast();
-  const { user, logout, login, authenticated, getAccessToken } = usePrivy();
+  const { user, logout, login, authenticated, ready: privyReady, getAccessToken } = usePrivy();
   const { data: tokensRaw = [], isLoading } = useTokensQuery();
   /** Devnet/testnet: 1-click token list often only lists mainnet Solana USDC mint. Inject cluster USDC so Pay with + selection resolve. */
   const tokens = useMemo(() => {
@@ -2360,10 +2360,16 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             </div>
           </div>
         )}
-        {loadingClaim ? (
-          <div className="space-y-4">
-            <Skeleton className="h-8 w-1/2" />
-            <Skeleton className="h-12 w-full" />
+        {loadingClaim || !privyReady || (authenticated && isCheckingRecipient) ? (
+          <div className="space-y-5 animate-pulse">
+            <div className="flex items-center gap-3">
+              <Skeleton className="h-10 w-10 rounded-full" />
+              <Skeleton className="h-5 w-36" />
+            </div>
+            <Skeleton className="h-14 w-2/3" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-4/5" />
+            <Skeleton className="h-12 w-full rounded-xl mt-2" />
           </div>
         ) : claim ? (
           <>
