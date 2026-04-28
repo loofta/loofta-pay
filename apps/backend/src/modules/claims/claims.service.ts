@@ -982,6 +982,24 @@ export class ClaimsService {
     return { swept: !!sweepTxHash, sweepTxHash, sweptAmount };
   }
 
+  /** Poll getSignatureStatuses instead of using WebSocket signatureSubscribe (avoids RPC endpoints that don't support WS). */
+  private async pollConfirmTransaction(
+    conn: import('@solana/web3.js').Connection,
+    signature: string,
+    timeoutMs = 60_000,
+    intervalMs = 1_000,
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const statuses = await conn.getSignatureStatuses([signature], { searchTransactionHistory: true });
+      const status = statuses.value[0];
+      if (status?.err) throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
+      if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return;
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+    throw new Error(`Transaction ${signature} confirmation timed out`);
+  }
+
   private async sweepClaimBurnerToWallet(
     claimId: string,
     claim: Claim & { recipient_address?: string },
@@ -1054,7 +1072,7 @@ export class ClaimsService {
           }
         }
         sweepTx.add(createTransferInstruction(burnerAta, recipientAta, burnerKeypair.publicKey, balance));
-        const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
+        const { blockhash } = await conn.getLatestBlockhash('confirmed');
         sweepTx.recentBlockhash = blockhash;
         sweepTx.feePayer = feePayerKp?.publicKey ?? burnerKeypair.publicKey;
         sweepTx.sign(burnerKeypair);
@@ -1067,7 +1085,7 @@ export class ClaimsService {
           `Claim ${claimId}: [SWEEP] direct SPL burner->recipient ${balance} base units (burner ${burnerKeypair.publicKey.toBase58().slice(0, 8)} → ${wallet.slice(0, 8)})`,
         );
         const sig = await conn.sendTransaction(sweepTx, signers, { skipPreflight: true });
-        await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+        await this.pollConfirmTransaction(conn, sig);
         this.logger.log(
           `Claim ${claimId}: [MONEY] ✅ swept ${balance} base-units USDC (${(Number(balance) / 1_000_000).toFixed(6)} USDC) burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} -> recipient=${wallet.slice(0, 8)} tx=${sig}`,
         );
@@ -1171,14 +1189,14 @@ export class ClaimsService {
     ): Promise<string> => {
       const ix = buildUndelegateIx();
       const tx = new Transaction().add(ix);
-      const { blockhash, lastValidBlockHeight } = await sendConn.getLatestBlockhash('confirmed');
+      const { blockhash } = await sendConn.getLatestBlockhash('confirmed');
       tx.recentBlockhash = blockhash;
       tx.feePayer = feePayerKp.publicKey;
       tx.sign(feePayerKp, burnerKeypair);
       debug.push(`${label}: signers=[sponsor=${feePayerKp.publicKey.toBase58().slice(0, 8)}, burner=${burner.toBase58().slice(0, 8)}]`);
       const sig = await sendConn.sendTransaction(tx, [feePayerKp, burnerKeypair], { skipPreflight: true });
       debug.push(`${label}: tx=${sig}`);
-      await sendConn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+      await this.pollConfirmTransaction(sendConn, sig);
       return sig;
     };
 
@@ -1323,12 +1341,12 @@ export class ClaimsService {
         try {
           if (attempt > 0) await new Promise((r) => setTimeout(r, 2_000));
           const withdrawTx = new Transaction().add(buildWithdrawIx());
-          const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
+          const { blockhash } = await conn.getLatestBlockhash('confirmed');
           withdrawTx.recentBlockhash = blockhash;
           withdrawTx.feePayer = feePayerKp.publicKey;
           withdrawTx.sign(feePayerKp, burnerKeypair);
           const sig = await conn.sendTransaction(withdrawTx, [feePayerKp, burnerKeypair], { skipPreflight: true });
-          await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+          await this.pollConfirmTransaction(conn, sig);
           this.logger.log(`Claim ${claimId}: PER withdraw->burner ATA tx=${sig} (attempt ${attempt + 1})`);
           debug.push(`withdraw tx=${sig} (attempt ${attempt + 1})`);
           return { attempted: true, success: true, txHash: sig, depositAmountRaw: depositAmountRaw.toString(), debug };
@@ -1440,7 +1458,7 @@ export class ClaimsService {
               }
             }
             tx.add(createTransferInstruction(burnerAta, creatorAta, burnerKeypair.publicKey, balance));
-            const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
+            const { blockhash } = await conn.getLatestBlockhash('confirmed');
             tx.recentBlockhash = blockhash;
             const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
             tx.feePayer = feePayerKp?.publicKey ?? burnerKeypair.publicKey;
@@ -1452,7 +1470,7 @@ export class ClaimsService {
             }
             this.logger.log(`Claim ${claimId}: sending reclaim transfer ${balance} USDC burner->creator ${creatorWallet.slice(0, 8)}...`);
             const sig = await conn.sendTransaction(tx, signers, { skipPreflight: true });
-            await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+            await this.pollConfirmTransaction(conn, sig);
             this.logger.log(`Claim ${claimId}: [MONEY] reclaimed ${balance} USDC from burner ${burnerKeypair.publicKey.toBase58()} to creator ${creatorWallet} tx=${sig}`);
           } else {
             this.logger.log(`Claim ${claimId}: burner ${burnerKeypair.publicKey.toBase58()} has 0 USDC balance, nothing to transfer`);
