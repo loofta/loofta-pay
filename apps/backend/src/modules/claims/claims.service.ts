@@ -836,7 +836,10 @@ export class ClaimsService {
     const claim = await this.findOneRaw(claimId);
     // Guard: do not re-claim a completed or cancelled payment
     const claimStatus = (claim.status || '').toUpperCase();
-    if (claimStatus === 'SUCCESS' || claimStatus === 'CANCELLED') {
+    const claimBurnerAddress = (claim as { claim_burner_address?: string | null }).claim_burner_address?.trim();
+    // Allow claiming when status is SUCCESS but a burner is still set — this means the sender
+    // funded the payment before the recipient could claim, setting status to SUCCESS prematurely.
+    if (claimStatus === 'CANCELLED' || (claimStatus === 'SUCCESS' && !claimBurnerAddress)) {
       throw new BadRequestException('This payment has already been completed or cancelled.');
     }
     const ra = (claim.recipient_address || '').trim();
@@ -871,8 +874,16 @@ export class ClaimsService {
 
     const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
     if (sweepTxHash) {
-      await this.updateStatus(claimId, 'SUCCESS', undefined, privyUserId);
+      await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
       this.logger.log(`Claim ${claimId}: sweep completed immediately, marked SUCCESS`);
+    } else if (claimStatus === 'SUCCESS') {
+      // Status was already SUCCESS (prematurely set by sender) and burner is now empty —
+      // the sweep either just ran successfully elsewhere, or funds haven't arrived yet.
+      // Don't downgrade; schedule a background retry to catch late-arriving funds.
+      this.logger.log(`Claim ${claimId}: burner empty but status already SUCCESS — scheduling background retry`);
+      if (claimBurnerAddress) {
+        this.scheduleBackgroundSweepRetry(claimId, wallet, privyUserId);
+      }
     } else {
       // Funds still in-flight on MagicBlock private leg (devnet: random delay up to ~15 min). Mark
       // PRIVATE_TRANSFER_PENDING and retry sweep until getBurnerInboundBackgroundMaxMs().
@@ -905,7 +916,7 @@ export class ClaimsService {
         if (st === 'SUCCESS' || st === 'CANCELLED') return;
         const { sweepTxHash } = await this.sweepClaimBurnerToWallet(claimId, freshClaim, wallet);
         if (sweepTxHash) {
-          await this.updateStatus(claimId, 'SUCCESS', undefined, privyUserId);
+          await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
           this.logger.log(`Claim ${claimId}: background poll sweep succeeded, marked SUCCESS`);
           return;
         }
@@ -966,7 +977,7 @@ export class ClaimsService {
     }
     const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
     if (sweepTxHash) {
-      await this.updateStatus(claimId, 'SUCCESS', undefined, privyUserId);
+      await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
     }
     return { swept: !!sweepTxHash, sweepTxHash, sweptAmount };
   }
@@ -1661,6 +1672,8 @@ export class ClaimsService {
     paidWithToken?: string;
     paidWithChain?: string;
     fromToken?: string;
+    /** Pass true when the recipient sweep has completed — skips the intermediary-pending guard so SUCCESS is stored as-is. */
+    recipientSwept?: boolean;
   }, createdByUserId?: string): Promise<Claim> {
     // Ownership check for destructive transitions
     if ((status as string).toUpperCase() === 'CANCELLED' && createdByUserId) {
@@ -1674,11 +1687,16 @@ export class ClaimsService {
     const updateData: Record<string, any> = { status: effectiveStatus };
 
     // For unresolved recipients, sender-funded does not mean recipient-claimed yet.
-    if (status === 'SUCCESS') {
+    // Skip this conversion when the caller confirms the sweep has completed (recipientSwept).
+    if (status === 'SUCCESS' && !extra?.recipientSwept) {
       const result = await this.fetchRawRow(id);
-      if (result && this.isPendingRecipientAddress(result.row.recipient_address as string)) {
-        effectiveStatus = 'PRIVATE_TRANSFER_PENDING';
-        updateData.status = effectiveStatus;
+      if (result) {
+        const isPending = this.isPendingRecipientAddress(result.row.recipient_address as string);
+        const hasBurner = !!(result.row.claim_burner_address as string | null | undefined)?.trim();
+        if (isPending || hasBurner) {
+          effectiveStatus = 'PRIVATE_TRANSFER_PENDING';
+          updateData.status = effectiveStatus;
+        }
       }
     }
 
@@ -1825,7 +1843,7 @@ export class ClaimsService {
       try {
         const { sweepTxHash } = await this.sweepClaimBurnerToWallet(claim.id, claim, recipientWallet);
         if (sweepTxHash) {
-          await this.updateStatus(claim.id, 'SUCCESS');
+          await this.updateStatus(claim.id, 'SUCCESS', { recipientSwept: true });
           this.logger.log(`[cronSweep] Claim ${claim.id}: sweep succeeded → SUCCESS`);
         } else {
           this.logger.debug(`[cronSweep] Claim ${claim.id}: burner still empty, will retry next tick`);
