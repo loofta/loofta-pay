@@ -859,8 +859,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         title: "Payment received!",
         description: "Your claim completed successfully. USDC will arrive in your wallet shortly.",
       });
+      // Show success immediately without waiting for refetch; avoid the intermediate skeleton.
+      setStatus("SUCCESS");
+      queryClient.setQueryData(["claim", id, "recipient-check", user?.id], { isRecipient: true });
       queryClient.invalidateQueries({ queryKey: ["claim", id] });
-      queryClient.invalidateQueries({ queryKey: ["claim", id, "recipient-check", user?.id] });
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
       // Wait for RPC to index the sweep tx before refetching balance.
       setTimeout(() => {

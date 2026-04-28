@@ -13,7 +13,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import {
   Loader2, RefreshCw, Shield, Search, ChevronDown, ChevronRight,
-  ExternalLink, Pencil, AlertTriangle, Copy,
+  ExternalLink, Pencil, AlertTriangle, Copy, Zap,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -439,6 +439,19 @@ export default function AdminDashboard() {
   });
   const [saving, setSaving] = useState(false);
 
+  // Tabs
+  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist">("payments");
+
+  // Sparks leaderboard
+  const [sparksData, setSparksData] = useState<any[]>([]);
+  const [sparksLoading, setSparksLoading] = useState(false);
+  const [sparksLoaded, setSparksLoaded] = useState(false);
+
+  // Waitlist
+  const [waitlistData, setWaitlistData] = useState<any[]>([]);
+  const [waitlistLoading, setWaitlistLoading] = useState(false);
+  const [waitlistLoaded, setWaitlistLoaded] = useState(false);
+
   // Keep userId stable in callbacks via ref
   const userIdRef = useRef(userId);
   useEffect(() => { userIdRef.current = userId; }, [userId]);
@@ -500,6 +513,37 @@ export default function AdminDashboard() {
 
   const applySearch = () => setAppliedSearch(searchInput);
   const refresh = () => fetchPayments(currentPage, { search: appliedSearch, devnet: devnetFilter, status: statusFilter });
+
+  const fetchSparks = useCallback(async () => {
+    setSparksLoading(true);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch("/api/admin/rewards", { headers });
+      if (!res.ok) throw new Error("Failed to load");
+      setSparksData(await res.json());
+      setSparksLoaded(true);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load Sparks" });
+    } finally {
+      setSparksLoading(false);
+    }
+  }, [authHeaders, toast]);
+
+  const fetchWaitlist = useCallback(async () => {
+    setWaitlistLoading(true);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch("/api/admin/waitlist", { headers });
+      if (!res.ok) throw new Error("Failed to load");
+      const data = await res.json();
+      setWaitlistData(data.entries ?? []);
+      setWaitlistLoaded(true);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load waitlist" });
+    } finally {
+      setWaitlistLoading(false);
+    }
+  }, [authHeaders, toast]);
 
   // ── Expand row ──────────────────────────────────────────────────────────────
   const toggleExpand = useCallback(async (id: string) => {
@@ -625,19 +669,163 @@ export default function AdminDashboard() {
         <div className="flex items-center gap-3">
           <Shield className="w-5 h-5 text-blue-400 shrink-0" />
           <span className="font-bold text-base">Loofta Admin</span>
-          <span className="text-gray-600 text-sm hidden sm:block">· payments ≥ 2026-04-25</span>
         </div>
         <Button
           variant="outline"
           size="sm"
-          onClick={refresh}
-          disabled={loading}
+          onClick={activeTab === "payments" ? refresh : activeTab === "sparks" ? fetchSparks : fetchWaitlist}
+          disabled={loading || sparksLoading || waitlistLoading}
           className="border-gray-700 text-gray-300 bg-gray-900 hover:bg-gray-800"
         >
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          {(loading || sparksLoading || waitlistLoading) ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
           <span className="ml-1.5">Refresh</span>
         </Button>
       </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 mb-4 border-b border-gray-800">
+        <button
+          type="button"
+          onClick={() => setActiveTab("payments")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "payments" ? "border-blue-500 text-blue-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+        >
+          Payments
+        </button>
+        <button
+          type="button"
+          onClick={() => { setActiveTab("sparks"); if (!sparksLoaded) fetchSparks(); }}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "sparks" ? "border-amber-500 text-amber-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+        >
+          <Zap className="w-3.5 h-3.5" />
+          Sparks
+        </button>
+        <button
+          type="button"
+          onClick={() => { setActiveTab("waitlist"); if (!waitlistLoaded) fetchWaitlist(); }}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "waitlist" ? "border-green-500 text-green-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+        >
+          Waitlist
+          {waitlistLoaded && <span className="text-xs bg-green-900/50 text-green-400 rounded px-1.5 py-0.5">{waitlistData.length}</span>}
+        </button>
+      </div>
+
+      {/* ── Waitlist tab ── */}
+      {activeTab === "waitlist" && (
+        <div className="overflow-x-auto rounded-lg border border-gray-800">
+          {waitlistLoading && (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+            </div>
+          )}
+          {!waitlistLoading && waitlistLoaded && (
+            <table className="w-full text-xs text-gray-300">
+              <thead>
+                <tr className="border-b border-gray-800 bg-gray-900/60 text-gray-500 uppercase tracking-wider text-left">
+                  <th className="px-4 py-2.5">#</th>
+                  <th className="px-4 py-2.5">Name</th>
+                  <th className="px-4 py-2.5">Email</th>
+                  <th className="px-4 py-2.5">Telegram</th>
+                  <th className="px-4 py-2.5">Twitter</th>
+                  <th className="px-4 py-2.5">Occupation</th>
+                  <th className="px-4 py-2.5">Volume</th>
+                  <th className="px-4 py-2.5">Rails</th>
+                  <th className="px-4 py-2.5">Privy ID</th>
+                  <th className="px-4 py-2.5">Applied</th>
+                </tr>
+              </thead>
+              <tbody>
+                {waitlistData.map((e: any, i: number) => (
+                  <tr key={e.id} className="border-b border-gray-800/60 hover:bg-gray-900/50">
+                    <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
+                    <td className="px-4 py-2.5 font-medium text-white">{e.display_name || "—"}</td>
+                    <td className="px-4 py-2.5">{e.email || "—"}</td>
+                    <td className="px-4 py-2.5">{e.telegram_handle || "—"}</td>
+                    <td className="px-4 py-2.5">{e.twitter_username || "—"}</td>
+                    <td className="px-4 py-2.5">{e.occupation || "—"}</td>
+                    <td className="px-4 py-2.5">{e.payment_volume || "—"}</td>
+                    <td className="px-4 py-2.5 max-w-[140px] truncate">{Array.isArray(e.withdrawal_rails) ? e.withdrawal_rails.join(", ") : (e.withdrawal_rails || "—")}</td>
+                    <td className="px-4 py-2.5 font-mono text-gray-500 max-w-[120px] truncate">{e.privy_user_id || "—"}</td>
+                    <td className="px-4 py-2.5 text-gray-500 tabular-nums whitespace-nowrap">{new Date(e.created_at).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+                {waitlistData.length === 0 && (
+                  <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-600">No entries yet</td></tr>
+                )}
+              </tbody>
+            </table>
+          )}
+          {!waitlistLoading && !waitlistLoaded && (
+            <div className="text-gray-600 text-sm py-8 text-center">Click Refresh to load waitlist.</div>
+          )}
+        </div>
+      )}
+
+      {/* ── Sparks tab ── */}
+      {activeTab === "sparks" && (
+        <div>
+          {sparksLoading && (
+            <div className="flex items-center gap-2 text-sm text-gray-400 py-8">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading Sparks…
+            </div>
+          )}
+          {!sparksLoading && sparksLoaded && (
+            <div className="overflow-x-auto rounded-xl border border-gray-800">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wide">
+                    <th className="text-left px-4 py-2.5">#</th>
+                    <th className="text-left px-4 py-2.5">User</th>
+                    <th className="text-right px-4 py-2.5">⚡ Sparks</th>
+                    <th className="text-center px-3 py-2.5">Email</th>
+                    <th className="text-center px-3 py-2.5">X</th>
+                    <th className="text-center px-3 py-2.5">1st pay</th>
+                    <th className="text-center px-3 py-2.5">Unreg.</th>
+                    <th className="text-center px-3 py-2.5">Link paid</th>
+                    <th className="text-center px-3 py-2.5">10 pays</th>
+                    <th className="text-right px-4 py-2.5">Sent</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sparksData.map((u: any, i: number) => {
+                    const byKey = Object.fromEntries(u.tasks.map((t: any) => [t.key, t]));
+                    return (
+                      <tr key={u.privyUserId} className="border-b border-gray-800/60 hover:bg-gray-900/50">
+                        <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
+                        <td className="px-4 py-2.5">
+                          <div className="font-medium text-white">{u.username ? `@${u.username}` : "—"}</div>
+                          <div className="text-xs text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-bold text-amber-400 tabular-nums">{u.totalSparks.toLocaleString()}</td>
+                        {["connect_email","connect_twitter","first_payment","payment_to_unregistered","payment_link_paid","ten_payments"].map((key) => (
+                          <td key={key} className="px-3 py-2.5 text-center">
+                            {byKey[key]?.completed
+                              ? <span className="text-green-400">✓</span>
+                              : key === "ten_payments" && byKey[key]?.progress > 0
+                                ? <span className="text-amber-400 text-xs">{byKey[key].progress}/10</span>
+                                : <span className="text-gray-700">–</span>}
+                          </td>
+                        ))}
+                        <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-xs">
+                          {byKey["ten_payments"]?.progress ?? 0}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {sparksData.length === 0 && (
+                    <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-600">No data</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!sparksLoading && !sparksLoaded && (
+            <div className="text-gray-600 text-sm py-8 text-center">Click Refresh to load Sparks data.</div>
+          )}
+        </div>
+      )}
+
+      {/* ── Payments tab ── */}
+      {activeTab === "payments" && <>
 
       {/* Stats bar */}
       <div className="flex flex-wrap gap-2 mb-4 text-xs">
@@ -963,6 +1151,8 @@ export default function AdminDashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      </>}
     </div>
   );
 }
