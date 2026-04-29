@@ -193,7 +193,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
   try {
     const body = await request.json();
     console.log("[payments/PATCH] Request body:", body);
-    const { status: inputStatus, txHash, paidWith, depositReceivedAt, originAsset, destinationAsset } = body || {};
+    const { status: inputStatus, txHash, paidWith, paidWithChain, paidWithToken, depositReceivedAt, originAsset, destinationAsset } = body || {};
 
     const statusMap: Record<string, string> = {
       "PROCESSING": "IN_FLIGHT",
@@ -226,8 +226,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       updateData.sender_tx_hash = txHash;
     }
 
-    // from_chain / from_token: extract from paidWith string (e.g. "USDC (Solana wallet)" or "USDC on Solana")
-    if (paidWith) {
+    // from_chain / from_token: prefer explicit paidWithChain/paidWithToken when provided;
+    // fall back to regex-parsing paidWith for legacy callers.
+    if (paidWithChain) {
+      updateData.from_chain = String(paidWithChain).toLowerCase();
+    } else if (paidWith) {
       const parenMatch = paidWith.match(/^([^(]+)\s*\(([^)]+)\)/);
       if (parenMatch) {
         const token = parenMatch[1].trim().split(/\s+/)[0]; // first word is the token symbol
@@ -242,6 +245,9 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
           if (token) updateData.from_token = token.toUpperCase();
         }
       }
+    }
+    if (paidWithToken && !updateData.from_token) {
+      updateData.from_token = String(paidWithToken).toUpperCase();
     }
 
     // Try payments table first

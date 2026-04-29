@@ -8,18 +8,24 @@ const BADGE_ON_DARK =
   "shrink-0 rounded-full border border-amber-500/35 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400/95";
 const BADGE_ON_LIGHT =
   "shrink-0 rounded-full border border-amber-600/35 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800";
+const BADGE_MAINNET_ON_DARK =
+  "shrink-0 rounded-full border border-green-500/35 bg-green-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-400";
+const BADGE_MAINNET_ON_LIGHT =
+  "shrink-0 rounded-full border border-green-600/35 bg-green-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-700";
 
 type LooftaPayLogoLinkProps = {
   href?: string;
   imageWidth: number;
   imageHeight: number;
   imageClassName?: string;
-  /** Cluster badge (e.g. Devnet) sits after “Loofta Pay” */
+  /** Cluster badge (e.g. Devnet) sits after "Loofta Pay" */
   badgeVariant: "on-dark" | "on-light";
+  /** When true, overrides the cluster badge to show a green "Mainnet" badge */
+  isMainnet?: boolean;
 };
 
 /**
- * Wordmark: Loofta + gradient “pay”, then optional non-mainnet cluster tag (e.g. Devnet).
+ * Wordmark: Loofta + gradient "pay", then optional non-mainnet cluster tag (e.g. Devnet).
  */
 export function LooftaPayLogoLink({
   href = "/",
@@ -27,6 +33,7 @@ export function LooftaPayLogoLink({
   imageHeight,
   imageClassName,
   badgeVariant,
+  isMainnet = false,
 }: LooftaPayLogoLinkProps) {
   const clusterTag = clusterBadgeLabel();
   const showClusterBadge = isNonMainnetCluster() && clusterTag;
@@ -53,7 +60,9 @@ export function LooftaPayLogoLink({
           pay
         </span>
       </span>
-      {showClusterBadge ? (
+      {isMainnet ? (
+        <span className={badgeVariant === "on-dark" ? BADGE_MAINNET_ON_DARK : BADGE_MAINNET_ON_LIGHT}>Mainnet</span>
+      ) : showClusterBadge ? (
         <span className={badgeVariant === "on-dark" ? BADGE_ON_DARK : BADGE_ON_LIGHT}>{clusterTag}</span>
       ) : null}
     </Link>

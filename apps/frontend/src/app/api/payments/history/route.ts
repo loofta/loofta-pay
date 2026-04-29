@@ -48,7 +48,7 @@ function isExpiredOpenPayment(p: PaymentHistoryClaim): boolean {
 }
 
 /** Normalise a payments row to the shared PaymentHistoryClaim shape. */
-function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim {
+function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & { _recipient_user_id?: string | null } {
   return {
     id: String(row.id ?? ""),
     amount: String(row.amount ?? "0"),
@@ -71,6 +71,7 @@ function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim {
     is_private: null,
     description: (row.description as string | null) ?? null,
     is_devnet: Boolean(row.is_devnet),
+    _recipient_user_id: (row.recipient_user_id as string | null) ?? null,
   };
 }
 
@@ -300,10 +301,12 @@ export async function GET(request: Request) {
       ...normPaymentReceived, ...normClaimReceived,
     ];
 
-    // Enrich with usernames — collect both created_by and sender_user_id in one batch
+    // Enrich with usernames — collect created_by, sender_user_id, and recipient_user_id in one batch
+    type EnrichedClaim = PaymentHistoryClaim & { sender_user_id?: string | null; _recipient_user_id?: string | null };
     const allUserIds = [...new Set([
       ...allItems.map((c) => c.created_by),
-      ...allItems.map((c) => (c as PaymentHistoryClaim & { sender_user_id?: string | null }).sender_user_id ?? null),
+      ...allItems.map((c) => (c as EnrichedClaim).sender_user_id ?? null),
+      ...allItems.map((c) => (c as EnrichedClaim)._recipient_user_id ?? null),
     ].filter(Boolean))] as string[];
     let usernameMap: Record<string, string> = {};
     if (allUserIds.length > 0) {
@@ -321,11 +324,19 @@ export async function GET(request: Request) {
     }
 
     const enrich = (c: PaymentHistoryClaim) => {
-      const senderUserId = (c as PaymentHistoryClaim & { sender_user_id?: string | null }).sender_user_id;
+      const ec = c as EnrichedClaim;
+      // Only backfill from recipient_user_id for from_sender payments.
+      // from_recipient (payment request links) store the creator's own ID in recipient_user_id,
+      // so backfilling there would show the creator's own username as the payee.
+      const recipientUsername = c.recipient_username ||
+        (c.direction === "from_sender" && ec._recipient_user_id && usernameMap[ec._recipient_user_id]) || null;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { _recipient_user_id: _dropped, ...rest } = ec;
       return {
-        ...c,
+        ...rest,
+        recipient_username: recipientUsername,
         creator_username: (c.created_by && usernameMap[c.created_by]) || null,
-        sender_username: (senderUserId && usernameMap[senderUserId]) || null,
+        sender_username: (ec.sender_user_id && usernameMap[ec.sender_user_id]) || null,
       };
     };
 

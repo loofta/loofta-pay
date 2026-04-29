@@ -132,6 +132,7 @@ export function MinimalHeader() {
   const { authenticated, email, logout } = useAuth();
   const { login: privyLogin } = usePrivy();
   const username = useAuthStore((s) => s.username ?? null);
+  const networkMode = useAuthStore((s) => s.networkMode);
   const pathname = usePathname();
   const headerRef = useRef<HTMLElement>(null);
 
@@ -192,7 +193,7 @@ export function MinimalHeader() {
       >
         <div className="w-full max-w-7xl mx-auto px-4 md:px-8 flex items-center justify-between">
           <div className="flex items-center min-w-0">
-            <LooftaPayLogoLink imageWidth={120} imageHeight={36} imageClassName="h-9 w-auto" badgeVariant="on-dark" />
+            <LooftaPayLogoLink imageWidth={120} imageHeight={36} imageClassName="h-9 w-auto" badgeVariant="on-dark" isMainnet={networkMode === "mainnet"} />
           </div>
 
           <div className="flex items-center shrink-0 gap-2">

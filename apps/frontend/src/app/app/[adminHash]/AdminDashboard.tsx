@@ -451,6 +451,7 @@ export default function AdminDashboard() {
   const [waitlistData, setWaitlistData] = useState<any[]>([]);
   const [waitlistLoading, setWaitlistLoading] = useState(false);
   const [waitlistLoaded, setWaitlistLoaded] = useState(false);
+  const [grantingAccess, setGrantingAccess] = useState<string | null>(null);
 
   // Keep userId stable in callbacks via ref
   const userIdRef = useRef(userId);
@@ -542,6 +543,27 @@ export default function AdminDashboard() {
       toast({ variant: "destructive", title: "Failed to load waitlist" });
     } finally {
       setWaitlistLoading(false);
+    }
+  }, [authHeaders, toast]);
+
+  // ── Grant / revoke mainnet access ───────────────────────────────────────────
+  const grantWaitlistAccess = useCallback(async (id: string, grant: boolean) => {
+    setGrantingAccess(id);
+    try {
+      const res = await fetch(`/api/admin/waitlist/${id}/access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({ grant }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setWaitlistData((prev) =>
+        prev.map((e) => (e.id === id ? { ...e, mainnet_access: grant } : e))
+      );
+      toast({ title: grant ? "Mainnet access granted" : "Mainnet access revoked" });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Failed", description: err.message });
+    } finally {
+      setGrantingAccess(null);
     }
   }, [authHeaders, toast]);
 
@@ -731,6 +753,7 @@ export default function AdminDashboard() {
                   <th className="px-4 py-2.5">Rails</th>
                   <th className="px-4 py-2.5">Privy ID</th>
                   <th className="px-4 py-2.5">Applied</th>
+                  <th className="px-4 py-2.5">Mainnet</th>
                 </tr>
               </thead>
               <tbody>
@@ -746,10 +769,24 @@ export default function AdminDashboard() {
                     <td className="px-4 py-2.5 max-w-[140px] truncate">{Array.isArray(e.withdrawal_rails) ? e.withdrawal_rails.join(", ") : (e.withdrawal_rails || "—")}</td>
                     <td className="px-4 py-2.5 font-mono text-gray-500 max-w-[120px] truncate">{e.privy_user_id || "—"}</td>
                     <td className="px-4 py-2.5 text-gray-500 tabular-nums whitespace-nowrap">{new Date(e.created_at).toLocaleDateString()}</td>
+                    <td className="px-4 py-2.5">
+                      <button
+                        type="button"
+                        disabled={grantingAccess === e.id}
+                        onClick={() => grantWaitlistAccess(e.id, !e.mainnet_access)}
+                        className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-50 ${
+                          e.mainnet_access
+                            ? "bg-green-900/60 text-green-400 hover:bg-green-900"
+                            : "bg-gray-800 text-gray-500 hover:bg-gray-700 hover:text-gray-300"
+                        }`}
+                      >
+                        {grantingAccess === e.id ? "…" : e.mainnet_access ? "Granted" : "Grant"}
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {waitlistData.length === 0 && (
-                  <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-600">No entries yet</td></tr>
+                  <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-600">No entries yet</td></tr>
                 )}
               </tbody>
             </table>

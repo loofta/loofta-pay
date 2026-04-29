@@ -6,10 +6,14 @@ type AuthState = {
 	userId?: string;
 	email?: string;
 	username?: string | null;
+	mainnetAccess: boolean;
+	networkMode: "devnet" | "mainnet";
 	openShareModal: boolean;
 	openSettingsModal: boolean;
 	setAuth: (v: { authenticated: boolean; userId?: string; email?: string; username?: string | null }) => void;
 	setUsername: (username: string | null) => void;
+	setMainnetAccess: (access: boolean) => void;
+	setNetworkMode: (mode: "devnet" | "mainnet") => void;
 	setOpenShareModal: (open: boolean) => void;
 	setOpenSettingsModal: (open: boolean) => void;
 };
@@ -33,6 +37,8 @@ export const useAuthStore = create<AuthState>()(
 			userId: undefined,
 			email: undefined,
 			username: undefined,
+			mainnetAccess: false,
+			networkMode: "devnet",
 			openShareModal: false,
 			openSettingsModal: false,
 			setAuth: (v) =>
@@ -45,6 +51,8 @@ export const useAuthStore = create<AuthState>()(
 							userId: undefined,
 							email: undefined,
 							username: null,
+							mainnetAccess: false,
+							networkMode: "devnet",
 						};
 					}
 					// When logging in / syncing: only update fields that are provided;
@@ -57,6 +65,8 @@ export const useAuthStore = create<AuthState>()(
 					};
 				}),
 			setUsername: (username) => set({ username }),
+			setMainnetAccess: (access) => set({ mainnetAccess: access }),
+			setNetworkMode: (mode) => set({ networkMode: mode }),
 			setOpenShareModal: (open) => set({ openShareModal: open }),
 			setOpenSettingsModal: (open) => set({ openSettingsModal: open }),
 		}),
@@ -68,6 +78,8 @@ export const useAuthStore = create<AuthState>()(
 				userId: state.userId,
 				email: state.email,
 				username: state.username,
+				mainnetAccess: state.mainnetAccess,
+				networkMode: state.networkMode,
 			}),
 		}
 	)

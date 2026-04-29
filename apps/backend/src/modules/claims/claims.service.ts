@@ -522,6 +522,7 @@ export class ClaimsService {
           direction: 'from_sender',
           recipient_address: recipientAddress,
           recipient_user_id: user.privyUserId,
+          recipient_email: cleanEmail,
           created_by: userId ? String(userId) : null,
           status: 'OPEN',
           description: description || null,

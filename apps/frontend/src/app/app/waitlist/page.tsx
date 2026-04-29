@@ -171,78 +171,274 @@ function VideoModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   );
 }
 
+// ─── Waitlist card stack (same pattern as home hero) ─────────────────────────
+
+type WCard = {
+  amount: string; person: string; sub: string; meta: string;
+  status: string; statusColor: string; time: string;
+  avatarLetter: string; avatarBg: string;
+};
+type WPose = { x: number; y: number; rot: number; scale: number; opacity: number; blur: number };
+
+const WCARDS: WCard[] = [
+  { amount: "$2,500", person: "XYZ Foundation", sub: "Hackathon prize", meta: "Congrats on winning Radar 🏆", status: "RECEIVED", statusColor: "#34D399", time: "just now", avatarLetter: "◎", avatarBg: "linear-gradient(135deg,#14F195,#9945FF)" },
+  { amount: "$890",   person: "Straipe",         sub: "Payout · bank 🏦",  meta: "October subscription",        status: "RECEIVED", statusColor: "#34D399", time: "18s ago",  avatarLetter: "S", avatarBg: "linear-gradient(135deg,#635BFF,#00D4FF)" },
+  { amount: "$75",    person: "@jpegmafia",       sub: "Tipped on X",       meta: "loved your latest post 🔥",   status: "RECEIVED", statusColor: "#34D399", time: "1m ago",   avatarLetter: "𝕏", avatarBg: "linear-gradient(135deg,#0F172A,#475569)" },
+  { amount: "€450",   person: "Helena Bauer 🇩🇪", sub: "Paid from Revolut", meta: "Community manager — Week 42", status: "RECEIVED", statusColor: "#34D399", time: "3m ago",   avatarLetter: "H", avatarBg: "linear-gradient(135deg,#3B82F6,#8B5CF6)" },
+  { amount: "$1,200", person: "Mirror.xyz",       sub: "Video collab",       meta: "Sponsored post + edit",       status: "RECEIVED", statusColor: "#34D399", time: "5m ago",   avatarLetter: "M", avatarBg: "linear-gradient(135deg,#F59E0B,#EF4444)" },
+];
+
+function WReceiptCard({ card, pose, z, dragHandlers, isDragged, isFront }: {
+  card: WCard; pose: WPose; z: number;
+  dragHandlers: { onMouseDown: (e: React.MouseEvent) => void; onTouchStart: (e: React.TouchEvent) => void };
+  isDragged: boolean; isFront: boolean;
+}) {
+  return (
+    <div
+      onMouseDown={isFront ? dragHandlers.onMouseDown : undefined}
+      onTouchStart={isFront ? dragHandlers.onTouchStart : undefined}
+      className="absolute w-[300px] select-none rounded-[22px] border border-white/10 bg-gradient-to-b from-[#222228]/95 to-[#121216]/95 p-[22px] backdrop-blur-xl"
+      style={{
+        top: "50%", left: "50%", zIndex: z,
+        transform: `translate(calc(-50% + ${pose.x}px), calc(-50% + ${pose.y}px)) rotate(${pose.rot}deg) scale(${pose.scale})`,
+        opacity: pose.opacity,
+        filter: pose.blur ? `blur(${pose.blur}px)` : "none",
+        transition: isDragged ? "none" : "transform 1100ms cubic-bezier(.22,1,.36,1), opacity 700ms cubic-bezier(.22,1,.36,1), filter 700ms linear",
+        boxShadow: isDragged
+          ? "0 50px 120px -20px rgba(0,0,0,.9), 0 0 40px rgba(255,19,1,.3), inset 0 1px 0 rgba(255,255,255,.1)"
+          : "0 40px 90px -20px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.08)",
+        cursor: isFront ? (isDragged ? "grabbing" : "grab") : "default",
+        touchAction: isFront ? "none" : "auto",
+      }}
+    >
+      <div className="mb-4 flex items-center justify-between">
+        <span
+          className="inline-flex items-center gap-[7px] rounded-full py-1 pl-[9px] pr-[11px] text-[12px] font-semibold"
+          style={{ color: card.statusColor, background: `${card.statusColor}14`, border: `1px solid ${card.statusColor}35` }}
+        >
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: card.statusColor, boxShadow: `0 0 10px ${card.statusColor}` }} />
+          {card.status}
+        </span>
+        <span className="text-[11px] text-slate-500">{card.time}</span>
+      </div>
+      <div className="mb-1 text-[44px] font-semibold leading-none tracking-tight tabular-nums text-white">{card.amount}</div>
+      <div className="mb-4 text-[13px] italic text-slate-400">&ldquo;{card.meta}&rdquo;</div>
+      <div className="flex items-center gap-2.5 border-t border-white/[0.06] pt-2.5">
+        <div className="flex h-[30px] w-[30px] items-center justify-center rounded-full text-[13px] font-medium text-white" style={{ background: card.avatarBg }}>
+          {card.avatarLetter}
+        </div>
+        <div className="text-[13px] leading-tight">
+          <div className="font-medium text-white">{card.person}</div>
+          <div className="text-[11px] text-slate-500">{card.sub}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WCardStack() {
+  const [front, setFront] = useState(0);
+  const [drag, setDrag] = useState<{ x: number; y: number; startX: number; startY: number } | null>(null);
+  const [throwing, setThrowing] = useState<{ x: number; y: number; rot: number } | null>(null);
+  const n = WCARDS.length;
+
+  useEffect(() => {
+    if (drag || throwing) return;
+    const id = setInterval(() => setFront((f) => (f + 1) % n), 2400);
+    return () => clearInterval(id);
+  }, [n, drag, throwing]);
+
+  const onMouseDown = (e: React.MouseEvent) => { e.preventDefault(); setDrag({ x: 0, y: 0, startX: e.clientX, startY: e.clientY }); };
+  const onTouchStart = (e: React.TouchEvent) => { const t = e.touches[0]; setDrag({ x: 0, y: 0, startX: t.clientX, startY: t.clientY }); };
+
+  useEffect(() => {
+    if (!drag) return;
+    const onMove = (cx: number, cy: number) => setDrag((d) => d ? { ...d, x: cx - d.startX, y: cy - d.startY } : null);
+    const mm = (e: MouseEvent) => onMove(e.clientX, e.clientY);
+    const tm = (e: TouchEvent) => { const t = e.touches[0]; onMove(t.clientX, t.clientY); };
+    const onEnd = () => {
+      setDrag((cur) => {
+        if (!cur) return null;
+        const dist = Math.hypot(cur.x, cur.y);
+        if (dist > 120) {
+          const mag = 900 / Math.max(1, dist);
+          setThrowing({ x: cur.x * mag * 0.9, y: cur.y * mag * 0.9, rot: cur.x * 0.08 });
+          setTimeout(() => { setFront((f) => (f + 1) % n); setThrowing(null); }, 500);
+        }
+        return null;
+      });
+    };
+    window.addEventListener("mousemove", mm); window.addEventListener("touchmove", tm);
+    window.addEventListener("mouseup", onEnd); window.addEventListener("touchend", onEnd);
+    return () => { window.removeEventListener("mousemove", mm); window.removeEventListener("touchmove", tm); window.removeEventListener("mouseup", onEnd); window.removeEventListener("touchend", onEnd); };
+  }, [drag, n]);
+
+  const getPose = (i: number): WPose => {
+    let d = (i - front + n) % n;
+    if (d > n / 2) d -= n;
+    if (d === 0) {
+      if (throwing) return { x: throwing.x, y: throwing.y, rot: throwing.rot, scale: 0.9, opacity: 0, blur: 3 };
+      if (drag) return { x: drag.x, y: drag.y + 20, rot: -1 + drag.x * 0.08, scale: 1.02, opacity: 1, blur: 0 };
+      return { x: 0, y: 20, rot: -1, scale: 1, opacity: 1, blur: 0 };
+    }
+    if (d === 1)  return { x: 85,   y: -30,  rot: 6,   scale: 0.94, opacity: 0.85, blur: 0 };
+    if (d === 2)  return { x: 155,  y: -80,  rot: 12,  scale: 0.86, opacity: 0.55, blur: 2 };
+    if (d === -1) return { x: -130, y: -270, rot: -22, scale: 0.82, opacity: 0,    blur: 5 };
+    return             { x: -170, y: -350, rot: -26, scale: 0.78, opacity: 0,    blur: 7 };
+  };
+
+  const dragHandlers = { onMouseDown, onTouchStart };
+
+  return (
+    <div className="relative h-full w-full">
+      <div aria-hidden className="pointer-events-none absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full blur-[80px]" style={{ background: "radial-gradient(ellipse,rgba(255,19,1,.28),transparent 70%)" }} />
+      <div aria-hidden className="pointer-events-none absolute left-1/2 top-1/2 h-[240px] w-[520px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-white/[0.06]" style={{ transform: "translate(-50%,-50%) rotate(-8deg)" }} />
+      {WCARDS.map((c, i) => {
+        let d = (i - front + n) % n;
+        if (d > n / 2) d -= n;
+        return (
+          <WReceiptCard key={i} card={c} pose={getPose(i)} z={10 - Math.abs(d)} dragHandlers={dragHandlers} isDragged={d === 0 && !!drag} isFront={d === 0} />
+        );
+      })}
+      {!drag && !throwing && (
+        <div className="pointer-events-none absolute left-1/2 top-6 inline-flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
+          drag to flick →
+        </div>
+      )}
+      <div className="absolute bottom-8 left-1/2 flex -translate-x-1/2 gap-1.5">
+        {WCARDS.map((_, i) => (
+          <span key={i} className="h-1.5 rounded-full transition-all duration-300" style={{ width: i === front ? 20 : 6, background: i === front ? "linear-gradient(90deg,#FF1301,#EAB308)" : "rgba(255,255,255,.18)" }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Landing screen ───────────────────────────────────────────────────────────
+
+const STATS = [
+  { value: "500+", label: "On the waitlist" },
+  { value: "$100", label: "Cashback for early users" },
+  { value: "0%", label: "Fees during early access" },
+  { value: "24h", label: "Avg. review time" },
+];
+
+const CARDS = [
+  {
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[#FF4A26]">
+        <circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" />
+      </svg>
+    ),
+    title: "Up to $100 cashback",
+    desc: "Not a voucher — real money deposited after your first payments on mainnet.",
+  },
+  {
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[#FF4A26]">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    ),
+    title: "Direct founder access",
+    desc: "Skip the queue. Message the team building this and shape what ships next.",
+  },
+  {
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[#FF4A26]">
+        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+      </svg>
+    ),
+    title: "Shape what gets built",
+    desc: "Your workflow becomes the product roadmap. Early users decide priorities.",
+  },
+];
 
 function LandingScreen({ onStart, onVideo }: { onStart: () => void; onVideo: () => void }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
       transition={{ duration: 0.5, ease: [0.32, 0.72, 0, 1] }}
-      className="min-h-screen bg-[#0f0f12] text-white flex flex-col"
+      className="bg-[#0f0f12] text-white"
     >
-      <div className="flex-1 flex flex-col justify-center px-8 py-16 max-w-2xl mx-auto w-full">
-        {/* Badge */}
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-semibold mb-8 w-fit">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-          Limited spots · Mainnet Early Access
+      {/* ── Split hero ── */}
+      <div className="flex min-h-screen">
+        {/* Left: card stack */}
+        <div className="hidden lg:flex lg:w-1/2 items-center justify-center relative overflow-hidden bg-[#0a0a0d]">
+          <WCardStack />
         </div>
 
-        {/* Headline */}
-        <h1 className="text-4xl sm:text-5xl font-medium text-white leading-tight mb-5">
-          Most people will wait months<br />
-          to use{" "}
-          <span className="bg-gradient-to-r from-[#FF4A26] to-[#EAB308] bg-clip-text text-transparent">
-            Loofta on mainnet.
-          </span><br />
-          You don't have to.
-        </h1>
-
-        {/* Body */}
-        <p className="text-lg text-slate-400 leading-relaxed mb-8">
-          A small, hand-picked group gets access before anyone else — with real cashback,
-          direct founder support, and features shaped around how{" "}
-          <span className="text-white font-medium">you</span> work.
-          Spots are limited and assigned manually.
-        </p>
-
-        {/* Perks */}
-        <ul className="space-y-4 mb-10">
-          {[
-            { icon: "💸", title: "Up to $100 cashback", desc: "not a voucher — real money, after you start using loofta." },
-            { icon: "🎯", title: "Direct founder access", desc: "skip the queue, message the team building this." },
-            { icon: "🎁", title: "Shape what gets built next", desc: "your workflow becomes the product." },
-          ].map((p) => (
-            <li key={p.title} className="flex items-baseline gap-3">
-              <span className="text-xl shrink-0">{p.icon}</span>
-              <span className="text-base text-slate-300">
-                <span className="font-semibold text-white">{p.title}</span>
-                <span className="text-slate-500"> — </span>
-                {p.desc}
-              </span>
-            </li>
-          ))}
-        </ul>
-
-        {/* CTAs */}
-        <div className="flex flex-col gap-3">
-          <button
-            type="button"
-            onClick={onStart}
-            className="w-full py-4 rounded-2xl font-semibold text-base text-white bg-gradient-to-r from-[#FF4A26] to-[#EAB308] hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_8px_24px_rgba(255,74,38,0.3)]"
-          >
-            Request access →
-          </button>
-          <button
-            type="button"
-            onClick={onVideo}
-            className="w-full flex items-center justify-center gap-2 px-6 py-4 rounded-2xl font-semibold text-base text-slate-300 border border-white/10 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
-          >
-            <span className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center shrink-0">
-              <Play className="w-3.5 h-3.5 text-white fill-white ml-0.5" />
+        {/* Right: content */}
+        <div className="w-full lg:w-1/2 flex flex-col justify-center px-8 sm:px-12 lg:px-16 py-20">
+          {/* Eyebrow */}
+          <div className="flex items-center gap-3 mb-8">
+            <span className="h-px w-6 bg-[#FF4A26]" />
+            <span className="text-[11px] font-semibold uppercase tracking-widest text-[#FF4A26]">
+              Mainnet Early Access
             </span>
-            Watch demo
-          </button>
+          </div>
+
+          {/* Headline */}
+          <h1 className="text-4xl sm:text-5xl lg:text-[3.25rem] font-semibold leading-[1.12] mb-6 max-w-lg">
+            Most people will wait.<br />
+            <span className="bg-gradient-to-r from-[#FF4A26] to-[#EAB308] bg-clip-text text-transparent italic">
+              You don&apos;t have to.
+            </span>
+          </h1>
+
+          {/* Body */}
+          <p className="text-base text-slate-400 leading-relaxed mb-10 max-w-sm">
+            A hand-picked group gets access before anyone else — real cashback,
+            direct founder support, and features shaped around how you work.
+            Spots are assigned manually.
+          </p>
+
+          {/* CTAs */}
+          <div className="flex flex-col sm:flex-row gap-3 max-w-sm">
+            <button
+              type="button"
+              onClick={onStart}
+              className="flex-1 py-3.5 rounded-xl font-semibold text-sm text-white bg-gradient-to-r from-[#FF4A26] to-[#EAB308] hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_8px_24px_rgba(255,74,38,0.25)]"
+            >
+              Request access →
+            </button>
+            <button
+              type="button"
+              onClick={onVideo}
+              className="flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl font-semibold text-sm text-slate-300 border border-white/10 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
+            >
+              <span className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center shrink-0">
+                <Play className="w-3 h-3 text-white fill-white ml-0.5" />
+              </span>
+              Watch demo
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Stats bar ── */}
+      <div className="border-y border-white/8 grid grid-cols-2 lg:grid-cols-4 divide-x divide-white/8">
+        {STATS.map((s) => (
+          <div key={s.label} className="px-8 py-10">
+            <p className="text-3xl sm:text-4xl font-semibold text-white mb-1.5 tabular-nums">{s.value}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">{s.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Feature cards ── */}
+      <div className="px-6 sm:px-10 py-20">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 text-center mb-12">
+          Why apply early
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-white/8 rounded-2xl overflow-hidden max-w-5xl mx-auto">
+          {CARDS.map((c) => (
+            <div key={c.title} className="bg-[#0f0f12] p-8">
+              <div className="mb-6">{c.icon}</div>
+              <p className="text-lg font-semibold text-white mb-3">{c.title}</p>
+              <p className="text-base text-slate-500 leading-relaxed">{c.desc}</p>
+            </div>
+          ))}
         </div>
       </div>
     </motion.div>
