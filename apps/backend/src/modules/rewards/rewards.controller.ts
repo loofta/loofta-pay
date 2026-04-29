@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { RewardsService } from './rewards.service';
 import { PrivyAuthGuard } from '@/auth/privy-auth.guard';
@@ -14,8 +14,12 @@ export class RewardsController {
   @UseGuards(PrivyAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user Sparks and task completion status' })
-  async getMyRewards(@PrivyUser() user: { id: string }) {
-    return this.rewardsService.getRewards(user.id);
+  async getMyRewards(
+    @PrivyUser() user: { id: string },
+    @Query('network') network?: string,
+  ) {
+    const isDevnet = network !== 'mainnet';
+    return this.rewardsService.getRewards(user.id, isDevnet);
   }
 
   @Get('admin/all')

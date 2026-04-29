@@ -644,8 +644,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     const h = window.location.hostname;
     setIsClaimPageLocalhost(h === "localhost" || h === "127.0.0.1");
   }, []);
-  /** USDC-only pay UX on devnet / testnet or when private payment is enabled. */
-  const hideAlternateTokenPay = isNonMainnetCluster() || PRIVATE_PAYMENT_ENABLED;
+  /** USDC-only pay UX on devnet / testnet. On mainnet, always show alternate token pay. */
+  const hideAlternateTokenPay = isNonMainnetCluster();
   const { toast } = useToast();
   const { user, logout, login, authenticated, ready: privyReady, getAccessToken } = usePrivy();
   const { data: tokensRaw = [], isLoading } = useTokensQuery();

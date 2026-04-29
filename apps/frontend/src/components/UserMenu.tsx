@@ -54,6 +54,11 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const username = usernameProp ?? storeUsername;
   const email = emailProp ?? storeEmail;
 
+  const mainnetAccess = useAuthStore((s) => s.mainnetAccess);
+  const networkMode = useAuthStore((s) => s.networkMode);
+  const setMainnetAccess = useAuthStore((s) => s.setMainnetAccess);
+  const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
+
   const openShareModalFromStore = useAuthStore((s) => s.openShareModal);
   const setOpenShareModal = useAuthStore((s) => s.setOpenShareModal);
   const openSettingsModalFromStore = useAuthStore((s) => s.openSettingsModal);
@@ -298,6 +303,26 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       fetchPreferences();
     }
   }, [showShareModal, authenticated, getAccessToken, privyUser?.id]);
+
+  // Fetch mainnet access once when user is authenticated
+  useEffect(() => {
+    if (!authenticated || !getAccessToken || !privyUser?.id) return;
+    const check = async () => {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch("/api/users/mainnet-access", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const { mainnetAccess: access } = await res.json();
+          setMainnetAccess(!!access);
+          // If access was revoked, reset to devnet
+          if (!access) setNetworkMode("devnet");
+        }
+      } catch { /* non-critical */ }
+    };
+    check();
+  }, [authenticated, privyUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Update user preferences
   const handleTogglePrivatePayments = async (checked: boolean) => {
@@ -873,6 +898,22 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
           </div>
 
           <div className="space-y-4 py-0">
+            {/* Network toggle — only for users with mainnet access */}
+            {mainnetAccess && (
+              <div>
+                <Label className="text-sm font-medium mb-2 block text-gray-300">Network</Label>
+                <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-sm text-white/90">
+                    {networkMode === "mainnet" ? "Mainnet" : "Devnet"}
+                  </span>
+                  <Switch
+                    checked={networkMode === "mainnet"}
+                    onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Sign-in methods - show connected first, then Add buttons */}
             <div>
               <Label className="text-sm font-medium mb-2 block text-gray-300">Sign-in methods</Label>

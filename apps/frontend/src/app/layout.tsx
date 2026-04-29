@@ -97,7 +97,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} font-grotesk`}>
+    <html lang="en" className={`${inter.variable} font-grotesk`} suppressHydrationWarning>
       <head>
         {/* Preload critical fonts for better LCP */}
         <link

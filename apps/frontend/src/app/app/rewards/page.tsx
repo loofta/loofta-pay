@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
+import { useAuthStore } from "@/store/auth";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
@@ -38,8 +39,8 @@ const TASK_ICONS: Record<TaskKey, string> = {
   ten_payments: "🔥",
 };
 
-async function fetchRewards(token: string | null): Promise<RewardsData> {
-  const res = await fetch(`${BACKEND_URL}/rewards/me`, {
+async function fetchRewards(token: string | null, network: "mainnet" | "devnet"): Promise<RewardsData> {
+  const res = await fetch(`${BACKEND_URL}/rewards/me?network=${network}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error("Failed to load rewards");
@@ -189,6 +190,7 @@ function RewardsSkeleton() {
 export default function RewardsPage() {
   const { authenticated, userId } = useAuth();
   const { login: privyLogin, getAccessToken } = usePrivy();
+  const networkMode = useAuthStore((s) => s.networkMode);
 
   const {
     data,
@@ -197,10 +199,10 @@ export default function RewardsPage() {
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ["rewards", userId ?? ""],
+    queryKey: ["rewards", userId ?? "", networkMode],
     queryFn: async () => {
       const token = await getAccessToken().catch(() => null);
-      return fetchRewards(token);
+      return fetchRewards(token, networkMode);
     },
     enabled: Boolean(authenticated && userId),
     staleTime: 60_000,

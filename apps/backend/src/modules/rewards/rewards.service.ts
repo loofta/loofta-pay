@@ -57,13 +57,14 @@ export class RewardsService {
     private readonly privyVerification: PrivyVerificationService,
   ) {}
 
-  async getRewards(privyUserId: string): Promise<RewardsData> {
-    const hit = this.cache.get(privyUserId);
+  async getRewards(privyUserId: string, isDevnet = true): Promise<RewardsData> {
+    const cacheKey = `${privyUserId}:${isDevnet ? 'devnet' : 'mainnet'}`;
+    const hit = this.cache.get(cacheKey);
     if (hit && Date.now() - hit.ts < CACHE_TTL_MS) {
       return hit.data;
     }
-    const data = await this.computeRewards(privyUserId);
-    this.cache.set(privyUserId, { data, ts: Date.now() });
+    const data = await this.computeRewards(privyUserId, isDevnet);
+    this.cache.set(cacheKey, { data, ts: Date.now() });
     return data;
   }
 
@@ -94,10 +95,10 @@ export class RewardsService {
     this.cache.delete(privyUserId);
   }
 
-  private async computeRewards(privyUserId: string): Promise<RewardsData> {
+  private async computeRewards(privyUserId: string, isDevnet: boolean): Promise<RewardsData> {
     const [linkedAccounts, paymentStats] = await Promise.all([
       this.getLinkedAccounts(privyUserId),
-      this.getPaymentStats(privyUserId),
+      this.getPaymentStats(privyUserId, isDevnet),
     ]);
 
     const hasEmail = linkedAccounts.some(
@@ -178,7 +179,7 @@ export class RewardsService {
    * 1. sender_user_id = user (canonical)
    * 2. Legacy: created_by = user AND sender_user_id IS NULL AND direction != from_recipient
    */
-  private async getPaymentStats(privyUserId: string): Promise<{
+  private async getPaymentStats(privyUserId: string, isDevnet: boolean): Promise<{
     successfulSentCount: number;
     hasPaymentToUnregistered: boolean;
     hasLinkPaid: boolean;
@@ -192,6 +193,7 @@ export class RewardsService {
         .select('id, recipient_user_id, recipient_address')
         .eq('sender_user_id', privyUserId)
         .eq('status', 'SUCCESS')
+        .eq('is_devnet', isDevnet)
         .neq('direction', 'from_recipient');
 
       // Legacy fallback: created_by without sender_user_id
@@ -201,6 +203,7 @@ export class RewardsService {
         .eq('created_by', privyUserId)
         .is('sender_user_id', null)
         .eq('status', 'SUCCESS')
+        .eq('is_devnet', isDevnet)
         .neq('direction', 'from_recipient');
 
       const sentByIdSet = new Set((byCreator ?? []).map((r: any) => r.id));
@@ -222,6 +225,7 @@ export class RewardsService {
         .eq('created_by', privyUserId)
         .eq('direction', 'from_recipient')
         .eq('status', 'SUCCESS')
+        .eq('is_devnet', isDevnet)
         .limit(1);
 
       return {
