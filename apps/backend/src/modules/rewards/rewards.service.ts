@@ -190,7 +190,7 @@ export class RewardsService {
       // Primary: sender_user_id column (new rows)
       const { data: bysender } = await db
         .from('payments')
-        .select('id, recipient_user_id, recipient_address')
+        .select('id, recipient_user_id, recipient_address, recipient_was_unregistered')
         .eq('sender_user_id', privyUserId)
         .eq('status', 'SUCCESS')
         .eq('is_devnet', isDevnet)
@@ -199,7 +199,7 @@ export class RewardsService {
       // Legacy fallback: created_by without sender_user_id
       const { data: byCreator } = await db
         .from('payments')
-        .select('id, recipient_user_id, recipient_address')
+        .select('id, recipient_user_id, recipient_address, recipient_was_unregistered')
         .eq('created_by', privyUserId)
         .is('sender_user_id', null)
         .eq('status', 'SUCCESS')
@@ -213,6 +213,7 @@ export class RewardsService {
       ];
 
       const hasPaymentToUnregistered = allSent.some((r: any) => {
+        if (r.recipient_was_unregistered) return true;
         if (!r.recipient_user_id) return true;
         const addr = String(r.recipient_address || '');
         return PENDING_PREFIXES.some((p) => addr.startsWith(p));
