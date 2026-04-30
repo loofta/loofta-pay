@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
+async function verifyTurnstile(token: string, ip: string): Promise<boolean> {
+  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      secret: process.env.TURNSTILE_SECRET_KEY!,
+      response: token,
+      remoteip: ip,
+    }),
+  });
+  const data = await res.json();
+  return data.success === true;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -18,7 +32,13 @@ export async function POST(request: NextRequest) {
       withdrawal_rails,
       earn_interest,
       privy_user_id,
+      turnstile_token,
     } = body;
+
+    const ip = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for") ?? "unknown";
+    if (!turnstile_token || !(await verifyTurnstile(turnstile_token, ip))) {
+      return NextResponse.json({ error: "Bot check failed. Please refresh and try again." }, { status: 403 });
+    }
 
     if (!email && !telegram_handle && !twitter_username) {
       return NextResponse.json(
