@@ -21,6 +21,7 @@
     "@lightprotocol/hasher.rs": "^0.2.1",
     "@magicblock-labs/ephemeral-rollups-sdk": "^0.8.0",
     "@magicblock-labs/gum-sdk": "^3.0.10",
+    "@marsidev/react-turnstile": "^1.5.1",
     "@metamask/delegation-toolkit": "^0.11.0",
     "@privy-io/react-auth": "^3.13.1",
     "@radix-ui/react-alert-dialog": "^1.1.1",

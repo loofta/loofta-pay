@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, Check, Play, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
+import { Turnstile } from "@marsidev/react-turnstile";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -353,7 +354,7 @@ const CARDS = [
   },
 ];
 
-function LandingScreen({ onStart, onVideo }: { onStart: () => void; onVideo: () => void }) {
+function LandingScreen({ onStart, onVideo, turnstileReady }: { onStart: () => void; onVideo: () => void; turnstileReady: boolean }) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -398,9 +399,10 @@ function LandingScreen({ onStart, onVideo }: { onStart: () => void; onVideo: () 
             <button
               type="button"
               onClick={onStart}
-              className="flex-1 py-3.5 rounded-xl font-semibold text-sm text-white bg-gradient-to-r from-[#FF4A26] to-[#EAB308] hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_8px_24px_rgba(255,74,38,0.25)]"
+              disabled={!turnstileReady}
+              className="flex-1 py-3.5 rounded-xl font-semibold text-sm text-white bg-gradient-to-r from-[#FF4A26] to-[#EAB308] hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_8px_24px_rgba(255,74,38,0.25)] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Request access →
+              {turnstileReady ? "Request access →" : "Verifying…"}
             </button>
             <button
               type="button"
@@ -491,6 +493,7 @@ export default function MainnetPage() {
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const currentStep = STEPS[step];
@@ -583,6 +586,7 @@ export default function MainnetPage() {
           withdrawal_rails: form.withdrawal_rails,
           earn_interest: form.earn_interest,
           privy_user_id: userId || null,
+          turnstile_token: turnstileToken,
         }),
       });
       const data = await res.json();
@@ -720,7 +724,18 @@ export default function MainnetPage() {
     return (
       <>
         <VideoModal open={videoOpen} onClose={() => setVideoOpen(false)} />
-        <LandingScreen onStart={() => setStarted(true)} onVideo={() => setVideoOpen(true)} />
+        <Turnstile
+          siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
+          onSuccess={setTurnstileToken}
+          onExpire={() => setTurnstileToken(null)}
+          options={{ appearance: "interaction-only" }}
+          className="fixed bottom-4 right-4 z-50"
+        />
+        <LandingScreen
+          onStart={() => setStarted(true)}
+          onVideo={() => setVideoOpen(true)}
+          turnstileReady={!!turnstileToken}
+        />
       </>
     );
   }
