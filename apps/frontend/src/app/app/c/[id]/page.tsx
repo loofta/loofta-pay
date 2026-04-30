@@ -35,6 +35,7 @@ import { trimDecimals, roundUpDecimals, formatUTCTimestamp } from "@/lib/format"
 import { findTokenBySelection } from "@/lib/tokens";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { useClaimPayStore } from "@/store/claimPay";
+import { useAuthStore } from "@/store/auth";
 import { TokenIcon } from "@/components/TokenIcon";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -647,6 +648,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const { toast } = useToast();
   const { user, logout, login, authenticated, ready: privyReady, getAccessToken } = usePrivy();
 
+  const networkMode = useAuthStore((s) => s.networkMode);
   const [hasMainnetAccess, setHasMainnetAccess] = useState(false);
   useEffect(() => {
     if (!authenticated || !user) return;
@@ -660,8 +662,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     });
   }, [authenticated, user, getAccessToken]);
 
-  /** USDC-only pay UX on devnet / testnet — unless user has mainnet access granted. */
-  const hideAlternateTokenPay = isNonMainnetCluster() && !hasMainnetAccess;
+  /** USDC-only pay UX on devnet — unless user has mainnet access and has switched to mainnet mode. */
+  const hideAlternateTokenPay = isNonMainnetCluster() && !(hasMainnetAccess && networkMode === "mainnet");
   const { data: tokensRaw = [], isLoading } = useTokensQuery();
   /** Devnet/testnet: 1-click token list often only lists mainnet Solana USDC mint. Inject cluster USDC so Pay with + selection resolve. */
   const tokens = useMemo(() => {
