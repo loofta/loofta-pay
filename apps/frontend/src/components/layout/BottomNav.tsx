@@ -70,15 +70,21 @@ export function BottomNav() {
 
     let activeKey: NavKey;
 
-    if (pathname === "/history") {
+    if (pathname === "/history" || pathname === "/app/history") {
         activeKey = "history";
-    } else if (pathname === "/settings") {
+    } else if (pathname === "/settings" || pathname === "/app/settings") {
         activeKey = "settings";
-    } else if (pathname === "/" && tab === "receive") {
+    } else if ((pathname === "/" || pathname === "/app") && tab === "receive") {
         activeKey = "receive";
     } else {
         activeKey = "send";
     }
+
+    const isAppPath = pathname?.startsWith('/app');
+    const sendHref = isAppPath ? '/app' : '/';
+    const receiveHref = isAppPath ? '/app?tab=receive' : '/?tab=receive';
+    const historyHref = isAppPath ? '/app/history' : '/history';
+    const settingsHref = isAppPath ? '/app/settings' : '/settings';
 
     return (
         <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-pb bg-[#0f0f12]/70 backdrop-blur-xl border-t border-white/10 shadow-[0_-10px_30px_rgba(0,0,0,0.35)]">
@@ -86,25 +92,25 @@ export function BottomNav() {
 
             <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-1 mt-1">
                 <NavItem
-                    href="/"
+                    href={sendHref}
                     label="Send"
                     active={activeKey === 'send'}
                     icon={<ArrowUp />}
                 />
                 <NavItem
-                    href="/?tab=receive"
+                    href={receiveHref}
                     label="Receive"
                     active={activeKey === 'receive'}
                     icon={<ArrowDown />}
                 />
                 <NavItem
-                    href="/history"
+                    href={historyHref}
                     label="History"
                     active={activeKey === 'history'}
                     icon={<Clock />}
                 />
                 <NavItem
-                    href="/settings"
+                    href={settingsHref}
                     label="Profile"
                     active={activeKey === 'settings'}
                     icon={<Settings />}

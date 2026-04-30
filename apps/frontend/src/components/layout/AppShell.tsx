@@ -12,7 +12,14 @@ function ShellContent({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
-  const showBottomNav = !isCheckoutPage && (pathname === '/' || pathname === '/history' || pathname === '/settings' || pathname?.startsWith('/c/') || pathname === '/rewards' || pathname === '/waitlist');
+  const showBottomNav = !isCheckoutPage && (
+    pathname === '/' || pathname === '/app' ||
+    pathname === '/history' || pathname === '/app/history' ||
+    pathname === '/settings' || pathname === '/app/settings' ||
+    pathname?.startsWith('/c/') || pathname?.startsWith('/app/c/') ||
+    pathname === '/rewards' || pathname === '/app/rewards' ||
+    pathname === '/waitlist' || pathname === '/app/waitlist'
+  );
   const showMinimalHeader = !isCheckoutPage;
   const showBanner = showMinimalHeader && !bannerDismissed;
   const showFooter = !isCheckoutPage;

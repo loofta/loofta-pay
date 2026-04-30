@@ -406,7 +406,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
         isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
       });
       return {
-        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null },
+        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient" },
         latestIntent: data.intent ? {
           depositAddress: data.intent.deposit_address || null,
           memo: data.intent.memo ?? null,
@@ -436,7 +436,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
     isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
-    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null },
+    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient" },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -644,10 +644,24 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     const h = window.location.hostname;
     setIsClaimPageLocalhost(h === "localhost" || h === "127.0.0.1");
   }, []);
-  /** USDC-only pay UX on devnet / testnet. On mainnet, always show alternate token pay. */
-  const hideAlternateTokenPay = isNonMainnetCluster();
   const { toast } = useToast();
   const { user, logout, login, authenticated, ready: privyReady, getAccessToken } = usePrivy();
+
+  const [hasMainnetAccess, setHasMainnetAccess] = useState(false);
+  useEffect(() => {
+    if (!authenticated || !user) return;
+    getAccessToken().then((token) => {
+      fetch("/api/users/mainnet-access", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+        .then((r) => r.json())
+        .then((d) => setHasMainnetAccess(!!d?.mainnetAccess))
+        .catch(() => {});
+    });
+  }, [authenticated, user, getAccessToken]);
+
+  /** USDC-only pay UX on devnet / testnet — unless user has mainnet access granted. */
+  const hideAlternateTokenPay = isNonMainnetCluster() && !hasMainnetAccess;
   const { data: tokensRaw = [], isLoading } = useTokensQuery();
   /** Devnet/testnet: 1-click token list often only lists mainnet Solana USDC mint. Inject cluster USDC so Pay with + selection resolve. */
   const tokens = useMemo(() => {
@@ -2952,8 +2966,20 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               <>
                 {!embedInApp && (
                   <div className="mb-3 flex items-start justify-between">
-                    <div className="text-xl font-sans font-medium text-slate-300">Payment request</div>
-                    {claim?.created_by ? (
+                    <div className="text-xl font-sans font-medium text-slate-300">
+                      {(claim as { direction?: string } | null)?.direction === "from_sender" ? "Payment to" : "Payment request"}
+                    </div>
+                    {(claim as { direction?: string } | null)?.direction === "from_sender" ? (
+                      <div className="text-sm text-gray-600">
+                        {(claim as { recipient_pending_username_value?: string } | null)?.recipient_pending_username_value
+                          ? `@${(claim as { recipient_pending_username_value?: string }).recipient_pending_username_value}`
+                          : (claim as { recipient_pending_email_value?: string } | null)?.recipient_pending_email_value
+                          ? (claim as { recipient_pending_email_value?: string }).recipient_pending_email_value
+                          : claim?.recipient_username
+                          ? `@${claim.recipient_username}`
+                          : null}
+                      </div>
+                    ) : claim?.created_by ? (
                       <div className="text-sm text-gray-600">
                         {claim.creator_username ? `@${claim.creator_username}` : 'User'}
                       </div>
