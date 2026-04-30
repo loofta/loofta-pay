@@ -39,7 +39,9 @@ export default function Home() {
   });
 
   useEffect(() => {
-    if (searchParams.get("tab") === "receive") setActiveTabState("receive");
+    const tab = searchParams.get("tab");
+    if (tab === "receive") setActiveTabState("receive");
+    else setActiveTabState("send");
   }, [searchParams]);
 
   // When ?to=username (e.g. redirect from /link/@username), show Send tab and pay-to-user form
