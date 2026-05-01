@@ -104,6 +104,10 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [showExportModal, setShowExportModal] = useState(false);
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [isLocalhost, setIsLocalhost] = useState(false);
+  useEffect(() => {
+    setIsLocalhost(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+  }, []);
   const [exportedPrivateKey, setExportedPrivateKey] = useState<string | null>(null);
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
@@ -562,6 +566,21 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               </button>
             </div>
 
+            {/* Network toggle — localhost only */}
+            {isLocalhost && (
+              <div className="mb-2">
+                <div className={`flex items-center justify-between px-3 py-2 rounded-lg ${isDarkPage ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}>
+                  <span className={`text-sm ${isDarkPage ? "text-gray-300" : "text-gray-700"}`}>
+                    {networkMode === "mainnet" ? "Mainnet" : "Devnet"}
+                  </span>
+                  <Switch
+                    checked={networkMode === "mainnet"}
+                    onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Divider */}
             {username && (
               <div className={`h-px my-2 ${isDarkPage ? "bg-gray-700" : "bg-gray-200"
@@ -829,6 +848,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.4 }}
+                    className="flex flex-col gap-3"
                   >
                     <button
                       onClick={(e) => {
@@ -869,6 +889,15 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </span>
                       )}
                     </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowShareModal(false);
+                      }}
+                      className="w-full py-3 rounded-xl font-semibold text-slate-400 hover:text-white transition-colors"
+                    >
+                      Close
+                    </button>
                   </motion.div>
                 </div>
               </motion.div>
@@ -898,8 +927,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
           </div>
 
           <div className="space-y-4 py-0">
-            {/* Network toggle — only for users with mainnet access */}
-            {mainnetAccess && (
+            {/* Network toggle — localhost only */}
+            {isLocalhost && (
               <div>
                 <Label className="text-sm font-medium mb-2 block text-gray-300">Network</Label>
                 <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
