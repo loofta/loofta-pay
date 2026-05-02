@@ -38,10 +38,10 @@ export function proxy(request: NextRequest) {
   // pay.loofta.xyz or localhost non-marketing path → transparently rewrite to /app/*
   // URL in the browser stays the same; only Next.js routing changes
   if (isAppDomain || isLocalAppPath) {
-    const rewritten = new URL(
-      `/app${pathname === "/" ? "" : pathname}`,
-      request.url
-    );
+    // Don't double-prefix: if a link already includes /app (e.g. /app/waitlist from
+    // MinimalHeader), keep it as-is rather than producing /app/app/waitlist.
+    const appPathname = pathname.startsWith("/app") ? pathname : `/app${pathname === "/" ? "" : pathname}`;
+    const rewritten = new URL(appPathname, request.url);
     const response = NextResponse.rewrite(rewritten);
 
     // Suppress indexing for the secret admin path

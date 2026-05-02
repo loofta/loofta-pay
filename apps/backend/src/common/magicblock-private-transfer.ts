@@ -72,12 +72,12 @@ export function grossUpForMagicblockFee(netBaseUnits: number): number {
  * API constraint: `maxDelayMs` must be ≤ 600_000 (10 minutes).
  *
  * Mainnet: 10s–60s random window — enough to break timing analysis, short enough UX is fine.
- * Devnet:  30s–600s (wider window for testing the full delay range).
+ * Devnet:  30s–300s (5 min window for testing the full delay range).
  * Localhost: no delay.
  */
 export const MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS = 600_000;
 export const MAGICBLOCK_PRIVATE_DEVNET_MIN_DELAY_MS = 30_000;
-export const MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS = MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS;
+export const MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS = 300_000;  // 5 min
 export const MAGICBLOCK_PRIVATE_MAINNET_MIN_DELAY_MS = 10_000;  // 10s
 export const MAGICBLOCK_PRIVATE_MAINNET_MAX_DELAY_MS = 60_000;  // 60s
 

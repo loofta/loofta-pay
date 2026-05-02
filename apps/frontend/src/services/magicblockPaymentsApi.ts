@@ -10,7 +10,7 @@ const BASE_URL = "https://payments.magicblock.app";
 
 /** Devnet private leg: random delay in [min, max] (must match backend; MagicBlock API caps max at 600_000). */
 export const MAGICBLOCK_PRIVATE_MIN_DELAY_MS = "30000";
-export const MAGICBLOCK_PRIVATE_MAX_DELAY_MS_DEVNET = String(600_000);
+export const MAGICBLOCK_PRIVATE_MAX_DELAY_MS_DEVNET = String(300_000);
 
 /** For console logs — actual delay is chosen server-side when building the transfer. */
 export function formatMagicblockPrivateDelayLogMs(apiCluster: "devnet" | "mainnet"): string {
