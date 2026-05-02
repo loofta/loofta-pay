@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Settings } from "lucide-react";
 import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
+import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 /** Privy uses type "twitter_oauth" for Twitter (not "twitter" or "x"). */
 const TWITTER_TYPES = ["twitter_oauth", "twitter", "x"] as const;
 
@@ -110,7 +111,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   }, []);
   const [exportedPrivateKey, setExportedPrivateKey] = useState<string | null>(null);
   const [withdrawAddress, setWithdrawAddress] = useState("");
-  const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
   const [updatingToTwitter, setUpdatingToTwitter] = useState(false);
   const [twitterLinkedOptimistic, setTwitterLinkedOptimistic] = useState(false);
@@ -155,6 +155,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const { exportWallet } = useExportWallet();
   const { wallets } = useWallets();
   const { toast } = useToast();
+  const { balanceUSD } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated === true });
 
   const linkedAccounts = (privyUser?.linkedAccounts || []) as Array<{ type?: string; username?: string; name?: string; address?: string; subject?: string }>;
   const hasTwitter = linkedAccounts.some((a) => a.type && TWITTER_TYPES.includes(a.type as any));
@@ -1263,20 +1264,15 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               />
             </div>
             <div>
-              <Label htmlFor="withdraw-amount">Amount (USDC)</Label>
-              <Input
-                id="withdraw-amount"
-                type="number"
-                step="0.01"
-                placeholder="0.00"
-                value={withdrawAmount}
-                onChange={(e) => setWithdrawAmount(e.target.value)}
-                className="mt-1"
-              />
+              <Label>Amount (USDC)</Label>
+              <div className="mt-1 flex items-center justify-between rounded-md border border-input bg-muted px-3 py-2 text-sm">
+                <span className="font-medium">${balanceUSD.toFixed(2)}</span>
+                <span className="text-xs text-muted-foreground">Full balance</span>
+              </div>
             </div>
-            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
-              <p className="text-sm text-blue-800 dark:text-blue-200">
-                <strong>Note:</strong> You'll need SOL for transaction fees. Make sure you have enough SOL in your wallet.
+            <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3">
+              <p className="text-sm text-purple-800 dark:text-purple-200">
+                <strong>Privacy:</strong> Withdrawals must be for your full balance. After sending, your Loofta wallet address rotates so incoming payments cannot be linked to this withdrawal.
               </p>
             </div>
           </div>
@@ -1286,7 +1282,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               onClick={() => {
                 setShowWithdrawModal(false);
                 setWithdrawAddress("");
-                setWithdrawAmount("");
               }}
               disabled={withdrawing}
             >
@@ -1294,16 +1289,15 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             </Button>
             <Button
               onClick={async () => {
-                if (!withdrawAddress || !withdrawAmount) {
+                if (!withdrawAddress) {
                   toast({
                     variant: "destructive",
-                    title: "Missing information",
-                    description: "Please enter both recipient address and amount.",
+                    title: "Missing address",
+                    description: "Please enter a recipient address.",
                   });
                   return;
                 }
 
-                // Validate Solana address format
                 if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(withdrawAddress)) {
                   toast({
                     variant: "destructive",
@@ -1313,12 +1307,11 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   return;
                 }
 
-                const amount = parseFloat(withdrawAmount);
-                if (isNaN(amount) || amount <= 0) {
+                if (balanceUSD <= 0) {
                   toast({
                     variant: "destructive",
-                    title: "Invalid amount",
-                    description: "Please enter a valid amount greater than 0.",
+                    title: "No balance",
+                    description: "You have no funds to withdraw.",
                   });
                   return;
                 }
@@ -1329,7 +1322,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   // using Privy's wallet signing capabilities or your backend API
                   toast({
                     title: "Withdrawal initiated",
-                    description: `Withdrawing $${amount.toFixed(2)} USDC to ${withdrawAddress.slice(0, 8)}...`,
+                    description: `Withdrawing $${balanceUSD.toFixed(2)} USDC to ${withdrawAddress.slice(0, 8)}...`,
                   });
 
                   // TODO: Implement actual withdrawal logic
@@ -1340,7 +1333,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
 
                   setShowWithdrawModal(false);
                   setWithdrawAddress("");
-                  setWithdrawAmount("");
                 } catch (error: any) {
                   toast({
                     variant: "destructive",
@@ -1351,7 +1343,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   setWithdrawing(false);
                 }
               }}
-              disabled={withdrawing || !withdrawAddress || !withdrawAmount}
+              disabled={withdrawing || !withdrawAddress || balanceUSD <= 0}
             >
               {withdrawing ? "Processing..." : "Withdraw"}
             </Button>

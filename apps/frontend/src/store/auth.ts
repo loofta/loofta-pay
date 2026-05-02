@@ -30,6 +30,12 @@ function getAuthStorage() {
 	return localStorage;
 }
 
+function loadUserNetworkMode(userId: string): "devnet" | "mainnet" | null {
+	if (typeof window === "undefined") return null;
+	const v = localStorage.getItem(`loofta.net.${userId}`);
+	return v === "devnet" || v === "mainnet" ? v : null;
+}
+
 export const useAuthStore = create<AuthState>()(
 	persist(
 		(set) => ({
@@ -38,13 +44,12 @@ export const useAuthStore = create<AuthState>()(
 			email: undefined,
 			username: undefined,
 			mainnetAccess: false,
-			networkMode: "devnet",
+			networkMode: "mainnet",
 			openShareModal: false,
 			openSettingsModal: false,
 			setAuth: (v) =>
 				set((state) => {
 					const authenticated = !!v.authenticated;
-					// When logging out, clear all user data so persisted state is clean
 					if (!authenticated) {
 						return {
 							authenticated: false,
@@ -52,21 +57,31 @@ export const useAuthStore = create<AuthState>()(
 							email: undefined,
 							username: null,
 							mainnetAccess: false,
-							networkMode: "devnet",
+							networkMode: "mainnet",
 						};
 					}
-					// When logging in / syncing: only update fields that are provided;
-					// never overwrite username with undefined (keeps persisted username across Privy rehydration)
+					const newUserId = v.userId ?? state.userId;
+					// Load per-user network preference when switching accounts
+					const savedMode = newUserId && newUserId !== state.userId
+						? loadUserNetworkMode(newUserId)
+						: null;
 					return {
 						authenticated: true,
-						userId: v.userId ?? state.userId,
+						userId: newUserId,
 						email: v.email ?? state.email,
 						...(v.username !== undefined && { username: v.username }),
+						...(savedMode !== null && { networkMode: savedMode }),
 					};
 				}),
 			setUsername: (username) => set({ username }),
 			setMainnetAccess: (access) => set({ mainnetAccess: access }),
-			setNetworkMode: (mode) => set({ networkMode: mode }),
+			setNetworkMode: (mode) =>
+				set((state) => {
+					if (state.userId && typeof window !== "undefined") {
+						localStorage.setItem(`loofta.net.${state.userId}`, mode);
+					}
+					return { networkMode: mode };
+				}),
 			setOpenShareModal: (open) => set({ openShareModal: open }),
 			setOpenSettingsModal: (open) => set({ openSettingsModal: open }),
 		}),
