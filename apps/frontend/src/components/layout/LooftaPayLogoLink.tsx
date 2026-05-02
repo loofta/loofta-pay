@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { clusterBadgeLabel, isNonMainnetCluster } from "@/lib/solanaCluster";
 
 const BADGE_ON_DARK =
   "shrink-0 rounded-full border border-amber-500/35 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400/95";
@@ -18,26 +17,19 @@ type LooftaPayLogoLinkProps = {
   imageWidth: number;
   imageHeight: number;
   imageClassName?: string;
-  /** Cluster badge (e.g. Devnet) sits after "Loofta Pay" */
   badgeVariant: "on-dark" | "on-light";
-  /** When true, overrides the cluster badge to show a green "Mainnet" badge */
+  /** Controls which network badge to show next to the logo */
   isMainnet?: boolean;
 };
 
-/**
- * Wordmark: Loofta + gradient "pay", then optional non-mainnet cluster tag (e.g. Devnet).
- */
 export function LooftaPayLogoLink({
   href = "/",
   imageWidth,
   imageHeight,
   imageClassName,
   badgeVariant,
-  isMainnet = false,
+  isMainnet = true,
 }: LooftaPayLogoLinkProps) {
-  const clusterTag = clusterBadgeLabel();
-  const showClusterBadge = isNonMainnetCluster() && clusterTag;
-
   return (
     <Link href={href} prefetch className="inline-flex items-center gap-2 hover:opacity-90 transition-opacity">
       <span className="relative inline-block shrink-0">
@@ -62,9 +54,9 @@ export function LooftaPayLogoLink({
       </span>
       {isMainnet ? (
         <span className={badgeVariant === "on-dark" ? BADGE_MAINNET_ON_DARK : BADGE_MAINNET_ON_LIGHT}>Mainnet</span>
-      ) : showClusterBadge ? (
-        <span className={badgeVariant === "on-dark" ? BADGE_ON_DARK : BADGE_ON_LIGHT}>{clusterTag}</span>
-      ) : null}
+      ) : (
+        <span className={badgeVariant === "on-dark" ? BADGE_ON_DARK : BADGE_ON_LIGHT}>Devnet</span>
+      )}
     </Link>
   );
 }

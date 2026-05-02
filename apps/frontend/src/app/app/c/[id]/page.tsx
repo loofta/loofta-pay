@@ -662,8 +662,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     });
   }, [authenticated, user, getAccessToken]);
 
-  /** USDC-only pay UX on devnet — unless user has mainnet access and has switched to mainnet mode. */
-  const hideAlternateTokenPay = isNonMainnetCluster() && !(hasMainnetAccess && networkMode === "mainnet");
+  /** USDC-only pay UX in devnet mode. networkMode is the source of truth since cluster is always mainnet-beta. */
+  const hideAlternateTokenPay = networkMode !== "mainnet";
   const { data: tokensRaw = [], isLoading } = useTokensQuery();
   /** Devnet/testnet: 1-click token list often only lists mainnet Solana USDC mint. Inject cluster USDC so Pay with + selection resolve. */
   const tokens = useMemo(() => {
