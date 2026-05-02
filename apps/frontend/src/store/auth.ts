@@ -1,5 +1,10 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { getSolanaCluster } from "@/lib/solanaCluster";
+
+// On devnet deployments, default to devnet mode so cross-chain options stay hidden.
+const CLUSTER_DEFAULT_NETWORK_MODE: "devnet" | "mainnet" =
+	getSolanaCluster() === "mainnet-beta" ? "mainnet" : "devnet";
 
 type AuthState = {
 	authenticated: boolean;
@@ -44,7 +49,7 @@ export const useAuthStore = create<AuthState>()(
 			email: undefined,
 			username: undefined,
 			mainnetAccess: false,
-			networkMode: "mainnet",
+			networkMode: CLUSTER_DEFAULT_NETWORK_MODE,
 			openShareModal: false,
 			openSettingsModal: false,
 			setAuth: (v) =>
@@ -57,7 +62,7 @@ export const useAuthStore = create<AuthState>()(
 							email: undefined,
 							username: null,
 							mainnetAccess: false,
-							networkMode: "mainnet",
+							networkMode: CLUSTER_DEFAULT_NETWORK_MODE,
 						};
 					}
 					const newUserId = v.userId ?? state.userId;
