@@ -99,7 +99,8 @@ export const useAuthStore = create<AuthState>()(
 				email: state.email,
 				username: state.username,
 				mainnetAccess: state.mainnetAccess,
-				networkMode: state.networkMode,
+				// networkMode is NOT persisted here — unauthenticated default is derived from
+				// CLUSTER_DEFAULT_NETWORK_MODE, and per-user preference lives in loofta.net.${userId}.
 			}),
 		}
 	)
