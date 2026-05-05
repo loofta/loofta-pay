@@ -24,6 +24,11 @@ export class CreateClaimFromEmailDto {
   @MaxLength(500)
   description?: string;
 
+  @ApiPropertyOptional({ description: 'Solana cluster for this payment', enum: ['devnet', 'mainnet'] })
+  @IsOptional()
+  @IsString()
+  cluster?: 'devnet' | 'mainnet';
+
   // Server-side only — stripped from request body by ValidationPipe whitelist.
   userId?: string;
 }

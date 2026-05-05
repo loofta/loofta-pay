@@ -87,6 +87,7 @@ export interface CreateClaimInput {
   userId?: string;
   orgReferral?: string;
   direction?: PaymentDirection;
+  cluster?: 'devnet' | 'mainnet';
 }
 
 // ===========================================

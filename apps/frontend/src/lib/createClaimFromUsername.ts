@@ -11,6 +11,7 @@ export async function createClaimFromUsername(input: {
   userEmail?: string;
   isPrivate?: boolean;
   description?: string;
+  cluster?: 'devnet' | 'mainnet';
 }): Promise<{ id: string }> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
   const authHeader: Record<string, string> = input.accessToken
@@ -29,6 +30,7 @@ export async function createClaimFromUsername(input: {
       amount: Number(input.amount),
       isPrivate: input.isPrivate ?? false,
       description: input.description ?? undefined,
+      cluster: input.cluster,
     }),
   });
   if (!r.ok) {

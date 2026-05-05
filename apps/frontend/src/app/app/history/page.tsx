@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
+import { useAuthStore } from "@/store/auth";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import {ArrowDown, ArrowUp} from "lucide-react";
 
@@ -119,11 +120,13 @@ function extractGifUrl(desc: string): string | null {
 async function fetchPaymentHistory(
   userId: string,
   accessToken?: string | null,
+  networkMode?: string,
 ): Promise<{ sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[] }> {
   const headers: Record<string, string> = accessToken
     ? { authorization: `Bearer ${accessToken}` }
     : { "x-privy-user-id": userId };
-  const r = await fetch("/api/payments/history", { headers, cache: "no-store" });
+  const params = networkMode ? `?network=${networkMode}` : "";
+  const r = await fetch(`/api/payments/history${params}`, { headers, cache: "no-store" });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
     throw new Error(err?.error || "Failed to load history");
@@ -169,6 +172,7 @@ function paymentCardClass(type: "sent" | "received") {
 export default function HistoryPage() {
   const { authenticated, userId } = useAuth();
   const { login: privyLogin, getAccessToken } = usePrivy();
+  const networkMode = useAuthStore((s) => s.networkMode);
   const {
     data,
     isLoading: loading,
@@ -176,10 +180,10 @@ export default function HistoryPage() {
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ["payments", "history", userId ?? ""],
+    queryKey: ["payments", "history", userId ?? "", networkMode],
     queryFn: async () => {
       const token = await getAccessToken().catch(() => null);
-      return fetchPaymentHistory(userId!, token);
+      return fetchPaymentHistory(userId!, token, networkMode);
     },
     enabled: Boolean(authenticated && userId),
     staleTime: 30_000,

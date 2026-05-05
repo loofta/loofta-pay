@@ -156,7 +156,8 @@ export async function GET(request: Request) {
     }
 
     const supabase = getSupabaseAdmin();
-    const devnetOnly = isNonMainnetCluster();
+    const networkParam = searchParams.get("network");
+    const devnetOnly = networkParam ? networkParam !== "mainnet" : isNonMainnetCluster();
 
     // ── payments table (new records) ──────────────────────────────────────
     // Sent: payments where this user is the sender (new schema)

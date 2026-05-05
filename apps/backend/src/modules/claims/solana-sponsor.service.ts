@@ -267,6 +267,7 @@ export class SolanaSponsorService {
     transactionBase64: string;
     recentBlockhash: string;
     lastValidBlockHeight: number;
+    topUpLamports: number;
   }> {
     if (!this.feePayerKeypair) {
       throw new Error('Fee payer not configured for sponsoring');
@@ -294,6 +295,7 @@ export class SolanaSponsorService {
         transactionBase64: Buffer.from(serialized).toString('base64'),
         recentBlockhash: blockhash,
         lastValidBlockHeight,
+        topUpLamports: 0,
       };
     } catch {
       // fall through to versioned
@@ -314,42 +316,75 @@ export class SolanaSponsorService {
     );
     const decompiledMsg = TransactionMessage.decompile(vMsg, { addressLookupTableAccounts: altAccounts });
 
-    // The MagicBlock program does a CPI SystemProgram.transfer FROM the sender's wallet to
-    // create the ephemeral shuttle account (~2039280 lamports rent). On mainnet an additional
-    // 0.002 SOL flat fee is also charged from the sender. We prepend a top-up from our fee payer
-    // so the sender can cover both. 5_000_000 = 0.005 SOL covers rent + mainnet fee + buffer.
+    // Inline SOL top-up: fee payer sends lamports to sender in the same tx so the sender
+    // can pay MagicBlock's shuttle rent (~2039280 lamports). Atomic — no wasted SOL if tx fails.
     const senderPk = vMsg.staticAccountKeys[0];
-    const SHUTTLE_TOPUP_LAMPORTS = 5_000_000;
+    const MIN_SENDER_LAMPORTS = 3_000_000;
     const senderBalance = await resolveConn.getBalance(senderPk);
+    const topUpLamports = Math.max(0, MIN_SENDER_LAMPORTS - senderBalance);
     const prefundIxs: ReturnType<typeof SystemProgram.transfer>[] = [];
-    if (senderBalance < SHUTTLE_TOPUP_LAMPORTS) {
-      const topUp = SHUTTLE_TOPUP_LAMPORTS - senderBalance;
+    if (topUpLamports > 0) {
       prefundIxs.push(
-        SystemProgram.transfer({ fromPubkey: feePayerPk, toPubkey: senderPk, lamports: topUp }),
+        SystemProgram.transfer({ fromPubkey: feePayerPk, toPubkey: senderPk, lamports: topUpLamports }),
       );
       this.logger.log(
-        `SolanaSponsor[prepareAndPartialSign]: sender has ${senderBalance} lamports — prepending +${topUp} lamports shuttle top-up`,
+        `SolanaSponsor[prepareAndPartialSign]: sender has ${senderBalance} lamports — inline top-up +${topUpLamports} lamports`,
       );
+    } else {
+      this.logger.log(`SolanaSponsor[prepareAndPartialSign]: sender has ${senderBalance} lamports — no top-up needed`);
     }
 
-    // Rebuild as legacy (not v0) — ALTs are fully resolved above so all accounts can be inlined
-    // as static keys. Legacy txs have no ALT references, so Privy's embedded wallet can sign
-    // without calling prepareTransaction to look up tables on-chain.
-    const legacyMsg = new TransactionMessage({
+    // Rebuild as v0 (keeping ALTs compressed) — stays ~750b instead of ~1210b legacy expansion,
+    // leaving room for the Loofta fee instruction appended after this.
+    const v0Msg = new TransactionMessage({
       payerKey: feePayerPk,
       recentBlockhash: blockhash,
       instructions: [...prefundIxs, ...decompiledMsg.instructions],
-    }).compileToLegacyMessage();
-    const legacyTx = Transaction.populate(legacyMsg);
-    const ser = legacyTx.serialize({ requireAllSignatures: false, verifySignatures: false });
+    }).compileToV0Message(altAccounts);
+    const v0Tx = new VersionedTransaction(v0Msg);
+    const ser = v0Tx.serialize();
     this.logger.log(
-      `SolanaSponsor[prepareAndPartialSign]: v0→legacy rebuilt | ${ser.length}b prefunded=${prefundIxs.length > 0} blockhash=${blockhash.slice(0, 8)}... (unsigned, countersign after user)`,
+      `SolanaSponsor[prepareAndPartialSign]: rebuilt as v0 | ${ser.length}b topUp=${topUpLamports} blockhash=${blockhash.slice(0, 8)}... (unsigned, countersign after user)`,
     );
     return {
       transactionBase64: Buffer.from(ser).toString('base64'),
       recentBlockhash: blockhash,
       lastValidBlockHeight,
+      topUpLamports,
     };
+  }
+
+  /**
+   * Send SOL from fee payer to sender if their balance is below the threshold.
+   * Returns how many lamports were sent (0 if sender already had enough).
+   * Used on mainnet so the main payment tx needs no top-up ix → smaller tx → Loofta fee ix fits.
+   */
+  async prefundSenderSolIfNeeded(
+    senderAddress: string,
+    conn: Connection,
+    minLamports = 3_000_000,
+  ): Promise<number> {
+    if (!this.feePayerKeypair) throw new Error('Fee payer not configured');
+    const { PublicKey } = await import('@solana/web3.js');
+    const senderPk = new PublicKey(senderAddress);
+    const balance = await conn.getBalance(senderPk);
+    if (balance >= minLamports) {
+      this.logger.log(`SolanaSponsor[prefund]: sender ${senderAddress.slice(0, 8)}… has ${balance} lamports — no prefund needed`);
+      return 0;
+    }
+    const topUp = minLamports - balance;
+    const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
+    const tx = new Transaction();
+    tx.recentBlockhash = blockhash;
+    tx.lastValidBlockHeight = lastValidBlockHeight;
+    tx.feePayer = this.feePayerKeypair.publicKey;
+    tx.add(SystemProgram.transfer({ fromPubkey: this.feePayerKeypair.publicKey, toPubkey: senderPk, lamports: topUp }));
+    tx.sign(this.feePayerKeypair);
+    const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
+    this.logger.log(`SolanaSponsor[prefund]: sent +${topUp} lamports to ${senderAddress.slice(0, 8)}… sig=${sig.slice(0, 12)}…`);
+    await this.waitUntilSignatureVisible(sig, 30_000, 400, 'prefund', conn);
+    this.logger.log(`SolanaSponsor[prefund]: confirmed`);
+    return topUp;
   }
 
   /**
@@ -534,48 +569,80 @@ export class SolanaSponsorService {
       `SolanaSponsor[sign-and-broadcast-per]: incoming bytes=${transactionBuffer.length} rpc=${broadcastConn.rpcEndpoint}`,
     );
 
-    const legacy = Transaction.from(transactionBuffer);
-    if (!legacy.feePayer || legacy.feePayer.toBase58() !== this.feePayerAddress) {
-      throw new Error('Invalid fee payer in PER transaction');
-    }
-
     // Allow SOL transfers from fee payer only up to the shuttle top-up cap (0.005 SOL).
     const MAX_TOPUP_LAMPORTS = 5_000_000;
-    let totalFeePayerLamports = 0;
-    for (const ix of legacy.instructions) {
-      if (ix.programId.equals(SystemProgram.programId) && ix.data.length >= 12 && ix.data.readUInt32LE(0) === 2) {
-        const sender = ix.keys[0]?.pubkey;
-        if (sender?.toBase58() === this.feePayerAddress) {
-          const lamports = Number(ix.data.readBigUInt64LE(4));
-          totalFeePayerLamports += lamports;
-          if (totalFeePayerLamports > MAX_TOPUP_LAMPORTS) {
-            throw new Error(`PER transaction attempts to transfer too much SOL from fee payer (${totalFeePayerLamports} lamports)`);
+
+    let legacy: Transaction | null = null;
+    try { legacy = Transaction.from(transactionBuffer); } catch { legacy = null; }
+
+    let serializedForBroadcast: Uint8Array;
+
+    if (legacy) {
+      if (!legacy.feePayer || legacy.feePayer.toBase58() !== this.feePayerAddress) {
+        throw new Error('Invalid fee payer in PER transaction');
+      }
+      let totalFeePayerLamports = 0;
+      for (const ix of legacy.instructions) {
+        if (ix.programId.equals(SystemProgram.programId) && ix.data.length >= 12 && ix.data.readUInt32LE(0) === 2) {
+          const sender = ix.keys[0]?.pubkey;
+          if (sender?.toBase58() === this.feePayerAddress) {
+            const lamports = Number(ix.data.readBigUInt64LE(4));
+            totalFeePayerLamports += lamports;
+            if (totalFeePayerLamports > MAX_TOPUP_LAMPORTS) {
+              throw new Error(`PER transaction attempts to transfer too much SOL from fee payer (${totalFeePayerLamports} lamports)`);
+            }
           }
         }
       }
-    }
-
-    legacy.partialSign(this.feePayerKeypair);
-
-    if (!legacy.verifySignatures()) {
-      const signerState = legacy.signatures.map((s) => ({
-        signer: s.publicKey.toBase58().slice(0, 8) + '...',
-        signed: Boolean(s.signature),
-      }));
-      throw new Error(`PER transaction signature verification failed: ${JSON.stringify(signerState)}`);
+      legacy.partialSign(this.feePayerKeypair);
+      if (!legacy.verifySignatures()) {
+        const signerState = legacy.signatures.map((s) => ({
+          signer: s.publicKey.toBase58().slice(0, 8) + '...',
+          signed: Boolean(s.signature),
+        }));
+        throw new Error(`PER transaction signature verification failed: ${JSON.stringify(signerState)}`);
+      }
+      serializedForBroadcast = legacy.serialize({ requireAllSignatures: false, verifySignatures: false });
+    } else {
+      // v0 transaction (produced by prepareAndPartialSignTransaction for MagicBlock ALT-based txs)
+      const versioned = VersionedTransaction.deserialize(transactionBuffer);
+      const staticKeys = versioned.message.staticAccountKeys;
+      if (!staticKeys[0] || staticKeys[0].toBase58() !== this.feePayerAddress) {
+        throw new Error('Invalid fee payer in PER v0 transaction');
+      }
+      let totalFeePayerLamports = 0;
+      for (const ix of versioned.message.compiledInstructions) {
+        const programId = staticKeys[versioned.message.staticAccountKeys.findIndex((_, i) => i === ix.programIdIndex)];
+        if (programId?.toBase58() === SystemProgram.programId.toBase58() && ix.data[0] === 2) {
+          const senderIdx = ix.accountKeyIndexes[0];
+          const sender = staticKeys[senderIdx];
+          if (sender?.toBase58() === this.feePayerAddress) {
+            const view = new DataView(ix.data.buffer, ix.data.byteOffset);
+            const lamports = Number(view.getBigUint64(4, true));
+            totalFeePayerLamports += lamports;
+            if (totalFeePayerLamports > MAX_TOPUP_LAMPORTS) {
+              throw new Error(`PER v0 transaction attempts to transfer too much SOL from fee payer (${totalFeePayerLamports} lamports)`);
+            }
+          }
+        }
+      }
+      versioned.sign([this.feePayerKeypair]);
+      serializedForBroadcast = versioned.serialize();
     }
 
     const sendT0 = Date.now();
     const sig = await broadcastConn.sendRawTransaction(
-      legacy.serialize({ requireAllSignatures: false, verifySignatures: false }),
+      serializedForBroadcast,
       { skipPreflight: false, maxRetries: 3, preflightCommitment: 'confirmed' },
     );
     this.logger.log(
       `SolanaSponsor[sign-and-broadcast-per]: sendRawTransaction done in ${Date.now() - sendT0}ms sig=${sig.slice(0, 12)}...`,
     );
     await this.waitUntilSignatureVisible(sig, 12_000, 400, 'sign-and-broadcast-per', broadcastConn).catch((e) => {
+      const msg = String((e as Error)?.message ?? e);
+      if (msg.includes('failed on-chain')) throw e; // on-chain failure must propagate
       this.logger.warn(
-        `SolanaSponsor: PER sig ${sig.slice(0, 12)}... not yet visible after short wait (${String((e as Error)?.message ?? e)}). Returning immediately.`,
+        `SolanaSponsor: PER sig ${sig.slice(0, 12)}... not yet visible after short wait (${msg}). Returning immediately.`,
       );
     });
     this.logger.log(`SolanaSponsor[sign-and-broadcast-per]: total ${Date.now() - reqStart}ms`);

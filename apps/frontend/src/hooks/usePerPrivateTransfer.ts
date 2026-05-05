@@ -35,6 +35,11 @@ export type PerPrivateTransferOptions = {
    * Use this to persist the signature to the backend so it can be recovered if RPC polling fails.
    */
   onSignature?: (signature: string) => void | Promise<void>;
+  /** Called after the tx is built — provides fee breakdown before user signs. */
+  onTxBuilt?: (data: {
+    feeAmountUsdc: number;
+    feeBreakdown?: { looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number };
+  }) => void;
 };
 
 /**
@@ -49,7 +54,7 @@ export function usePerPrivateTransfer() {
 
   const transfer = useCallback(
     async (wallet: Wallet, options: PerPrivateTransferOptions): Promise<string> => {
-      const { privyUserId, accessToken, claimId, sendPaymentId, onProgress, isBurnerRecipient, onSignature } = options;
+      const { privyUserId, accessToken, claimId, sendPaymentId, onProgress, isBurnerRecipient, onSignature, onTxBuilt } = options;
       if (!privyUserId?.trim()) {
         throw new Error("Log in to send a private transfer.");
       }
@@ -74,6 +79,10 @@ export function usePerPrivateTransfer() {
         ? await buildClaimPrivateTransfer(claimId, privyUserId, sender, accessToken, apiCluster)
         : await buildSendPaymentPrivateTransfer(sendPaymentId!, privyUserId, sender, accessToken, apiCluster);
 
+      if (txData.feeAmountUsdc != null) {
+        onTxBuilt?.({ feeAmountUsdc: txData.feeAmountUsdc, feeBreakdown: txData.feeBreakdown });
+      }
+
       const ephemeralRpc = getEphemeralRpcForMode(networkMode);
       const broadcastRpc = txData.sendTo === "ephemeral" ? ephemeralRpc : getRpcForMode(networkMode);
       const broadcastConn =
@@ -96,7 +105,7 @@ export function usePerPrivateTransfer() {
       } catch {
         tx = VersionedTransaction.deserialize(txBytes);
         txIsLegacy = false;
-        console.warn("[PrivatePay] tx is versioned (v0) — fee sponsor may not be applied");
+        console.info("[PrivatePay] tx is versioned (v0) — fee sponsor + inline top-up applied by backend");
       }
 
       // Log fee sponsor state: fee payer + which signers already have a signature (sponsor partial-signs on devnet)
