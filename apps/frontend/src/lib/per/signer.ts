@@ -66,6 +66,10 @@ type PrivySolanaChain = ReturnType<typeof getPrivySolanaChain>;
 /**
  * Privy embedded wallet from `useWallets()` + `useSignTransaction()` — implements Anchor `Wallet`
  * for PER / MagicBlock flows.
+ *
+ * Always pass `chain` explicitly from networkMode (`getPrivySolanaChainForMode(networkMode)`).
+ * Defaulting to `getPrivySolanaChain()` uses the build-time cluster, which causes Privy to
+ * simulate v0 transactions on the wrong network (e.g. mainnet ALTs not found on devnet RPC).
  */
 export function privyStandardWalletToAnchorWallet(
   wallet: ConnectedStandardSolanaWallet,
@@ -74,21 +78,22 @@ export function privyStandardWalletToAnchorWallet(
     wallet: ConnectedStandardSolanaWallet;
     chain?: PrivySolanaChain;
   }) => Promise<{ signedTransaction: Uint8Array }>,
+  chain?: PrivySolanaChain,
 ): Wallet {
   const publicKey = new PublicKey(wallet.address);
-  const chain = getPrivySolanaChain();
+  const resolvedChain = chain ?? getPrivySolanaChain();
   const signOne = async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
     if (tx instanceof VersionedTransaction) {
       // serialize() with no args works for versioned; Privy signs raw bytes regardless of tx version
       const serialized = tx.serialize();
-      const { signedTransaction } = await signTransaction({ transaction: serialized, wallet, chain });
+      const { signedTransaction } = await signTransaction({ transaction: serialized, wallet, chain: resolvedChain });
       return VersionedTransaction.deserialize(signedTransaction) as T;
     }
     const serialized = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
     const { signedTransaction } = await signTransaction({
       transaction: serialized,
       wallet,
-      chain,
+      chain: resolvedChain,
     });
     return Transaction.from(signedTransaction) as T;
   };

@@ -282,6 +282,7 @@ export function MinimalHeader() {
             loadingBalance={loadingBalance}
             solanaAddress={solanaAddress}
             onRefresh={refreshBalance}
+            devnetMode={networkMode === "devnet"}
             dark
           />
         )}

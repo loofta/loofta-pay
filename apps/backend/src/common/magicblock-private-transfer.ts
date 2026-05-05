@@ -25,7 +25,7 @@ const log = new Logger('MagicblockPrivateTransfer');
  */
 export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // deducted from USDC amount by MagicBlock
 export const LOOFTA_FEE_BPS = 10;            // Loofta fee via appended ix (10 BPS of net)
-export const MAGICBLOCK_GAS_SOL = 0.002;     // flat SOL fee charged by MagicBlock (mainnet only)
+export const MAGICBLOCK_GAS_SOL = 0.002;     // flat SOL fee charged in native SOL by MagicBlock on mainnet
 /** Conservative SOL fallback price used when the price API is unavailable. */
 const SOL_PRICE_FALLBACK_USD = 180;
 /** Cache TTL: 60 seconds. */
@@ -120,7 +120,7 @@ export async function requestMagicblockPrivateTransfer(params: {
   cluster: 'devnet' | 'mainnet' | 'localhost';
 }): Promise<MagicblockPrivateTransferTxResponse> {
   const { minDelayMs, maxDelayMs } = magicblockPrivateDelayForCluster(params.cluster);
-  const body = {
+  const body: Record<string, unknown> = {
     from: params.from,
     to: params.to,
     mint: params.mint,
@@ -135,7 +135,6 @@ export async function requestMagicblockPrivateTransfer(params: {
     minDelayMs,
     maxDelayMs,
   };
-
   log.log(`POST https://payments.magicblock.app/v1/spl/transfer payload=${JSON.stringify(body)}`);
 
   const res = await fetch('https://payments.magicblock.app/v1/spl/transfer', {

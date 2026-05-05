@@ -1,9 +1,11 @@
 /**
- * Send USDC from Privy embedded Solana wallet: prefer Loofta backend fee payer, then Privy gas sponsorship, then user SOL.
+ * Send USDC from Privy embedded Solana wallet.
+ * Devnet: try Loofta backend fee payer first, fall back to Privy gas sponsorship, then user SOL.
+ * Mainnet: skip Loofta fee payer — use Privy gas sponsorship directly (pass skipLooftaFeePayer=true).
  */
 
 import type { ConnectedStandardSolanaWallet } from "@privy-io/react-auth/solana";
-import { Connection } from "@solana/web3.js";
+import { Connection, PublicKey } from "@solana/web3.js";
 import bs58 from "bs58";
 import { getPrivySolanaChain } from "@/lib/solanaCluster";
 import { buildUSDCTransferTransaction } from "@/services/solanaTransfer";
@@ -38,6 +40,12 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
   signTransaction: SignTransactionFn;
   signAndSendTransaction: SignAndSendTransactionFn;
   memo?: string | null;
+  /** Override USDC mint for networkMode-aware callers. Defaults to cluster-based mint. */
+  usdcMint?: PublicKey;
+  /** Override Privy chain for networkMode-aware callers. Defaults to cluster-based chain. */
+  chain?: PrivySolanaChain;
+  /** On mainnet: skip Loofta backend fee payer and use Privy gas sponsorship directly. */
+  skipLooftaFeePayer?: boolean;
 }): Promise<string> {
   const {
     senderAddress,
@@ -49,10 +57,12 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
     signTransaction,
     signAndSendTransaction,
     memo,
+    usdcMint,
+    skipLooftaFeePayer = false,
   } = params;
-  const chain = getPrivySolanaChain();
+  const chain = params.chain ?? getPrivySolanaChain();
 
-  if (privyUserId) {
+  if (privyUserId && !skipLooftaFeePayer) {
     try {
       const unsignedTx = await buildUSDCTransferTransaction({
         senderAddress,
@@ -60,6 +70,7 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
         amountUSDC,
         connection,
         memo: memo ?? undefined,
+        usdcMint,
       });
       const preparedBytes = await prepareSponsoredTransaction(
         new Uint8Array(unsignedTx.serialize()),
@@ -83,6 +94,7 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
     amountUSDC,
     connection,
     memo: memo ?? undefined,
+    usdcMint,
   });
   try {
     const { signature } = await signAndSendTransaction({
@@ -100,6 +112,7 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
         amountUSDC,
         connection,
         memo: memo ?? undefined,
+        usdcMint,
       });
       const { signature } = await signAndSendTransaction({
         transaction: selfPayTx.serialize(),

@@ -1,5 +1,6 @@
 import { PublicKey } from "@solana/web3.js";
 import { getSolanaCluster, type SolanaClusterName } from "@/lib/solanaCluster";
+import type { NetworkMode } from "@/lib/solanaRpc";
 
 /**
  * MagicBlock PER / TEE — see:
@@ -25,8 +26,15 @@ function defaultMagicblockTeeBase(): string {
   return "https://tee.magicblock.app";
 }
 
-/** MagicBlock TEE / ephemeral HTTP(S) endpoint for getAuthToken + Connection(?token=). */
+/** MagicBlock TEE / ephemeral HTTP(S) endpoint for getAuthToken + Connection(?token=). Build-time default. */
 export const EPHEMERAL_RPC_URL = defaultMagicblockTeeBase();
+
+/** Runtime networkMode-aware TEE URL — use this instead of EPHEMERAL_RPC_URL in hooks/components. */
+export function getEphemeralRpcForMode(mode: NetworkMode): string {
+  const explicit = process.env.NEXT_PUBLIC_MAGICBLOCK_URL?.replace(/\?.*$/, "").trim();
+  if (explicit) return explicit;
+  return mode === "mainnet" ? "https://mainnet-tee.magicblock.app" : "https://tee.magicblock.app";
+}
 
 /**
  * ER validator identity for delegate instructions (must match TEE / environment).
@@ -49,6 +57,15 @@ function defaultValidatorPubkey(): PublicKey {
 }
 
 export const VALIDATOR_PUBKEY = defaultValidatorPubkey();
+
+/** Runtime networkMode-aware validator pubkey. */
+export function getValidatorPubkeyForMode(mode: NetworkMode): PublicKey {
+  const explicit = process.env.NEXT_PUBLIC_MAGICBLOCK_VALIDATOR?.trim();
+  if (explicit) return new PublicKey(explicit);
+  return mode === "mainnet"
+    ? new PublicKey("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo")
+    : new PublicKey("FnE6VJT5QNZdedZPnCoLsARgBwoE6DeJNjBs2H1gySXA");
+}
 
 export const LOOFTA_PER_PROGRAM_ID = new PublicKey(
   process.env.NEXT_PUBLIC_PER_PROGRAM_ID || "EQMRkmeCbzZaXyEDwgqiTqgg8kUjxBXPe616odmPjSwL",

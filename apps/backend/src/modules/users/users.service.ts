@@ -391,14 +391,22 @@ export class UsersService {
   }
 
   private async getSolanaWalletBalanceUSDInternal(walletAddress: string): Promise<number> {
-    const solanaRpcUrl = process.env.SOLANA_RPC_URL ||
-      (process.env.HELIUS_API_KEY
-        ? `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`
-        : 'https://api.mainnet-beta.solana.com');
+    const cluster =
+      process.env.SOLANA_CLUSTER?.trim() ||
+      process.env.NEXT_PUBLIC_SOLANA_CLUSTER?.trim() ||
+      'mainnet-beta';
+    const isDevnet = cluster === 'devnet' || cluster === 'testnet';
 
-    const usdcMint =
-      process.env.SOLANA_USDC_MINT?.trim() ||
-      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const heliusKey = process.env.HELIUS_API_KEY?.trim();
+    const solanaRpcUrl = isDevnet
+      ? (process.env.SOLANA_DEVNET_RPC_URL?.trim() ||
+         (heliusKey ? `https://devnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.devnet.solana.com'))
+      : (process.env.SOLANA_RPC_URL?.trim() ||
+         (heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com'));
+
+    const usdcMint = isDevnet
+      ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+      : 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
     try {
       const response = await fetch(solanaRpcUrl, {

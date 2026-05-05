@@ -70,4 +70,8 @@ export class SupabaseService implements OnModuleInit {
   get sendPaymentLinks() {
     return this.client.from('send_payment_links');
   }
+
+  get mainnetWaitlist() {
+    return this.client.from('mainnet_waitlist');
+  }
 }

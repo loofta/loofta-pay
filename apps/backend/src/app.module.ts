@@ -21,6 +21,7 @@ import { HealthModule } from './modules/health/health.module';
 import { UsersModule } from './modules/users/users.module';
 import { SendPaymentModule } from './modules/send-payment/send-payment.module';
 import { RewardsModule } from './modules/rewards/rewards.module';
+import { WaitlistModule } from './modules/waitlist/waitlist.module';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { RewardsModule } from './modules/rewards/rewards.module';
     UsersModule,
     SendPaymentModule,
     RewardsModule,
+    WaitlistModule,
   ],
   providers: [
     {

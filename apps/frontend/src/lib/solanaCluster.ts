@@ -1,21 +1,8 @@
-import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
-
-/**
- * Cluster label for UI (e.g. Devnet badge). Prefer NEXT_PUBLIC_SOLANA_CLUSTER.
- *
- * If cluster is **not** set, `NEXT_PUBLIC_ENABLE_PRIVATE_PAYMENT=true` defaults the
- * app to **devnet** (PER / private flows expect devnet unless you opt into mainnet).
- * Set `NEXT_PUBLIC_SOLANA_CLUSTER=mainnet-beta` explicitly for mainnet PER.
- */
 export type SolanaClusterName = "mainnet-beta" | "devnet" | "testnet";
 
 export function getSolanaCluster(): SolanaClusterName {
   const raw = process.env.NEXT_PUBLIC_SOLANA_CLUSTER?.trim();
   if (raw === "devnet" || raw === "testnet" || raw === "mainnet-beta") return raw;
-  if (raw) return "mainnet-beta";
-
-  if (PRIVATE_PAYMENT_ENABLED) return "devnet";
-
   return "mainnet-beta";
 }
 
@@ -44,26 +31,35 @@ export function getPrivySolanaChain(): PrivySolanaChain {
   return "solana:mainnet";
 }
 
-/** HTTP RPC for @solana/web3.js Connection (falls back by cluster). */
+/** HTTP RPC for @solana/web3.js Connection. Helius key takes priority over explicit URL. */
 export function getSolanaHttpRpc(): string {
   const cluster = getSolanaCluster();
+  const key = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
   if (cluster === "devnet") {
-    return process.env.NEXT_PUBLIC_SOLANA_DEVNET_RPC_URL?.trim() || "https://api.devnet.solana.com";
+    if (key) return `https://devnet.helius-rpc.com/?api-key=${key}`;
+    return (
+      process.env.NEXT_PUBLIC_SOLANA_DEVNET_RPC_URL?.trim() ||
+      "https://api.devnet.solana.com"
+    );
   }
   if (cluster === "testnet") return "https://api.testnet.solana.com";
-  return process.env.NEXT_PUBLIC_SOLANA_RPC_URL?.trim()
-    || (process.env.NEXT_PUBLIC_HELIUS_API_KEY
-      ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-      : "https://api.mainnet-beta.solana.com");
+  if (key) return `https://mainnet.helius-rpc.com/?api-key=${key}`;
+  return (
+    process.env.NEXT_PUBLIC_SOLANA_RPC_URL?.trim() ||
+    "https://api.mainnet-beta.solana.com"
+  );
 }
 
 export function getSolanaWsRpc(): string {
   const explicit = process.env.NEXT_PUBLIC_SOLANA_WS_URL?.trim();
   if (explicit) return explicit;
   const cluster = getSolanaCluster();
-  if (cluster === "devnet") return "wss://api.devnet.solana.com";
+  const key = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
+  if (cluster === "devnet") {
+    return key ? `wss://devnet.helius-rpc.com/?api-key=${key}` : "wss://api.devnet.solana.com";
+  }
   if (cluster === "testnet") return "wss://api.testnet.solana.com";
-  return process.env.NEXT_PUBLIC_HELIUS_API_KEY
-    ? `wss://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
+  return key
+    ? `wss://mainnet.helius-rpc.com/?api-key=${key}`
     : "wss://api.mainnet-beta.solana.com";
 }

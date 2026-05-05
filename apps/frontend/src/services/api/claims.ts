@@ -128,15 +128,30 @@ export async function updateClaimStatus(
   });
 }
 
+export async function countersignAndBroadcastPER(
+  transactionBase64: string,
+  userId: string,
+  accessToken?: string | null,
+  cluster?: 'devnet' | 'mainnet',
+): Promise<{ signature: string }> {
+  return fetchApi<{ signature: string }>('/claims/solana-sponsor/per/sign-and-broadcast', {
+    method: 'POST',
+    body: JSON.stringify({ transaction: transactionBase64, cluster }),
+    userId,
+    accessToken,
+  });
+}
+
 export async function buildClaimPrivateTransfer(
   claimId: string,
   userId: string,
   senderWallet: string,
   accessToken?: string | null,
+  cluster?: 'devnet' | 'mainnet',
 ): Promise<MagicblockTxResponse> {
   return fetchApi<MagicblockTxResponse>(`/claims/${claimId}/build-private-transfer`, {
     method: 'POST',
-    body: JSON.stringify({ sender_wallet: senderWallet }),
+    body: JSON.stringify({ sender_wallet: senderWallet, cluster }),
     userId,
     accessToken,
   });

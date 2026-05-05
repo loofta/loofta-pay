@@ -24,6 +24,7 @@ import {
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
   appendLooftaFeeInstruction,
   grossUpForMagicblockFee,
+  requestMagicblockPrivateTransfer,
   type MagicblockPrivateTransferTxResponse,
 } from '@/common/magicblock-private-transfer';
 
@@ -206,6 +207,7 @@ export class ClaimsService {
         to_chain: 'solana',
         to_token: 'USDC',
         is_devnet: isSolanaDevnetFromConfig(this.configService),
+        recipient_was_unregistered: true,
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id')
@@ -566,6 +568,7 @@ export class ClaimsService {
         to_chain: 'solana',
         to_token: 'USDC',
         is_devnet: isSolanaDevnetFromConfig(this.configService),
+        recipient_was_unregistered: true,
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id')
@@ -699,6 +702,7 @@ export class ClaimsService {
     claimId: string,
     privyUserId: string,
     senderWallet: string,
+    requestCluster?: 'devnet' | 'mainnet',
   ): Promise<MagicblockPrivateTransferTxResponse> {
     const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
     const claim = await this.findOneRaw(claimId);
@@ -720,57 +724,69 @@ export class ClaimsService {
     const baseUnits = Math.round(amountUsd * 1_000_000);
     // Gross up so recipient gets baseUnits after MagicBlock's 10 BPS volume fee deduction.
     const grossUnits = grossUpForMagicblockFee(baseUnits);
-    const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
-    this.logger.log(`[PrivatePay] claim=${claimId} amount=${amountUsd} net=${baseUnits} gross=${grossUnits} cluster=${cluster}`);
+    const cluster = requestCluster
+      ?? (isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet');
+    const effectiveMint = cluster === 'mainnet'
+      ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
+      : new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || this.usdcMint.toBase58());
+    this.logger.log(`[PrivatePay] claim=${claimId} amount=${amountUsd} net=${baseUnits} gross=${grossUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… (requestCluster=${requestCluster ?? 'none'})`);
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
-      mint: this.usdcMint.toBase58(),
+      mint: effectiveMint.toBase58(),
       amount: grossUnits,
       cluster,
     });
 
-    // Append Loofta's 10 BPS USDC fee instruction (sender → fee payer wallet).
     const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
     const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
-    let txBase64 = txResponse.transactionBase64;
-    if (feePayerAddress && feePayerKp) {
-      try {
-        txBase64 = await appendLooftaFeeInstruction(
-          txBase64,
-          senderWallet.trim(),
-          feePayerAddress,
-          baseUnits,
-          this.usdcMint,
-          this.solanaSponsor.getConnection(),
-          feePayerKp.publicKey,
-        );
-      } catch (e) {
-        this.logger.warn(`[PrivatePay] Fee instruction append failed (non-fatal): ${String(e)}`);
-      }
-    }
+    const txBase64 = txResponse.transactionBase64;
 
-    // On devnet Privy doesn't support fee sponsoring — inject our fee payer so the
-    // user's wallet only needs to provide one signature (theirs), not pay the fee.
-    if (cluster === 'devnet' && this.solanaSponsor.isAvailable()) {
+    // Inject fee payer so the user doesn't need SOL. Fee payer also tops up sender SOL
+    // to cover MagicBlock's shuttle rent + mainnet flat fee. User signs, then frontend calls
+    // /solana-sponsor/per/sign-and-broadcast for the fee payer to countersign and broadcast.
+    if (this.solanaSponsor.isAvailable()) {
+      const heliusKey = this.configService.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
+      const sponsorConn = cluster === 'mainnet'
+        ? new Connection(heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com', 'confirmed')
+        : undefined;
       this.logger.log(
-        `[PrivatePay] Devnet fee sponsor: applying to MagicBlock tx | requiredSigners=[${txResponse.requiredSigners.join(', ')}] blockhash=${txResponse.recentBlockhash?.slice(0, 8)}...`,
+        `[PrivatePay] Fee sponsor: preparing tx | cluster=${cluster} requiredSigners=[${txResponse.requiredSigners.join(', ')}]`,
       );
       try {
-        const sponsored = await this.solanaSponsor.prepareAndPartialSignTransaction(txBase64);
+        const sponsored = await this.solanaSponsor.prepareAndPartialSignTransaction(txBase64, sponsorConn);
         this.logger.log(
-          `[PrivatePay] Devnet fee sponsor applied: feePayer=${this.solanaSponsor.getFeePayerAddress()?.slice(0, 8)}... newBlockhash=${sponsored.recentBlockhash.slice(0, 8)}...`,
+          `[PrivatePay] Fee sponsor prepared: feePayer=${feePayerAddress?.slice(0, 8)}... blockhash=${sponsored.recentBlockhash.slice(0, 8)}...`,
         );
+
+        // Append Loofta's 10 BPS USDC fee AFTER v0→legacy conversion — MagicBlock returns v0
+        // so the fee ix must be added to the legacy tx produced by prepareAndPartialSign.
+        let finalTxBase64 = sponsored.transactionBase64;
+        if (feePayerAddress && feePayerKp) {
+          try {
+            finalTxBase64 = await appendLooftaFeeInstruction(
+              finalTxBase64,
+              senderWallet.trim(),
+              feePayerAddress,
+              baseUnits,
+              effectiveMint,
+              sponsorConn ?? this.solanaSponsor.getConnection(),
+              feePayerKp.publicKey,
+            );
+            this.logger.log(`[PrivatePay] Loofta fee ix appended`);
+          } catch (e) {
+            this.logger.warn(`[PrivatePay] Fee instruction append failed (non-fatal): ${String(e)}`);
+          }
+        }
+
         return {
           ...txResponse,
-          transactionBase64: sponsored.transactionBase64,
+          transactionBase64: finalTxBase64,
           recentBlockhash: sponsored.recentBlockhash,
           lastValidBlockHeight: sponsored.lastValidBlockHeight,
         };
       } catch (e) {
-        this.logger.warn(
-          `[PrivatePay] Devnet fee sponsor failed, returning unsponsored tx: ${String(e)}`,
-        );
+        this.logger.warn(`[PrivatePay] Fee sponsor failed, returning unsponsored tx: ${String(e)}`);
       }
     }
 
@@ -1001,6 +1017,136 @@ export class ClaimsService {
     throw new Error(`Transaction ${signature} confirmation timed out`);
   }
 
+  /** True when the latest intent for this payment came from a non-Solana chain (NEAR intent cross-chain). */
+  private async isCrossChainPayment(claimId: string): Promise<boolean> {
+    const supabase = this.supabaseService.getClient();
+    const { data: intent } = await supabase
+      .from('payment_intents')
+      .select('from_chain')
+      .eq('payment_id', claimId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (intent?.from_chain) {
+      const c = (intent.from_chain as string).toLowerCase();
+      return c !== 'sol' && c !== 'solana';
+    }
+    const { data: legacy } = await supabase
+      .from('claim_intents')
+      .select('from_chain')
+      .eq('claim_id', claimId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (legacy?.from_chain) {
+      const c = (legacy.from_chain as string).toLowerCase();
+      return c !== 'sol' && c !== 'solana';
+    }
+    return false;
+  }
+
+  /**
+   * Cross-chain claim path: the NEAR intent delivered USDC to the burner.
+   * 1. Wait for USDC to appear in burner ATA.
+   * 2. Auto-sign a MagicBlock PER private transfer: burner → recipient (requested_amount, grossed up for MB fee).
+   * 3. Sweep remaining dust (Loofta fee + gas pre-paid by sender) to the fee-payer wallet.
+   */
+  private async sweepCrossChainBurnerPrivately(
+    claimId: string,
+    claim: Claim,
+    wallet: string,
+    burnerKeypair: Keypair,
+    conn: Connection,
+  ): Promise<{ sweepTxHash?: string; sweptAmount?: string }> {
+    const burnerAta = await getAssociatedTokenAddress(this.usdcMint, burnerKeypair.publicKey);
+
+    // Wait for NEAR intent USDC delivery
+    let balance = BigInt(0);
+    try { balance = (await getAccount(conn, burnerAta)).amount; } catch { /* not yet */ }
+    if (balance === BigInt(0)) {
+      balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS);
+    }
+    if (balance === BigInt(0)) {
+      this.logger.log(`[CrossChain] ${claimId}: USDC not yet in burner — funds still in flight`);
+      return {};
+    }
+
+    const amountUsd = parseFloat(String(claim.amount || '0'));
+    const requestedBaseUnits = Math.round(amountUsd * 1_000_000);
+    const transferUnits = grossUpForMagicblockFee(requestedBaseUnits);
+    const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost'
+      : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
+
+    this.logger.log(
+      `[CrossChain] ${claimId}: balance=${balance} transferUnits=${transferUnits} cluster=${cluster} recipient=${wallet.slice(0, 8)}…`,
+    );
+
+    if (BigInt(transferUnits) > balance) {
+      this.logger.warn(`[CrossChain] ${claimId}: balance ${balance} < transferUnits ${transferUnits} — aborting, intent may not be complete`);
+      return {};
+    }
+
+    // Build PER private transfer from burner to recipient
+    const txResponse = await requestMagicblockPrivateTransfer({
+      from: burnerKeypair.publicKey.toBase58(),
+      to: wallet.trim(),
+      mint: this.usdcMint.toBase58(),
+      amount: transferUnits,
+      cluster,
+    });
+
+    // Auto-sign with burner keypair (and fee payer for ATA rent)
+    const txBytes = Buffer.from(txResponse.transactionBase64, 'base64');
+    const tx = Transaction.from(txBytes);
+    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+    if (feePayerKp) {
+      tx.feePayer = feePayerKp.publicKey;
+      tx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
+    }
+    tx.partialSign(burnerKeypair);
+    if (feePayerKp) tx.partialSign(feePayerKp);
+
+    // Submit — ephemeral rollup if MagicBlock requires it, otherwise base chain
+    let sendConn = conn;
+    if (txResponse.sendTo === 'ephemeral') {
+      const ec = await this.getEphemeralConnectionForBurner(burnerKeypair);
+      if (ec) sendConn = ec;
+    }
+    const sig = await sendConn.sendRawTransaction(tx.serialize({ requireAllSignatures: false }), { skipPreflight: true });
+    await this.pollConfirmTransaction(conn, sig);
+    this.logger.log(`[CrossChain] ${claimId}: PER transfer confirmed tx=${sig}`);
+
+    // Sweep dust (fee + gas pre-paid into burner) to fee-payer wallet — fire-and-forget
+    const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
+    if (feePayerKp && feePayerAddress) {
+      void (async () => {
+        try {
+          await new Promise((r) => setTimeout(r, 4_000));
+          const remaining = await getAccount(conn, burnerAta).catch(() => null);
+          const dust = remaining?.amount ?? BigInt(0);
+          if (dust > BigInt(0)) {
+            const feePayerPubkey = new PublicKey(feePayerAddress);
+            const feePayerAta = await getAssociatedTokenAddress(this.usdcMint, feePayerPubkey);
+            const dustTx = new Transaction();
+            try { await getAccount(conn, feePayerAta); } catch {
+              dustTx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, feePayerAta, feePayerPubkey, this.usdcMint));
+            }
+            dustTx.add(createTransferInstruction(burnerAta, feePayerAta, burnerKeypair.publicKey, dust));
+            dustTx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
+            dustTx.feePayer = feePayerKp.publicKey;
+            dustTx.sign(burnerKeypair, feePayerKp);
+            const dustSig = await conn.sendRawTransaction(dustTx.serialize(), { skipPreflight: true });
+            this.logger.log(`[CrossChain] ${claimId}: dust swept (${dust} units) → fee payer tx=${dustSig}`);
+          }
+        } catch (e) {
+          this.logger.warn(`[CrossChain] ${claimId}: dust sweep failed (non-fatal): ${String(e)}`);
+        }
+      })();
+    }
+
+    return { sweepTxHash: sig, sweptAmount: (requestedBaseUnits / 1_000_000).toFixed(6) };
+  }
+
   private async sweepClaimBurnerToWallet(
     claimId: string,
     claim: Claim & { recipient_address?: string },
@@ -1027,6 +1173,14 @@ export class ClaimsService {
       const secretKey = this.decryptClaimBurnerSecret(rawClaim.claim_burner_encrypted_secret, burnerAddr);
       const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
       const conn = this.solanaSponsor.getConnection();
+
+      // Cross-chain payments (e.g. ETH/BTC → Solana via NEAR Intents) land in the burner
+      // and must be privately forwarded to the recipient via MagicBlock PER transfer.
+      const isCrossChain = await this.isCrossChainPayment(claimId);
+      if (isCrossChain) {
+        return this.sweepCrossChainBurnerPrivately(claimId, claim, wallet, burnerKeypair, conn);
+      }
+
       // Always attempt PER withdraw first. This also recovers older claims that
       // were incorrectly marked non-private while funds are still in PER deposit.
       const perWithdraw = await this.tryWithdrawPerDepositToBurnerAta(
@@ -1896,6 +2050,8 @@ export class ClaimsService {
         deadline: params.deadline ? new Date(params.deadline).toISOString() : null,
         time_estimate: params.timeEstimate || null,
         status: params.status || 'PENDING_DEPOSIT',
+        from_chain: params.fromChain || null,
+        to_chain: params.toChain || null,
         last_status_payload: null,
       })
       .select()

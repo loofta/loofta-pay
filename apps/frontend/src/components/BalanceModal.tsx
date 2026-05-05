@@ -28,14 +28,8 @@ import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { addWithdrawal, getWithdrawalHistory, type WithdrawalHistoryItem } from "@/lib/withdrawalHistory";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { cn } from "@/lib/utils";
-import { clusterBadgeLabel, isNonMainnetCluster } from "@/lib/solanaCluster";
+import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 import { ExternalLink } from "lucide-react";
-
-const SOLANA_RPC_URL =
-  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-  (process.env.NEXT_PUBLIC_HELIUS_API_KEY
-    ? `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`
-    : "https://api.mainnet-beta.solana.com");
 
 const LOG_PREFIX = "[BalanceModal]";
 
@@ -48,6 +42,8 @@ export interface BalanceModalProps {
   onRefresh: () => void;
   /** When true, use dark theme (bg-[#0f0f12], border-white/10, etc.) like other app modals. */
   dark?: boolean;
+  /** When true, user is in devnet mode — balance is $0 and withdrawals are disabled. */
+  devnetMode?: boolean;
 }
 
 export function BalanceModal({
@@ -58,8 +54,8 @@ export function BalanceModal({
   solanaAddress,
   onRefresh,
   dark = false,
+  devnetMode = false,
 }: BalanceModalProps) {
-  const solanaClusterTag = clusterBadgeLabel();
   const { toast } = useToast();
   const { data: tokens = [] } = useTokensQuery();
 
@@ -74,6 +70,11 @@ export function BalanceModal({
   useEffect(() => {
     if (open) setRecentWithdrawals(getWithdrawalHistory());
   }, [open]);
+
+  // Lock amount to full balance — wallet rotates after full withdrawal for privacy.
+  useEffect(() => {
+    setWithdrawAmount(balanceUSD);
+  }, [balanceUSD, open]);
 
   const { user } = usePrivy();
   const { wallets: solanaWallets } = useWallets();
@@ -189,7 +190,8 @@ export function BalanceModal({
 
     setWithdrawing(true);
     try {
-      const connection = new Connection(SOLANA_RPC_URL, "confirmed");
+      const mode = devnetMode ? "devnet" : "mainnet";
+      const connection = new Connection(getRpcForMode(mode), "confirmed");
       let recipientAddress: string;
       let memo: string | null = null;
 
@@ -241,6 +243,9 @@ export function BalanceModal({
         signTransaction,
         signAndSendTransaction,
         memo: memo ?? undefined,
+        usdcMint: getUsdcMintForMode(mode),
+        chain: getPrivySolanaChainForMode(mode),
+        skipLooftaFeePayer: mode === "mainnet",
       });
       console.log(`${LOG_PREFIX} Withdraw tx sent`, {
         signature: sig,
@@ -396,8 +401,8 @@ export function BalanceModal({
                     {isUSDCOnSolana && loadingBalance ? "…" : `$${isNearIntentsWithdraw ? balanceUSD : balanceDisplay}`}
                   </p>
                   <p className={`text-xs mt-1 ${dark ? "text-slate-500" : "text-gray-500"}`}>
-                    {isNonMainnetCluster() && solanaClusterTag
-                      ? `${solanaClusterTag} — USDC shown is on this cluster only (not mainnet).`
+                    {devnetMode
+                      ? "Devnet — USDC shown is on devnet only (not mainnet)."
                       : "Mainnet USDC — your embedded address can hold different balances on devnet/testnet."}
                   </p>
                 </div>
@@ -433,33 +438,21 @@ export function BalanceModal({
             </p>
           </div>
 
-          {/* Amount */}
+          {/* Amount — locked to full balance for privacy */}
           <div>
-            <Label htmlFor="withdraw-amount" className={dark ? "text-slate-300" : undefined}>
+            <Label className={dark ? "text-slate-300" : undefined}>
               Amount (USDC to send)
               {isNearIntentsWithdraw && effectiveToken && (
                 <span className={dark ? "text-slate-400 font-normal" : "text-gray-500 font-normal"}> → receive ~{effectiveToken.symbol} on {effectiveToken.chain}</span>
               )}
             </Label>
-            <Input
-              id="withdraw-amount"
-              type="number"
-              step="0.01"
-              min="0"
-              placeholder="0.00"
-              value={withdrawAmount}
-              onChange={(e) => setWithdrawAmount(e.target.value)}
-              className={`mt-1 font-mono ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
-            />
-            {payFromBalanceNum > 0 && (
-              <button
-                type="button"
-                onClick={() => setWithdrawAmount(balanceUSD)}
-                className={`text-xs hover:underline mt-1 ${dark ? "text-orange-400" : "text-orange-600"}`}
-              >
-                Max
-              </button>
-            )}
+            <div className={`mt-1 flex items-center justify-between rounded-md border px-3 py-2 text-sm font-mono ${dark ? "border-white/20 bg-white/10 text-white" : "border-input bg-muted text-gray-900"}`}>
+              <span className="font-semibold">${payFromBalanceNum.toFixed(2)}</span>
+              <span className={`text-xs ${dark ? "text-slate-400" : "text-muted-foreground"}`}>Full balance</span>
+            </div>
+            <p className={`text-xs mt-2 ${dark ? "text-purple-300" : "text-purple-700"}`}>
+              Withdrawals are always for your full balance. After sending, your Loofta wallet address rotates to keep your payments private.
+            </p>
           </div>
 
           {/* Destination address */}
@@ -497,6 +490,11 @@ export function BalanceModal({
             </p>
           </div>
 
+          {devnetMode && (
+            <p className={`text-xs text-center ${dark ? "text-amber-400" : "text-amber-600"}`}>
+              Withdrawals are not available on devnet.
+            </p>
+          )}
           <div className="flex gap-2 pt-2">
             <Button variant="outline" onClick={onClose} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
               Cancel
@@ -504,10 +502,9 @@ export function BalanceModal({
             <Button
               onClick={handleWithdraw}
               disabled={
+                devnetMode ||
                 withdrawing ||
                 payFromBalanceNum <= 0 ||
-                !withdrawAmount ||
-                parseFloat(withdrawAmount) <= 0 ||
                 !withdrawAddress.trim() ||
                 !wallet ||
                 (isUSDCOnSolana ? addressRiskStatus !== "safe" : !destinationAddressValid)
