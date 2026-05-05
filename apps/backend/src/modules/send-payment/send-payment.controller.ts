@@ -86,9 +86,9 @@ export class SendPaymentController {
   async buildPrivateTransfer(
     @Param('id') id: string,
     @PrivyUser() user: { id: string },
-    @Body() body: { sender_wallet: string },
+    @Body() body: { sender_wallet: string; cluster?: 'devnet' | 'mainnet' },
   ) {
-    return this.sendPaymentService.buildPrivateTransferForSender(id, user.id, body.sender_wallet);
+    return this.sendPaymentService.buildPrivateTransferForSender(id, user.id, body.sender_wallet, body.cluster);
   }
 
   @Get(':id')

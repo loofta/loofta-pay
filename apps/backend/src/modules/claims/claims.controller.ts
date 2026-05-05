@@ -236,11 +236,11 @@ export class ClaimsController {
   async buildPrivateTransfer(
     @Param('id') id: string,
     @Req() req: { user?: { id: string } },
-    @Body() body: { sender_wallet: string },
+    @Body() body: { sender_wallet: string; cluster?: 'devnet' | 'mainnet' },
   ) {
     const privyUserId = req.user?.id;
     if (!privyUserId) throw new UnauthorizedException('Login required.');
-    return this.claimsService.buildPrivateTransferForPayer(id, privyUserId, body.sender_wallet);
+    return this.claimsService.buildPrivateTransferForPayer(id, privyUserId, body.sender_wallet, body.cluster);
   }
 
   /**
@@ -471,6 +471,43 @@ export class ClaimsController {
         throw new ServiceUnavailableException('Solana sponsorship is not configured');
       }
       throw new BadRequestException(e?.message || 'Failed to sign and broadcast');
+    }
+  }
+
+  /**
+   * Countersign a user-signed MagicBlock PER transaction with the fee payer and broadcast.
+   * Used for both claim and send-payment PER flows. The fee payer is allowed to transfer a small
+   * amount of SOL (shuttle top-up) which is blocked by the generic sign-and-broadcast endpoint.
+   */
+  @Post('solana-sponsor/per/sign-and-broadcast')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Countersign and broadcast a user-signed MagicBlock PER transaction' })
+  @ApiResponse({ status: 200, description: 'Transaction signature', schema: { properties: { signature: { type: 'string' } } } })
+  @ApiResponse({ status: 400, description: 'Invalid transaction' })
+  @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
+  async signAndBroadcastPER(
+    @Body() body: { transaction: string; cluster?: 'devnet' | 'mainnet' },
+  ): Promise<{ signature: string }> {
+    if (!body?.transaction || typeof body.transaction !== 'string') {
+      throw new BadRequestException('Missing or invalid transaction');
+    }
+    if (!this.solanaSponsor.isAvailable()) {
+      throw new ServiceUnavailableException('Solana fee sponsorship is not configured');
+    }
+    try {
+      const { Connection } = await import('@solana/web3.js');
+      const heliusKey = this.configService.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
+      const conn = body.cluster === 'mainnet'
+        ? new Connection(heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com', 'confirmed')
+        : undefined;
+      return await this.solanaSponsor.signAndBroadcastPER(body.transaction, conn);
+    } catch (e: any) {
+      if (e?.message?.includes('not configured')) {
+        throw new ServiceUnavailableException('Solana sponsorship is not configured');
+      }
+      throw new BadRequestException(e?.message || 'Failed to sign and broadcast PER transaction');
     }
   }
 

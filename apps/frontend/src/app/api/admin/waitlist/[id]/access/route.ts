@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdmin } from "@/lib/admin";
-import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { getVerifiedUserId } from "@/lib/serverAuth";
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
 export async function POST(
   request: NextRequest,
@@ -12,21 +13,20 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { grant } = await request.json() as { grant: boolean };
-  if (typeof grant !== "boolean") {
-    return NextResponse.json({ error: "grant must be a boolean" }, { status: 400 });
-  }
-
+  const authHeader = request.headers.get("authorization") ?? "";
   const { id } = await params;
-  const supabase = getSupabaseAdmin();
-  const { error } = await supabase
-    .from("mainnet_waitlist")
-    .update({ mainnet_access: grant })
-    .eq("id", id);
+  const body = await request.json().catch(() => ({}));
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  const res = await fetch(`${BACKEND_URL}/admin/waitlist/${id}/access`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Authorization: authHeader },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    return NextResponse.json(err, { status: res.status });
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json(await res.json());
 }

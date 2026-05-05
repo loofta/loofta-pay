@@ -3,11 +3,12 @@
 import { useCallback, useMemo } from "react";
 import type { Wallet } from "@coral-xyz/anchor";
 import { Connection, Transaction, VersionedTransaction, SendTransactionError } from "@solana/web3.js";
-import { getSolanaCluster, getSolanaHttpRpc } from "@/lib/solanaCluster";
+import { useAuthStore } from "@/store/auth";
+import { getRpcForMode } from "@/lib/solanaRpc";
 import { formatMagicblockPrivateDelayLogMs } from "@/services/magicblockPaymentsApi";
-import { buildClaimPrivateTransfer } from "@/services/api/claims";
+import { buildClaimPrivateTransfer, countersignAndBroadcastPER } from "@/services/api/claims";
 import { buildSendPaymentPrivateTransfer } from "@/services/api/sendPayment";
-import { EPHEMERAL_RPC_URL } from "@/lib/per/constants";
+import { getEphemeralRpcForMode } from "@/lib/per/constants";
 import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 
@@ -43,7 +44,8 @@ export type PerPrivateTransferOptions = {
  * Delivery delay is configured on the server (devnet: 30s–15m; mainnet: none). Claim sweep: burner → recipient uses direct SPL on the backend.
  */
 export function usePerPrivateTransfer() {
-  const connection = useMemo(() => new Connection(getSolanaHttpRpc(), "confirmed"), []);
+  const networkMode = useAuthStore((s) => s.networkMode);
+  const connection = useMemo(() => new Connection(getRpcForMode(networkMode), "confirmed"), [networkMode]);
 
   const transfer = useCallback(
     async (wallet: Wallet, options: PerPrivateTransferOptions): Promise<string> => {
@@ -60,8 +62,8 @@ export function usePerPrivateTransfer() {
 
       onProgress?.({ phase: "preparing" });
 
-      const cluster = getSolanaCluster();
-      const apiCluster = cluster === "mainnet-beta" ? "mainnet" : "devnet";
+      const apiCluster = networkMode === "mainnet" ? "mainnet" : "devnet";
+      const cluster = networkMode === "mainnet" ? "mainnet-beta" : "devnet";
       const sender = wallet.publicKey.toBase58();
 
       console.info(
@@ -69,13 +71,14 @@ export function usePerPrivateTransfer() {
       );
 
       const txData = claimId
-        ? await buildClaimPrivateTransfer(claimId, privyUserId, sender, accessToken)
-        : await buildSendPaymentPrivateTransfer(sendPaymentId!, privyUserId, sender, accessToken);
+        ? await buildClaimPrivateTransfer(claimId, privyUserId, sender, accessToken, apiCluster)
+        : await buildSendPaymentPrivateTransfer(sendPaymentId!, privyUserId, sender, accessToken, apiCluster);
 
-      const broadcastRpc = txData.sendTo === "ephemeral" ? EPHEMERAL_RPC_URL : getSolanaHttpRpc();
+      const ephemeralRpc = getEphemeralRpcForMode(networkMode);
+      const broadcastRpc = txData.sendTo === "ephemeral" ? ephemeralRpc : getRpcForMode(networkMode);
       const broadcastConn =
         txData.sendTo === "ephemeral"
-          ? new Connection(EPHEMERAL_RPC_URL, "confirmed")
+          ? new Connection(ephemeralRpc, "confirmed")
           : connection;
       console.info(
         `[PrivatePay] tx built | kind=${txData.kind} sendTo=${txData.sendTo} rpc=${broadcastRpc} ix=${txData.instructionCount} signers=${txData.requiredSigners.join(",")}`,
@@ -127,53 +130,57 @@ export function usePerPrivateTransfer() {
       );
 
       onProgress?.({ phase: "awaiting_signature", walletTransactionCount: 1 });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const [signedTx] = await wallet.signAllTransactions([tx] as any);
-
-      // Confirm all required signatures are present after user signs
-      let missingAfterSign: string[];
-      if (signedTx instanceof Transaction) {
-        missingAfterSign = signedTx.signatures
-          .filter((s) => !s.signature)
-          .map((s) => s.publicKey.toBase58().slice(0, 8) + "…");
-      } else {
-        const vSigned = signedTx as VersionedTransaction;
-        const staticKeys = vSigned.message.staticAccountKeys;
-        missingAfterSign = vSigned.signatures
-          .map((sig, i) => ({ signer: (staticKeys[i]?.toBase58().slice(0, 8) ?? `acct${i}`) + "…", signed: sig.some((b) => b !== 0) }))
-          .filter((s) => !s.signed)
-          .map((s) => s.signer);
-      }
-      console.info(
-        `[PrivatePay] user signed | allSigned=${missingAfterSign.length === 0} missing=[${missingAfterSign.join(", ") || "none"}]`,
-      );
-
       onProgress?.({ phase: "broadcasting", step: "privateTransfer", index: 1, total: 1 });
       let signature: string;
-      try {
-        const serialized =
+
+      {
+        // Fee payer is injected by the backend (both mainnet and devnet).
+        // User signs first, then the backend countersigns and broadcasts.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const [signedTx] = await wallet.signAllTransactions([tx] as any);
+
+        let missingAfterSign: string[];
+        if (signedTx instanceof Transaction) {
+          missingAfterSign = signedTx.signatures.filter((s) => !s.signature).map((s) => s.publicKey.toBase58().slice(0, 8) + "…");
+        } else {
+          const vSigned = signedTx as VersionedTransaction;
+          const staticKeys = vSigned.message.staticAccountKeys;
+          missingAfterSign = vSigned.signatures
+            .map((sig, i) => ({ signer: (staticKeys[i]?.toBase58().slice(0, 8) ?? `acct${i}`) + "…", signed: sig.some((b) => b !== 0) }))
+            .filter((s) => !s.signed).map((s) => s.signer);
+        }
+        console.info(`[PrivatePay] user signed | allSigned=${missingAfterSign.length === 0} missing=[${missingAfterSign.join(", ") || "none"}]`);
+
+        const feePayerAfterSign =
           signedTx instanceof Transaction
-            ? signedTx.serialize()
-            : (signedTx as VersionedTransaction).serialize();
-        signature = await broadcastConn.sendRawTransaction(serialized, {
-          skipPreflight: false,
-          preflightCommitment: "confirmed",
-        });
-      } catch (e) {
-        if (e instanceof SendTransactionError) {
+            ? signedTx.feePayer?.toBase58()
+            : (signedTx as VersionedTransaction).message.staticAccountKeys[0]?.toBase58();
+        const needsCountersign = feePayerAfterSign && feePayerAfterSign !== sender;
+
+        if (needsCountersign) {
+          const serialized =
+            signedTx instanceof Transaction
+              ? signedTx.serialize({ requireAllSignatures: false, verifySignatures: false })
+              : (signedTx as VersionedTransaction).serialize();
+          console.info(`[PrivatePay] sending to backend for fee payer countersign | feePayer=${feePayerAfterSign?.slice(0, 8)}…`);
+          const result = await countersignAndBroadcastPER(Buffer.from(serialized).toString("base64"), privyUserId, accessToken, apiCluster);
+          signature = result.signature;
+        } else {
           try {
-            const logs = await e.getLogs(broadcastConn);
-            console.error("[PrivatePay] broadcast failed, on-chain logs:", logs);
-          } catch {
-            /* ignore */
+            const serialized =
+              signedTx instanceof Transaction
+                ? signedTx.serialize()
+                : (signedTx as VersionedTransaction).serialize();
+            signature = await broadcastConn.sendRawTransaction(serialized, { skipPreflight: false, preflightCommitment: "confirmed" });
+          } catch (e) {
+            if (e instanceof SendTransactionError) {
+              try { const logs = await e.getLogs(broadcastConn); console.error("[PrivatePay] broadcast failed:", logs); } catch { /* ignore */ }
+              throw new Error(privatePayErrorMessageForUser(e.message, cluster));
+            }
+            if (e instanceof Error) throw new Error(privatePayErrorMessageForUser(e.message, cluster));
+            throw e;
           }
-          const userMsg = privatePayErrorMessageForUser(e.message, cluster);
-          throw new Error(userMsg);
         }
-        if (e instanceof Error) {
-          throw new Error(privatePayErrorMessageForUser(e.message, cluster));
-        }
-        throw e;
       }
 
       // Persist the signature immediately — before confirmation polling — so the backend
@@ -193,7 +200,7 @@ export function usePerPrivateTransfer() {
 
       return signature;
     },
-    [connection],
+    [connection, networkMode],
   );
 
   return { transfer };

@@ -111,6 +111,7 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 const LIMIT = 50;
+const WAITLIST_LIMIT = 25;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -216,6 +217,23 @@ function UserChip({ user, privyId }: { user: AppUser | null; privyId: string | n
         </span>
       )}
     </span>
+  );
+}
+
+function SortableHeader({ col, label, sortCol, sortDir, onSort }: {
+  col: string; label: string; sortCol: string; sortDir: "asc" | "desc";
+  onSort: (col: string) => void;
+}) {
+  const active = sortCol === col;
+  return (
+    <th className="px-4 py-2.5 cursor-pointer select-none hover:text-gray-200" onClick={() => onSort(col)}>
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <span className={active ? "text-blue-400" : "text-gray-700"}>
+          {active ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
+        </span>
+      </span>
+    </th>
   );
 }
 
@@ -451,7 +469,16 @@ export default function AdminDashboard() {
   const [waitlistData, setWaitlistData] = useState<any[]>([]);
   const [waitlistLoading, setWaitlistLoading] = useState(false);
   const [waitlistLoaded, setWaitlistLoaded] = useState(false);
+  const [waitlistTotal, setWaitlistTotal] = useState(0);
+  const [waitlistPage, setWaitlistPage] = useState(1);
+  const [waitlistSearchInput, setWaitlistSearchInput] = useState("");
+  const [waitlistSearch, setWaitlistSearch] = useState("");
+  const [waitlistAccessFilter, setWaitlistAccessFilter] = useState<"all" | "granted" | "not_granted">("all");
+  const [waitlistSortCol, setWaitlistSortCol] = useState("created_at");
+  const [waitlistSortDir, setWaitlistSortDir] = useState<"asc" | "desc">("desc");
   const [grantingAccess, setGrantingAccess] = useState<string | null>(null);
+  const [grantEmailInput, setGrantEmailInput] = useState("");
+  const [grantingByEmail, setGrantingByEmail] = useState(false);
 
   // Keep userId stable in callbacks via ref
   const userIdRef = useRef(userId);
@@ -530,14 +557,24 @@ export default function AdminDashboard() {
     }
   }, [authHeaders, toast]);
 
-  const fetchWaitlist = useCallback(async () => {
+  const fetchWaitlist = useCallback(async (
+    page = 1,
+    opts: { search: string; access: string; sortCol: string; sortDir: "asc" | "desc" } = { search: "", access: "all", sortCol: "created_at", sortDir: "desc" },
+  ) => {
     setWaitlistLoading(true);
     try {
       const headers = await authHeaders();
-      const res = await fetch("/api/admin/waitlist", { headers });
+      const qs = new URLSearchParams({ page: String(page), limit: String(WAITLIST_LIMIT) });
+      if (opts.search) qs.set("search", opts.search);
+      if (opts.access !== "all") qs.set("access", opts.access);
+      qs.set("sort_col", opts.sortCol);
+      qs.set("sort_dir", opts.sortDir);
+      const res = await fetch(`/api/admin/waitlist?${qs}`, { headers });
       if (!res.ok) throw new Error("Failed to load");
       const data = await res.json();
       setWaitlistData(data.entries ?? []);
+      setWaitlistTotal(data.total ?? 0);
+      setWaitlistPage(page);
       setWaitlistLoaded(true);
     } catch {
       toast({ variant: "destructive", title: "Failed to load waitlist" });
@@ -545,6 +582,31 @@ export default function AdminDashboard() {
       setWaitlistLoading(false);
     }
   }, [authHeaders, toast]);
+
+  // ── Grant access by email ────────────────────────────────────────────────────
+  const grantAccessByEmail = useCallback(async () => {
+    const email = grantEmailInput.trim();
+    if (!email) return;
+    setGrantingByEmail(true);
+    try {
+      const res = await fetch("/api/admin/waitlist/grant-by-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message ?? "Failed");
+      }
+      toast({ title: `Mainnet access granted to ${email}` });
+      setGrantEmailInput("");
+      fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Failed", description: err.message });
+    } finally {
+      setGrantingByEmail(false);
+    }
+  }, [grantEmailInput, authHeaders, toast, fetchWaitlist, waitlistPage, waitlistSearch, waitlistAccessFilter, waitlistSortCol, waitlistSortDir]);
 
   // ── Grant / revoke mainnet access ───────────────────────────────────────────
   const grantWaitlistAccess = useCallback(async (id: string, grant: boolean) => {
@@ -566,6 +628,24 @@ export default function AdminDashboard() {
       setGrantingAccess(null);
     }
   }, [authHeaders, toast]);
+
+  // ── Waitlist sort ────────────────────────────────────────────────────────────
+  const handleWaitlistSort = (col: string) => {
+    if (waitlistSortCol === col) {
+      const next = waitlistSortDir === "asc" ? "desc" : "asc";
+      setWaitlistSortDir(next);
+      fetchWaitlist(1, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: col, sortDir: next });
+    } else {
+      setWaitlistSortCol(col);
+      setWaitlistSortDir("desc");
+      fetchWaitlist(1, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: col, sortDir: "desc" });
+    }
+  };
+
+  const applyWaitlistSearch = () => {
+    setWaitlistSearch(waitlistSearchInput);
+    fetchWaitlist(1, { search: waitlistSearchInput, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir });
+  };
 
   // ── Expand row ──────────────────────────────────────────────────────────────
   const toggleExpand = useCallback(async (id: string) => {
@@ -695,7 +775,7 @@ export default function AdminDashboard() {
         <Button
           variant="outline"
           size="sm"
-          onClick={activeTab === "payments" ? refresh : activeTab === "sparks" ? fetchSparks : fetchWaitlist}
+          onClick={activeTab === "payments" ? refresh : activeTab === "sparks" ? fetchSparks : () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })}
           disabled={loading || sparksLoading || waitlistLoading}
           className="border-gray-700 text-gray-300 bg-gray-900 hover:bg-gray-800"
         >
@@ -723,76 +803,156 @@ export default function AdminDashboard() {
         </button>
         <button
           type="button"
-          onClick={() => { setActiveTab("waitlist"); if (!waitlistLoaded) fetchWaitlist(); }}
+          onClick={() => { setActiveTab("waitlist"); if (!waitlistLoaded) fetchWaitlist(1, { search: "", access: "all", sortCol: "created_at", sortDir: "desc" }); }}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "waitlist" ? "border-green-500 text-green-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
           Waitlist
-          {waitlistLoaded && <span className="text-xs bg-green-900/50 text-green-400 rounded px-1.5 py-0.5">{waitlistData.length}</span>}
+          {waitlistLoaded && <span className="text-xs bg-green-900/50 text-green-400 rounded px-1.5 py-0.5">{waitlistTotal}</span>}
         </button>
       </div>
 
       {/* ── Waitlist tab ── */}
       {activeTab === "waitlist" && (
-        <div className="overflow-x-auto rounded-lg border border-gray-800">
-          {waitlistLoading && (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+        <div className="space-y-3">
+
+          {/* Filter bar */}
+          <div className="flex flex-wrap gap-2">
+            <div className="relative flex-1 min-w-52">
+              <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-gray-500 pointer-events-none" />
+              <Input
+                placeholder="Search email, name, privy ID, telegram, twitter…"
+                value={waitlistSearchInput}
+                onChange={(e) => setWaitlistSearchInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && applyWaitlistSearch()}
+                className="pl-9 bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-sm"
+              />
             </div>
-          )}
-          {!waitlistLoading && waitlistLoaded && (
-            <table className="w-full text-xs text-gray-300">
-              <thead>
-                <tr className="border-b border-gray-800 bg-gray-900/60 text-gray-500 uppercase tracking-wider text-left">
-                  <th className="px-4 py-2.5">#</th>
-                  <th className="px-4 py-2.5">Name</th>
-                  <th className="px-4 py-2.5">Email</th>
-                  <th className="px-4 py-2.5">Telegram</th>
-                  <th className="px-4 py-2.5">Twitter</th>
-                  <th className="px-4 py-2.5">Occupation</th>
-                  <th className="px-4 py-2.5">Volume</th>
-                  <th className="px-4 py-2.5">Rails</th>
-                  <th className="px-4 py-2.5">Privy ID</th>
-                  <th className="px-4 py-2.5">Applied</th>
-                  <th className="px-4 py-2.5">Mainnet</th>
-                </tr>
-              </thead>
-              <tbody>
-                {waitlistData.map((e: any, i: number) => (
-                  <tr key={e.id} className="border-b border-gray-800/60 hover:bg-gray-900/50">
-                    <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
-                    <td className="px-4 py-2.5 font-medium text-white">{e.display_name || "—"}</td>
-                    <td className="px-4 py-2.5">{e.email || "—"}</td>
-                    <td className="px-4 py-2.5">{e.telegram_handle || "—"}</td>
-                    <td className="px-4 py-2.5">{e.twitter_username || "—"}</td>
-                    <td className="px-4 py-2.5">{e.occupation || "—"}</td>
-                    <td className="px-4 py-2.5">{e.payment_volume || "—"}</td>
-                    <td className="px-4 py-2.5 max-w-[140px] truncate">{Array.isArray(e.withdrawal_rails) ? e.withdrawal_rails.join(", ") : (e.withdrawal_rails || "—")}</td>
-                    <td className="px-4 py-2.5 font-mono text-gray-500 max-w-[120px] truncate">{e.privy_user_id || "—"}</td>
-                    <td className="px-4 py-2.5 text-gray-500 tabular-nums whitespace-nowrap">{new Date(e.created_at).toLocaleDateString()}</td>
-                    <td className="px-4 py-2.5">
-                      <button
-                        type="button"
-                        disabled={grantingAccess === e.id}
-                        onClick={() => grantWaitlistAccess(e.id, !e.mainnet_access)}
-                        className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-50 ${
-                          e.mainnet_access
-                            ? "bg-green-900/60 text-green-400 hover:bg-green-900"
-                            : "bg-gray-800 text-gray-500 hover:bg-gray-700 hover:text-gray-300"
-                        }`}
-                      >
-                        {grantingAccess === e.id ? "…" : e.mainnet_access ? "Granted" : "Grant"}
-                      </button>
-                    </td>
+            <Select value={waitlistAccessFilter} onValueChange={(v: "all" | "granted" | "not_granted") => {
+              setWaitlistAccessFilter(v);
+              fetchWaitlist(1, { search: waitlistSearch, access: v, sortCol: waitlistSortCol, sortDir: waitlistSortDir });
+            }}>
+              <SelectTrigger className="w-40 bg-gray-900 border-gray-700 text-gray-100">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-gray-900 border-gray-700 text-gray-100">
+                <SelectItem value="all">All entries</SelectItem>
+                <SelectItem value="granted">Access granted</SelectItem>
+                <SelectItem value="not_granted">Not granted</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button size="sm" onClick={applyWaitlistSearch} className="bg-blue-700 hover:bg-blue-600 text-white">
+              Search
+            </Button>
+          </div>
+
+          {/* Grant by email */}
+          <div className="flex gap-2">
+            <Input
+              placeholder="Grant mainnet access by email address…"
+              value={grantEmailInput}
+              onChange={(e) => setGrantEmailInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && grantAccessByEmail()}
+              className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-sm flex-1"
+            />
+            <Button
+              size="sm"
+              onClick={grantAccessByEmail}
+              disabled={grantingByEmail || !grantEmailInput.trim()}
+              className="bg-green-700 hover:bg-green-600 text-white shrink-0"
+            >
+              {grantingByEmail ? <Loader2 className="w-4 h-4 animate-spin" /> : "Grant Access"}
+            </Button>
+          </div>
+
+          {/* Table */}
+          <div className="overflow-x-auto rounded-lg border border-gray-800">
+            {waitlistLoading && (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+              </div>
+            )}
+            {!waitlistLoading && waitlistLoaded && (
+              <table className="w-full text-xs text-gray-300">
+                <thead>
+                  <tr className="border-b border-gray-800 bg-gray-900/60 text-gray-500 uppercase tracking-wider text-left text-[10px]">
+                    <th className="px-4 py-2.5">#</th>
+                    <SortableHeader col="display_name" label="Name" sortCol={waitlistSortCol} sortDir={waitlistSortDir} onSort={handleWaitlistSort} />
+                    <SortableHeader col="email" label="Email" sortCol={waitlistSortCol} sortDir={waitlistSortDir} onSort={handleWaitlistSort} />
+                    <th className="px-4 py-2.5">Telegram</th>
+                    <th className="px-4 py-2.5">Twitter</th>
+                    <SortableHeader col="occupation" label="Occupation" sortCol={waitlistSortCol} sortDir={waitlistSortDir} onSort={handleWaitlistSort} />
+                    <SortableHeader col="payment_volume" label="Volume" sortCol={waitlistSortCol} sortDir={waitlistSortDir} onSort={handleWaitlistSort} />
+                    <th className="px-4 py-2.5">Rails</th>
+                    <th className="px-4 py-2.5">Privy ID</th>
+                    <SortableHeader col="created_at" label="Applied" sortCol={waitlistSortCol} sortDir={waitlistSortDir} onSort={handleWaitlistSort} />
+                    <SortableHeader col="mainnet_access" label="Mainnet" sortCol={waitlistSortCol} sortDir={waitlistSortDir} onSort={handleWaitlistSort} />
                   </tr>
-                ))}
-                {waitlistData.length === 0 && (
-                  <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-600">No entries yet</td></tr>
-                )}
-              </tbody>
-            </table>
-          )}
-          {!waitlistLoading && !waitlistLoaded && (
-            <div className="text-gray-600 text-sm py-8 text-center">Click Refresh to load waitlist.</div>
+                </thead>
+                <tbody>
+                  {waitlistData.map((e: any, i: number) => (
+                    <tr key={e.id} className="border-b border-gray-800/60 hover:bg-gray-900/50">
+                      <td className="px-4 py-2.5 text-gray-600 tabular-nums">{(waitlistPage - 1) * WAITLIST_LIMIT + i + 1}</td>
+                      <td className="px-4 py-2.5 font-medium text-white">{e.display_name || "—"}</td>
+                      <td className="px-4 py-2.5">{e.email || "—"}</td>
+                      <td className="px-4 py-2.5">{e.telegram_handle || "—"}</td>
+                      <td className="px-4 py-2.5">{e.twitter_username || "—"}</td>
+                      <td className="px-4 py-2.5">{e.occupation || "—"}</td>
+                      <td className="px-4 py-2.5">{e.payment_volume || "—"}</td>
+                      <td className="px-4 py-2.5 max-w-[140px] truncate">{Array.isArray(e.withdrawal_rails) ? e.withdrawal_rails.join(", ") : (e.withdrawal_rails || "—")}</td>
+                      <td className="px-4 py-2.5 font-mono text-gray-500 max-w-[120px] truncate" title={e.privy_user_id}>{e.privy_user_id || "—"}</td>
+                      <td className="px-4 py-2.5 text-gray-500 tabular-nums whitespace-nowrap">{new Date(e.created_at).toLocaleDateString()}</td>
+                      <td className="px-4 py-2.5">
+                        <button
+                          type="button"
+                          disabled={grantingAccess === e.id}
+                          onClick={() => grantWaitlistAccess(e.id, !e.mainnet_access)}
+                          className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-50 ${
+                            e.mainnet_access
+                              ? "bg-green-900/60 text-green-400 hover:bg-green-900"
+                              : "bg-gray-800 text-gray-500 hover:bg-gray-700 hover:text-gray-300"
+                          }`}
+                        >
+                          {grantingAccess === e.id ? "…" : e.mainnet_access ? "Granted" : "Grant"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {waitlistData.length === 0 && (
+                    <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-600">No entries found</td></tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+            {!waitlistLoading && !waitlistLoaded && (
+              <div className="text-gray-600 text-sm py-8 text-center">Click Refresh to load waitlist.</div>
+            )}
+          </div>
+
+          {/* Pagination */}
+          {waitlistTotal > WAITLIST_LIMIT && (
+            <div className="flex items-center justify-between text-sm text-gray-400">
+              <span>{waitlistTotal} total · page {waitlistPage} of {Math.ceil(waitlistTotal / WAITLIST_LIMIT)}</span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={waitlistPage <= 1 || waitlistLoading}
+                  onClick={() => fetchWaitlist(waitlistPage - 1, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })}
+                  className="border-gray-700 text-gray-300 bg-gray-900 hover:bg-gray-800"
+                >
+                  ← Prev
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={waitlistPage >= Math.ceil(waitlistTotal / WAITLIST_LIMIT) || waitlistLoading}
+                  onClick={() => fetchWaitlist(waitlistPage + 1, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })}
+                  className="border-gray-700 text-gray-300 bg-gray-900 hover:bg-gray-800"
+                >
+                  Next →
+                </Button>
+              </div>
+            </div>
           )}
         </div>
       )}

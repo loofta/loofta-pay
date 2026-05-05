@@ -19,6 +19,7 @@ import {
 } from "@solana/spl-token";
 import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { getUsdcMint } from "@/lib/per/constants";
+import type { NetworkMode } from "@/lib/solanaRpc";
 
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
@@ -63,10 +64,12 @@ export async function buildUSDCTransferTransaction(params: {
   memo?: string | null;
   /** When set (and distinct from sender), transaction fee payer + ATA rent payer for new accounts. */
   feePayerAddress?: string | null;
+  /** Override USDC mint (for networkMode-aware callers). Defaults to cluster-based getUsdcMint(). */
+  usdcMint?: PublicKey;
 }): Promise<VersionedTransaction> {
   const connection =
     params.connection || new Connection(getSolanaHttpRpc(), "confirmed");
-  const mint = getUsdcMint();
+  const mint = params.usdcMint ?? getUsdcMint();
   const sender = new PublicKey(params.senderAddress);
   const recipient = new PublicKey(params.recipientAddress);
   const feePayerRaw = params.feePayerAddress?.trim();

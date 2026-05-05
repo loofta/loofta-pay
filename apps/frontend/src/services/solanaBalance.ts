@@ -5,22 +5,14 @@
 
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
-import {
-  getSolanaCluster,
-  getSolanaHttpRpc,
-  isNonMainnetCluster,
-} from "@/lib/solanaCluster";
-import { getUsdcMint } from "@/lib/per/constants";
+import { getSolanaCluster, isNonMainnetCluster } from "@/lib/solanaCluster";
+import { getRpcForMode, getUsdcMintForMode, type NetworkMode } from "@/lib/solanaRpc";
 
-/** @deprecated Prefer getUsdcMint() for cluster-aware mint */
+/** @deprecated Prefer getUsdcMintForMode() for networkMode-aware mint */
 export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-function rpcUrl(): string {
-  return getSolanaHttpRpc();
-}
-
-function usdcMintAddress(): string {
-  return getUsdcMint().toBase58();
+function defaultNetworkMode(): NetworkMode {
+  return isNonMainnetCluster() ? "devnet" : "mainnet";
 }
 
 /** React Query stale time shared by header + pay modal for embedded-wallet USDC reads */
@@ -31,38 +23,32 @@ export type EmbeddedSolanaUsdcBalanceRow = {
   walletAddress: string;
 };
 
-export function embeddedSolanaUsdcBalanceQueryKey(address: string) {
-  return [
-    "embeddedSolanaUsdcBalance",
-    address,
-    isNonMainnetCluster() ? "dev" : "main",
-  ] as const;
+export function embeddedSolanaUsdcBalanceQueryKey(address: string, networkMode?: NetworkMode) {
+  const tag = networkMode ?? defaultNetworkMode();
+  return ["embeddedSolanaUsdcBalance", address, tag] as const;
 }
 
 /**
- * Cached USDC balance row for React Query (same RPC as {@link getSolanaUSDCBalance}).
+ * Cached USDC balance row for React Query.
  */
 export async function fetchEmbeddedSolanaUsdcBalance(
-  address: string
+  address: string,
+  networkMode?: NetworkMode
 ): Promise<EmbeddedSolanaUsdcBalanceRow> {
-  const balanceUSD = await getSolanaUSDCBalance(address);
+  const balanceUSD = await getSolanaUSDCBalance(address, networkMode);
   return { balanceUSD, walletAddress: address };
 }
 
 /**
- * USDC balance in raw base units (6 decimals) for a wallet’s USDC ATA.
- * One `getTokenAccountBalance` RPC — cheaper than {@link getSolanaUSDCBalance} (`getTokenAccountsByOwner`) when you only need “is there USDC yet”.
- *
- * Not replaceable with Privy: claim **burner** pubkeys are not embedded wallets; the chain must be read until a backend pushes readiness.
+ * USDC balance in raw base units (6 decimals) for a wallet's USDC ATA.
+ * Uses getAccountInfo instead of getTokenAccountBalance — the latter errors when ATA doesn't exist.
  */
-export async function getUsdcAtaBalanceBaseUnits(ownerAddress: string): Promise<number> {
+export async function getUsdcAtaBalanceBaseUnits(ownerAddress: string, networkMode?: NetworkMode): Promise<number> {
   try {
-    const conn = new Connection(getSolanaHttpRpc(), "confirmed");
-    const usdcMint = getUsdcMint();
+    const mode = networkMode ?? defaultNetworkMode();
+    const conn = new Connection(getRpcForMode(mode), "confirmed");
+    const usdcMint = getUsdcMintForMode(mode);
     const ata = getAssociatedTokenAddressSync(usdcMint, new PublicKey(ownerAddress));
-    // Use getAccountInfo instead of getTokenAccountBalance — the latter returns
-    // an RPC error ("could not find account") when the ATA doesn't exist yet,
-    // while getAccountInfo returns null silently.
     const acctInfo = await conn.getAccountInfo(ata);
     if (!acctInfo || acctInfo.data.length < 72) return 0;
     // SPL Token account layout: amount is a u64 at offset 64
@@ -76,10 +62,13 @@ export async function getUsdcAtaBalanceBaseUnits(ownerAddress: string): Promise<
 /**
  * Get USDC balance from Solana wallet address
  */
-export async function getSolanaUSDCBalance(walletAddress: string): Promise<number> {
+export async function getSolanaUSDCBalance(walletAddress: string, networkMode?: NetworkMode): Promise<number> {
   try {
-    // Use Solana Web3.js or direct RPC call
-    const response = await fetch(rpcUrl(), {
+    const mode = networkMode ?? defaultNetworkMode();
+    const rpc = getRpcForMode(mode);
+    const mint = getUsdcMintForMode(mode).toBase58();
+
+    const response = await fetch(rpc, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -88,30 +77,26 @@ export async function getSolanaUSDCBalance(walletAddress: string): Promise<numbe
         method: "getTokenAccountsByOwner",
         params: [
           walletAddress,
-          {
-            mint: usdcMintAddress(),
-          },
-          {
-            encoding: "jsonParsed",
-          },
+          { mint },
+          { encoding: "jsonParsed" },
         ],
       }),
     });
 
     const data = await response.json();
-    
+
     if (data.error || !data.result?.value || data.result.value.length === 0) {
       return 0;
     }
 
-    // Get USDC balance (6 decimals)
     const account = data.result.value[0];
     const balance = account.account.data.parsed.info.tokenAmount.uiAmount;
 
     if (process.env.NODE_ENV === "development") {
       console.info("[Loofta] USDC balance", {
         cluster: getSolanaCluster(),
-        mint: usdcMintAddress(),
+        networkMode: mode,
+        mint,
         uiAmount: balance ?? 0,
       });
     }
@@ -126,9 +111,10 @@ export async function getSolanaUSDCBalance(walletAddress: string): Promise<numbe
 /**
  * Get SOL balance from Solana wallet address
  */
-export async function getSolanaSOLBalance(walletAddress: string): Promise<number> {
+export async function getSolanaSOLBalance(walletAddress: string, networkMode?: NetworkMode): Promise<number> {
   try {
-    const response = await fetch(rpcUrl(), {
+    const rpc = getRpcForMode(networkMode ?? defaultNetworkMode());
+    const response = await fetch(rpc, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -140,12 +126,11 @@ export async function getSolanaSOLBalance(walletAddress: string): Promise<number
     });
 
     const data = await response.json();
-    
+
     if (data.error || !data.result?.value) {
       return 0;
     }
 
-    // Convert lamports to SOL (9 decimals)
     const lamports = data.result.value;
     return lamports / 1e9;
   } catch (error) {
@@ -155,19 +140,11 @@ export async function getSolanaSOLBalance(walletAddress: string): Promise<number
 }
 
 /**
- * Get total balance in USD
- * Fetches USDC balance (1:1 with USD) and optionally SOL balance
+ * Get total USD balance (USDC 1:1 with USD).
  */
-export async function getSolanaBalanceUSD(walletAddress: string): Promise<number> {
+export async function getSolanaBalanceUSD(walletAddress: string, networkMode?: NetworkMode): Promise<number> {
   try {
-    // Get USDC balance (primary - 1:1 with USD)
-    const usdcBalance = await getSolanaUSDCBalance(walletAddress);
-    
-    // Optionally get SOL balance and convert to USD
-    // For now, just return USDC balance
-    // TODO: Add SOL price conversion if needed
-    
-    return usdcBalance;
+    return await getSolanaUSDCBalance(walletAddress, networkMode);
   } catch (error) {
     console.error("[Solana Balance] Error calculating USD balance:", error);
     return 0;

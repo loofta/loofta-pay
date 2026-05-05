@@ -10,7 +10,8 @@ import {
 } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
 import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSend";
-import { getSolanaHttpRpc, isNonMainnetCluster } from "@/lib/solanaCluster";
+import { useAuthStore } from "@/store/auth";
+import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 import {
   EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS,
@@ -43,57 +44,43 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
   const { wallets: standardWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
   const { signTransaction } = useSignTransaction();
+  const networkMode = useAuthStore((s) => s.networkMode);
   const [isLoading, setIsLoading] = useState(false);
 
   const { data: balanceData, refetch: refreshBalance } = useQuery({
-    queryKey: ["solanaPaymentBalance", user?.id, isNonMainnetCluster() ? "dev" : "main"],
+    queryKey: ["solanaPaymentBalance", user?.id, networkMode],
     queryFn: async () => {
       const token = await getAccessToken?.();
       if (!token || !user?.id) throw new Error("Not authenticated");
       const clientAddress = deriveSolanaEmbeddedAddress(user);
-      let balanceUSD = 0;
+      // Use backend only to resolve the canonical wallet address.
+      // Backend balance is cluster-locked (reflects backend's configured network, not networkMode),
+      // so always fetch balance client-side with the correct networkMode RPC.
       let walletAddress: string | undefined;
       try {
         const r = await fetch(`${BACKEND_URL}/users/me/wallet/balance`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          headers: { Authorization: `Bearer ${token}` },
         });
         if (r.ok) {
           const json = (await r.json()) as { balanceUSD?: number; walletAddress?: string };
-          balanceUSD = json.balanceUSD ?? 0;
           walletAddress = json.walletAddress;
         }
       } catch {
-        // Backend failed, will use client fallback
+        // Backend failed, fall back to client-derived address
       }
       const address = walletAddress || clientAddress;
 
-      // Non-mainnet: always use same RPC/mint as the rest of the app (backend used to be mainnet-only).
-      if (isNonMainnetCluster() && address) {
+      // Always fetch balance client-side so networkMode (mainnet vs devnet) is respected.
+      let balanceUSD = 0;
+      if (address) {
         const row = await queryClient.fetchQuery({
-          queryKey: embeddedSolanaUsdcBalanceQueryKey(address),
-          queryFn: () => fetchEmbeddedSolanaUsdcBalance(address),
+          queryKey: embeddedSolanaUsdcBalanceQueryKey(address, networkMode),
+          queryFn: () => fetchEmbeddedSolanaUsdcBalance(address, networkMode),
           staleTime: EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS,
         });
         balanceUSD = row.balanceUSD;
-        walletAddress = address;
-        return { balanceUSD, walletAddress };
       }
-
-      // Mainnet: prefer backend; if zero, try client (shared cache with header hook).
-      if (address && balanceUSD === 0) {
-        const row = await queryClient.fetchQuery({
-          queryKey: embeddedSolanaUsdcBalanceQueryKey(address),
-          queryFn: () => fetchEmbeddedSolanaUsdcBalance(address),
-          staleTime: EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS,
-        });
-        if (row.balanceUSD > 0) {
-          balanceUSD = row.balanceUSD;
-          walletAddress = walletAddress ?? address;
-        }
-      }
-      return { balanceUSD, walletAddress: walletAddress ?? address ?? undefined };
+      return { balanceUSD, walletAddress: address ?? undefined };
     },
     enabled: enabled && authenticated === true && !!getAccessToken && !!user?.id,
   });
@@ -125,7 +112,7 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
 
     setIsLoading(true);
     try {
-      const conn = new Connection(getSolanaHttpRpc(), "confirmed");
+      const conn = new Connection(getRpcForMode(networkMode), "confirmed");
       return await sendUsdcWithPrivyEmbeddedWallet({
         senderAddress,
         recipientAddress: config.recipientAddress.trim(),
@@ -135,6 +122,9 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
         privyUserId: user?.id,
         signTransaction,
         signAndSendTransaction,
+        usdcMint: getUsdcMintForMode(networkMode),
+        chain: getPrivySolanaChainForMode(networkMode),
+        skipLooftaFeePayer: networkMode === "mainnet",
       });
     } catch (error: any) {
       if (

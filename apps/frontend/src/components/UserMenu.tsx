@@ -321,8 +321,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         if (res.ok) {
           const { mainnetAccess: access } = await res.json();
           setMainnetAccess(!!access);
-          // If access was revoked, reset to devnet
-          if (!access) setNetworkMode("devnet");
+          // If full access was revoked, keep networkMode as-is so users can still view/withdraw received funds
+          // but gating happens at the action level (pay/send disabled without mainnetAccess)
         }
       } catch { /* non-critical */ }
     };
@@ -567,20 +567,25 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               </button>
             </div>
 
-            {/* Network toggle — localhost only */}
-            {isLocalhost && (
-              <div className="mb-2">
-                <div className={`flex items-center justify-between px-3 py-2 rounded-lg ${isDarkPage ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}>
+            {/* Network toggle — visible to all; non-mainnetAccess users get view-only mainnet */}
+            <div className="mb-2">
+              <div className={`flex items-center justify-between px-3 py-2 rounded-lg ${isDarkPage ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}>
+                <div className="flex flex-col min-w-0">
                   <span className={`text-sm ${isDarkPage ? "text-gray-300" : "text-gray-700"}`}>
-                    {networkMode === "mainnet" ? "Mainnet" : "Devnet"}
+                    {networkMode === "mainnet"
+                      ? (mainnetAccess ? "Mainnet Beta" : "Mainnet (view only)")
+                      : "Devnet"}
                   </span>
-                  <Switch
-                    checked={networkMode === "mainnet"}
-                    onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
-                  />
+                  {networkMode === "mainnet" && !mainnetAccess && (
+                    <span className="text-xs text-amber-400/80 leading-tight">Payments disabled — balance &amp; withdraw only</span>
+                  )}
                 </div>
+                <Switch
+                  checked={networkMode === "mainnet"}
+                  onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
+                />
               </div>
-            )}
+            </div>
 
             {/* Divider */}
             {username && (
@@ -928,21 +933,26 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
           </div>
 
           <div className="space-y-4 py-0">
-            {/* Network toggle — localhost only */}
-            {isLocalhost && (
-              <div>
-                <Label className="text-sm font-medium mb-2 block text-gray-300">Network</Label>
-                <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+            {/* Network toggle — visible to all */}
+            <div>
+              <Label className="text-sm font-medium mb-2 block text-gray-300">Network</Label>
+              <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                <div className="flex flex-col min-w-0">
                   <span className="text-sm text-white/90">
-                    {networkMode === "mainnet" ? "Mainnet" : "Devnet"}
+                    {networkMode === "mainnet"
+                      ? (mainnetAccess ? "Mainnet Beta" : "Mainnet (view only)")
+                      : "Devnet"}
                   </span>
-                  <Switch
-                    checked={networkMode === "mainnet"}
-                    onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
-                  />
+                  {networkMode === "mainnet" && !mainnetAccess && (
+                    <span className="text-xs text-amber-400/80 mt-0.5">Balance &amp; withdraw only — payments require beta access</span>
+                  )}
                 </div>
+                <Switch
+                  checked={networkMode === "mainnet"}
+                  onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
+                />
               </div>
-            )}
+            </div>
 
             {/* Sign-in methods - show connected first, then Add buttons */}
             <div>
@@ -1109,17 +1119,19 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   </button>
                   <button
                     onClick={() => {
+                      if (networkMode === "devnet") return;
                       setShowSettingsModal(false);
                       setShowWithdrawModal(true);
                     }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
+                    disabled={networkMode === "devnet"}
+                    className="w-full text-left px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                       <polyline points="7 10 12 15 17 10"></polyline>
                       <line x1="12" y1="15" x2="12" y2="3"></line>
                     </svg>
-                    Withdraw
+                    Withdraw{networkMode === "devnet" ? " (mainnet only)" : ""}
                   </button>
                   <button
                     onClick={async () => {

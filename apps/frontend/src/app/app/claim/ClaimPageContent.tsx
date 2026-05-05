@@ -19,7 +19,8 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { useRouter, usePathname } from "next/navigation";
 import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
-import { isNonMainnetCluster } from "@/lib/solanaCluster";
+import { useAuthStore } from "@/store/auth";
+import { CROSS_CHAIN_ENABLED } from "@/lib/features";
 import { MessageInput } from "@/components/MessageInput";
 
 /** Inline Loofta logo SVG (matches pay modal). */
@@ -93,13 +94,11 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
     if (isStandaloneClaim) router.replace("/?tab=receive&create=1");
   }, [isStandaloneClaim, router]);
 
+  const networkMode = useAuthStore((s) => s.networkMode);
+  const crossChainEnabled = CROSS_CHAIN_ENABLED || networkMode !== "mainnet";
+
   const { data: rawTokens = [] } = useTokensQuery();
-  const tokens = useMemo(
-    () => isNonMainnetCluster()
-      ? rawTokens.filter(t => ['solana', 'sol'].includes(t.chain?.toLowerCase() ?? '') && t.symbol?.toUpperCase() === 'USDC')
-      : rawTokens,
-    [rawTokens],
-  );
+  const tokens = useMemo(() => rawTokens, [rawTokens]);
   const [toSel, setToSel] = useState<TokenSelection | undefined>(undefined);
   const [amount, setAmount] = useState<string>("");
   const [recipient, setRecipient] = useState<string>("");
@@ -748,7 +747,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                             </div>
                             <div className="flex-1 min-w-0">
                               <span className="font-semibold text-gray-900 block">Use another wallet</span>
-                              <span className="text-sm text-gray-500">Different token or network</span>
+                              <span className="text-sm text-gray-500">{crossChainEnabled ? "Different token or network" : "USDC on Solana"}</span>
                             </div>
                             {receiveDestination === "other" ? (
                               <span className="text-xs font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Selected</span>
@@ -760,17 +759,19 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
 
                         {receiveDestination === "other" && (
                           <>
-                            <div>
-                              <label className="text-gray-600 mb-1 block">Token you want to receive</label>
-                              <TokenCombobox
-                                tokens={tokens}
-                                value={toSel}
-                                onChange={setToSel}
-                                placeholder="Select token"
-                                onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                                className="bg-white text-gray-900 border border-gray-200 hover:border-orange-300 w-full h-12"
-                              />
-                            </div>
+                            {crossChainEnabled && (
+                              <div>
+                                <label className="text-gray-600 mb-1 block">Token you want to receive</label>
+                                <TokenCombobox
+                                  tokens={tokens}
+                                  value={toSel}
+                                  onChange={setToSel}
+                                  placeholder="Select token"
+                                  onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                                  className="bg-white text-gray-900 border border-gray-200 hover:border-orange-300 w-full h-12"
+                                />
+                              </div>
+                            )}
                             <div>
                               <label className="text-gray-600 mb-1 block">Wallet address</label>
                               <Input
@@ -808,17 +809,19 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                     ) : (
                       /* Not logged in: token + address only */
                       <>
-                        <div>
-                          <label className="text-gray-600 mb-1 block">Token you want to receive</label>
-                          <TokenCombobox
-                            tokens={tokens}
-                            value={toSel}
-                            onChange={setToSel}
-                            placeholder="Select token"
-                            onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                            className="bg-white text-gray-900 border border-gray-200 hover:border-orange-300 w-full h-12"
-                          />
-                        </div>
+                        {crossChainEnabled && (
+                          <div>
+                            <label className="text-gray-600 mb-1 block">Token you want to receive</label>
+                            <TokenCombobox
+                              tokens={tokens}
+                              value={toSel}
+                              onChange={setToSel}
+                              placeholder="Select token"
+                              onQuery={async (q) => tokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                              className="bg-white text-gray-900 border border-gray-200 hover:border-orange-300 w-full h-12"
+                            />
+                          </div>
+                        )}
                         <div>
                           <label className="text-gray-600 mb-1 block">Your wallet address</label>
                           <Input

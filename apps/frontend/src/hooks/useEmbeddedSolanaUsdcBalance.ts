@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets } from "@privy-io/react-auth/solana";
-import { isNonMainnetCluster } from "@/lib/solanaCluster";
+import { useAuthStore } from "@/store/auth";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 import {
   EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS,
@@ -30,17 +30,18 @@ export function useEmbeddedSolanaUsdcBalance(
   const { enabled = true } = options;
   const { user, authenticated } = usePrivy();
   const { ready: walletsReady } = useWallets();
+  const networkMode = useAuthStore((s) => s.networkMode);
   const address = deriveSolanaEmbeddedAddress(user ?? null);
 
   const query = useQuery({
     queryKey: address
-      ? embeddedSolanaUsdcBalanceQueryKey(address)
-      : (["embeddedSolanaUsdcBalance", "__none__", isNonMainnetCluster() ? "dev" : "main"] as const),
+      ? embeddedSolanaUsdcBalanceQueryKey(address, networkMode)
+      : (["embeddedSolanaUsdcBalance", "__none__", networkMode] as const),
     queryFn: async () => {
       if (!address) {
         throw new Error("Missing Solana address for balance query");
       }
-      return fetchEmbeddedSolanaUsdcBalance(address);
+      return fetchEmbeddedSolanaUsdcBalance(address, networkMode);
     },
     staleTime: EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS,
     refetchInterval: 30_000,

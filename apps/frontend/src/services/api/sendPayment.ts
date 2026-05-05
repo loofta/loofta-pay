@@ -138,10 +138,11 @@ export async function buildSendPaymentPrivateTransfer(
   userId: string,
   senderWallet: string,
   accessToken?: string | null,
+  cluster?: 'devnet' | 'mainnet',
 ): Promise<MagicblockTxResponse> {
   return fetchApi<MagicblockTxResponse>(`/send-payment/${sendPaymentId}/build-private-transfer`, {
     method: 'POST',
-    body: JSON.stringify({ sender_wallet: senderWallet }),
+    body: JSON.stringify({ sender_wallet: senderWallet, cluster }),
     userId,
     accessToken,
   });

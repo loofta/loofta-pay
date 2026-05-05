@@ -113,12 +113,14 @@ export class SolanaSponsorService {
     timeoutMs = 90_000,
     pollMs = 400,
     label = 'sponsor',
+    conn?: Connection,
   ): Promise<void> {
+    const pollConn = conn ?? this.connection;
     const start = Date.now();
     let lastProgressLog = 0;
-    const rpcEndpoint = this.connection.rpcEndpoint;
+    const rpcEndpoint = pollConn.rpcEndpoint;
     while (Date.now() - start < timeoutMs) {
-      const { value } = await this.connection.getSignatureStatuses([signature], {
+      const { value } = await pollConn.getSignatureStatuses([signature], {
         searchTransactionHistory: true,
       });
       const st = value[0];
@@ -165,24 +167,25 @@ export class SolanaSponsorService {
       return cluster === 'devnet' || cluster === 'testnet';
     })();
 
+    const helius = this.config.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
+
     if (isDevnet) {
       const devnetRpc =
         this.config.get<string>('SOLANA_DEVNET_RPC_URL') ??
         process.env.SOLANA_DEVNET_RPC_URL ??
         getEnvFromFile('SOLANA_DEVNET_RPC_URL');
-      return devnetRpc?.trim() || 'https://api.devnet.solana.com';
+      if (devnetRpc?.trim()) return devnetRpc.trim();
+      if (helius) return `https://devnet.helius-rpc.com/?api-key=${helius}`;
+      return 'https://api.devnet.solana.com';
     }
 
-    // Mainnet: explicit RPC > Helius > public fallback
+    // Mainnet: Helius key > explicit RPC > public fallback
+    if (helius) return `https://mainnet.helius-rpc.com/?api-key=${helius}`;
     const mainnetRpc =
       this.config.get<string>('SOLANA_RPC_URL') ??
       process.env.SOLANA_RPC_URL ??
       getEnvFromFile('SOLANA_RPC_URL');
     if (mainnetRpc?.trim()) return mainnetRpc.trim();
-
-    const helius = this.config.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
-    if (helius) return `https://mainnet.helius-rpc.com/?api-key=${helius}`;
-
     return 'https://api.mainnet-beta.solana.com';
   }
 
@@ -253,13 +256,14 @@ export class SolanaSponsorService {
   }
 
   /**
-   * Set our fee payer on the transaction, refresh the blockhash, partially sign with the fee payer
-   * keypair, and return the updated transaction. The user wallet still needs to sign before broadcasting.
+   * Set our fee payer on the MagicBlock PER transaction, refresh the blockhash, and return the
+   * prepared transaction WITHOUT signing. The user wallet signs next via Privy, then the frontend
+   * calls signAndBroadcastPER so the fee payer countersigns with the same blockhash the user used.
    *
-   * Used on devnet where Privy does not support fee sponsoring: the backend injects the fee payer
-   * partial signature so the frontend only needs the user's wallet signature.
+   * Partial-signing upfront is intentionally avoided: Privy's signTransaction internally calls
+   * prepareTransaction which replaces the blockhash, invalidating any existing partial signatures.
    */
-  async prepareAndPartialSignTransaction(serializedBase64: string): Promise<{
+  async prepareAndPartialSignTransaction(serializedBase64: string, conn?: Connection): Promise<{
     transactionBase64: string;
     recentBlockhash: string;
     lastValidBlockHeight: number;
@@ -268,7 +272,8 @@ export class SolanaSponsorService {
       throw new Error('Fee payer not configured for sponsoring');
     }
     const txBuffer = Buffer.from(serializedBase64, 'base64');
-    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
+    const resolveConn = conn ?? this.connection;
+    const { blockhash, lastValidBlockHeight } = await resolveConn.getLatestBlockhash('confirmed');
     const feePayerPk = this.feePayerKeypair.publicKey;
 
     // Try legacy first — MagicBlock PER private transfer uses legacy transactions
@@ -281,10 +286,9 @@ export class SolanaSponsorService {
       );
       legacy.recentBlockhash = blockhash;
       legacy.feePayer = feePayerPk;
-      legacy.partialSign(this.feePayerKeypair);
       const serialized = legacy.serialize({ requireAllSignatures: false, verifySignatures: false });
       this.logger.log(
-        `SolanaSponsor[prepareAndPartialSign]: legacy tx ${serialized.length}b feePayer=${feePayerPk.toBase58().slice(0, 8)}... blockhash=${blockhash.slice(0, 8)}...`,
+        `SolanaSponsor[prepareAndPartialSign]: legacy tx ${serialized.length}b feePayer=${feePayerPk.toBase58().slice(0, 8)}... blockhash=${blockhash.slice(0, 8)}... (unsigned, countersign after user)`,
       );
       return {
         transactionBase64: Buffer.from(serialized).toString('base64'),
@@ -302,7 +306,7 @@ export class SolanaSponsorService {
     const vMsg = originalV0.message;
     const altAccounts: AddressLookupTableAccount[] = [];
     for (const lookup of vMsg.addressTableLookups) {
-      const result = await this.connection.getAddressLookupTable(lookup.accountKey);
+      const result = await resolveConn.getAddressLookupTable(lookup.accountKey);
       if (result.value) altAccounts.push(result.value);
     }
     this.logger.log(
@@ -311,11 +315,12 @@ export class SolanaSponsorService {
     const decompiledMsg = TransactionMessage.decompile(vMsg, { addressLookupTableAccounts: altAccounts });
 
     // The MagicBlock program does a CPI SystemProgram.transfer FROM the sender's wallet to
-    // create the ephemeral shuttle account (~2039280 lamports rent). The sender may have 0 SOL,
-    // so we prepend a top-up from our fee payer so the sender can cover that internal transfer.
+    // create the ephemeral shuttle account (~2039280 lamports rent). On mainnet an additional
+    // 0.002 SOL flat fee is also charged from the sender. We prepend a top-up from our fee payer
+    // so the sender can cover both. 5_000_000 = 0.005 SOL covers rent + mainnet fee + buffer.
     const senderPk = vMsg.staticAccountKeys[0];
-    const SHUTTLE_TOPUP_LAMPORTS = 3_000_000; // 0.003 SOL — covers 2039280 rent + buffer
-    const senderBalance = await this.connection.getBalance(senderPk);
+    const SHUTTLE_TOPUP_LAMPORTS = 5_000_000;
+    const senderBalance = await resolveConn.getBalance(senderPk);
     const prefundIxs: ReturnType<typeof SystemProgram.transfer>[] = [];
     if (senderBalance < SHUTTLE_TOPUP_LAMPORTS) {
       const topUp = SHUTTLE_TOPUP_LAMPORTS - senderBalance;
@@ -327,16 +332,18 @@ export class SolanaSponsorService {
       );
     }
 
-    const newMsg = new TransactionMessage({
+    // Rebuild as legacy (not v0) — ALTs are fully resolved above so all accounts can be inlined
+    // as static keys. Legacy txs have no ALT references, so Privy's embedded wallet can sign
+    // without calling prepareTransaction to look up tables on-chain.
+    const legacyMsg = new TransactionMessage({
       payerKey: feePayerPk,
       recentBlockhash: blockhash,
       instructions: [...prefundIxs, ...decompiledMsg.instructions],
-    }).compileToV0Message(altAccounts);
-    const newV0 = new VersionedTransaction(newMsg);
-    newV0.sign([this.feePayerKeypair]);
-    const ser = newV0.serialize();
+    }).compileToLegacyMessage();
+    const legacyTx = Transaction.populate(legacyMsg);
+    const ser = legacyTx.serialize({ requireAllSignatures: false, verifySignatures: false });
     this.logger.log(
-      `SolanaSponsor[prepareAndPartialSign]: v0 rebuilt | ${ser.length}b prefunded=${prefundIxs.length > 0} blockhash=${blockhash.slice(0, 8)}...`,
+      `SolanaSponsor[prepareAndPartialSign]: v0→legacy rebuilt | ${ser.length}b prefunded=${prefundIxs.length > 0} blockhash=${blockhash.slice(0, 8)}... (unsigned, countersign after user)`,
     );
     return {
       transactionBase64: Buffer.from(ser).toString('base64'),
@@ -468,6 +475,110 @@ export class SolanaSponsorService {
       );
     });
     this.logger.log(`SolanaSponsor[sign-and-broadcast]: v0 total ${Date.now() - reqStart}ms`);
+    return { signature: sig };
+  }
+
+  /**
+   * Mainnet path: resolve ALTs and convert a v0 MagicBlock transaction to legacy format so
+   * Privy's embedded wallet can sign it without calling prepareTransaction to look up tables.
+   * Does NOT inject our fee payer — Privy's gas sponsorship covers the tx fee on mainnet.
+   */
+  async convertV0ToLegacy(serializedBase64: string, conn?: Connection): Promise<{ transactionBase64: string }> {
+    const txBuffer = Buffer.from(serializedBase64, 'base64');
+    // Already legacy — nothing to do.
+    try {
+      Transaction.from(txBuffer);
+      return { transactionBase64: serializedBase64 };
+    } catch {
+      // fall through to v0 handling
+    }
+    const resolveConn = conn ?? this.connection;
+    const v0 = VersionedTransaction.deserialize(txBuffer);
+    const vMsg = v0.message;
+    const altAccounts: AddressLookupTableAccount[] = [];
+    for (const lookup of vMsg.addressTableLookups) {
+      const result = await resolveConn.getAddressLookupTable(lookup.accountKey);
+      if (result.value) altAccounts.push(result.value);
+    }
+    this.logger.log(
+      `SolanaSponsor[convertV0ToLegacy]: resolved ALTs=${altAccounts.length}/${vMsg.addressTableLookups.length}`,
+    );
+    const decompiledMsg = TransactionMessage.decompile(vMsg, { addressLookupTableAccounts: altAccounts });
+    const legacyMsg = new TransactionMessage({
+      payerKey: vMsg.staticAccountKeys[0],
+      recentBlockhash: decompiledMsg.recentBlockhash,
+      instructions: decompiledMsg.instructions,
+    }).compileToLegacyMessage();
+    const legacyTx = Transaction.populate(legacyMsg);
+    const ser = legacyTx.serialize({ requireAllSignatures: false, verifySignatures: false });
+    this.logger.log(`SolanaSponsor[convertV0ToLegacy]: v0→legacy ${ser.length}b`);
+    return { transactionBase64: Buffer.from(ser).toString('base64') };
+  }
+
+  /**
+   * Countersign a user-signed MagicBlock PER transaction with our fee payer and broadcast.
+   *
+   * Unlike signAndBroadcast, this allows SystemProgram.transfer FROM the fee payer (needed for
+   * the shuttle SOL top-up prepended by prepareAndPartialSignTransaction). The total SOL the
+   * fee payer can transfer is capped at 5_000_000 lamports (0.005 SOL) to prevent abuse.
+   */
+  async signAndBroadcastPER(userSignedTxBase64: string, conn?: Connection): Promise<{ signature: string }> {
+    if (!this.feePayerKeypair || !this.feePayerAddress) {
+      throw new Error('Solana fee sponsorship is not configured');
+    }
+
+    const broadcastConn = conn ?? this.connection;
+    const transactionBuffer = Buffer.from(userSignedTxBase64, 'base64');
+    const reqStart = Date.now();
+    this.logger.log(
+      `SolanaSponsor[sign-and-broadcast-per]: incoming bytes=${transactionBuffer.length} rpc=${broadcastConn.rpcEndpoint}`,
+    );
+
+    const legacy = Transaction.from(transactionBuffer);
+    if (!legacy.feePayer || legacy.feePayer.toBase58() !== this.feePayerAddress) {
+      throw new Error('Invalid fee payer in PER transaction');
+    }
+
+    // Allow SOL transfers from fee payer only up to the shuttle top-up cap (0.005 SOL).
+    const MAX_TOPUP_LAMPORTS = 5_000_000;
+    let totalFeePayerLamports = 0;
+    for (const ix of legacy.instructions) {
+      if (ix.programId.equals(SystemProgram.programId) && ix.data.length >= 12 && ix.data.readUInt32LE(0) === 2) {
+        const sender = ix.keys[0]?.pubkey;
+        if (sender?.toBase58() === this.feePayerAddress) {
+          const lamports = Number(ix.data.readBigUInt64LE(4));
+          totalFeePayerLamports += lamports;
+          if (totalFeePayerLamports > MAX_TOPUP_LAMPORTS) {
+            throw new Error(`PER transaction attempts to transfer too much SOL from fee payer (${totalFeePayerLamports} lamports)`);
+          }
+        }
+      }
+    }
+
+    legacy.partialSign(this.feePayerKeypair);
+
+    if (!legacy.verifySignatures()) {
+      const signerState = legacy.signatures.map((s) => ({
+        signer: s.publicKey.toBase58().slice(0, 8) + '...',
+        signed: Boolean(s.signature),
+      }));
+      throw new Error(`PER transaction signature verification failed: ${JSON.stringify(signerState)}`);
+    }
+
+    const sendT0 = Date.now();
+    const sig = await broadcastConn.sendRawTransaction(
+      legacy.serialize({ requireAllSignatures: false, verifySignatures: false }),
+      { skipPreflight: false, maxRetries: 3, preflightCommitment: 'confirmed' },
+    );
+    this.logger.log(
+      `SolanaSponsor[sign-and-broadcast-per]: sendRawTransaction done in ${Date.now() - sendT0}ms sig=${sig.slice(0, 12)}...`,
+    );
+    await this.waitUntilSignatureVisible(sig, 12_000, 400, 'sign-and-broadcast-per', broadcastConn).catch((e) => {
+      this.logger.warn(
+        `SolanaSponsor: PER sig ${sig.slice(0, 12)}... not yet visible after short wait (${String((e as Error)?.message ?? e)}). Returning immediately.`,
+      );
+    });
+    this.logger.log(`SolanaSponsor[sign-and-broadcast-per]: total ${Date.now() - reqStart}ms`);
     return { signature: sig };
   }
 }

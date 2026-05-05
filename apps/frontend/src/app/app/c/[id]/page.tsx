@@ -62,8 +62,7 @@ import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
-import { getSolanaHttpRpc, isNonMainnetCluster } from "@/lib/solanaCluster";
-import { getUsdcMint } from "@/lib/per/constants";
+import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
 import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
@@ -77,6 +76,7 @@ import {
   privatePaymentFundsAppearCopy,
   privatePaymentWaitingAfterSenderCopy,
 } from "@/lib/privatePaymentCopy";
+import { CROSS_CHAIN_ENABLED } from "@/lib/features";
 
 function formatPerTransferStepName(step: string): string {
   const labels: Record<string, string> = {
@@ -407,7 +407,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
         isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
       });
       return {
-        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient" },
+        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean },
         latestIntent: data.intent ? {
           depositAddress: data.intent.deposit_address || null,
           memo: data.intent.memo ?? null,
@@ -662,14 +662,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     });
   }, [authenticated, user, getAccessToken]);
 
-  /** USDC-only pay UX in devnet mode. networkMode is the source of truth since cluster is always mainnet-beta. */
-  const hideAlternateTokenPay = networkMode !== "mainnet";
+  const hideAlternateTokenPay = false;
+  /** User is viewing mainnet but cannot send payments (no beta access). Balance/withdraw still works. */
+  const mainnetViewOnly = networkMode === "mainnet" && !hasMainnetAccess;
   const { data: tokensRaw = [], isLoading } = useTokensQuery();
-  /** Devnet/testnet: 1-click token list often only lists mainnet Solana USDC mint. Inject cluster USDC so Pay with + selection resolve. */
+  /** Devnet mode: inject devnet USDC mint so Pay with + selection resolve correctly. */
   const tokens = useMemo(() => {
     const list = tokensRaw;
-    if (!isNonMainnetCluster()) return list;
-    const mint = getUsdcMint().toBase58();
+    if (networkMode === "mainnet") return list;
+    const mint = getUsdcMintForMode(networkMode).toBase58();
     const mintLc = mint.toLowerCase();
     // Remove Solana USDC rows whose mint is not this cluster (e.g. mainnet EPjF… on devnet).
     const filtered = list.filter((t) => {
@@ -746,11 +747,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
   // Poll claim burner USDC (per-claim pubkey — not the user’s Privy wallet). Privy cannot surface this; we must read chain state (or a future backend “burner funded” flag).
   const burnerAddr = (claim as { claim_burner_address?: string | null } | null)?.claim_burner_address ?? null;
+  /** Network the claim was created on — drives burner polling and sweep RPC. Overrides user's global networkMode for claim-specific ops. */
+  const claimNetworkMode = (claim as { is_devnet?: boolean } | null)?.is_devnet === false ? "mainnet" : networkMode;
   const burnerReadyQuery = useQuery({
-    queryKey: ["burner-ready", burnerAddr],
+    queryKey: ["burner-ready", burnerAddr, claimNetworkMode],
     queryFn: async (): Promise<{ balance: number; isReady: boolean }> => {
       if (!burnerAddr) return { balance: 0, isReady: false };
-      const balance = await getUsdcAtaBalanceBaseUnits(burnerAddr);
+      const balance = await getUsdcAtaBalanceBaseUnits(burnerAddr, claimNetworkMode);
       console.info(
         `[BurnerReady] claimId=${id} usdcBaseUnits=${balance} (ATA may be missing until first deposit)`,
       );
@@ -1101,6 +1104,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   };
 
   const selectedFrom = findTokenBySelection(tokens, fromSel || null);
+  /** True when user picks a non-USDC/Solana token on mainnet beta — show "unavailable" instead of quote. */
+  const crossChainUnavailableOnBeta = networkMode === "mainnet" && !CROSS_CHAIN_ENABLED && !!selectedFrom &&
+    !(selectedFrom.symbol === "USDC" && ["solana", "sol"].includes((selectedFrom.chain ?? "").toLowerCase()));
   const destToken = useMemo(() => {
     if (!claim?.to_symbol || !claim?.to_chain) return null;
     // Try exact match first
@@ -1790,7 +1796,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       setConfirmingTxSignature(sig);
       setConfirmingTxSource("wallet");
 
-      const connection = new Connection(getSolanaHttpRpc(), "confirmed");
+      const connection = new Connection(getRpcForMode(networkMode), "confirmed");
       const confirmed = await waitForConfirmation(connection, sig, 90_000);
       if (!confirmed) {
         throw new Error(
@@ -1888,8 +1894,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         return;
       }
 
-      const connection = new Connection(getSolanaHttpRpc(), "confirmed");
-      const anchorWallet = privyStandardWalletToAnchorWallet(wallet, privySolanaSignTransaction);
+      const connection = new Connection(getRpcForMode(networkMode), "confirmed");
+      const anchorWallet = privyStandardWalletToAnchorWallet(wallet, privySolanaSignTransaction, getPrivySolanaChainForMode(networkMode));
       const isBurnerForLoofta = !!((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
       if (!user?.id) {
         throw new Error("Log in to pay with Loofta.");
@@ -1984,7 +1990,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     if (txHashRecoveryRef.current === txHash) return; // already tried this hash
     txHashRecoveryRef.current = txHash;
 
-    const conn = new Connection(getSolanaHttpRpc(), "confirmed");
+    const conn = new Connection(getRpcForMode(networkMode), "confirmed");
     console.info(`[TxRecovery] Polling on-chain for saved tx hash ${txHash.slice(0, 12)}…`);
 
     waitForSignatureConfirmation(conn, txHash, 60_000, 2000, "recovery")
@@ -3208,37 +3214,47 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           transition={{ duration: 0.2 }}
                           className="mt-4"
                         >
-                          <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
-                                  <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
-                                </div>
-                                <div>
-                                  <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send approximately</p>
-                                  {quoteLoading ? (
-                                    <div className="flex items-center gap-2">
-                                      <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
-                                      <p className="text-lg font-bold text-emerald-900">Calculating...</p>
-                                    </div>
-                                  ) : (
-                                    <p className="text-lg font-bold text-emerald-900">
-                                      {quote?.amountInFormatted
-                                        ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                        : quote?.est
-                                          ? `${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
-                                          : quote?.usd
-                                            ? `≈ $${quote.usd.toFixed(2)}`
-                                            : selectedFrom.price && claim?.amount
-                                              ? `${roundUpDecimals((parseFloat(claim.amount) / selectedFrom.price).toFixed(6), 6)} ${selectedFrom.symbol}`
-                                              : "Unable to calculate"}
-                                    </p>
-                                  )}
-                                </div>
+                          {crossChainUnavailableOnBeta ? (
+                            <div className="p-4 bg-amber-500/10 rounded-xl border border-amber-500/30 flex items-center gap-3">
+                              <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={32} />
+                              <div>
+                                <p className="text-sm font-semibold text-amber-300">{selectedFrom.symbol} on {selectedFrom.chain}</p>
+                                <p className="text-xs text-amber-400/80 mt-0.5">Cross-chain payments unavailable on mainnet beta</p>
                               </div>
-                              <ArrowRight className="w-5 h-5 text-emerald-600" />
                             </div>
-                          </div>
+                          ) : (
+                            <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                                    <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send approximately</p>
+                                    {quoteLoading ? (
+                                      <div className="flex items-center gap-2">
+                                        <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                                        <p className="text-lg font-bold text-emerald-900">Calculating...</p>
+                                      </div>
+                                    ) : (
+                                      <p className="text-lg font-bold text-emerald-900">
+                                        {quote?.amountInFormatted
+                                          ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                          : quote?.est
+                                            ? `${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
+                                            : quote?.usd
+                                              ? `≈ $${quote.usd.toFixed(2)}`
+                                              : selectedFrom.price && claim?.amount
+                                                ? `${roundUpDecimals((parseFloat(claim.amount) / selectedFrom.price).toFixed(6), 6)} ${selectedFrom.symbol}`
+                                                : "Unable to calculate"}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                                <ArrowRight className="w-5 h-5 text-emerald-600" />
+                              </div>
+                            </div>
+                          )}
                         </motion.div>
                       ) : selectedFrom && selectedFrom.symbol === usdcSolanaToken?.symbol && selectedFrom.chain === usdcSolanaToken?.chain ? (
                         PRIVATE_PAYMENT_COMING_SOON ? (
@@ -3388,37 +3404,47 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           transition={{ duration: 0.2 }}
                           className="mt-4"
                         >
-                          <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
-                                  <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
-                                </div>
-                                <div>
-                                  <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send approximately</p>
-                                  {quoteLoading ? (
-                                    <div className="flex items-center gap-2">
-                                      <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
-                                      <p className="text-lg font-bold text-emerald-900">Calculating...</p>
-                                    </div>
-                                  ) : (
-                                    <p className="text-lg font-bold text-emerald-900">
-                                      {quote?.amountInFormatted
-                                        ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
-                                        : quote?.est
-                                          ? `${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
-                                          : quote?.usd
-                                            ? `≈ $${quote.usd.toFixed(2)}`
-                                            : selectedFrom.price && claim?.amount
-                                              ? `${roundUpDecimals((parseFloat(claim.amount) / selectedFrom.price).toFixed(6), 6)} ${selectedFrom.symbol}`
-                                              : "Unable to calculate"}
-                                    </p>
-                                  )}
-                                </div>
+                          {crossChainUnavailableOnBeta ? (
+                            <div className="p-4 bg-amber-500/10 rounded-xl border border-amber-500/30 flex items-center gap-3">
+                              <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={32} />
+                              <div>
+                                <p className="text-sm font-semibold text-amber-300">{selectedFrom.symbol} on {selectedFrom.chain}</p>
+                                <p className="text-xs text-amber-400/80 mt-0.5">Cross-chain payments unavailable on mainnet beta</p>
                               </div>
-                              <ArrowRight className="w-5 h-5 text-emerald-600" />
                             </div>
-                          </div>
+                          ) : (
+                            <div className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 shadow-sm">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                                    <TokenIcon token={selectedFrom} chain={selectedFrom.chain} size={24} />
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-emerald-700 font-medium mb-0.5">You'll send approximately</p>
+                                    {quoteLoading ? (
+                                      <div className="flex items-center gap-2">
+                                        <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                                        <p className="text-lg font-bold text-emerald-900">Calculating...</p>
+                                      </div>
+                                    ) : (
+                                      <p className="text-lg font-bold text-emerald-900">
+                                        {quote?.amountInFormatted
+                                          ? `${roundUpDecimals(quote.amountInFormatted, 6)} ${selectedFrom.symbol}`
+                                          : quote?.est
+                                            ? `${roundUpDecimals(String(quote.est), 6)} ${selectedFrom.symbol}`
+                                            : quote?.usd
+                                              ? `≈ $${quote.usd.toFixed(2)}`
+                                              : selectedFrom.price && claim?.amount
+                                                ? `${roundUpDecimals((parseFloat(claim.amount) / selectedFrom.price).toFixed(6), 6)} ${selectedFrom.symbol}`
+                                                : "Unable to calculate"}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                                <ArrowRight className="w-5 h-5 text-emerald-600" />
+                              </div>
+                            </div>
+                          )}
                         </motion.div>
                       ) : selectedFrom?.symbol === usdcSolanaToken?.symbol && selectedFrom?.chain === usdcSolanaToken?.chain ? (
                         (() => {
@@ -3474,6 +3500,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                   )}
 
+                  {mainnetViewOnly && (
+                    <div className="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-sm text-amber-300 text-center">
+                      You&apos;re viewing mainnet. Payments require{" "}
+                      <a href="/app/waitlist" className="underline underline-offset-2 hover:text-amber-200">mainnet beta access</a>.
+                    </div>
+                  )}
+
                   <div className="mt-4 flex gap-3">
                     {DEMO_MODE ? (
                       <Button
@@ -3505,21 +3538,23 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             return onPrepare();
                           }}
                           disabled={
-                            requiresPrivate && !isPrivateMode
+                            mainnetViewOnly || crossChainUnavailableOnBeta
                               ? true
-                              : !authenticated
-                                ? false
-                                : (() => {
-                                  const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
-                                    selectedFrom?.chain === usdcSolanaToken?.chain;
-                                  if (privatePayActive) {
+                              : requiresPrivate && !isPrivateMode
+                                ? true
+                                : !authenticated
+                                  ? false
+                                  : (() => {
+                                    const isUSDCOnSolana = selectedFrom?.symbol === usdcSolanaToken?.symbol &&
+                                      selectedFrom?.chain === usdcSolanaToken?.chain;
+                                    if (privatePayActive) {
+                                      return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
+                                    }
+                                    if (isUSDCOnSolana) {
+                                      return (!usdcSolanaToken || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
+                                    }
                                     return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
-                                  }
-                                  if (isUSDCOnSolana) {
-                                    return (!usdcSolanaToken || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
-                                  }
-                                  return (!selectedFrom || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS");
-                                })()
+                                  })()
                           }
                           loading={preparing}
                           loadingText={(() => {
@@ -3532,14 +3567,16 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         >
                           {!authenticated
                             ? "Sign in to pay"
-                            : (() => {
-                              const isUSDCOnSolana = !selectedFrom || (
-                                selectedFrom.symbol === usdcSolanaToken?.symbol &&
-                                selectedFrom.chain === usdcSolanaToken?.chain
-                              );
-                              if (isUSDCOnSolana) return "Pay now";
-                              return "Get deposit address";
-                            })()}
+                            : crossChainUnavailableOnBeta
+                              ? "Unavailable on beta"
+                              : (() => {
+                                const isUSDCOnSolana = !selectedFrom || (
+                                  selectedFrom.symbol === usdcSolanaToken?.symbol &&
+                                  selectedFrom.chain === usdcSolanaToken?.chain
+                                );
+                                if (isUSDCOnSolana) return "Pay now";
+                                return "Get deposit address";
+                              })()}
                         </GradientActionButton>
                       </>
                     )}

@@ -3,6 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { ClaimsService } from './claims.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { RequestDepositDto } from './dto';
+import { fetchSolPriceUsd, MAGICBLOCK_GAS_SOL } from '@/common/magicblock-private-transfer';
+
+const CROSS_CHAIN_LOOFTA_FEE_BPS = 30;
 
 // Chains that require INTENTS deposit mode
 const INTENTS_ONLY_CHAINS = new Set([
@@ -184,39 +187,28 @@ export class DepositService {
       const claimBurner = (rawClaim.claim_burner_address || '').trim();
       const isPending = finalRecipient.startsWith(ClaimsService.PENDING_EMAIL_PREFIX) || finalRecipient.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
 
-      // Quote recipient: pending -> burner only; private -> user embedded wallet; non-private Solana dest -> burner or finalRecipient; else -> finalRecipient
+      // Privacy: for all cross-chain payments to Solana, always deliver to the burner.
+      // The backend auto-signs a private PER transfer from burner → recipient at claim time,
+      // keeping the recipient's real address hidden from the NEAR intent.
       let recipientAddress: string;
-      if (isPending) {
+      if (isDestSolana) {
         if (!claimBurner) {
           throw new BadRequestException({
-            message: 'Burner address required for pending claim.',
+            message: 'This payment link does not have a deposit address yet. Ask the recipient to open the link first.',
             code: 'MISSING_BURNER',
           });
         }
         recipientAddress = claimBurner;
-        this.logger.log(`[Deposit] Pending claim: using claim burner as Near-Intent recipient`);
-      } else if (isPrivate && originChain !== 'solana' && isDestSolana && claim.to_symbol === 'USDC') {
-        if (!recipientSolanaAddress) {
-          throw new BadRequestException(
-            'Private cross-chain payment to Solana requires login. Please connect your Loofta account and use your embedded Solana wallet address as recipient.'
-          );
-        }
-        recipientAddress = recipientSolanaAddress;
-        this.logger.log(`[Deposit] Private cross-chain: using user embedded Solana wallet as recipient: ${recipientAddress}`);
-      } else if (!isPrivate && isDestSolana) {
-        recipientAddress = claimBurner || finalRecipient;
-        if (claimBurner) this.logger.log(`[Deposit] Non-private cross-chain to Solana: using claim unique burner as quote recipient`);
-        else this.logger.log(`[Deposit] Using final recipient for quote: ${recipientAddress}`);
+        this.logger.log(`[Deposit] Cross-chain → Solana: always routing to burner for privacy (${recipientAddress.slice(0, 8)}…)`);
       } else {
+        if (!finalRecipient || finalRecipient.startsWith(ClaimsService.PENDING_EMAIL_PREFIX) || finalRecipient.startsWith(ClaimsService.PENDING_USERNAME_PREFIX)) {
+          throw new BadRequestException({
+            message: 'Recipient address is not available yet. The recipient must open the payment link first.',
+            code: 'MISSING_RECIPIENT',
+          });
+        }
         recipientAddress = finalRecipient;
-        this.logger.log(`[Deposit] Using recipient: ${recipientAddress}`);
-      }
-
-      if (!recipientAddress || typeof recipientAddress !== 'string') {
-        throw new BadRequestException({
-          message: 'Recipient address is required. For payment links to a username/email, the recipient must open the link and claim first.',
-          code: 'MISSING_RECIPIENT',
-        });
+        this.logger.log(`[Deposit] Cross-chain non-Solana dest: using finalRecipient`);
       }
 
       // Get destination asset ID
@@ -254,16 +246,28 @@ export class DepositService {
       let amountInHuman = 0;
       
       if (destPrice && destPrice > 0) {
-        amountOutHuman = amountUsd / destPrice; // Exact output amount in destination token
-        this.logger.log(`[Deposit] Calculated amountOutHuman: ${amountOutHuman} ${claim.to_symbol} (from USD: ${amountUsd})`);
+        amountOutHuman = amountUsd / destPrice;
+        this.logger.log(`[Deposit] Base amountOutHuman: ${amountOutHuman} ${claim.to_symbol} (USD: ${amountUsd})`);
       } else {
-        // Fallback: if price is not available, estimate based on 1:1 for stablecoins
         this.logger.warn(`[Deposit] Destination price not available, using fallback calculation`);
         if (claim.to_symbol.toUpperCase() === 'USDC' || claim.to_symbol.toUpperCase() === 'USDT') {
-          amountOutHuman = amountUsd; // Assume 1:1 for stablecoins
+          amountOutHuman = amountUsd;
         } else {
           throw new BadRequestException('Destination token price not available and cannot estimate amount');
         }
+      }
+
+      // Gross-up EXACT_OUTPUT so the burner receives requested_amount + Loofta fee + MagicBlock gas.
+      // At claim time the backend sweeps requested_amount to recipient via private PER transfer,
+      // and the remainder (fee + gas) is swept as dust to the fee-payer wallet.
+      if (isDestSolana) {
+        const solPriceUsd = await fetchSolPriceUsd();
+        const looftaFeeHuman = amountOutHuman * CROSS_CHAIN_LOOFTA_FEE_BPS / 10_000;
+        const gasFeeHuman = MAGICBLOCK_GAS_SOL * solPriceUsd / (destPrice || 1); // in dest token units
+        amountOutHuman = amountOutHuman + looftaFeeHuman + gasFeeHuman;
+        this.logger.log(
+          `[Deposit] Fee gross-up: loofta=${looftaFeeHuman.toFixed(6)} gas=${gasFeeHuman.toFixed(6)} solPrice=$${solPriceUsd} → grossedAmountOut=${amountOutHuman.toFixed(6)} ${claim.to_symbol}`,
+        );
       }
       
       // For EXACT_INPUT fallback (if needed), calculate input with buffer
