@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from "react";
+import { useAuthStore } from "@/store/auth";
 import { useRouter } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
 import { useToast } from "@/components/ui/use-toast";
@@ -36,6 +37,8 @@ export interface SendFlowInAppProps {
 export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, onClaimCreated }: SendFlowInAppProps) {
   const router = useRouter();
   const { user, getAccessToken, login, authenticated } = usePrivy();
+  const networkMode = useAuthStore((s) => s.networkMode);
+  const apiCluster = networkMode === "mainnet" ? "mainnet" : "devnet";
   const { toast } = useToast();
   const [amount, setAmount] = useState(initialAmount || "100");
   const [description, setDescription] = useState("");
@@ -103,6 +106,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           accessToken,
           isPrivate: effectivePrivate,
           description: fullDescription,
+          cluster: apiCluster,
         });
         await new Promise((r) => setTimeout(r, 300));
         if (onClaimCreated) onClaimCreated(result.id); else router.push(`/c/${result.id}`);
@@ -115,6 +119,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           accessToken,
           isPrivate: effectivePrivate,
           description: fullDescription,
+          cluster: apiCluster,
         });
         await new Promise((r) => setTimeout(r, 300));
         if (onClaimCreated) onClaimCreated(result.id); else router.push(`/c/${result.id}`);

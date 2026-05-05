@@ -6,13 +6,14 @@ import { isNonMainnetCluster } from "@/lib/solanaCluster";
 
 export async function POST(request: Request) {
   try {
-    const { amount, toSel, recipient, userId, description, direction } = await request.json();
+    const { amount, toSel, recipient, userId, description, direction, cluster } = await request.json();
     if (!amount || !recipient) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
     const supabase = getSupabaseAdmin();
     const isFromRecipient = direction === 'from_recipient';
     const uid = userId ? String(userId) : null;
+    const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isNonMainnetCluster();
     const { data, error } = await supabase
       .from("payments")
       .insert({
@@ -26,7 +27,7 @@ export async function POST(request: Request) {
         expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         to_chain: "solana",
         to_token: "USDC",
-        is_devnet: isNonMainnetCluster(),
+        is_devnet: isDevnet,
         description: description ? String(description).slice(0, 1000) : null,
       })
       .select("id")

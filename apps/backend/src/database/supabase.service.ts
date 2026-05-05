@@ -74,4 +74,8 @@ export class SupabaseService implements OnModuleInit {
   get mainnetWaitlist() {
     return this.client.from('mainnet_waitlist');
   }
+
+  get claimEvents() {
+    return this.client.from('claim_events');
+  }
 }

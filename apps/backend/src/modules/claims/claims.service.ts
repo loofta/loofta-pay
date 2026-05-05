@@ -21,8 +21,10 @@ import { SendPaymentEncryptionService } from '../send-payment/encryption.service
 import { SolanaSponsorService } from './solana-sponsor.service';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 import {
+  LOOFTA_FEE_BPS,
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
   appendLooftaFeeInstruction,
+  fetchSolPriceUsd,
   grossUpForMagicblockFee,
   requestMagicblockPrivateTransfer,
   type MagicblockPrivateTransferTxResponse,
@@ -99,12 +101,13 @@ export class ClaimsService {
    * Create a new payment claim
    */
   async create(dto: CreateClaimDto): Promise<{ id: string; link: string }> {
-    const { amount, toSel, recipient, userId } = dto;
+    const { amount, toSel, recipient, userId, cluster } = dto;
 
     if (!amount || !toSel?.symbol || !toSel?.chain || !recipient) {
       throw new BadRequestException('Missing required fields');
     }
 
+    const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
     const { data, error } = await this.supabaseService.payments
       .insert({
         amount: Number(amount),
@@ -114,7 +117,7 @@ export class ClaimsService {
         status: 'OPEN',
         to_chain: 'solana',
         to_token: 'USDC',
-        is_devnet: isSolanaDevnetFromConfig(this.configService),
+        is_devnet: isDevnet,
       })
       .select('id')
       .single();
@@ -137,7 +140,8 @@ export class ClaimsService {
    * If user does not exist: create "burner" claim with PENDING_USERNAME so they can claim later when they sign up with that username.
    */
   async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; link: string }> {
-    const { username, amount, userId, isPrivate = false, description } = dto;
+    const { username, amount, userId, isPrivate = false, description, cluster } = dto;
+    const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
     const cleanUsername = username.replace(/^@/, '').toLowerCase();
 
     let recipientAddress: string;
@@ -170,7 +174,7 @@ export class ClaimsService {
           description: description || null,
           to_chain: 'solana',
           to_token: 'USDC',
-          is_devnet: isSolanaDevnetFromConfig(this.configService),
+          is_devnet: isDevnet,
         })
         .select('id')
         .single();
@@ -206,7 +210,7 @@ export class ClaimsService {
         description: description || null,
         to_chain: 'solana',
         to_token: 'USDC',
-        is_devnet: isSolanaDevnetFromConfig(this.configService),
+        is_devnet: isDevnet,
         recipient_was_unregistered: true,
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
@@ -502,7 +506,8 @@ export class ClaimsService {
    * Create a claim from email. If user exists, use their wallet. If not, create with PENDING_EMAIL so they can claim by signing in later.
    */
   async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; link: string }> {
-    const { email, amount, userId, isPrivate = false, description } = dto;
+    const { email, amount, userId, isPrivate = false, description, cluster } = dto;
+    const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
     const cleanEmail = email.trim().toLowerCase();
 
     let recipientAddress: string;
@@ -530,7 +535,7 @@ export class ClaimsService {
           description: description || null,
           to_chain: 'solana',
           to_token: 'USDC',
-          is_devnet: isSolanaDevnetFromConfig(this.configService),
+          is_devnet: isDevnet,
         })
         .select('id')
         .single();
@@ -567,7 +572,7 @@ export class ClaimsService {
         description: description || null,
         to_chain: 'solana',
         to_token: 'USDC',
-        is_devnet: isSolanaDevnetFromConfig(this.configService),
+        is_devnet: isDevnet,
         recipient_was_unregistered: true,
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
@@ -722,14 +727,67 @@ export class ClaimsService {
       throw new BadRequestException('Invalid claim amount');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
-    // Gross up so recipient gets baseUnits after MagicBlock's 10 BPS volume fee deduction.
-    const grossUnits = grossUpForMagicblockFee(baseUnits);
     const cluster = requestCluster
       ?? (isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet');
     const effectiveMint = cluster === 'mainnet'
       ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
       : new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || this.usdcMint.toBase58());
-    this.logger.log(`[PrivatePay] claim=${claimId} amount=${amountUsd} net=${baseUnits} gross=${grossUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… (requestCluster=${requestCluster ?? 'none'})`);
+
+    // Correct is_devnet and stamp sender_user_id so the payer sees it in history.
+    const correctIsDevnet = cluster !== 'mainnet';
+    await this.supabaseService.payments
+      .update({ is_devnet: correctIsDevnet, sender_user_id: privyUserId })
+      .eq('id', claimId);
+    this.logger.log(`[PrivatePay] stamped claim ${claimId}: is_devnet=${correctIsDevnet} sender_user_id=${privyUserId}`);
+
+    const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
+    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+    const heliusKey = this.configService.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
+    const sponsorConn = (cluster === 'mainnet' && this.solanaSponsor.isAvailable())
+      ? new Connection(heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com', 'confirmed')
+      : undefined;
+
+    // ── Pre-calculate fees before calling MagicBlock ──────────────────────────────────────────
+    // Fee model: sender pays exactly `baseUnits`. Fee is deducted from recipient's share.
+    //   sender pays: grossUp(baseUnits - totalFee) [MagicBlock] + totalFee [fee ix] ≈ baseUnits
+    const MIN_SOL_LAMPORTS = 3_000_000;
+    let solRecoveryFeeUnits = 0;
+    let capturedSolPriceUsd: number | null = null;
+    let estimatedPrefundLamports = 0;
+    if (cluster === 'mainnet' && sponsorConn) {
+      try {
+        const senderBalance = await sponsorConn.getBalance(new PublicKey(senderWallet.trim()));
+        estimatedPrefundLamports = Math.max(0, MIN_SOL_LAMPORTS - senderBalance);
+        if (estimatedPrefundLamports > 0) {
+          capturedSolPriceUsd = await fetchSolPriceUsd();
+          if (capturedSolPriceUsd !== null) {
+            solRecoveryFeeUnits = Math.ceil(capturedSolPriceUsd * (estimatedPrefundLamports / 1e9) * 1_000_000);
+            this.logger.log(`[PrivatePay] SOL: ${estimatedPrefundLamports} lamports needed @ $${capturedSolPriceUsd.toFixed(2)}/SOL = ${solRecoveryFeeUnits} USDC units recovery`);
+          } else {
+            this.logger.warn('[PrivatePay] SOL price unavailable — skipping SOL recovery fee');
+          }
+        } else {
+          this.logger.log('[PrivatePay] Sender already has enough SOL — no recovery needed');
+        }
+      } catch (e) {
+        this.logger.warn(`[PrivatePay] SOL balance check failed, skipping recovery: ${String(e)}`);
+      }
+    }
+
+    const bpsFeeUnits = Math.ceil(baseUnits * LOOFTA_FEE_BPS / 10_000);
+    // Charge the actual SOL recovery — fee payer must always break even on SOL.
+    // Only hard cap is baseUnits (can't charge more than the payment amount itself).
+    const cappedSolRecovery = Math.min(solRecoveryFeeUnits, baseUnits);
+    const totalFeeUnits = bpsFeeUnits + cappedSolRecovery;
+    // Fee model: fee is ON TOP. MagicBlock delivers the full claim amount to recipient.
+    // Sender pays: grossUp(baseUnits) [MagicBlock] + totalFeeUnits [fee ix] = claim + fees.
+    const grossUnits = grossUpForMagicblockFee(baseUnits);
+    this.logger.log(
+      `[PrivatePay] claim=${claimId} amount=${amountUsd} | bps=${bpsFeeUnits} solRecovery=${cappedSolRecovery}${cappedSolRecovery < solRecoveryFeeUnits ? `(capped from ${solRecoveryFeeUnits})` : ''} totalFee=${totalFeeUnits}` +
+      ` | mbGross=${grossUnits} senderPays=${grossUnits + totalFeeUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}…`,
+    );
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
@@ -738,42 +796,51 @@ export class ClaimsService {
       cluster,
     });
 
-    const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
-    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
     const txBase64 = txResponse.transactionBase64;
 
-    // Inject fee payer so the user doesn't need SOL. Fee payer also tops up sender SOL
-    // to cover MagicBlock's shuttle rent + mainnet flat fee. User signs, then frontend calls
-    // /solana-sponsor/per/sign-and-broadcast for the fee payer to countersign and broadcast.
     if (this.solanaSponsor.isAvailable()) {
-      const heliusKey = this.configService.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
-      const sponsorConn = cluster === 'mainnet'
-        ? new Connection(heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com', 'confirmed')
-        : undefined;
       this.logger.log(
-        `[PrivatePay] Fee sponsor: preparing tx | cluster=${cluster} requiredSigners=[${txResponse.requiredSigners.join(', ')}]`,
+        `[PrivatePay] Fee sponsor: preparing tx | cluster=${cluster} feePayer=${feePayerAddress ?? 'n/a'} requiredSigners=[${txResponse.requiredSigners.join(', ')}]`,
       );
+
       try {
         const sponsored = await this.solanaSponsor.prepareAndPartialSignTransaction(txBase64, sponsorConn);
         this.logger.log(
-          `[PrivatePay] Fee sponsor prepared: feePayer=${feePayerAddress?.slice(0, 8)}... blockhash=${sponsored.recentBlockhash.slice(0, 8)}...`,
+          `[PrivatePay] Fee sponsor prepared: feePayer=${feePayerAddress} topUpLamports=${sponsored.topUpLamports} blockhash=${sponsored.recentBlockhash.slice(0, 8)}...`,
         );
 
-        // Append Loofta's 10 BPS USDC fee AFTER v0→legacy conversion — MagicBlock returns v0
-        // so the fee ix must be added to the legacy tx produced by prepareAndPartialSign.
+        // Use the actual inline top-up to compute the definitive fee (may differ slightly from estimate)
+        let actualTotalFeeUnits = totalFeeUnits;
+        let actualSolPriceUsd = capturedSolPriceUsd;
+        let actualSolLamports = sponsored.topUpLamports;
+        let actualSolRecoveryUnits = cappedSolRecovery;
+        if (sponsored.topUpLamports > 0) {
+          const freshSolPrice = await fetchSolPriceUsd();
+          if (freshSolPrice !== null) {
+            actualSolPriceUsd = freshSolPrice;
+            actualSolRecoveryUnits = Math.min(
+              Math.ceil(freshSolPrice * (sponsored.topUpLamports / 1e9) * 1_000_000),
+              baseUnits,
+            );
+            actualTotalFeeUnits = bpsFeeUnits + actualSolRecoveryUnits;
+            if (actualTotalFeeUnits !== totalFeeUnits) {
+              this.logger.log(`[PrivatePay] Fee adjusted: estimated=${totalFeeUnits} actual=${actualTotalFeeUnits} (topUp=${sponsored.topUpLamports} lamports @ $${freshSolPrice.toFixed(2)})`);
+            }
+          }
+        }
+
         let finalTxBase64 = sponsored.transactionBase64;
-        if (feePayerAddress && feePayerKp) {
+        if (feePayerAddress && feePayerKp && actualTotalFeeUnits > 0) {
           try {
             finalTxBase64 = await appendLooftaFeeInstruction(
               finalTxBase64,
               senderWallet.trim(),
               feePayerAddress,
-              baseUnits,
+              actualTotalFeeUnits,
               effectiveMint,
               sponsorConn ?? this.solanaSponsor.getConnection(),
               feePayerKp.publicKey,
             );
-            this.logger.log(`[PrivatePay] Loofta fee ix appended`);
           } catch (e) {
             this.logger.warn(`[PrivatePay] Fee instruction append failed (non-fatal): ${String(e)}`);
           }
@@ -784,13 +851,30 @@ export class ClaimsService {
           transactionBase64: finalTxBase64,
           recentBlockhash: sponsored.recentBlockhash,
           lastValidBlockHeight: sponsored.lastValidBlockHeight,
+          feeAmountUsdc: actualTotalFeeUnits / 1_000_000,
+          feeBreakdown: {
+            looftaBpsUsdc: bpsFeeUnits / 1_000_000,
+            solRecoveryUsdc: actualSolRecoveryUnits / 1_000_000,
+            solLamports: actualSolLamports,
+            solPriceUsd: actualSolPriceUsd ?? 0,
+          },
         };
       } catch (e) {
         this.logger.warn(`[PrivatePay] Fee sponsor failed, returning unsponsored tx: ${String(e)}`);
       }
     }
 
-    return { ...txResponse, transactionBase64: txBase64 };
+    return {
+      ...txResponse,
+      transactionBase64: txBase64,
+      feeAmountUsdc: totalFeeUnits / 1_000_000,
+      feeBreakdown: {
+        looftaBpsUsdc: bpsFeeUnits / 1_000_000,
+        solRecoveryUsdc: cappedSolRecovery / 1_000_000,
+        solLamports: estimatedPrefundLamports,
+        solPriceUsd: capturedSolPriceUsd ?? 0,
+      },
+    };
   }
 
   /** Same routing as frontend getEffectiveRecipient: pending → burner, else wallet. */
@@ -1847,6 +1931,15 @@ export class ClaimsService {
     fromToken?: string;
     /** Pass true when the recipient sweep has completed — skips the intermediary-pending guard so SUCCESS is stored as-is. */
     recipientSwept?: boolean;
+    /** Total fee charged to sender in USDC (loofta BPS + SOL recovery). Persisted to claim_events. */
+    feeAmountUsdc?: number;
+    /** Fee breakdown snapshot at payment time. Persisted to claim_events. */
+    feeBreakdown?: {
+      looftaBpsUsdc: number;
+      solRecoveryUsdc: number;
+      solLamports: number;
+      solPriceUsd: number;
+    };
   }, createdByUserId?: string): Promise<Claim> {
     // Ownership check for destructive transitions
     if ((status as string).toUpperCase() === 'CANCELLED' && createdByUserId) {
@@ -1913,6 +2006,20 @@ export class ClaimsService {
     }
 
     this.logger.log(`Updated claim ${id} status to ${effectiveStatus}`);
+
+    if (extra?.feeBreakdown) {
+      const eventPayload = {
+        feeAmountUsdc: extra.feeAmountUsdc ?? null,
+        ...extra.feeBreakdown,
+        txHash: extra.txHash ?? null,
+      };
+      const { error: evtErr } = await (this.supabaseService.claimEvents as any)
+        .insert({ claim_id: id, type: 'FEE_CHARGED', payload: eventPayload });
+      if (evtErr) {
+        this.logger.warn(`Failed to insert FEE_CHARGED event for claim ${id}: ${evtErr.message}`);
+      }
+    }
+
     return { id, status: effectiveStatus } as unknown as Claim;
   }
 

@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { ClaimsService } from './claims.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { RequestDepositDto } from './dto';
-import { fetchSolPriceUsd, MAGICBLOCK_GAS_SOL } from '@/common/magicblock-private-transfer';
+import { fetchSolPriceUsd, MAGICBLOCK_MIN_SENDER_SOL } from '@/common/magicblock-private-transfer';
 
 const CROSS_CHAIN_LOOFTA_FEE_BPS = 30;
 
@@ -263,7 +263,7 @@ export class DepositService {
       if (isDestSolana) {
         const solPriceUsd = await fetchSolPriceUsd();
         const looftaFeeHuman = amountOutHuman * CROSS_CHAIN_LOOFTA_FEE_BPS / 10_000;
-        const gasFeeHuman = MAGICBLOCK_GAS_SOL * solPriceUsd / (destPrice || 1); // in dest token units
+        const gasFeeHuman = solPriceUsd != null ? MAGICBLOCK_MIN_SENDER_SOL * solPriceUsd / (destPrice || 1) : 0; // in dest token units
         amountOutHuman = amountOutHuman + looftaFeeHuman + gasFeeHuman;
         this.logger.log(
           `[Deposit] Fee gross-up: loofta=${looftaFeeHuman.toFixed(6)} gas=${gasFeeHuman.toFixed(6)} solPrice=$${solPriceUsd} → grossedAmountOut=${amountOutHuman.toFixed(6)} ${claim.to_symbol}`,

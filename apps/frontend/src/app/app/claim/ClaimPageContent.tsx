@@ -54,6 +54,7 @@ async function createClaim(formData: {
   userId?: string;
   direction?: "from_sender" | "from_recipient";
   description?: string;
+  cluster?: 'devnet' | 'mainnet';
 }): Promise<{ id: string; link: string }> {
   const r = await fetch("/api/claims/create", {
     method: "POST",
@@ -298,6 +299,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         userId: authenticated ? userId : undefined,
         direction: "from_recipient",
         description: combinedDescription,
+        cluster: networkMode === "mainnet" ? "mainnet" : "devnet",
       });
       setCreatedLink(res.link);
       setShowConfetti(true);

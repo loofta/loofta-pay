@@ -373,6 +373,8 @@ export class ClaimsController {
       isPrivate?: boolean;
       paidWithToken?: string;
       paidWithChain?: string;
+      feeAmountUsdc?: number;
+      feeBreakdown?: { looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number };
     },
     @Req() req: { user?: { id: string } },
   ): Promise<Claim> {
@@ -382,6 +384,8 @@ export class ClaimsController {
       isPrivate: body.isPrivate,
       paidWithToken: body.paidWithToken,
       paidWithChain: body.paidWithChain,
+      feeAmountUsdc: body.feeAmountUsdc,
+      feeBreakdown: body.feeBreakdown,
     }, req.user!.id);
   }
 

@@ -547,6 +547,8 @@ async function updateClaimStatus(
     isPrivate?: boolean;
     paidWithToken?: string;
     paidWithChain?: string;
+    feeAmountUsdc?: number;
+    feeBreakdown?: { looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number };
   },
   userId?: string,
   accessToken?: string | null,
@@ -1035,6 +1037,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [statusData, setStatusData] = useState<any>(null);
+  const [paidFeeUsdc, setPaidFeeUsdc] = useState<number | null>(null);
+  const [paidFeeBreakdown, setPaidFeeBreakdown] = useState<{ looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number } | null>(null);
   const [speedUpOpen, setSpeedUpOpen] = useState<boolean>(false);
   const [txInput, setTxInput] = useState<string>("");
   const [submittingTx, setSubmittingTx] = useState<boolean>(false);
@@ -1642,6 +1646,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           accessToken: perToken,
           claimId: claim.id,
           isBurnerRecipient,
+          onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
+            setPaidFeeUsdc(feeAmountUsdc);
+            if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
+            try { localStorage.setItem(`loofta:fee:${claim.id}`, JSON.stringify({ feeAmountUsdc, feeBreakdown: feeBreakdown ?? null })); } catch { /* ignore */ }
+          },
           onSignature: async (sig) => {
             broadcastedSignature = sig;
             // Fire-and-forget — don't block the confirmation flow
@@ -1696,6 +1705,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           isPrivate: true,
           paidWithToken: "USDC",
           paidWithChain: "solana",
+          ...(paidFeeUsdc != null ? { feeAmountUsdc: paidFeeUsdc } : {}),
+          ...(paidFeeBreakdown ? { feeBreakdown: paidFeeBreakdown } : {}),
         },
         user?.id,
         perToken,
@@ -1785,12 +1796,21 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       }
       const isBurnerWallet = !!((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
       const walletToken = await getAccessToken();
+      let walletFeeUsdc: number | null = null;
+      let walletFeeBreakdown: { looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number } | null = null;
       const sig = await perTransfer(anchorWallet, {
         privyUserId: user.id,
         accessToken: walletToken,
         claimId: claim.id,
         onProgress: setPerTransferPhase,
         isBurnerRecipient: isBurnerWallet,
+        onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
+          walletFeeUsdc = feeAmountUsdc;
+          walletFeeBreakdown = feeBreakdown ?? null;
+          setPaidFeeUsdc(feeAmountUsdc);
+          if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
+          try { localStorage.setItem(`loofta:fee:${claim.id}`, JSON.stringify({ feeAmountUsdc, feeBreakdown: feeBreakdown ?? null })); } catch { /* ignore */ }
+        },
       });
       setPerTransferPhase(null);
       setConfirmingTxSignature(sig);
@@ -1814,6 +1834,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           isPrivate: true,
           paidWithToken: "USDC",
           paidWithChain: "solana",
+          ...(walletFeeUsdc != null ? { feeAmountUsdc: walletFeeUsdc } : {}),
+          ...(walletFeeBreakdown ? { feeBreakdown: walletFeeBreakdown } : {}),
         },
         user?.id,
         walletToken,
@@ -1902,12 +1924,21 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       }
       setPerTransferPhase({ phase: "preparing" });
       const looFtaToken = await getAccessToken();
+      let looftaFeeUsdc: number | null = null;
+      let looftaFeeBreakdown: { looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number } | null = null;
       const sig = await perTransfer(anchorWallet, {
         privyUserId: user.id,
         accessToken: looFtaToken,
         claimId: claim.id,
         onProgress: setPerTransferPhase,
         isBurnerRecipient: isBurnerForLoofta,
+        onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
+          looftaFeeUsdc = feeAmountUsdc;
+          looftaFeeBreakdown = feeBreakdown ?? null;
+          setPaidFeeUsdc(feeAmountUsdc);
+          if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
+          try { localStorage.setItem(`loofta:fee:${claim.id}`, JSON.stringify({ feeAmountUsdc, feeBreakdown: feeBreakdown ?? null })); } catch { /* ignore */ }
+        },
       });
       setPerTransferPhase(null);
       setConfirmingTxSignature(sig);
@@ -1930,6 +1961,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           isPrivate: true,
           paidWithToken: "USDC",
           paidWithChain: "solana",
+          ...(looftaFeeUsdc != null ? { feeAmountUsdc: looftaFeeUsdc } : {}),
+          ...(looftaFeeBreakdown ? { feeBreakdown: looftaFeeBreakdown } : {}),
         },
         user?.id,
         looFtaToken,
@@ -1968,6 +2001,21 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       setConfirmingTxSource(null);
     }
   }
+
+  // Hydrate fee data from localStorage on load (survives page refresh)
+  useEffect(() => {
+    if (!claim?.id || paidFeeUsdc != null) return;
+    const claimStatus = String(claim?.status || status || "").toUpperCase();
+    if (!["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(claimStatus)) return;
+    try {
+      const saved = localStorage.getItem(`loofta:fee:${claim.id}`);
+      if (saved) {
+        const { feeAmountUsdc, feeBreakdown } = JSON.parse(saved);
+        if (typeof feeAmountUsdc === "number") setPaidFeeUsdc(feeAmountUsdc);
+        if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
+      }
+    } catch { /* ignore */ }
+  }, [claim?.id, claim?.status, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep ref updated (retained for any legacy callers but auto-trigger is disabled below)
   useEffect(() => {
@@ -2841,7 +2889,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   <div className="text-base font-medium text-slate-200 mb-2">Payment summary</div>
                   <div className="text-base text-gray-700 space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className="text-gray-600">Amount requested</span>
+                      <span className="text-gray-600">Recipient receives</span>
                       <span className="text-lg font-semibold text-gray-900">
                         <span className="inline-flex items-center gap-1">
                           <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={18} />
@@ -2849,6 +2897,36 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         </span>
                       </span>
                     </div>
+                    {paidFeeUsdc != null && paidFeeUsdc > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-600 text-sm">Platform fee</span>
+                        <span className="text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
+                      </div>
+                    )}
+                    {paidFeeUsdc != null && (
+                      <div className="flex items-center justify-between border-t border-gray-200 pt-1 mt-1">
+                        <span className="text-gray-600 font-medium">You paid</span>
+                        <span className="text-base font-semibold text-gray-900">
+                          ${(parseFloat(claim.amount || "0") + paidFeeUsdc).toFixed(4)}
+                        </span>
+                      </div>
+                    )}
+                    {user?.id && claim?.created_by === user.id && (() => {
+                      const recipientLabel =
+                        (claim as { recipient_pending_username_value?: string } | null)?.recipient_pending_username_value
+                          ? `@${(claim as { recipient_pending_username_value?: string }).recipient_pending_username_value}`
+                          : (claim as { recipient_pending_email_value?: string } | null)?.recipient_pending_email_value
+                          ? (claim as { recipient_pending_email_value?: string }).recipient_pending_email_value
+                          : claim?.recipient_username
+                          ? `@${claim.recipient_username}`
+                          : null;
+                      return recipientLabel ? (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600">Sent to</span>
+                          <span className="text-sm font-medium text-gray-900">{recipientLabel}</span>
+                        </div>
+                      ) : null;
+                    })()}
                     {claim.created_at && (
                       <div className="flex items-center justify-between pt-2 border-t border-gray-200 mt-2">
                         <span className="text-gray-600">Created</span>
@@ -3663,7 +3741,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           <div className="text-lg font-semibold text-slate-200 mb-2">Payment summary</div>
                           <div className="text-base text-gray-700 space-y-1">
                             <div className="flex items-center justify-between">
-                              <span className="text-gray-600">Amount requested</span>
+                              <span className="text-gray-600">{(claim as { direction?: string } | null)?.direction === "from_sender" ? "Amount paid" : "Amount requested"}</span>
                               <span className="text-lg font-semibold text-gray-900">
                                 <span className="inline-flex items-center gap-1">
                                   <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={24} />

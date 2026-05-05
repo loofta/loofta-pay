@@ -30,6 +30,13 @@ export interface MagicblockTxResponse {
   instructionCount: number;
   requiredSigners: string[];
   validator: string;
+  feeAmountUsdc?: number;
+  feeBreakdown?: {
+    looftaBpsUsdc: number;
+    solRecoveryUsdc: number;
+    solLamports: number;
+    solPriceUsd: number;
+  };
 }
 
 /** Private `/v1/spl/transfer` is built on the backend so the recipient is not exposed in the browser network tab. */
