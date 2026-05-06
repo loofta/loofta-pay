@@ -18,10 +18,16 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-/** True when Privy returns "Gas sponsorship is not configured for chain …". */
+/** True when Privy sponsorship fails for any expected reason (not user rejection). */
 export function isPrivyGasSponsorNotConfiguredError(err: unknown): boolean {
   const msg = String((err as Error)?.message ?? err ?? "");
-  return /gas sponsorship is not configured/i.test(msg);
+  return (
+    /gas sponsorship is not configured/i.test(msg) ||
+    // Wallet is on the old iframe stack, not TEE — sponsor not supported
+    /sponsoring transactions is only supported for wallets on the tee stack/i.test(msg) ||
+    // Privy wraps sponsorship + simulation failures as this error via TRANSACTION_FAILURE
+    /failed to connect to wallet/i.test(msg)
+  );
 }
 
 /**

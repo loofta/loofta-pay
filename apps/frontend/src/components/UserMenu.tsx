@@ -104,15 +104,12 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [updatingPreferences, setUpdatingPreferences] = useState(false);
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
-  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [isLocalhost, setIsLocalhost] = useState(false);
   useEffect(() => {
     setIsLocalhost(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
   }, []);
   const [exportedPrivateKey, setExportedPrivateKey] = useState<string | null>(null);
-  const [withdrawAddress, setWithdrawAddress] = useState("");
-  const [withdrawing, setWithdrawing] = useState(false);
   const [updatingToTwitter, setUpdatingToTwitter] = useState(false);
   const [twitterLinkedOptimistic, setTwitterLinkedOptimistic] = useState(false);
   const [linkingMethod, setLinkingMethod] = useState<"twitter" | "email" | null>(null);
@@ -1125,22 +1122,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     </svg>
                     View on Solscan
                   </button>
-                  <button
-                    onClick={() => {
-                      if (networkMode === "devnet") return;
-                      setShowSettingsModal(false);
-                      setShowWithdrawModal(true);
-                    }}
-                    disabled={networkMode === "devnet"}
-                    className="w-full text-left px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                      <polyline points="7 10 12 15 17 10"></polyline>
-                      <line x1="12" y1="15" x2="12" y2="3"></line>
-                    </svg>
-                    Withdraw{networkMode === "devnet" ? " (mainnet only)" : ""}
-                  </button>
+                  {/* Export Private Key button — temporarily hidden
                   <button
                     onClick={async () => {
                       setShowSettingsModal(false);
@@ -1180,6 +1162,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     </svg>
                     Export Private Key
                   </button>
+                  */}
                 </div>
               </>
             ) : (
@@ -1263,113 +1246,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         </DialogContent>
       </Dialog>
 
-      {/* Withdraw Modal */}
-      <Dialog open={showWithdrawModal} onOpenChange={setShowWithdrawModal}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Withdraw Funds</DialogTitle>
-            <DialogDescription>
-              Send funds from your wallet to another Solana address.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div>
-              <Label htmlFor="withdraw-address">Recipient Address</Label>
-              <Input
-                id="withdraw-address"
-                placeholder="Enter Solana address"
-                value={withdrawAddress}
-                onChange={(e) => setWithdrawAddress(e.target.value)}
-                className="mt-1 font-mono text-sm"
-              />
-            </div>
-            <div>
-              <Label>Amount (USDC)</Label>
-              <div className="mt-1 flex items-center justify-between rounded-md border border-input bg-muted px-3 py-2 text-sm">
-                <span className="font-medium">${balanceUSD.toFixed(2)}</span>
-                <span className="text-xs text-muted-foreground">Full balance</span>
-              </div>
-            </div>
-            <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3">
-              <p className="text-sm text-purple-800 dark:text-purple-200">
-                <strong>Privacy:</strong> Withdrawals must be for your full balance. After sending, your Loofta wallet address rotates so incoming payments cannot be linked to this withdrawal.
-              </p>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowWithdrawModal(false);
-                setWithdrawAddress("");
-              }}
-              disabled={withdrawing}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={async () => {
-                if (!withdrawAddress) {
-                  toast({
-                    variant: "destructive",
-                    title: "Missing address",
-                    description: "Please enter a recipient address.",
-                  });
-                  return;
-                }
-
-                if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(withdrawAddress)) {
-                  toast({
-                    variant: "destructive",
-                    title: "Invalid address",
-                    description: "Please enter a valid Solana address.",
-                  });
-                  return;
-                }
-
-                if (balanceUSD <= 0) {
-                  toast({
-                    variant: "destructive",
-                    title: "No balance",
-                    description: "You have no funds to withdraw.",
-                  });
-                  return;
-                }
-
-                setWithdrawing(true);
-                try {
-                  // Note: This is a placeholder. You'll need to implement actual USDC transfer
-                  // using Privy's wallet signing capabilities or your backend API
-                  toast({
-                    title: "Withdrawal initiated",
-                    description: `Withdrawing $${balanceUSD.toFixed(2)} USDC to ${withdrawAddress.slice(0, 8)}...`,
-                  });
-
-                  // TODO: Implement actual withdrawal logic
-                  // This would involve:
-                  // 1. Getting the Solana wallet from useWallets
-                  // 2. Creating a USDC transfer transaction
-                  // 3. Signing and sending the transaction
-
-                  setShowWithdrawModal(false);
-                  setWithdrawAddress("");
-                } catch (error: any) {
-                  toast({
-                    variant: "destructive",
-                    title: "Withdrawal failed",
-                    description: error?.message || "Failed to process withdrawal. Please try again.",
-                  });
-                } finally {
-                  setWithdrawing(false);
-                }
-              }}
-              disabled={withdrawing || !withdrawAddress || balanceUSD <= 0}
-            >
-              {withdrawing ? "Processing..." : "Withdraw"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

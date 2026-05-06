@@ -1,7 +1,7 @@
 "use client";
 
 export type WithdrawalHistoryItem = {
-  id: string; // tx signature (unique per withdrawal)
+  id: string;
   createdAt: number;
   amountUSDC: number;
   txSignature: string;
@@ -9,6 +9,10 @@ export type WithdrawalHistoryItem = {
   destinationChain: string;
   destinationToken: string;
   isNearIntents: boolean;
+  depositAddress?: string;       // Near Intents relay address for status polling
+  estimatedOut?: string;         // Estimated output amount (human-readable)
+  nearIntentsStatus?: string;    // Latest status from 1Click API
+  nearIntentsComplete?: boolean; // True once bridge confirms SUCCESS/REFUNDED
 };
 
 const STORAGE_KEY = "loofta.withdrawal.history.v1";
@@ -36,12 +40,18 @@ function saveWithdrawalHistory(items: WithdrawalHistoryItem[]) {
 
 export function addWithdrawal(item: Omit<WithdrawalHistoryItem, "createdAt">) {
   const list = getWithdrawalHistory();
-  const entry: WithdrawalHistoryItem = {
-    ...item,
-    createdAt: Date.now(),
-  };
-  // Prepend; avoid duplicate by id (tx signature)
+  const entry: WithdrawalHistoryItem = { ...item, createdAt: Date.now() };
   const filtered = list.filter((x) => x.id !== entry.id);
   filtered.unshift(entry);
   saveWithdrawalHistory(filtered);
+  return entry;
+}
+
+export function updateWithdrawalStatus(id: string, status: string, complete: boolean) {
+  const list = getWithdrawalHistory();
+  const idx = list.findIndex((x) => x.id === id);
+  if (idx >= 0) {
+    list[idx] = { ...list[idx], nearIntentsStatus: status, nearIntentsComplete: complete };
+    saveWithdrawalHistory(list);
+  }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -17,21 +17,191 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
-import { CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, ArrowRight } from "lucide-react";
 import { usePrivy } from "@privy-io/react-auth";
-import { useWallets, useSignAndSendTransaction, useSignTransaction } from "@privy-io/react-auth/solana";
+import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
 import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSend";
-import { getDepositInfo } from "@/services/nearIntents";
+import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
 import type { NearToken } from "@/services/nearIntents";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
-import { addWithdrawal, getWithdrawalHistory, type WithdrawalHistoryItem } from "@/lib/withdrawalHistory";
+import {
+  addWithdrawal,
+  getWithdrawalHistory,
+  updateWithdrawalStatus,
+  type WithdrawalHistoryItem,
+} from "@/lib/withdrawalHistory";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { cn } from "@/lib/utils";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
-import { ExternalLink } from "lucide-react";
 
 const LOG_PREFIX = "[BalanceModal]";
+
+// BETA: flip to false to re-enable Near Intents cross-chain withdrawals
+const BETA_SOLANA_ONLY = true;
+
+type WithdrawalStep = "idle" | "submitting" | "sent" | "bridging" | "complete" | "failed";
+
+const TERMINAL_BRIDGE_STATUSES = new Set(["SUCCESS", "COMPLETED", "REFUNDED", "FAILED", "EXPIRED"]);
+const SUCCESS_BRIDGE_STATUSES = new Set(["SUCCESS", "COMPLETED"]);
+
+function stepLabel(step: WithdrawalStep, isNearIntents: boolean): string {
+  if (step === "submitting") return isNearIntents ? "Getting bridge quote…" : "Building transaction…";
+  if (step === "sent") return "Sending USDC…";
+  if (step === "bridging") return "Bridge routing…";
+  if (step === "complete") return isNearIntents ? "Bridge complete!" : "Sent!";
+  if (step === "failed") return "Transaction failed";
+  return "";
+}
+
+function bridgeStatusLabel(status: string | null | undefined): string {
+  if (!status) return "Waiting for bridge…";
+  const s = status.toUpperCase();
+  if (s === "PENDING") return "Bridge received deposit, processing…";
+  if (s === "PROCESSING") return "Bridge is routing to destination…";
+  if (s === "SUCCESS" || s === "COMPLETED") return "Bridge complete!";
+  if (s === "REFUNDED") return "Bridge refunded — check your Solana wallet";
+  if (s === "FAILED") return "Bridge failed";
+  if (s === "EXPIRED") return "Bridge quote expired — funds refunded";
+  return status;
+}
+
+interface ProgressStepsProps {
+  step: WithdrawalStep;
+  isNearIntents: boolean;
+  txSignature?: string;
+  bridgeStatus?: string | null;
+  destinationToken?: string;
+  destinationChain?: string;
+  estimatedOut?: string;
+  amountUSDC?: number;
+  dark: boolean;
+  onDone: () => void;
+}
+
+function ProgressSteps({
+  step,
+  isNearIntents,
+  txSignature,
+  bridgeStatus,
+  destinationToken,
+  destinationChain,
+  estimatedOut,
+  amountUSDC,
+  dark,
+  onDone,
+}: ProgressStepsProps) {
+  const isDone = step === "complete" || step === "failed";
+  const isSuccess = step === "complete";
+
+  type StepDef = { label: string; sublabel?: string; status: "done" | "active" | "pending" | "failed" };
+
+  const steps: StepDef[] = useMemo(() => {
+    if (isNearIntents) {
+      const s1Status =
+        step === "submitting" ? "active" :
+        ["sent", "bridging", "complete", "failed"].includes(step) ? "done" : "pending";
+      const s2Status =
+        step === "sent" ? "active" :
+        ["bridging", "complete", "failed"].includes(step) ? "done" : "pending";
+      const s3Status =
+        step === "bridging" ? "active" :
+        step === "complete" ? "done" :
+        step === "failed" ? "failed" : "pending";
+      return [
+        { label: "Get bridge quote", sublabel: "Calculating best route via Near Intents", status: s1Status },
+        { label: "Send USDC", sublabel: amountUSDC ? `Sending $${amountUSDC.toFixed(2)} USDC to bridge` : "Sending USDC to bridge", status: s2Status },
+        {
+          label: step === "complete" ? "Bridge complete" : step === "failed" ? "Bridge failed" : "Bridge routing",
+          sublabel: bridgeStatusLabel(bridgeStatus),
+          status: s3Status,
+        },
+      ];
+    }
+    const s1Status = step === "submitting" ? "active" : ["sent", "complete"].includes(step) ? "done" : "pending";
+    const s2Status = step === "sent" ? "active" : step === "complete" ? "done" : "pending";
+    return [
+      { label: "Build transaction", sublabel: "Preparing USDC transfer", status: s1Status },
+      { label: "Send USDC", sublabel: amountUSDC ? `Sending $${amountUSDC.toFixed(2)} USDC to destination` : "Sending to destination", status: s2Status },
+    ];
+  }, [step, isNearIntents, bridgeStatus, amountUSDC]);
+
+  const textBase = dark ? "text-white" : "text-gray-900";
+  const textSub = dark ? "text-slate-400" : "text-gray-500";
+  const borderBase = dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white";
+
+  return (
+    <div className="py-2 space-y-4">
+      {/* Step list */}
+      <div className="space-y-3">
+        {steps.map((s, i) => (
+          <div key={i} className={`flex items-start gap-3 rounded-xl border p-3 ${borderBase}`}>
+            <div className="mt-0.5 shrink-0 w-6 h-6 flex items-center justify-center">
+              {s.status === "done" && <CheckCircle2 className="h-5 w-5 text-emerald-400" />}
+              {s.status === "active" && <Loader2 className="h-5 w-5 text-blue-400 animate-spin" />}
+              {s.status === "failed" && <AlertTriangle className="h-5 w-5 text-red-400" />}
+              {s.status === "pending" && (
+                <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-xs font-bold ${dark ? "border-white/20 text-slate-500" : "border-gray-300 text-gray-400"}`}>
+                  {i + 1}
+                </span>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className={`text-sm font-medium ${textBase}`}>{s.label}</p>
+              {s.sublabel && <p className={`text-xs mt-0.5 ${textSub}`}>{s.sublabel}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Estimate / result */}
+      {isNearIntents && estimatedOut && destinationToken && destinationChain && (
+        <div className={`rounded-xl border p-3 flex items-center gap-3 ${borderBase}`}>
+          <ArrowRight className={`h-4 w-4 shrink-0 ${dark ? "text-slate-400" : "text-gray-400"}`} />
+          <div>
+            <p className={`text-xs ${textSub}`}>You receive (estimated)</p>
+            <p className={`text-sm font-semibold ${textBase}`}>
+              ~{Number(estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 6 })} {destinationToken}
+              <span className={`font-normal ml-1 ${textSub}`}>on {destinationChain}</span>
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Solana TX link */}
+      {txSignature && (
+        <a
+          href={getExplorerTxUrl("solana", txSignature)}
+          target="_blank"
+          rel="noreferrer"
+          className={`flex items-center gap-2 text-xs rounded-lg border px-3 py-2 transition-colors ${dark ? "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10" : "border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100"}`}
+        >
+          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+          View Solana transaction
+        </a>
+      )}
+
+      {/* Done / retry buttons */}
+      {isDone && (
+        <Button
+          onClick={onDone}
+          className={cn(
+            "w-full",
+            isSuccess
+              ? "bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90 text-white"
+              : "bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white"
+          )}
+        >
+          {isSuccess ? "Done" : "Close"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function shortAddr(addr: string, h = 6, t = 4) {
+  return addr.length > h + t ? `${addr.slice(0, h)}…${addr.slice(-t)}` : addr;
+}
 
 export interface BalanceModalProps {
   open: boolean;
@@ -40,9 +210,7 @@ export interface BalanceModalProps {
   loadingBalance: boolean;
   solanaAddress: string | null;
   onRefresh: () => void;
-  /** When true, use dark theme (bg-[#0f0f12], border-white/10, etc.) like other app modals. */
   dark?: boolean;
-  /** When true, user is in devnet mode — balance is $0 and withdrawals are disabled. */
   devnetMode?: boolean;
 }
 
@@ -67,25 +235,27 @@ export function BalanceModal({
   const [addressRiskStatus, setAddressRiskStatus] = useState<"idle" | "checking" | "safe" | "unsafe">("idle");
   const [recentWithdrawals, setRecentWithdrawals] = useState<WithdrawalHistoryItem[]>([]);
 
-  useEffect(() => {
-    if (open) setRecentWithdrawals(getWithdrawalHistory());
-  }, [open]);
+  // Quote estimation for cross-chain
+  const [quoteAmount, setQuoteAmount] = useState<string | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false); // eslint-disable-line @typescript-eslint/no-unused-vars
 
-  // Lock amount to full balance — wallet rotates after full withdrawal for privacy.
-  useEffect(() => {
-    setWithdrawAmount(balanceUSD);
-  }, [balanceUSD, open]);
+  // Withdrawal progress tracking
+  const [withdrawStep, setWithdrawStep] = useState<WithdrawalStep>("idle");
+  const [activeWithdrawal, setActiveWithdrawal] = useState<WithdrawalHistoryItem | null>(null);
+  const [depositAddressForPolling, setDepositAddressForPolling] = useState<string | null>(null);
+  const [bridgeStatus, setBridgeStatus] = useState<string | null>(null);
 
-  const { user } = usePrivy();
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const { user, getAccessToken } = usePrivy();
   const { wallets: solanaWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
-  const { signTransaction } = useSignTransaction();
+
   const wallet = useMemo(
     () => (solanaAddress ? solanaWallets?.find((w) => w.address === solanaAddress) : undefined),
     [solanaAddress, solanaWallets]
   );
 
-  // USDC on Solana - primary balance we have in embedded wallet
   const usdcSolanaToken = useMemo(
     () =>
       tokens.find(
@@ -96,15 +266,13 @@ export function BalanceModal({
     [tokens]
   );
 
-  // Withdraw options: only USDC on Solana (free) + other tokens (no other Solana tokens)
   const withdrawTokens = useMemo(() => {
-    const solanaLower = (c: string | undefined) => (c || "").toLowerCase() === "solana" || (c || "").toLowerCase() === "sol";
+    const solLower = (c: string | undefined) => (c || "").toLowerCase() === "solana" || (c || "").toLowerCase() === "sol";
     const usdcSol = usdcSolanaToken ? [usdcSolanaToken] : [];
-    const otherChains = tokens.filter((t) => !solanaLower(t.chain));
+    const otherChains = tokens.filter((t) => !solLower(t.chain));
     return [...usdcSol, ...otherChains];
   }, [tokens, usdcSolanaToken]);
 
-  // Default to USDC/Solana when token list loads
   const selectedFrom = useMemo(
     () => findTokenBySelection(withdrawTokens, fromSel ?? (usdcSolanaToken ? { symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain } : undefined)),
     [withdrawTokens, fromSel, usdcSolanaToken]
@@ -114,36 +282,147 @@ export function BalanceModal({
   const isUSDCOnSolana =
     effectiveToken?.symbol === "USDC" &&
     (effectiveToken?.chain === "solana" || effectiveToken?.chain === "sol");
-  /** For display: selected token balance (only USDC Solana has balance). */
-  const balanceNum = isUSDCOnSolana ? parseFloat(balanceUSD) || 0 : 0;
-  const balanceDisplay = isUSDCOnSolana ? balanceUSD : "0.00";
-  /** We always pay from USDC (Solana) balance; for other tokens we use Near Intents. */
   const payFromBalanceNum = parseFloat(balanceUSD) || 0;
   const destChain = effectiveToken?.chain || "";
-  const isNearIntentsWithdraw = !isUSDCOnSolana && effectiveToken && usdcSolanaToken;
+  const isNearIntentsWithdraw = !BETA_SOLANA_ONLY && !isUSDCOnSolana && effectiveToken && usdcSolanaToken;
   const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
 
-  /** Check destination address with Range risk API (server-side). */
+  // On open: load history and resume any in-progress Near Intents withdrawal
+  useEffect(() => {
+    if (!open) return;
+    const history = getWithdrawalHistory();
+    setRecentWithdrawals(history);
+
+    const latest = history[0];
+    if (
+      latest &&
+      latest.isNearIntents &&
+      !latest.nearIntentsComplete &&
+      latest.depositAddress
+    ) {
+      setActiveWithdrawal(latest);
+      setBridgeStatus(latest.nearIntentsStatus ?? null);
+      setWithdrawStep("bridging");
+      setDepositAddressForPolling(latest.depositAddress);
+    } else {
+      // Clean state for fresh form
+      if (withdrawStep === "idle") return;
+      setWithdrawStep("idle");
+      setActiveWithdrawal(null);
+      setDepositAddressForPolling(null);
+      setBridgeStatus(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Near Intents polling via interval (mirrors useIntentStatus logic but imperative)
+  useEffect(() => {
+    if (!depositAddressForPolling || withdrawStep !== "bridging") {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+      return;
+    }
+
+    let cancelled = false;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const result = await getExecutionStatus(depositAddressForPolling);
+        if (cancelled) return;
+        const raw = result?.status || result?.executionStatus || result?.state || "PENDING";
+        const s = String(raw).toUpperCase();
+        setBridgeStatus(s);
+
+        // Persist latest status to localStorage
+        if (activeWithdrawal) {
+          updateWithdrawalStatus(activeWithdrawal.id, s, SUCCESS_BRIDGE_STATUSES.has(s));
+          // Also update DB (fire-and-forget)
+          getAccessToken().then((token) => {
+            if (!token || !activeWithdrawal) return;
+            fetch(`/api/withdrawals`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ id: activeWithdrawal.id, nearIntentsStatus: s, nearIntentsComplete: SUCCESS_BRIDGE_STATUSES.has(s) }),
+            }).catch(() => {});
+          });
+
+          if (SUCCESS_BRIDGE_STATUSES.has(s)) {
+            if (!cancelled) {
+              setWithdrawStep("complete");
+              setDepositAddressForPolling(null);
+              onRefresh();
+            }
+          } else if (TERMINAL_BRIDGE_STATUSES.has(s)) {
+            if (!cancelled) {
+              setWithdrawStep("failed");
+              setDepositAddressForPolling(null);
+            }
+          }
+        }
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    poll();
+    pollingRef.current = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [depositAddressForPolling, withdrawStep]);
+
+  // Initialise amount to full balance when modal opens or balance changes
+  useEffect(() => {
+    // Floor to 2 dp so we never exceed the actual raw balance (toFixed rounds up)
+    if (open && payFromBalanceNum > 0) setWithdrawAmount((Math.floor(payFromBalanceNum * 100) / 100).toFixed(2));
+  }, [open, payFromBalanceNum]);
+
+  const withdrawAmountNum = parseFloat(withdrawAmount) || 0;
+
+  // Quote estimation for cross-chain withdrawals (re-runs when amount changes)
+  useEffect(() => {
+    if (!isNearIntentsWithdraw || !usdcSolanaToken || !effectiveToken || !withdrawAmountNum) {
+      setQuoteAmount(null);
+      setQuoteLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setQuoteLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await getAccurateQuote({
+          fromToken: usdcSolanaToken as NearToken,
+          toToken: effectiveToken as NearToken,
+          amount: withdrawAmountNum.toString(),
+          slippageBps: 100,
+          dryRun: true,
+        });
+        if (!cancelled && r.amountOut) setQuoteAmount(r.amountOut);
+      } catch {
+        // non-fatal
+      } finally {
+        if (!cancelled) setQuoteLoading(false);
+      }
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [isNearIntentsWithdraw, effectiveToken?.tokenId, withdrawAmountNum, usdcSolanaToken]);
+
+  // Address risk check for direct Solana withdrawals
   const checkAddressRisk = useCallback(async (address: string): Promise<{ safe: boolean }> => {
-    const res = await fetch(
-      `/api/risk/address?address=${encodeURIComponent(address)}&network=solana`
-    );
+    const res = await fetch(`/api/risk/address?address=${encodeURIComponent(address)}&network=solana`);
     const data = await res.json().catch(() => ({}));
     return { safe: data.safe !== false };
   }, []);
 
-  /** Debounced Range check when user enters a valid Solana address (only for direct USDC→Solana withdraw). */
   useEffect(() => {
-    if (!isUSDCOnSolana) {
-      setAddressRiskStatus("idle");
-      return;
-    }
+    if (!isUSDCOnSolana) { setAddressRiskStatus("idle"); return; }
     const raw = withdrawAddress.trim();
-    const isValidFormat = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw);
-    if (!raw || !isValidFormat) {
-      setAddressRiskStatus("idle");
-      return;
-    }
+    if (!raw || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw)) { setAddressRiskStatus("idle"); return; }
     setAddressRiskStatus("checking");
     const t = setTimeout(async () => {
       const { safe } = await checkAddressRisk(raw);
@@ -152,15 +431,30 @@ export function BalanceModal({
     return () => clearTimeout(t);
   }, [withdrawAddress, checkAddressRisk, isUSDCOnSolana]);
 
+  const saveWithdrawalToDB = useCallback(async (item: WithdrawalHistoryItem) => {
+    try {
+      const token = await getAccessToken();
+      if (!token) return;
+      await fetch("/api/withdrawals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ...item, isDevnet: devnetMode }),
+      });
+    } catch {
+      // non-fatal
+    }
+  }, [getAccessToken, devnetMode]);
+
   const handleWithdraw = async () => {
     const rawAddress = withdrawAddress.trim();
-    const amount = parseFloat(withdrawAmount);
-    if (!(amount > 0)) {
-      toast({ variant: "destructive", title: "Invalid amount", description: "Enter an amount greater than 0." });
+    const amount = withdrawAmountNum;
+
+    if (!(amount >= 1)) {
+      toast({ variant: "destructive", title: "Minimum $1", description: "Minimum withdrawal is $1.00 USDC." });
       return;
     }
     if (amount > payFromBalanceNum) {
-      toast({ variant: "destructive", title: "Insufficient balance", description: `You have $${balanceUSD} USDC. Enter a lower amount.` });
+      toast({ variant: "destructive", title: "Insufficient balance", description: `You have $${payFromBalanceNum.toFixed(2)} USDC available.` });
       return;
     }
     if (!solanaAddress || !wallet) {
@@ -179,7 +473,7 @@ export function BalanceModal({
       }
     } else {
       if (!rawAddress || !destinationAddressValid) {
-        toast({ variant: "destructive", title: "Invalid address", description: `Enter a valid ${destChain || "destination"} address for the selected token.` });
+        toast({ variant: "destructive", title: "Invalid address", description: `Enter a valid ${destChain || "destination"} address.` });
         return;
       }
       if (!usdcSolanaToken || !effectiveToken) {
@@ -189,20 +483,16 @@ export function BalanceModal({
     }
 
     setWithdrawing(true);
+    setWithdrawStep("submitting");
+
     try {
       const mode = devnetMode ? "devnet" : "mainnet";
       const connection = new Connection(getRpcForMode(mode), "confirmed");
       let recipientAddress: string;
       let memo: string | null = null;
+      let depositAddr: string | undefined;
 
       if (isNearIntentsWithdraw && usdcSolanaToken && effectiveToken) {
-        console.log(`${LOG_PREFIX} Near Intents withdraw: requesting deposit info`, {
-          fromToken: { symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain },
-          toToken: { symbol: effectiveToken.symbol, chain: effectiveToken.chain },
-          amount: amount.toString(),
-          recipient: rawAddress,
-          sender: solanaAddress,
-        });
         const depositInfo = await getDepositInfo({
           fromToken: usdcSolanaToken as NearToken,
           toToken: effectiveToken as NearToken,
@@ -214,24 +504,16 @@ export function BalanceModal({
         });
         recipientAddress = depositInfo.depositAddress ?? "";
         memo = depositInfo.memo ?? null;
-        console.log(`${LOG_PREFIX} Near Intents deposit info`, {
-          depositAddress: depositInfo.depositAddress,
-          memo: depositInfo.memo,
-          quoteId: depositInfo.quoteId,
-          deadline: depositInfo.deadline,
-          timeEstimate: depositInfo.timeEstimate,
-          minDepositFormatted: depositInfo.minDepositFormatted,
-        });
+        depositAddr = recipientAddress;
+
         if (!recipientAddress || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(recipientAddress)) {
-          console.error(`${LOG_PREFIX} Near Intents returned invalid Solana deposit address:`, recipientAddress);
           throw new Error("Invalid deposit address from Near Intents. Please try again.");
         }
       } else {
         recipientAddress = rawAddress;
       }
 
-      // Log deposit address so you can verify it matches (e.g. Near Intents vs chain explorer)
-      console.log(`${LOG_PREFIX} Privy transaction deposit address (USDC send-to):`, recipientAddress, isNearIntentsWithdraw ? "(from Near Intents)" : "(direct withdraw)");
+      setWithdrawStep("sent");
 
       const sig = await sendUsdcWithPrivyEmbeddedWallet({
         senderAddress: solanaAddress,
@@ -240,35 +522,14 @@ export function BalanceModal({
         connection,
         wallet,
         privyUserId: user?.id,
-        signTransaction,
         signAndSendTransaction,
         memo: memo ?? undefined,
         usdcMint: getUsdcMintForMode(mode),
         chain: getPrivySolanaChainForMode(mode),
-        skipLooftaFeePayer: mode === "mainnet",
       });
-      console.log(`${LOG_PREFIX} Withdraw tx sent`, {
-        signature: sig,
-        amountUSDC: amount,
-        isNearIntents: isNearIntentsWithdraw,
-        ...(isNearIntentsWithdraw && {
-          depositAddress: recipientAddress,
-          memo,
-          destinationToken: effectiveToken?.symbol,
-          destinationChain: effectiveToken?.chain,
-          destinationAddress: rawAddress,
-        }),
-      });
-      toast({
-        title: "Withdrawal sent",
-        description: isNearIntentsWithdraw
-          ? `$${amount.toFixed(2)} USDC → ${effectiveToken?.symbol} on ${effectiveToken?.chain}. Tx: ${sig.slice(0, 8)}…`
-          : `$${amount.toFixed(2)} USDC sent. Tx: ${sig.slice(0, 8)}…`,
-      });
-      setWithdrawAmount("");
-      setWithdrawAddress("");
-      setAddressRiskStatus("idle");
-      addWithdrawal({
+
+      // Save to localStorage and DB
+      const item = addWithdrawal({
         id: sig,
         amountUSDC: amount,
         txSignature: sig,
@@ -276,16 +537,33 @@ export function BalanceModal({
         destinationChain: isNearIntentsWithdraw ? (effectiveToken?.chain ?? "solana") : "solana",
         destinationToken: isNearIntentsWithdraw ? (effectiveToken?.symbol ?? "USDC") : "USDC",
         isNearIntents: Boolean(isNearIntentsWithdraw),
+        depositAddress: depositAddr,
+        estimatedOut: quoteAmount ?? undefined,
+        nearIntentsStatus: isNearIntentsWithdraw ? "PENDING" : undefined,
+        nearIntentsComplete: !isNearIntentsWithdraw,
       });
+      setActiveWithdrawal(item);
       setRecentWithdrawals(getWithdrawalHistory());
-      onRefresh();
+      saveWithdrawalToDB(item);
+
+      setWithdrawAddress("");
+      setAddressRiskStatus("idle");
+
+      if (isNearIntentsWithdraw && depositAddr) {
+        setWithdrawStep("bridging");
+        setDepositAddressForPolling(depositAddr);
+        setBridgeStatus("PENDING");
+      } else {
+        setWithdrawStep("complete");
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`${LOG_PREFIX} Withdraw error`, { message: msg, isNearIntents: isNearIntentsWithdraw });
+      console.error(`${LOG_PREFIX} Withdraw error`, { message: msg });
+      setWithdrawStep("failed");
       if (msg.includes("user rejected") || msg.includes("denied") || msg.includes("User denied")) {
         toast({ variant: "destructive", title: "Cancelled", description: "You cancelled the transaction." });
       } else if (msg.includes("insufficient") || msg.includes("Insufficient")) {
-        toast({ variant: "destructive", title: "Insufficient balance", description: "Not enough USDC for this withdrawal." });
+        toast({ variant: "destructive", title: "Insufficient balance", description: "Not enough USDC." });
       } else {
         toast({ variant: "destructive", title: "Withdrawal failed", description: msg || "Please try again." });
       }
@@ -293,9 +571,6 @@ export function BalanceModal({
       setWithdrawing(false);
     }
   };
-
-  const shortAddr = (addr: string, h = 6, t = 4) =>
-    addr.length > h + t ? `${addr.slice(0, h)}…${addr.slice(-t)}` : addr;
 
   const contentCls = dark
     ? "sm:max-w-md border-white/10 bg-[#0f0f12] text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-gray-400]:!text-slate-500 [&_.bg-gray-100]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.border-gray-300]:!border-white/20 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&>button]:!text-slate-400 [&>button:hover]:!text-white"
@@ -324,7 +599,12 @@ export function BalanceModal({
             onClick={() => setTab("withdraw")}
             className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "withdraw" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
           >
-            Withdraw
+            {withdrawStep !== "idle" && withdrawStep !== "complete" && withdrawStep !== "failed" ? (
+              <span className="flex items-center justify-center gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                In Progress
+              </span>
+            ) : "Withdraw"}
           </button>
           <button
             type="button"
@@ -338,186 +618,297 @@ export function BalanceModal({
           </button>
         </div>
 
+        {/* History tab */}
         {tab === "history" ? (
           <div className="py-2 min-h-0 overflow-y-auto sm:max-h-[60vh]">
             {recentWithdrawals.length === 0 ? (
               <p className={`text-sm text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent withdrawals.</p>
             ) : (
               <ul className="space-y-2">
-                {recentWithdrawals.map((item) => (
-                  <li key={item.id}>
-                    <a
-                      href={getExplorerTxUrl("solana", item.txSignature)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={`flex items-center gap-3 rounded-lg border p-3 transition-colors ${dark ? "border-white/10 bg-white/5 hover:bg-white/10" : "border-gray-200 bg-white hover:border-gray-300"}`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className={`font-semibold text-sm ${dark ? "text-white" : "text-gray-900"}`}>
-                          ${item.amountUSDC.toFixed(2)} → {item.destinationToken} ({item.destinationChain})
-                        </p>
-                        <p className={`text-xs font-mono mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                          To {shortAddr(item.destinationAddress)}
-                        </p>
-                        <p className={`text-xs mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
-                          {new Date(item.createdAt).toLocaleString(undefined, {
-                            month: "short",
-                            day: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </p>
+                {recentWithdrawals.map((item) => {
+                  const isInProgress = item.isNearIntents && !item.nearIntentsComplete;
+                  return (
+                    <li key={item.id}>
+                      <div
+                        className={`rounded-lg border p-3 transition-colors ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className={`font-semibold text-sm ${dark ? "text-white" : "text-gray-900"}`}>
+                              ${item.amountUSDC.toFixed(2)} → {item.destinationToken}
+                              {item.estimatedOut && (
+                                <span className={`font-normal text-xs ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                                  (~{Number(item.estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} received)
+                                </span>
+                              )}
+                            </p>
+                            <p className={`text-xs font-mono mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                              To {shortAddr(item.destinationAddress)} · {item.destinationChain}
+                            </p>
+                            <p className={`text-xs mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                              {new Date(item.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            </p>
+                          </div>
+                          <div className="flex flex-col items-end gap-1.5 shrink-0">
+                            {isInProgress ? (
+                              <span className="flex items-center gap-1 text-xs font-medium text-blue-400">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Bridging
+                              </span>
+                            ) : item.nearIntentsComplete && item.nearIntentsStatus ? (
+                              <span className={`text-xs font-medium ${SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "text-emerald-400" : "text-amber-400"}`}>
+                                {SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "Completed" : item.nearIntentsStatus}
+                              </span>
+                            ) : !item.isNearIntents ? (
+                              <span className="text-xs font-medium text-emerald-400">Sent</span>
+                            ) : null}
+                            <a
+                              href={getExplorerTxUrl("solana", item.txSignature)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`${dark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-600"}`}
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                            </a>
+                          </div>
+                        </div>
+
+                        {/* Bridge status for in-progress */}
+                        {isInProgress && item.nearIntentsStatus && (
+                          <p className={`text-xs mt-2 pt-2 border-t ${dark ? "border-white/10 text-slate-400" : "border-gray-100 text-gray-500"}`}>
+                            {bridgeStatusLabel(item.nearIntentsStatus)}
+                          </p>
+                        )}
+
+                        {/* Track button for in-progress near intents */}
+                        {isInProgress && item.depositAddress && withdrawStep !== "bridging" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveWithdrawal(item);
+                              setBridgeStatus(item.nearIntentsStatus ?? null);
+                              setWithdrawStep("bridging");
+                              setDepositAddressForPolling(item.depositAddress!);
+                              setTab("withdraw");
+                            }}
+                            className={`mt-2 text-xs font-medium underline underline-offset-2 ${dark ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"}`}
+                          >
+                            Track progress →
+                          </button>
+                        )}
                       </div>
-                      <ExternalLink className={`h-4 w-4 shrink-0 ${dark ? "text-slate-400" : "text-gray-400"}`} />
-                    </a>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
+        ) : withdrawStep !== "idle" ? (
+          /* Progress panel */
+          <ProgressSteps
+            step={withdrawStep}
+            isNearIntents={Boolean(isNearIntentsWithdraw || activeWithdrawal?.isNearIntents)}
+            txSignature={activeWithdrawal?.txSignature}
+            bridgeStatus={bridgeStatus}
+            destinationToken={activeWithdrawal?.destinationToken || effectiveToken?.symbol}
+            destinationChain={activeWithdrawal?.destinationChain || effectiveToken?.chain}
+            estimatedOut={activeWithdrawal?.estimatedOut || quoteAmount || undefined}
+            amountUSDC={activeWithdrawal?.amountUSDC || withdrawAmountNum || payFromBalanceNum}
+            dark={dark}
+            onDone={() => {
+              setWithdrawStep("idle");
+              setActiveWithdrawal(null);
+              setBridgeStatus(null);
+              setDepositAddressForPolling(null);
+              if (withdrawStep === "complete") onRefresh();
+            }}
+          />
         ) : (
-        <div className="space-y-4 py-4">
-          {/* Balance – token/chain + dollar amount */}
-          <div>
-            <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-400" : "text-gray-500"}`}>
-              {isNearIntentsWithdraw ? "Paying from (USDC on Solana)" : "Available balance"}
-            </Label>
-            <div className={`p-4 rounded-xl border-2 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${dark ? "bg-white/10 border border-white/10" : "bg-white border border-gray-200"}`}>
-                  {(isNearIntentsWithdraw ? usdcSolanaToken : effectiveToken) && (
-                    <TokenIcon
-                      token={(isNearIntentsWithdraw ? usdcSolanaToken : effectiveToken)!}
-                      chain={isNearIntentsWithdraw ? "solana" : effectiveToken?.chain}
-                      size={24}
-                    />
-                  )}
-                </div>
-                <div>
-                  <p className={`text-sm font-medium ${dark ? "text-slate-300" : "text-gray-600"}`}>
-                    {isNearIntentsWithdraw ? "USDC / Solana" : `${effectiveToken?.symbol || "USDC"} / ${effectiveToken?.chain || "Solana"}`}
-                  </p>
-                  <p className={`text-xl font-semibold mt-0.5 ${dark ? "text-white" : "text-gray-900"}`}>
-                    {isUSDCOnSolana && loadingBalance ? "…" : `$${isNearIntentsWithdraw ? balanceUSD : balanceDisplay}`}
-                  </p>
-                  <p className={`text-xs mt-1 ${dark ? "text-slate-500" : "text-gray-500"}`}>
-                    {devnetMode
-                      ? "Devnet — USDC shown is on devnet only (not mainnet)."
-                      : "Mainnet USDC — your embedded address can hold different balances on devnet/testnet."}
-                  </p>
+          /* Withdraw form */
+          <div className="space-y-4 py-4">
+            {/* Balance */}
+            <div>
+              <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                {isNearIntentsWithdraw ? "Paying from (USDC on Solana)" : "Available balance"}
+              </Label>
+              <div className={`p-4 rounded-xl border-2 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${dark ? "bg-white/10 border border-white/10" : "bg-white border border-gray-200"}`}>
+                    {(isNearIntentsWithdraw ? usdcSolanaToken : effectiveToken) && (
+                      <TokenIcon
+                        token={(isNearIntentsWithdraw ? usdcSolanaToken : effectiveToken)!}
+                        chain={isNearIntentsWithdraw ? "solana" : effectiveToken?.chain}
+                        size={24}
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <p className={`text-sm font-medium ${dark ? "text-slate-300" : "text-gray-600"}`}>
+                      {isNearIntentsWithdraw ? "USDC / Solana" : `${effectiveToken?.symbol || "USDC"} / ${effectiveToken?.chain || "Solana"}`}
+                    </p>
+                    <p className={`text-xl font-semibold mt-0.5 ${dark ? "text-white" : "text-gray-900"}`}>
+                      {loadingBalance ? "…" : `$${balanceUSD}`}
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
-            {!loadingBalance && balanceNum <= 0 && isUSDCOnSolana && (
-              <p className={`text-sm mt-2 ${dark ? "text-amber-400" : "text-amber-600"}`}>No balance to withdraw.</p>
-            )}
-            {isNearIntentsWithdraw && payFromBalanceNum > 0 && (
-              <p className={`text-xs mt-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                You will pay from your USDC (Solana) balance. Fees are sponsored.
-              </p>
-            )}
-          </div>
-
-          {/* Token/network selector: USDC on Solana (free) or other tokens only (no other Solana) */}
-          <div>
-            <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-300" : "text-gray-700"}`}>
-              Withdraw to
-            </Label>
-            <TokenCombobox
-              tokens={withdrawTokens}
-              value={fromSel ?? (usdcSolanaToken ? { symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain } : undefined)}
-              onChange={setFromSel}
-              placeholder="USDC on Solana (free) or other token"
-              className={dark ? "w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white text-center placeholder:text-slate-400" : "w-full h-12 rounded-xl border-2 border-gray-200 bg-white text-center"}
-              defaultShowAllChains
-            />
-            <p className={`text-xs mt-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-              {isUSDCOnSolana
-                ? "USDC on Solana — free withdrawal to any Solana wallet."
-                : `Other tokens: USDC is bridged to ${effectiveToken?.symbol} on ${effectiveToken?.chain}. Enter ${effectiveToken?.chain} address.`}
-            </p>
-          </div>
-
-          {/* Amount — locked to full balance for privacy */}
-          <div>
-            <Label className={dark ? "text-slate-300" : undefined}>
-              Amount (USDC to send)
-              {isNearIntentsWithdraw && effectiveToken && (
-                <span className={dark ? "text-slate-400 font-normal" : "text-gray-500 font-normal"}> → receive ~{effectiveToken.symbol} on {effectiveToken.chain}</span>
+              {!loadingBalance && payFromBalanceNum <= 0 && isUSDCOnSolana && (
+                <p className={`text-sm mt-2 ${dark ? "text-amber-400" : "text-amber-600"}`}>No balance to withdraw.</p>
               )}
-            </Label>
-            <div className={`mt-1 flex items-center justify-between rounded-md border px-3 py-2 text-sm font-mono ${dark ? "border-white/20 bg-white/10 text-white" : "border-input bg-muted text-gray-900"}`}>
-              <span className="font-semibold">${payFromBalanceNum.toFixed(2)}</span>
-              <span className={`text-xs ${dark ? "text-slate-400" : "text-muted-foreground"}`}>Full balance</span>
             </div>
-            <p className={`text-xs mt-2 ${dark ? "text-purple-300" : "text-purple-700"}`}>
-              Withdrawals are always for your full balance. After sending, your Loofta wallet address rotates to keep your payments private.
-            </p>
-          </div>
 
-          {/* Destination address */}
-          <div>
-            <Label htmlFor="withdraw-address" className={dark ? "text-slate-300" : undefined}>
-              {isUSDCOnSolana ? "Destination Solana wallet" : `Destination address (${effectiveToken?.chain || "recipient"})`}
-            </Label>
-            <Input
-              id="withdraw-address"
-              placeholder={isUSDCOnSolana ? "Enter Solana address" : `Enter ${effectiveToken?.chain || "destination"} address (e.g. 0x… for EVM)`}
-              value={withdrawAddress}
-              onChange={(e) => setWithdrawAddress(e.target.value)}
-              className={`mt-1 font-mono text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
-            />
-            {isUSDCOnSolana && addressRiskStatus === "checking" && (
-              <p className={`text-xs mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
-                <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-                Checking address with Range…
-              </p>
-            )}
-            {isUSDCOnSolana && addressRiskStatus === "safe" && (
-              <p className="text-xs text-emerald-400 mt-1.5 flex items-center gap-1.5 font-medium">
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                Address compliant — safe to withdraw
-              </p>
-            )}
-            {isUSDCOnSolana && addressRiskStatus === "unsafe" && (
-              <p className="text-xs text-red-400 mt-1.5 flex items-center gap-1.5 font-medium">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                Address flagged — withdrawal blocked for your protection
-              </p>
-            )}
-            <p className={`text-xs mt-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-              {isUSDCOnSolana ? "Withdrawals are free — transaction fees are sponsored." : "Your USDC is sent to Near Intents; they route to the selected token/chain."}
-            </p>
-          </div>
+            {/* Token selector */}
+            <div>
+              <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-300" : "text-gray-700"}`}>
+                Withdraw to
+              </Label>
+              <TokenCombobox
+                tokens={withdrawTokens}
+                value={fromSel ?? (usdcSolanaToken ? { symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain } : undefined)}
+                onChange={setFromSel}
+                placeholder="USDC on Solana (free) or other token"
+                className={dark ? "w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white text-center placeholder:text-slate-400" : "w-full h-12 rounded-xl border-2 border-gray-200 bg-white text-center"}
+                defaultShowAllChains
+              />
+              {BETA_SOLANA_ONLY && !isUSDCOnSolana ? (
+                <p className={`text-xs mt-1.5 font-medium ${dark ? "text-amber-400" : "text-amber-600"}`}>
+                  Cross-chain withdrawals coming soon — only USDC on Solana is available in beta.
+                </p>
+              ) : (
+                <p className={`text-xs mt-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                  Free withdrawal to any Solana wallet.
+                </p>
+              )}
+            </div>
 
-          {devnetMode && (
-            <p className={`text-xs text-center ${dark ? "text-amber-400" : "text-amber-600"}`}>
-              Withdrawals are not available on devnet.
-            </p>
-          )}
-          <div className="flex gap-2 pt-2">
-            <Button variant="outline" onClick={onClose} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleWithdraw}
-              disabled={
-                devnetMode ||
-                withdrawing ||
-                payFromBalanceNum <= 0 ||
-                !withdrawAddress.trim() ||
-                !wallet ||
-                (isUSDCOnSolana ? addressRiskStatus !== "safe" : !destinationAddressValid)
-              }
-              className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {withdrawing ? "Sending…" : "Withdraw"}
-            </Button>
+            {/* Amount input + estimated receive */}
+            <div>
+              <Label htmlFor="withdraw-amount" className={dark ? "text-slate-300" : undefined}>
+                Amount to send (USDC)
+              </Label>
+              <div className="mt-1 flex gap-2">
+                <Input
+                  id="withdraw-amount"
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  max={payFromBalanceNum}
+                  placeholder="0.00"
+                  value={withdrawAmount}
+                  onChange={(e) => setWithdrawAmount(e.target.value)}
+                  className={`flex-1 font-mono text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setWithdrawAmount((Math.floor(payFromBalanceNum * 100) / 100).toFixed(2))}
+                  className={`shrink-0 px-3 text-xs ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}
+                >
+                  Max
+                </Button>
+              </div>
+              {withdrawAmountNum > 0 && withdrawAmountNum < 1 && (
+                <p className="text-xs text-red-400 mt-1">Minimum withdrawal is $1.00 USDC.</p>
+              )}
+              {withdrawAmountNum > payFromBalanceNum && payFromBalanceNum > 0 && (
+                <p className="text-xs text-red-400 mt-1">Exceeds available balance of ${payFromBalanceNum.toFixed(2)}.</p>
+              )}
+
+              {/* BETA_SOLANA_ONLY: cross-chain estimate — uncomment when Near Intents is re-enabled
+              {isNearIntentsWithdraw && (
+                <div className={`mt-2 flex items-center gap-2 rounded-lg border px-3 py-2 ${dark ? "border-white/10 bg-white/5" : "border-gray-100 bg-gray-50"}`}>
+                  <ArrowRight className={`h-3.5 w-3.5 shrink-0 ${dark ? "text-slate-400" : "text-gray-400"}`} />
+                  {quoteLoading ? (
+                    <span className={`text-xs flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Fetching estimate…
+                    </span>
+                  ) : quoteAmount ? (
+                    <span className={`text-xs ${dark ? "text-slate-300" : "text-gray-700"}`}>
+                      You receive ~<span className="font-semibold">
+                        {Number(quoteAmount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {effectiveToken?.symbol}
+                      </span>
+                      <span className={`ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>on {effectiveToken?.chain}</span>
+                    </span>
+                  ) : (
+                    <span className={`text-xs ${dark ? "text-slate-500" : "text-gray-400"}`}>Estimate unavailable</span>
+                  )}
+                </div>
+              )}
+              */}
+            </div>
+
+            {/* Destination address */}
+            <div>
+              <Label htmlFor="withdraw-address" className={dark ? "text-slate-300" : undefined}>
+                {isUSDCOnSolana ? "Destination Solana wallet" : `Destination address (${effectiveToken?.chain || "recipient"})`}
+              </Label>
+              <Input
+                id="withdraw-address"
+                placeholder={isUSDCOnSolana ? "Enter Solana address" : `Enter ${effectiveToken?.chain || "destination"} address`}
+                value={withdrawAddress}
+                onChange={(e) => setWithdrawAddress(e.target.value)}
+                className={`mt-1 font-mono text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+              />
+              {isUSDCOnSolana && addressRiskStatus === "checking" && (
+                <p className={`text-xs mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                  Checking address with Range…
+                </p>
+              )}
+              {isUSDCOnSolana && addressRiskStatus === "safe" && (
+                <p className="text-xs text-emerald-400 mt-1.5 flex items-center gap-1.5 font-medium">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                  Address compliant — safe to withdraw
+                </p>
+              )}
+              {isUSDCOnSolana && addressRiskStatus === "unsafe" && (
+                <p className="text-xs text-red-400 mt-1.5 flex items-center gap-1.5 font-medium">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Address flagged — withdrawal blocked
+                </p>
+              )}
+            </div>
+
+            {devnetMode && (
+              <p className={`text-xs text-center ${dark ? "text-amber-400" : "text-amber-600"}`}>
+                Withdrawals are not available on devnet.
+              </p>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" onClick={onClose} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleWithdraw}
+                disabled={
+                  devnetMode ||
+                  withdrawing ||
+                  (BETA_SOLANA_ONLY && !isUSDCOnSolana) ||
+                  withdrawAmountNum < 1 ||
+                  withdrawAmountNum > payFromBalanceNum ||
+                  !withdrawAddress.trim() ||
+                  !wallet ||
+                  (isUSDCOnSolana ? addressRiskStatus !== "safe" : !destinationAddressValid)
+                }
+                className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {withdrawing ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {stepLabel(withdrawStep, Boolean(isNearIntentsWithdraw))}
+                  </span>
+                ) : (
+                  isNearIntentsWithdraw ? `Bridge to ${effectiveToken?.symbol}` : "Withdraw USDC"
+                )}
+              </Button>
+            </div>
+            {!loadingBalance && payFromBalanceNum <= 0 && (
+              <p className={`text-xs text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>Add funds to withdraw.</p>
+            )}
           </div>
-          {!loadingBalance && payFromBalanceNum <= 0 && (
-            <p className={`text-xs text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>Add funds to your wallet to withdraw.</p>
-          )}
-        </div>
         )}
       </DialogContent>
     </Dialog>
