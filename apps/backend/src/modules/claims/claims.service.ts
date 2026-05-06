@@ -21,12 +21,12 @@ import { SendPaymentEncryptionService } from '../send-payment/encryption.service
 import { SolanaSponsorService } from './solana-sponsor.service';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 import {
-  LOOFTA_FEE_BPS,
+  MAGICBLOCK_GAS_SOL,
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
-  appendLooftaFeeInstruction,
   fetchSolPriceUsd,
   grossUpForMagicblockFee,
   requestMagicblockPrivateTransfer,
+  appendLooftaFeeInstruction,
   type MagicblockPrivateTransferTxResponse,
 } from '@/common/magicblock-private-transfer';
 
@@ -654,6 +654,26 @@ export class ClaimsService {
     // Never expose the encrypted burner private key to the frontend
     delete (claim as unknown as Record<string, unknown>)['claim_burner_encrypted_secret'];
 
+    // Attach fee data so the UI can show the payment breakdown on reload.
+    // New payments: fee_paid_usdc column is set directly at payment time.
+    // Legacy claims: fall back to the FEE_CHARGED claim_event payload.
+    if (['SUCCESS', 'PRIVATE_TRANSFER_PENDING'].includes((claim.status || '').toUpperCase())) {
+      if ((claim as any).fee_paid_usdc == null) {
+        try {
+          const { data: feeEvent } = await (this.supabaseService.claimEvents as any)
+            .select('payload')
+            .eq('claim_id', id)
+            .eq('type', 'FEE_CHARGED')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (feeEvent?.payload?.feeAmountUsdc != null) {
+            (claim as any).fee_paid_usdc = feeEvent.payload.feeAmountUsdc;
+          }
+        } catch { /* non-fatal */ }
+      }
+    }
+
     return claim;
   }
 
@@ -726,6 +746,9 @@ export class ClaimsService {
     if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
       throw new BadRequestException('Invalid claim amount');
     }
+    if (amountUsd < 5) {
+      throw new BadRequestException('Minimum payment amount is $5.00 USDC.');
+    }
     const baseUnits = Math.round(amountUsd * 1_000_000);
     const cluster = requestCluster
       ?? (isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet');
@@ -740,139 +763,100 @@ export class ClaimsService {
       .eq('id', claimId);
     this.logger.log(`[PrivatePay] stamped claim ${claimId}: is_devnet=${correctIsDevnet} sender_user_id=${privyUserId}`);
 
-    const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
-    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
-    const heliusKey = this.configService.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
-    const sponsorConn = (cluster === 'mainnet' && this.solanaSponsor.isAvailable())
-      ? new Connection(heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com', 'confirmed')
-      : undefined;
-
-    // ── Pre-calculate fees before calling MagicBlock ──────────────────────────────────────────
-    // Fee model: sender pays exactly `baseUnits`. Fee is deducted from recipient's share.
-    //   sender pays: grossUp(baseUnits - totalFee) [MagicBlock] + totalFee [fee ix] ≈ baseUnits
-    const MIN_SOL_LAMPORTS = 3_000_000;
-    let solRecoveryFeeUnits = 0;
-    let capturedSolPriceUsd: number | null = null;
-    let estimatedPrefundLamports = 0;
-    if (cluster === 'mainnet' && sponsorConn) {
-      try {
-        const senderBalance = await sponsorConn.getBalance(new PublicKey(senderWallet.trim()));
-        estimatedPrefundLamports = Math.max(0, MIN_SOL_LAMPORTS - senderBalance);
-        if (estimatedPrefundLamports > 0) {
-          capturedSolPriceUsd = await fetchSolPriceUsd();
-          if (capturedSolPriceUsd !== null) {
-            solRecoveryFeeUnits = Math.ceil(capturedSolPriceUsd * (estimatedPrefundLamports / 1e9) * 1_000_000);
-            this.logger.log(`[PrivatePay] SOL: ${estimatedPrefundLamports} lamports needed @ $${capturedSolPriceUsd.toFixed(2)}/SOL = ${solRecoveryFeeUnits} USDC units recovery`);
-          } else {
-            this.logger.warn('[PrivatePay] SOL price unavailable — skipping SOL recovery fee');
-          }
-        } else {
-          this.logger.log('[PrivatePay] Sender already has enough SOL — no recovery needed');
-        }
-      } catch (e) {
-        this.logger.warn(`[PrivatePay] SOL balance check failed, skipping recovery: ${String(e)}`);
+    // MagicBlock cost = 10 BPS volume fee + 0.002 SOL fixed gas fee (converted to USDC).
+    // Both are added to the amount so the recipient gets exactly baseUnits after MB deducts.
+    let solPriceUsd: number | null = null;
+    let solFeeUnits = 0;
+    try {
+      solPriceUsd = await fetchSolPriceUsd();
+      if (solPriceUsd !== null) {
+        solFeeUnits = Math.ceil(MAGICBLOCK_GAS_SOL * solPriceUsd * 1_000_000);
       }
+    } catch (e) {
+      this.logger.warn(`[PrivatePay] SOL price fetch failed, skipping gas conversion: ${String(e)}`);
     }
 
-    const bpsFeeUnits = Math.ceil(baseUnits * LOOFTA_FEE_BPS / 10_000);
-    // Charge the actual SOL recovery — fee payer must always break even on SOL.
-    // Only hard cap is baseUnits (can't charge more than the payment amount itself).
-    const cappedSolRecovery = Math.min(solRecoveryFeeUnits, baseUnits);
-    const totalFeeUnits = bpsFeeUnits + cappedSolRecovery;
-    // Fee model: fee is ON TOP. MagicBlock delivers the full claim amount to recipient.
-    // Sender pays: grossUp(baseUnits) [MagicBlock] + totalFeeUnits [fee ix] = claim + fees.
+    // MagicBlock gasless: the 0.002 SOL relay fee is charged via a separate prepended USDC
+    // instruction (sender → MB sponsor). It is NOT deducted from `amount`.
+    // Gross-up only covers MB's 10 BPS volume fee so recipient gets exactly baseUnits.
     const grossUnits = grossUpForMagicblockFee(baseUnits);
     this.logger.log(
-      `[PrivatePay] claim=${claimId} amount=${amountUsd} | bps=${bpsFeeUnits} solRecovery=${cappedSolRecovery}${cappedSolRecovery < solRecoveryFeeUnits ? `(capped from ${solRecoveryFeeUnits})` : ''} totalFee=${totalFeeUnits}` +
-      ` | mbGross=${grossUnits} senderPays=${grossUnits + totalFeeUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}…`,
+      `[PrivatePay] claim=${claimId} amount=${amountUsd} baseUnits=${baseUnits} solFeeUnits=${solFeeUnits}` +
+      ` solPrice=${solPriceUsd ?? 'n/a'} grossUnits=${grossUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… (gasless)`,
     );
-    // ─────────────────────────────────────────────────────────────────────────────────────────
 
-    const txResponse = await requestMagicblockPrivateTransfer({
+    let txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
       mint: effectiveMint.toBase58(),
       amount: grossUnits,
       cluster,
+      gasless: true,
     });
 
-    const txBase64 = txResponse.transactionBase64;
+    const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
+    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+    const clusterConn = this.solanaSponsor.getConnectionForCluster(cluster === 'devnet' ? 'devnet' : 'mainnet');
 
-    if (this.solanaSponsor.isAvailable()) {
-      this.logger.log(
-        `[PrivatePay] Fee sponsor: preparing tx | cluster=${cluster} feePayer=${feePayerAddress ?? 'n/a'} requiredSigners=[${txResponse.requiredSigners.join(', ')}]`,
-      );
-
+    // Check actual SOL deficit BEFORE prefunding so we recover the exact amount spent.
+    // Round up to nearest cent ($0.01 = 10,000 units) to ensure fee payer is fully covered.
+    const PREFUND_MIN_LAMPORTS = 3_000_000;
+    let actualTopUpLamports = 0;
+    if (this.solanaSponsor.isAvailable() && solPriceUsd) {
       try {
-        const sponsored = await this.solanaSponsor.prepareAndPartialSignTransaction(txBase64, sponsorConn);
-        this.logger.log(
-          `[PrivatePay] Fee sponsor prepared: feePayer=${feePayerAddress} topUpLamports=${sponsored.topUpLamports} blockhash=${sponsored.recentBlockhash.slice(0, 8)}...`,
-        );
-
-        // Use the actual inline top-up to compute the definitive fee (may differ slightly from estimate)
-        let actualTotalFeeUnits = totalFeeUnits;
-        let actualSolPriceUsd = capturedSolPriceUsd;
-        let actualSolLamports = sponsored.topUpLamports;
-        let actualSolRecoveryUnits = cappedSolRecovery;
-        if (sponsored.topUpLamports > 0) {
-          const freshSolPrice = await fetchSolPriceUsd();
-          if (freshSolPrice !== null) {
-            actualSolPriceUsd = freshSolPrice;
-            actualSolRecoveryUnits = Math.min(
-              Math.ceil(freshSolPrice * (sponsored.topUpLamports / 1e9) * 1_000_000),
-              baseUnits,
-            );
-            actualTotalFeeUnits = bpsFeeUnits + actualSolRecoveryUnits;
-            if (actualTotalFeeUnits !== totalFeeUnits) {
-              this.logger.log(`[PrivatePay] Fee adjusted: estimated=${totalFeeUnits} actual=${actualTotalFeeUnits} (topUp=${sponsored.topUpLamports} lamports @ $${freshSolPrice.toFixed(2)})`);
-            }
-          }
-        }
-
-        let finalTxBase64 = sponsored.transactionBase64;
-        if (feePayerAddress && feePayerKp && actualTotalFeeUnits > 0) {
-          try {
-            finalTxBase64 = await appendLooftaFeeInstruction(
-              finalTxBase64,
-              senderWallet.trim(),
-              feePayerAddress,
-              actualTotalFeeUnits,
-              effectiveMint,
-              sponsorConn ?? this.solanaSponsor.getConnection(),
-              feePayerKp.publicKey,
-            );
-          } catch (e) {
-            this.logger.warn(`[PrivatePay] Fee instruction append failed (non-fatal): ${String(e)}`);
-          }
-        }
-
-        return {
-          ...txResponse,
-          transactionBase64: finalTxBase64,
-          recentBlockhash: sponsored.recentBlockhash,
-          lastValidBlockHeight: sponsored.lastValidBlockHeight,
-          feeAmountUsdc: actualTotalFeeUnits / 1_000_000,
-          feeBreakdown: {
-            looftaBpsUsdc: bpsFeeUnits / 1_000_000,
-            solRecoveryUsdc: actualSolRecoveryUnits / 1_000_000,
-            solLamports: actualSolLamports,
-            solPriceUsd: actualSolPriceUsd ?? 0,
-          },
-        };
+        const senderBalance = await clusterConn.getBalance(new PublicKey(senderWallet.trim()));
+        actualTopUpLamports = Math.max(0, PREFUND_MIN_LAMPORTS - senderBalance);
       } catch (e) {
-        this.logger.warn(`[PrivatePay] Fee sponsor failed, returning unsponsored tx: ${String(e)}`);
+        this.logger.warn(`[PrivatePay] balance check failed, falling back to MAGICBLOCK_GAS_SOL estimate: ${String(e)}`);
+        actualTopUpLamports = Math.round(MAGICBLOCK_GAS_SOL * 1e9);
+      }
+    }
+
+    // Append USDC fee recovery instruction: sender pays fee payer back for the SOL prefund.
+    if (actualTopUpLamports > 0 && solPriceUsd && feePayerAddress && feePayerKp) {
+      const actualTopUpUsdc = (actualTopUpLamports / 1e9) * solPriceUsd * 1_000_000;
+      const feeUnitsRounded = Math.ceil(actualTopUpUsdc / 10_000) * 10_000;
+      try {
+        const modifiedTxBase64 = await appendLooftaFeeInstruction(
+          txResponse.transactionBase64,
+          senderWallet.trim(),
+          feePayerAddress,
+          feeUnitsRounded,
+          effectiveMint,
+          clusterConn,
+          feePayerKp.publicKey,
+        );
+        txResponse = { ...txResponse, transactionBase64: modifiedTxBase64 };
+        solFeeUnits = feeUnitsRounded;
+        this.logger.log(`[PrivatePay] USDC fee recovery: ${actualTopUpLamports} lamports → ${feeUnitsRounded} units ($${(feeUnitsRounded / 1_000_000).toFixed(4)}) → ${feePayerAddress.slice(0, 8)}…`);
+      } catch (e) {
+        this.logger.warn(`[PrivatePay] fee ix append failed, proceeding without: ${String(e)}`);
+      }
+    }
+
+    // Pre-fund sender SOL if below shuttle rent threshold (3M lamports).
+    if (this.solanaSponsor.isAvailable()) {
+      try {
+        const topUp = await this.solanaSponsor.prefundSenderSolIfNeeded(
+          senderWallet.trim(),
+          clusterConn,
+        );
+        if (topUp > 0) {
+          this.logger.log(`[PrivatePay] pre-funded sender +${topUp} lamports before MB tx`);
+        }
+      } catch (e) {
+        this.logger.warn(`[PrivatePay] pre-fund failed, proceeding without: ${String(e)}`);
       }
     }
 
     return {
       ...txResponse,
-      transactionBase64: txBase64,
-      feeAmountUsdc: totalFeeUnits / 1_000_000,
+      feeAmountUsdc: solFeeUnits / 1_000_000,
       feeBreakdown: {
-        looftaBpsUsdc: bpsFeeUnits / 1_000_000,
-        solRecoveryUsdc: cappedSolRecovery / 1_000_000,
-        solLamports: estimatedPrefundLamports,
-        solPriceUsd: capturedSolPriceUsd ?? 0,
+        looftaBpsUsdc: 0,
+        solRecoveryUsdc: solFeeUnits / 1_000_000,
+        solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
+        solPriceUsd: solPriceUsd ?? 0,
       },
     };
   }
@@ -1990,6 +1974,12 @@ export class ClaimsService {
       updateData.sender_tx_hash = extra.txHash;
     }
 
+    // Persist fee directly on the payments row so the summary is always readable on reload.
+    // Legacy claims table doesn't have these columns — they're excluded from legacyUpdateData below.
+    if (extra?.feeAmountUsdc != null) {
+      updateData.fee_paid_usdc = extra.feeAmountUsdc;
+    }
+
     // Legacy claims table uses paid_with_chain instead of from_chain/from_token
     const legacyUpdateData: Record<string, unknown> = { ...updateData };
     if (legacyUpdateData.from_chain !== undefined) {
@@ -1997,6 +1987,7 @@ export class ClaimsService {
       delete legacyUpdateData.from_chain;
     }
     delete legacyUpdateData.from_token;
+    delete legacyUpdateData.fee_paid_usdc;
 
     const { error } = await this.updateRow(id, updateData, legacyUpdateData);
 

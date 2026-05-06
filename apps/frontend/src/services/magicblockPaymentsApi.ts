@@ -37,6 +37,8 @@ export interface MagicblockTxResponse {
     solLamports: number;
     solPriceUsd: number;
   };
+  /** Jupiter USDC→SOL swap tx to sign & send before the private transfer (mainnet only, when sender SOL balance is low). */
+  solSwapTransactionBase64?: string;
 }
 
 /** Private `/v1/spl/transfer` is built on the backend so the recipient is not exposed in the browser network tab. */

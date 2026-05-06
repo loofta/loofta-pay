@@ -40,13 +40,22 @@ export type PerPrivateTransferOptions = {
     feeAmountUsdc: number;
     feeBreakdown?: { looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number };
   }) => void;
+  /**
+   * Privy embedded wallet: sign only, caller broadcasts.
+   * Used for the MagicBlock private transfer where the MB validator is already the fee payer.
+   * Returns the base58 transaction signature string.
+   */
+  privySignAndSend?: (txBytes: Uint8Array) => Promise<string>;
 };
 
 /**
  * Private SPL transfer: unsigned tx is built on the **backend** (MagicBlock `/v1/spl/transfer` is server-side only)
  * so the recipient wallet is not visible in the browser network tab.
  *
- * Delivery delay is configured on the server (devnet: 30s–15m; mainnet: none). Claim sweep: burner → recipient uses direct SPL on the backend.
+ * Pre-step (mainnet only): if sender SOL balance is below the MagicBlock shuttle rent threshold,
+ * a Jupiter USDC→SOL swap is executed first using Privy's sponsored signAndSendTransaction.
+ * Privy covers the gas fee (sponsor: true) and broadcasts directly — no Jupiter /execute needed.
+ * The swap output covers: shuttle rent (2,039,280) + tx fee buffer (100,000) + existing balance.
  */
 export function usePerPrivateTransfer() {
   const networkMode = useAuthStore((s) => s.networkMode);
@@ -54,7 +63,7 @@ export function usePerPrivateTransfer() {
 
   const transfer = useCallback(
     async (wallet: Wallet, options: PerPrivateTransferOptions): Promise<string> => {
-      const { privyUserId, accessToken, claimId, sendPaymentId, onProgress, isBurnerRecipient, onSignature, onTxBuilt } = options;
+      const { privyUserId, accessToken, claimId, sendPaymentId, onProgress, isBurnerRecipient, onSignature, onTxBuilt, privySignAndSend } = options;
       if (!privyUserId?.trim()) {
         throw new Error("Log in to send a private transfer.");
       }
@@ -72,9 +81,13 @@ export function usePerPrivateTransfer() {
       const sender = wallet.publicKey.toBase58();
 
       console.info(
-        `[PrivatePay] ▶ server-built tx | cluster=${apiCluster} claim=${claimId ?? "—"} send=${sendPaymentId ?? "—"} isBurner=${isBurnerRecipient ?? false} delayMs=${formatMagicblockPrivateDelayLogMs(apiCluster)}`,
+        `[PrivatePay] ▶ start | cluster=${apiCluster} claim=${claimId ?? "—"} send=${sendPaymentId ?? "—"} isBurner=${isBurnerRecipient ?? false} delayMs=${formatMagicblockPrivateDelayLogMs(apiCluster)}`,
       );
 
+      // ─────────────────────────────────────────────────────────────────────────
+      // MAIN: build and sign the MagicBlock private transfer
+      // ─────────────────────────────────────────────────────────────────────────
+      console.info(`[PrivatePay] building MB private transfer tx | cluster=${apiCluster} claim=${claimId ?? "—"} send=${sendPaymentId ?? "—"}`);
       const txData = claimId
         ? await buildClaimPrivateTransfer(claimId, privyUserId, sender, accessToken, apiCluster)
         : await buildSendPaymentPrivateTransfer(sendPaymentId!, privyUserId, sender, accessToken, apiCluster);
@@ -90,61 +103,34 @@ export function usePerPrivateTransfer() {
           ? new Connection(ephemeralRpc, "confirmed")
           : connection;
       console.info(
-        `[PrivatePay] tx built | kind=${txData.kind} sendTo=${txData.sendTo} rpc=${broadcastRpc} ix=${txData.instructionCount} signers=${txData.requiredSigners.join(",")}`,
+        `[PrivatePay] MB tx built | kind=${txData.kind} sendTo=${txData.sendTo} rpc=${broadcastRpc} ix=${txData.instructionCount} signers=${txData.requiredSigners.join(",")} feeUsdc=${txData.feeAmountUsdc}`,
       );
 
-      const txBytes = Buffer.from(txData.transactionBase64, "base64");
-
-      // MagicBlock may return a v0 versioned tx; backend converts to legacy when applying fee
-      // sponsorship, but fall back to VersionedTransaction if it comes through as v0.
-      let tx: Transaction | VersionedTransaction;
-      let txIsLegacy: boolean;
-      try {
-        tx = Transaction.from(txBytes);
-        txIsLegacy = true;
-      } catch {
-        tx = VersionedTransaction.deserialize(txBytes);
-        txIsLegacy = false;
-        console.info("[PrivatePay] tx is versioned (v0) — fee sponsor + inline top-up applied by backend");
-      }
-
-      // Log fee sponsor state: fee payer + which signers already have a signature (sponsor partial-signs on devnet)
-      let feePayerPk: string;
-      let alreadySigned: string[];
-      let stillNeeded: string[];
-      if (txIsLegacy) {
-        const legacyTx = tx as Transaction;
-        feePayerPk = legacyTx.feePayer?.toBase58() ?? "none";
-        const sigStates = legacyTx.signatures.map((s) => ({
-          signer: s.publicKey.toBase58().slice(0, 8) + "…",
-          signed: s.signature !== null,
-        }));
-        alreadySigned = sigStates.filter((s) => s.signed).map((s) => s.signer);
-        stillNeeded = sigStates.filter((s) => !s.signed).map((s) => s.signer);
-      } else {
-        const vTx = tx as VersionedTransaction;
-        // Signers are always in staticAccountKeys (never in ALTs) — safe to read without resolving LUTs
-        const staticKeys = vTx.message.staticAccountKeys;
-        feePayerPk = staticKeys[0]?.toBase58() ?? "none";
-        const sigStates = vTx.signatures.map((sig, i) => ({
-          signer: (staticKeys[i]?.toBase58().slice(0, 8) ?? `acct${i}`) + "…",
-          signed: sig.some((b) => b !== 0),
-        }));
-        alreadySigned = sigStates.filter((s) => s.signed).map((s) => s.signer);
-        stillNeeded = sigStates.filter((s) => !s.signed).map((s) => s.signer);
-      }
-      console.info(
-        `[PrivatePay] tx deserialized | version=${txIsLegacy ? "legacy" : "v0"} feePayer=${feePayerPk.slice(0, 8)}… walletPubkey=${sender.slice(0, 8)}… ` +
-          `alreadySigned=[${alreadySigned.join(", ") || "none"}] stillNeeded=[${stillNeeded.join(", ") || "none"}]`,
-      );
+      const rawTxBytes = Buffer.from(txData.transactionBase64, "base64");
 
       onProgress?.({ phase: "awaiting_signature", walletTransactionCount: 1 });
       onProgress?.({ phase: "broadcasting", step: "privateTransfer", index: 1, total: 1 });
       let signature: string;
 
-      {
-        // Fee payer is injected by the backend (both mainnet and devnet).
-        // User signs first, then the backend countersigns and broadcasts.
+      if (privySignAndSend) {
+        // Privy path: MB validator is fee payer (pre-signed server-side).
+        // Use sign-only so Privy doesn't run a gas-policy SOL-balance preflight check.
+        // We broadcast directly after signing with our RPC.
+        console.info(`[PrivatePay] Privy sign path | bytes=${rawTxBytes.length} version=${txData.version} sendTo=${txData.sendTo} signers=${txData.requiredSigners.join(",")}`);
+        signature = await privySignAndSend(rawTxBytes);
+        console.info(`[PrivatePay] Privy sign complete | sig=${signature.slice(0, 12)}…`);
+      } else {
+        // Legacy path (Phantom, etc.): deserialize, sign, countersign if needed, broadcast.
+        let tx: Transaction | VersionedTransaction;
+        let txIsLegacy: boolean;
+        try {
+          tx = Transaction.from(rawTxBytes);
+          txIsLegacy = true;
+        } catch {
+          tx = VersionedTransaction.deserialize(rawTxBytes);
+          txIsLegacy = false;
+        }
+        console.info(`[PrivatePay] wallet sign | version=${txIsLegacy ? "legacy" : "v0"} feePayer=${(txIsLegacy ? (tx as Transaction).feePayer?.toBase58() : (tx as VersionedTransaction).message.staticAccountKeys[0]?.toBase58())?.slice(0, 8)}… sender=${sender.slice(0, 8)}…`);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const [signedTx] = await wallet.signAllTransactions([tx] as any);
 
@@ -165,6 +151,7 @@ export function usePerPrivateTransfer() {
             ? signedTx.feePayer?.toBase58()
             : (signedTx as VersionedTransaction).message.staticAccountKeys[0]?.toBase58();
         const needsCountersign = feePayerAfterSign && feePayerAfterSign !== sender;
+        console.info(`[PrivatePay] feePayer=${feePayerAfterSign?.slice(0, 8)}… needsCountersign=${needsCountersign}`);
 
         if (needsCountersign) {
           const serialized =
@@ -180,6 +167,7 @@ export function usePerPrivateTransfer() {
               signedTx instanceof Transaction
                 ? signedTx.serialize()
                 : (signedTx as VersionedTransaction).serialize();
+            console.info(`[PrivatePay] broadcasting self-signed tx | bytes=${serialized.length}`);
             signature = await broadcastConn.sendRawTransaction(serialized, { skipPreflight: false, preflightCommitment: "confirmed" });
           } catch (e) {
             if (e instanceof SendTransactionError) {
@@ -192,20 +180,17 @@ export function usePerPrivateTransfer() {
         }
       }
 
-      // Persist the signature immediately — before confirmation polling — so the backend
-      // can recover the payment if RPC polling times out or fails.
+      console.info(`[PrivatePay] MB tx broadcast | sig=${signature.slice(0, 12)}… — calling onSignature then polling confirmation`);
       try {
         await onSignature?.(signature);
       } catch (e) {
         console.warn("[PrivatePay] onSignature callback failed (non-fatal):", e);
       }
 
-      // For ephemeral (MagicBlock PER) transactions, the tx settles on the base Solana chain.
-      // Poll the base connection as fallback in case the ephemeral RPC doesn't index statuses.
       const fallbackConn = txData.sendTo === "ephemeral" ? connection : undefined;
       await waitForSignatureConfirmation(broadcastConn, signature, 120_000, 1500, "privateTransfer", fallbackConn);
       const explorerUrl = `https://explorer.solana.com/tx/${signature}?cluster=${apiCluster === "mainnet" ? "mainnet-beta" : "devnet"}`;
-      console.info(`[PrivatePay] ✅ Confirmed | sig=${signature} | ${explorerUrl}`);
+      console.info(`[PrivatePay] ✅ confirmed | sig=${signature} | ${explorerUrl}`);
 
       return signature;
     },

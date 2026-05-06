@@ -699,6 +699,9 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                           USD
                         </span>
                       </div>
+                      {parsedAmount > 0 && (usdValue ?? parsedAmount) < 5 && (
+                        <p className="mt-1.5 text-sm text-red-400">Minimum payment amount is $5.00</p>
+                      )}
                     </div>
 
 
@@ -925,6 +928,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         onClick={() => onCreate()}
                         disabled={
                           creating ||
+                          (parsedAmount > 0 && (usdValue ?? parsedAmount) < 5) ||
                           !(parsedAmount > 0 &&
                             (receiveDestination === "loofta"
                               ? !!(solanaWallet?.address && defaultLooftaToken)
