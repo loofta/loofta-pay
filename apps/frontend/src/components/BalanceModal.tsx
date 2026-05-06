@@ -207,6 +207,8 @@ export interface BalanceModalProps {
   open: boolean;
   onClose: () => void;
   balanceUSD: string;
+  /** Precise balance number (unrounded). Used for withdrawal amount; balanceUSD is display-only. */
+  balanceExact?: number;
   loadingBalance: boolean;
   solanaAddress: string | null;
   onRefresh: () => void;
@@ -218,6 +220,7 @@ export function BalanceModal({
   open,
   onClose,
   balanceUSD,
+  balanceExact,
   loadingBalance,
   solanaAddress,
   onRefresh,
@@ -282,7 +285,9 @@ export function BalanceModal({
   const isUSDCOnSolana =
     effectiveToken?.symbol === "USDC" &&
     (effectiveToken?.chain === "solana" || effectiveToken?.chain === "sol");
-  const payFromBalanceNum = parseFloat(balanceUSD) || 0;
+  const payFromBalanceNum = parseFloat(balanceUSD) || 0; // display only
+  // Exact spendable balance truncated to USDC precision (6 dp) — never rounds up
+  const spendableBalance = Math.floor((balanceExact ?? payFromBalanceNum) * 1_000_000) / 1_000_000;
   const destChain = effectiveToken?.chain || "";
   const isNearIntentsWithdraw = !BETA_SOLANA_ONLY && !isUSDCOnSolana && effectiveToken && usdcSolanaToken;
   const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
@@ -373,11 +378,10 @@ export function BalanceModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depositAddressForPolling, withdrawStep]);
 
-  // Initialise amount to full balance when modal opens or balance changes
+  // Initialise amount to full spendable balance when modal opens or balance changes
   useEffect(() => {
-    // Floor to 2 dp so we never exceed the actual raw balance (toFixed rounds up)
-    if (open && payFromBalanceNum > 0) setWithdrawAmount((Math.floor(payFromBalanceNum * 100) / 100).toFixed(2));
-  }, [open, payFromBalanceNum]);
+    if (open && spendableBalance > 0) setWithdrawAmount(spendableBalance.toFixed(6).replace(/\.?0+$/, ""));
+  }, [open, spendableBalance]);
 
   const withdrawAmountNum = parseFloat(withdrawAmount) || 0;
 
@@ -453,8 +457,8 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "Minimum $1", description: "Minimum withdrawal is $1.00 USDC." });
       return;
     }
-    if (amount > payFromBalanceNum) {
-      toast({ variant: "destructive", title: "Insufficient balance", description: `You have $${payFromBalanceNum.toFixed(2)} USDC available.` });
+    if (amount > spendableBalance) {
+      toast({ variant: "destructive", title: "Insufficient balance", description: `You have ${spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC available.` });
       return;
     }
     if (!solanaAddress || !wallet) {
@@ -802,7 +806,7 @@ export function BalanceModal({
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => setWithdrawAmount((Math.floor(payFromBalanceNum * 100) / 100).toFixed(2))}
+                  onClick={() => setWithdrawAmount(spendableBalance.toFixed(6).replace(/\.?0+$/, ""))}
                   className={`shrink-0 px-3 text-xs ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}
                 >
                   Max
@@ -811,8 +815,8 @@ export function BalanceModal({
               {withdrawAmountNum > 0 && withdrawAmountNum < 1 && (
                 <p className="text-xs text-red-400 mt-1">Minimum withdrawal is $1.00 USDC.</p>
               )}
-              {withdrawAmountNum > payFromBalanceNum && payFromBalanceNum > 0 && (
-                <p className="text-xs text-red-400 mt-1">Exceeds available balance of ${payFromBalanceNum.toFixed(2)}.</p>
+              {withdrawAmountNum > spendableBalance && spendableBalance > 0 && (
+                <p className="text-xs text-red-400 mt-1">Exceeds available balance of {spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC.</p>
               )}
 
               {/* BETA_SOLANA_ONLY: cross-chain estimate — uncomment when Near Intents is re-enabled
@@ -888,7 +892,7 @@ export function BalanceModal({
                   withdrawing ||
                   (BETA_SOLANA_ONLY && !isUSDCOnSolana) ||
                   withdrawAmountNum < 1 ||
-                  withdrawAmountNum > payFromBalanceNum ||
+                  withdrawAmountNum > spendableBalance ||
                   !withdrawAddress.trim() ||
                   !wallet ||
                   (isUSDCOnSolana ? addressRiskStatus !== "safe" : !destinationAddressValid)
