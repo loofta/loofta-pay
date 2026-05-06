@@ -1,7 +1,5 @@
 /**
- * Send USDC from Privy embedded Solana wallet.
- * Devnet: try Loofta backend fee payer first, fall back to Privy gas sponsorship, then user SOL.
- * Mainnet: skip Loofta fee payer — use Privy gas sponsorship directly (pass skipLooftaFeePayer=true).
+ * Send USDC from Privy embedded Solana wallet using Privy gas sponsorship.
  */
 
 import type { ConnectedStandardSolanaWallet } from "@privy-io/react-auth/solana";
@@ -9,19 +7,8 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import bs58 from "bs58";
 import { getPrivySolanaChain } from "@/lib/solanaCluster";
 import { buildUSDCTransferTransaction } from "@/services/solanaTransfer";
-import {
-  isPrivyGasSponsorNotConfiguredError,
-  prepareSponsoredTransaction,
-  signAndBroadcastSponsoredTx,
-} from "@/services/solanaSponsor";
 
 type PrivySolanaChain = ReturnType<typeof getPrivySolanaChain>;
-
-type SignTransactionFn = (input: {
-  transaction: Uint8Array;
-  wallet: ConnectedStandardSolanaWallet;
-  chain?: PrivySolanaChain;
-}) => Promise<{ signedTransaction: Uint8Array }>;
 
 type SignAndSendTransactionFn = (input: {
   transaction: Uint8Array;
@@ -36,57 +23,17 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
   amountUSDC: number;
   connection: Connection;
   wallet: ConnectedStandardSolanaWallet;
-  privyUserId: string | undefined;
-  signTransaction: SignTransactionFn;
+  privyUserId?: string;
   signAndSendTransaction: SignAndSendTransactionFn;
   memo?: string | null;
-  /** Override USDC mint for networkMode-aware callers. Defaults to cluster-based mint. */
   usdcMint?: PublicKey;
-  /** Override Privy chain for networkMode-aware callers. Defaults to cluster-based chain. */
   chain?: PrivySolanaChain;
-  /** On mainnet: skip Loofta backend fee payer and use Privy gas sponsorship directly. */
+  /** Unused — kept for call-site compatibility. */
   skipLooftaFeePayer?: boolean;
+  signTransaction?: unknown;
 }): Promise<string> {
-  const {
-    senderAddress,
-    recipientAddress,
-    amountUSDC,
-    connection,
-    wallet,
-    privyUserId,
-    signTransaction,
-    signAndSendTransaction,
-    memo,
-    usdcMint,
-    skipLooftaFeePayer = false,
-  } = params;
+  const { senderAddress, recipientAddress, amountUSDC, connection, wallet, memo, usdcMint, signAndSendTransaction } = params;
   const chain = params.chain ?? getPrivySolanaChain();
-
-  if (privyUserId && !skipLooftaFeePayer) {
-    try {
-      const unsignedTx = await buildUSDCTransferTransaction({
-        senderAddress,
-        recipientAddress: recipientAddress.trim(),
-        amountUSDC,
-        connection,
-        memo: memo ?? undefined,
-        usdcMint,
-      });
-      const preparedBytes = await prepareSponsoredTransaction(
-        new Uint8Array(unsignedTx.serialize()),
-        privyUserId,
-        "embedded-usdc",
-      );
-      const { signedTransaction } = await signTransaction({
-        transaction: preparedBytes,
-        wallet,
-        chain,
-      });
-      return await signAndBroadcastSponsoredTx(signedTransaction, privyUserId, "embedded-usdc");
-    } catch (e) {
-      console.warn("[privyEmbeddedUsdcSend] Loofta fee payer path failed, trying Privy sponsor", e);
-    }
-  }
 
   const unsignedTx = await buildUSDCTransferTransaction({
     senderAddress,
@@ -96,32 +43,12 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
     memo: memo ?? undefined,
     usdcMint,
   });
-  try {
-    const { signature } = await signAndSendTransaction({
-      transaction: unsignedTx.serialize(),
-      wallet,
-      chain,
-      options: { sponsor: true } as never,
-    });
-    return bs58.encode(signature);
-  } catch (e: unknown) {
-    if (isPrivyGasSponsorNotConfiguredError(e)) {
-      const selfPayTx = await buildUSDCTransferTransaction({
-        senderAddress,
-        recipientAddress: recipientAddress.trim(),
-        amountUSDC,
-        connection,
-        memo: memo ?? undefined,
-        usdcMint,
-      });
-      const { signature } = await signAndSendTransaction({
-        transaction: selfPayTx.serialize(),
-        wallet,
-        chain,
-        options: { sponsor: false, skipPreflight: true } as never,
-      });
-      return bs58.encode(signature);
-    }
-    throw e;
-  }
+
+  const { signature } = await signAndSendTransaction({
+    transaction: unsignedTx.serialize(),
+    wallet,
+    chain,
+    options: { sponsor: true } as never,
+  });
+  return bs58.encode(signature);
 }

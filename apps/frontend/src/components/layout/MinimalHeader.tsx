@@ -147,7 +147,7 @@ export function MinimalHeader() {
   } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated });
 
   const balanceUSD = useMemo(
-    () => balanceNumber.toFixed(2),
+    () => (Math.floor(balanceNumber * 100) / 100).toFixed(2),
     [balanceNumber]
   );
 

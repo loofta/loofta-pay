@@ -2172,6 +2172,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     const txHash = claim?.sender_tx_hash;
     const claimStatus = String(claim?.status || "").toUpperCase();
     if (!txHash || claimStatus !== "PRIVATE_TRANSFER_PENDING") return;
+    // Only run for the payer — the recipient needs the sweep to complete, not just tx confirmation.
+    if (isRecipient) return;
     if (txHashRecoveryRef.current === txHash) return; // already tried this hash
     txHashRecoveryRef.current = txHash;
 

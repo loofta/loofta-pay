@@ -18,10 +18,11 @@ export function deriveSolanaEmbeddedAddress(
     (a) => (a.type === "wallet" || a.type === "smart_wallet") && base58(a)
   );
   if (walletOrSmart?.address) return walletOrSmart.address;
-  const embedded = linkedAccounts.find(
-    (a) =>
-      (a.type === "solana_embedded_wallet" || a.type === "solana") && base58(a)
+  // Use the LAST embedded wallet so that after rotation (createWallet), the newest address is active.
+  const embeddedAll = linkedAccounts.filter(
+    (a) => (a.type === "solana_embedded_wallet" || a.type === "solana") && base58(a)
   );
+  const embedded = embeddedAll[embeddedAll.length - 1];
   if (embedded?.address) return embedded.address;
   const wallet = linkedAccounts.find((a) => a.type === "wallet" && base58(a));
   return wallet?.address ?? null;

@@ -861,6 +861,19 @@ export class ClaimsService {
     };
   }
 
+  /** Resolve the correct Solana connection and USDC mint for a claim based on its is_devnet flag.
+   *  Falls back to backend SOLANA_CLUSTER config when is_devnet is null (legacy claims). */
+  private resolveClaimNetwork(claim: Claim): { conn: Connection; claimMint: PublicKey; cluster: 'mainnet' | 'devnet' } {
+    const rawClaim = claim as { is_devnet?: boolean | null };
+    const isDevnet = rawClaim.is_devnet ?? isSolanaDevnetFromConfig(this.configService);
+    const cluster: 'mainnet' | 'devnet' = isDevnet ? 'devnet' : 'mainnet';
+    const conn = this.solanaSponsor.getConnectionForCluster(cluster);
+    const mintStr = isDevnet
+      ? (this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
+      : (this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+    return { conn, claimMint: new PublicKey(mintStr), cluster };
+  }
+
   /** Same routing as frontend getEffectiveRecipient: pending → burner, else wallet. */
   private resolveEffectiveRecipientForPrivatePayment(
     claim: Claim & { claim_burner_address?: string | null },
@@ -1240,7 +1253,7 @@ export class ClaimsService {
     try {
       const secretKey = this.decryptClaimBurnerSecret(rawClaim.claim_burner_encrypted_secret, burnerAddr);
       const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
-      const conn = this.solanaSponsor.getConnection();
+      const { conn, claimMint } = this.resolveClaimNetwork(claim);
 
       // Cross-chain payments (e.g. ETH/BTC → Solana via NEAR Intents) land in the burner
       // and must be privately forwarded to the recipient via MagicBlock PER transfer.
@@ -1257,7 +1270,7 @@ export class ClaimsService {
         conn,
         String(claim.amount || '0'),
       );
-      const burnerAta = await getAssociatedTokenAddress(this.usdcMint, burnerKeypair.publicKey);
+      const burnerAta = await getAssociatedTokenAddress(claimMint, burnerKeypair.publicKey);
       let balance = BigInt(0);
       try {
         const acc = await getAccount(conn, burnerAta);
@@ -1278,7 +1291,7 @@ export class ClaimsService {
         // Direct SPL sweep: burner → recipient (public). Payer→burner was already private via MagicBlock.
         const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
         const recipientPubkey = new PublicKey(wallet.trim());
-        const recipientAta = await getAssociatedTokenAddress(this.usdcMint, recipientPubkey);
+        const recipientAta = await getAssociatedTokenAddress(claimMint, recipientPubkey);
         const sweepTx = new Transaction();
         try {
           await getAccount(conn, recipientAta);
@@ -1289,7 +1302,7 @@ export class ClaimsService {
                 feePayerKp.publicKey,
                 recipientAta,
                 recipientPubkey,
-                this.usdcMint,
+                claimMint,
               ),
             );
           }
@@ -1642,7 +1655,7 @@ export class ClaimsService {
           const encryptedSecret = rawClaim.claim_burner_encrypted_secret!;
           const secretKey = this.decryptClaimBurnerSecret(encryptedSecret, burnerAddress);
           const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
-          const conn = this.solanaSponsor.getConnection();
+          const { conn, claimMint } = this.resolveClaimNetwork(claim);
           // Attempt PER -> burner ATA first so reclaim also works when funds are
           // still parked in PER deposit state.
           const perWithdraw = await this.tryWithdrawPerDepositToBurnerAta(
@@ -1652,7 +1665,7 @@ export class ClaimsService {
             String(claim.amount || '0'),
           );
 
-          const burnerAta = await getAssociatedTokenAddress(this.usdcMint, burnerKeypair.publicKey);
+          const burnerAta = await getAssociatedTokenAddress(claimMint, burnerKeypair.publicKey);
           let balance = BigInt(0);
           try {
             const acc = await getAccount(conn, burnerAta);
@@ -1663,7 +1676,7 @@ export class ClaimsService {
           this.logger.log(`Claim ${claimId}: burner ${burnerKeypair.publicKey.toBase58()} USDC balance=${balance.toString()}`);
           if (balance > BigInt(0)) {
             const creatorPubkey = new PublicKey(creatorWallet.trim());
-            const creatorAta = await getAssociatedTokenAddress(this.usdcMint, creatorPubkey);
+            const creatorAta = await getAssociatedTokenAddress(claimMint, creatorPubkey);
             const tx = new Transaction();
             try {
               await getAccount(conn, creatorAta);
@@ -1675,7 +1688,7 @@ export class ClaimsService {
                     feePayer.publicKey,
                     creatorAta,
                     creatorPubkey,
-                    this.usdcMint,
+                    claimMint,
                   ),
                 );
               }
@@ -1809,15 +1822,15 @@ export class ClaimsService {
     const perDebugLog: string[] = [];
     if (burnerAddress) {
       try {
-        const conn = this.solanaSponsor.getConnection();
+        const { conn, claimMint } = this.resolveClaimNetwork(claim);
         const burnerPubkey = new PublicKey(burnerAddress);
-        const burnerAta = await getAssociatedTokenAddress(this.usdcMint, burnerPubkey);
+        const burnerAta = await getAssociatedTokenAddress(claimMint, burnerPubkey);
 
         // Check PER deposit account presence for this burner, and try a PER withdraw
         // so diagnostics reflects whether funds are stuck in PER state.
         try {
           const [depositPda] = PublicKey.findProgramAddressSync(
-            [Buffer.from(DEPOSIT_SEED), burnerPubkey.toBuffer(), this.usdcMint.toBuffer()],
+            [Buffer.from(DEPOSIT_SEED), burnerPubkey.toBuffer(), claimMint.toBuffer()],
             this.perProgramId,
           );
           const depositInfo = await conn.getAccountInfo(depositPda);
