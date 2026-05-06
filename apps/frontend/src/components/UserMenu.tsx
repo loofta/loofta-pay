@@ -9,6 +9,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
 import { useAuthStore } from "@/store/auth";
+import { getCachedMainnetAccess, setCachedMainnetAccess } from "@/lib/mainnetAccessCache";
 import { useToast } from "@/components/ui/use-toast";
 import {
   Dialog,
@@ -312,6 +313,12 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   // Fetch mainnet access once when user is authenticated
   useEffect(() => {
     if (!authenticated || !getAccessToken || !privyUser?.id) return;
+    const userId = privyUser.id;
+    const cached = getCachedMainnetAccess(userId);
+    if (cached !== null) {
+      setMainnetAccess(cached);
+      return;
+    }
     const check = async () => {
       try {
         const token = await getAccessToken();
@@ -321,6 +328,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         if (res.ok) {
           const { mainnetAccess: access } = await res.json();
           setMainnetAccess(!!access);
+          setCachedMainnetAccess(userId, !!access);
           // If full access was revoked, keep networkMode as-is so users can still view/withdraw received funds
           // but gating happens at the action level (pay/send disabled without mainnetAccess)
         }

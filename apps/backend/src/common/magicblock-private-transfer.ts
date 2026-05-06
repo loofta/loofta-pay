@@ -139,6 +139,8 @@ export interface MagicblockPrivateTransferTxResponse {
     solLamports: number;      // actual lamports topped up
     solPriceUsd: number;      // SOL/USD price used at payment time
   };
+  /** Jupiter USDC→SOL swap transaction to sign & send BEFORE the private transfer (mainnet only, when sender SOL balance is low). */
+  solSwapTransactionBase64?: string;
 }
 
 export async function requestMagicblockPrivateTransfer(params: {
@@ -147,6 +149,9 @@ export async function requestMagicblockPrivateTransfer(params: {
   mint: string;
   amount: number;
   cluster: 'devnet' | 'mainnet' | 'localhost';
+  /** When true, MagicBlock uses the configured sponsor as fee payer and prepends a fixed
+   *  relay-fee USDC transfer (sender → sponsor ATA) to cover SOL gas. No SOL needed from sender. */
+  gasless?: boolean;
 }): Promise<MagicblockPrivateTransferTxResponse> {
   const { minDelayMs, maxDelayMs } = magicblockPrivateDelayForCluster(params.cluster);
   const body: Record<string, unknown> = {
@@ -163,6 +168,7 @@ export async function requestMagicblockPrivateTransfer(params: {
     initVaultIfMissing: false,
     minDelayMs,
     maxDelayMs,
+    ...(params.gasless ? { gasless: true } : {}),
   };
   log.log(`POST https://payments.magicblock.app/v1/spl/transfer payload=${JSON.stringify(body)}`);
 

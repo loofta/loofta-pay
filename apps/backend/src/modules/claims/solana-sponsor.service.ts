@@ -197,6 +197,26 @@ export class SolanaSponsorService {
     return this.connection;
   }
 
+  getConnectionForCluster(cluster: 'mainnet' | 'devnet'): Connection {
+    const helius = this.config.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
+    if (cluster === 'mainnet') {
+      if (helius) return new Connection(`https://mainnet.helius-rpc.com/?api-key=${helius}`, 'confirmed');
+      const mainnetRpc =
+        this.config.get<string>('SOLANA_RPC_URL') ??
+        process.env.SOLANA_RPC_URL ??
+        getEnvFromFile('SOLANA_RPC_URL');
+      return new Connection(mainnetRpc?.trim() || 'https://api.mainnet-beta.solana.com', 'confirmed');
+    }
+    // devnet
+    const devnetRpc =
+      this.config.get<string>('SOLANA_DEVNET_RPC_URL') ??
+      process.env.SOLANA_DEVNET_RPC_URL ??
+      getEnvFromFile('SOLANA_DEVNET_RPC_URL');
+    if (devnetRpc?.trim()) return new Connection(devnetRpc.trim(), 'confirmed');
+    if (helius) return new Connection(`https://devnet.helius-rpc.com/?api-key=${helius}`, 'confirmed');
+    return new Connection('https://api.devnet.solana.com', 'confirmed');
+  }
+
   getFeePayerKeypair(): Keypair | null {
     return this.feePayerKeypair;
   }
@@ -558,16 +578,33 @@ export class SolanaSponsorService {
    * fee payer can transfer is capped at 5_000_000 lamports (0.005 SOL) to prevent abuse.
    */
   async signAndBroadcastPER(userSignedTxBase64: string, conn?: Connection): Promise<{ signature: string }> {
-    if (!this.feePayerKeypair || !this.feePayerAddress) {
-      throw new Error('Solana fee sponsorship is not configured');
-    }
-
     const broadcastConn = conn ?? this.connection;
     const transactionBuffer = Buffer.from(userSignedTxBase64, 'base64');
     const reqStart = Date.now();
     this.logger.log(
       `SolanaSponsor[sign-and-broadcast-per]: incoming bytes=${transactionBuffer.length} rpc=${broadcastConn.rpcEndpoint}`,
     );
+
+    // Gasless path: fee payer is MagicBlock's sponsor (not our keypair). Just broadcast.
+    const feePayerInTx = (() => {
+      try { return Transaction.from(transactionBuffer).feePayer?.toBase58(); } catch { /* v0 */ }
+      try { return VersionedTransaction.deserialize(transactionBuffer).message.staticAccountKeys[0]?.toBase58(); } catch { /* ignore */ }
+      return undefined;
+    })();
+    if (!this.feePayerAddress || feePayerInTx !== this.feePayerAddress) {
+      this.logger.log(`SolanaSponsor[sign-and-broadcast-per]: gasless path — feePayer=${feePayerInTx?.slice(0, 8) ?? 'unknown'}… is not ours, broadcasting directly`);
+      let serialized: Uint8Array;
+      try { serialized = Transaction.from(transactionBuffer).serialize({ requireAllSignatures: false, verifySignatures: false }); }
+      catch { serialized = VersionedTransaction.deserialize(transactionBuffer).serialize(); }
+      const sig = await broadcastConn.sendRawTransaction(serialized, { skipPreflight: false, maxRetries: 3, preflightCommitment: 'confirmed' });
+      this.logger.log(`SolanaSponsor[sign-and-broadcast-per]: gasless broadcast sig=${sig.slice(0, 12)}… total=${Date.now() - reqStart}ms`);
+      await this.waitUntilSignatureVisible(sig, 12_000, 400, 'sign-and-broadcast-per:gasless', broadcastConn).catch(() => {});
+      return { signature: sig };
+    }
+
+    if (!this.feePayerKeypair) {
+      throw new Error('Solana fee sponsorship is not configured');
+    }
 
     // Allow SOL transfers from fee payer only up to the shuttle top-up cap (0.005 SOL).
     const MAX_TOPUP_LAMPORTS = 5_000_000;
@@ -646,6 +683,41 @@ export class SolanaSponsorService {
       );
     });
     this.logger.log(`SolanaSponsor[sign-and-broadcast-per]: total ${Date.now() - reqStart}ms`);
+    return { signature: sig };
+  }
+
+  /**
+   * Send a small SOL amount from the fee payer to the given wallet.
+   * Used to top up a sender's SOL balance before a MagicBlock private transfer when they are below
+   * the shuttle rent threshold. No user signature required — fee payer signs entirely server-side.
+   */
+  async sendSolTopup(recipientWallet: string, lamports: number): Promise<{ signature: string }> {
+    if (!this.feePayerKeypair) {
+      throw new Error('Fee payer not configured — cannot send SOL top-up');
+    }
+    const { PublicKey } = await import('@solana/web3.js');
+    const recipient = new PublicKey(recipientWallet);
+    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
+
+    const tx = new Transaction({
+      recentBlockhash: blockhash,
+      feePayer: this.feePayerKeypair.publicKey,
+    }).add(
+      SystemProgram.transfer({
+        fromPubkey: this.feePayerKeypair.publicKey,
+        toPubkey: recipient,
+        lamports,
+      }),
+    );
+
+    tx.sign(this.feePayerKeypair);
+    const sig = await this.connection.sendRawTransaction(tx.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+    this.logger.log(`SolanaSponsor[sol-topup]: sent ${lamports} lamports to ${recipientWallet.slice(0, 8)}... sig=${sig.slice(0, 12)}... lastValidBlockHeight=${lastValidBlockHeight}`);
+    await this.waitUntilSignatureVisible(sig, 60_000, 500, 'sol-topup');
+    this.logger.log(`SolanaSponsor[sol-topup]: confirmed | sig=${sig.slice(0, 12)}...`);
     return { signature: sig };
   }
 }
