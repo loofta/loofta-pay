@@ -1987,46 +1987,28 @@ export class ClaimsService {
       }
     }
 
-    // Fire-and-forget email notification — never blocks the status update path.
-    this.sendRecipientNotificationAsync(id, effectiveStatus, extra?.recipientSwept ?? false);
-
     return { id, status: effectiveStatus } as unknown as Claim;
   }
 
   /**
-   * Non-blocking email notification. Fires after a status change and silently catches any errors.
-   * Sends "payment received" when funds land in recipient wallet (SUCCESS + recipientSwept),
-   * or "claim ready" when funds are confirmed but waiting for an email-only recipient to sign up.
+   * Send a payment notification email to the recipient.
+   * Call this directly after a payment confirms — never from updateStatus.
+   * Fire-and-forget: errors are logged but never thrown.
    */
-  private sendRecipientNotificationAsync(id: string, effectiveStatus: ClaimStatus, recipientSwept: boolean): void {
+  notifyRecipientAfterPayment(claimId: string): void {
     if (!this.emailService?.isAvailable()) return;
-
-    const shouldNotify =
-      (effectiveStatus === 'SUCCESS' && recipientSwept) ||
-      effectiveStatus === 'PRIVATE_TRANSFER_PENDING';
-
-    if (!shouldNotify) return;
-
-    this.doSendRecipientNotification(id, effectiveStatus, recipientSwept).catch((err: any) => {
-      this.logger.error(`sendRecipientNotification failed for claim ${id}: ${err?.message ?? err}`);
+    this.resolveAndSendEmail(claimId).catch((err: any) => {
+      this.logger.error(`Email notification failed for claim ${claimId}: ${err?.message ?? err}`);
     });
   }
 
-  private async doSendRecipientNotification(
-    id: string,
-    effectiveStatus: ClaimStatus,
-    recipientSwept: boolean,
-  ): Promise<void> {
+  private async resolveAndSendEmail(claimId: string): Promise<void> {
     if (!this.emailService) return;
 
-    const result = await this.fetchRawRow(id);
+    const result = await this.fetchRawRow(claimId);
     if (!result) return;
     const row = result.row;
 
-    // Skip if already notified
-    if (row.email_notification_sent_at) return;
-
-    // Resolve recipient email
     let recipientEmail: string | null = null;
     const directEmail = (row.recipient_email as string | null)?.trim().toLowerCase() || null;
     const recipientUsername = (row.recipient_username as string | null)?.replace(/^@/, '').trim() || null;
@@ -2037,47 +2019,37 @@ export class ClaimsService {
       try {
         const user = await this.usersService.findByUsername(recipientUsername);
         recipientEmail = user.email?.trim().toLowerCase() || null;
-      } catch {
-        // user not found — no email available
-      }
+      } catch { /* no email available */ }
     }
 
     if (!recipientEmail) return;
 
-    // Resolve sender username for display
     let senderUsername: string | null = null;
     const createdBy = (row.created_by as string | null) || null;
     if (createdBy) {
       try {
         const sender = await this.usersService.findByPrivyId(createdBy);
         senderUsername = sender?.username || null;
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     }
 
+    const scheduledAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
     const emailData = {
-      id,
+      id: claimId,
       amount: row.amount as string | number,
       description: (row.description as string | null) || null,
       senderUsername,
       recipientEmail,
+      scheduledAt,
     };
 
-    if (effectiveStatus === 'SUCCESS' && recipientSwept) {
-      await this.emailService.sendPaymentReceivedEmail(emailData);
-    } else if (effectiveStatus === 'PRIVATE_TRANSFER_PENDING') {
+    const status = (row.status as string || '').toUpperCase();
+    if (status === 'PRIVATE_TRANSFER_PENDING') {
       await this.emailService.sendClaimReadyEmail(emailData);
     } else {
-      return;
+      await this.emailService.sendPaymentReceivedEmail(emailData);
     }
-
-    // Mark as sent to prevent duplicates
-    await this.updateRow(
-      id,
-      { email_notification_sent_at: new Date().toISOString() },
-      { email_notification_sent_at: new Date().toISOString() },
-    );
   }
 
   /**

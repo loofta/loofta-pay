@@ -8,6 +8,7 @@ export interface ClaimEmailData {
   description?: string | null;
   senderUsername?: string | null;
   recipientEmail: string;
+  scheduledAt?: string;
 }
 
 @Injectable()
@@ -45,8 +46,9 @@ export class EmailService {
         to: data.recipientEmail,
         subject,
         html,
+        ...(data.scheduledAt ? { scheduledAt: data.scheduledAt } : {}),
       });
-      this.logger.log(`Payment received email sent to ${data.recipientEmail} for claim ${data.id}`);
+      this.logger.log(`Payment received email scheduled for ${data.recipientEmail} (claim ${data.id}, at ${data.scheduledAt ?? 'now'})`);
     } catch (err: any) {
       this.logger.error(`Failed to send payment received email for claim ${data.id}: ${err?.message ?? err}`);
     }
@@ -65,8 +67,9 @@ export class EmailService {
         to: data.recipientEmail,
         subject,
         html,
+        ...(data.scheduledAt ? { scheduledAt: data.scheduledAt } : {}),
       });
-      this.logger.log(`Claim ready email sent to ${data.recipientEmail} for claim ${data.id}`);
+      this.logger.log(`Claim ready email scheduled for ${data.recipientEmail} (claim ${data.id}, at ${data.scheduledAt ?? 'now'})`);
     } catch (err: any) {
       this.logger.error(`Failed to send claim ready email for claim ${data.id}: ${err?.message ?? err}`);
     }

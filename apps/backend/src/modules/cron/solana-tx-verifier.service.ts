@@ -109,6 +109,7 @@ export class SolanaTxVerifierService {
         paidWithToken: 'USDC',
         paidWithChain: 'solana',
       });
+      this.claimsService.notifyRecipientAfterPayment(claimId);
       return { claimId, txHash, action: 'confirmed' };
     }
 

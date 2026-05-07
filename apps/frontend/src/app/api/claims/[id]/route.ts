@@ -123,8 +123,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   }
 
   let creator_username: string | null = null;
-  const createdBy = rawPayment?.created_by;
-  if (typeof createdBy === 'string' && createdBy.includes('did:privy:')) {
+  if (createdBy.includes('did:privy:')) {
     const { data: appUser } = await supabase
       .from("app_users")
       .select("username")

@@ -175,6 +175,7 @@ export class ClaimProcessorService {
           recipientAddress.startsWith('PENDING_EMAIL:') || recipientAddress.startsWith('PENDING_USERNAME:');
         if (claim.is_private === true || hasPendingRecipient) {
           await this.claimsService.updateStatus(claimId, 'PRIVATE_TRANSFER_PENDING');
+          this.claimsService.notifyRecipientAfterPayment(claimId);
           return {
             claimId,
             intentId,
@@ -183,6 +184,7 @@ export class ClaimProcessorService {
           };
         }
         await this.claimsService.updateStatus(claimId, 'SUCCESS');
+        this.claimsService.notifyRecipientAfterPayment(claimId);
         return {
           claimId,
           intentId,
