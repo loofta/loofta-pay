@@ -1837,6 +1837,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           walletFeeUsdc = feeAmountUsdc;
           walletFeeBreakdown = feeBreakdown ?? null;
           setPaidFeeUsdc(feeAmountUsdc);
+          setPendingFeeUsdc(feeAmountUsdc);
           if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
         },
       });
@@ -1928,6 +1929,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     setShowPayNowModal(true);
     setPayingWithLoofta(true);
     setPayWithLooftaError(null);
+    setPendingFeeUsdc(null);
     try {
       // Normalize and validate Solana recipient (base58) — use burner when recipient not yet claimed
       const rawRecipient = effectiveRecipient.replace(/\s/g, "");
@@ -1970,6 +1972,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           looftaFeeUsdc = feeAmountUsdc;
           looftaFeeBreakdown = feeBreakdown ?? null;
           setPaidFeeUsdc(feeAmountUsdc);
+          setPendingFeeUsdc(feeAmountUsdc);
           if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
         },
         privySignAndSend: async (txBytes) => {
@@ -4064,6 +4067,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <h2 className="text-xl font-semibold text-gray-900 text-center">
                   Pay ${solPrice > 0 ? privatePayTotal.toFixed(2) : claimAmountUSD.toFixed(2)}
                 </h2>
+                <p className="pt-0.5 text-xs text-center text-muted-foreground">
+                  ${claimAmountUSD.toFixed(2)} + ~$
+                  {pendingFeeUsdc != null
+                    ? pendingFeeUsdc.toFixed(3)
+                    : solPrice > 0
+                      ? (privatePayProtocolFee + privatePayGasFee).toFixed(3)
+                      : "…"}{" "}
+                  fee
+                </p>
                 <p className="pt-1 text-sm text-center text-muted-foreground">Choose how to pay</p>
               </DialogHeader>
               <div className="space-y-3">
