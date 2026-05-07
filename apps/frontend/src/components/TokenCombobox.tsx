@@ -19,6 +19,7 @@ import { findTokenBySelection, formatChainLabel, groupTokensBySymbol, uniqueChai
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenIcon } from "./TokenIcon";
 import { getChainIcon } from "@/lib/chains";
+import { resolveTokenLogo } from "@/lib/tokenImages";
 
 type Props = {
 	tokens: NearToken[];
@@ -46,8 +47,10 @@ export function TokenCombobox({
 	const [query, setQuery] = React.useState("");
 	// Filter out tokens from hidden chains
 	const filteredTokens = React.useMemo(() => {
-		if (hideChains.length === 0) return tokens;
-		return tokens.filter(t => !hideChains.includes(t.chain?.toLowerCase() || ''));
+		return tokens.filter(t => {
+			if (hideChains.length > 0 && hideChains.includes(t.chain?.toLowerCase() || '')) return false;
+			return resolveTokenLogo(t) != null;
+		});
 	}, [tokens, hideChains]);
 	const [options, setOptions] = React.useState<NearToken[]>(filteredTokens);
 	const [loading, setLoading] = React.useState(false);
