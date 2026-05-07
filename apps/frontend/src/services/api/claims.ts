@@ -149,10 +149,11 @@ export async function buildClaimPrivateTransfer(
   senderWallet: string,
   accessToken?: string | null,
   cluster?: 'devnet' | 'mainnet',
+  gasless = true,
 ): Promise<MagicblockTxResponse> {
   return fetchApi<MagicblockTxResponse>(`/claims/${claimId}/build-private-transfer`, {
     method: 'POST',
-    body: JSON.stringify({ sender_wallet: senderWallet, cluster }),
+    body: JSON.stringify({ sender_wallet: senderWallet, cluster, gasless }),
     userId,
     accessToken,
   });

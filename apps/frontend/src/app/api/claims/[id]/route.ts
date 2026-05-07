@@ -65,15 +65,21 @@ function normalisePayment(raw: Record<string, unknown>): Record<string, unknown>
   };
 }
 
-export async function GET(_: Request, props: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const supabase = getSupabaseAdmin();
+
+  // Authentication required — unauthenticated users cannot read claim details.
+  const requestingUserId = await getVerifiedUserId(request);
+  if (!requestingUserId) {
+    return NextResponse.json({ error: "Authentication required to view this payment." }, { status: 403 });
+  }
 
   // Try payments table first; fall back to legacy claims
   let rawPayment: Record<string, unknown> | null = null;
   let isLegacy = false;
 
-  const { data: paymentRow, error: paymentError } = await supabase
+  const { data: paymentRow } = await supabase
     .from("payments")
     .select("id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id")
     .eq("id", params.id)
@@ -102,6 +108,18 @@ export async function GET(_: Request, props: { params: Promise<{ id: string }> }
   const status = String((rawPayment?.status as string) || "").toUpperCase();
   if (status === "DELETED") {
     return NextResponse.json({ error: "This payment doesn't exist." }, { status: 404 });
+  }
+
+  // Access control: only the creator or the intended recipient may view a claim.
+  const createdBy = String(rawPayment?.created_by ?? "");
+  const recipientUserId = String((paymentRow as Record<string, unknown> | null)?.recipient_user_id ?? "");
+  const isCreator = !!createdBy && createdBy === requestingUserId;
+  const isKnownRecipient = !!recipientUserId && recipientUserId === requestingUserId;
+  if (!isCreator && !isKnownRecipient) {
+    // For PENDING_EMAIL/USERNAME claims, recipient identity can't be verified here —
+    // the backend /claims/:id/latest-intent handles this with full identity checks.
+    // Return 404 so the frontend falls through to the backend call (which is the primary source anyway).
+    return NextResponse.json({ error: "Payment not found." }, { status: 404 });
   }
 
   let creator_username: string | null = null;

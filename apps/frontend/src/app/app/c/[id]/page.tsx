@@ -46,22 +46,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import { isEvmChainId } from "@/config/biconomy";
 import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
 import {
-  useSignMessage as usePrivySignMessage,
   useWallets as useSolanaWallets,
   useSignTransaction as usePrivySolanaSignTransaction,
 } from "@privy-io/react-auth/solana";
-import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
-import { getUsdcAtaBalanceBaseUnits, embeddedSolanaUsdcBalanceQueryKey, getSolanaSOLBalance } from "@/services/solanaBalance";
+import { getUsdcAtaBalanceBaseUnits } from "@/services/solanaBalance";
 import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
-import { Connection, PublicKey, SystemProgram, Transaction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
-import {
-  getAssociatedTokenAddressSync,
-  createTransferInstruction,
-  createAssociatedTokenAccountInstruction,
-  TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-} from "@solana/spl-token";
+import { Connection, PublicKey, Transaction, VersionedTransaction } from "@solana/web3.js";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
 import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
@@ -805,18 +796,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   });
   const solPrice = solPriceQuery.data ?? 0;
 
-  // Minimum SOL the embedded wallet must hold before payment so no fee-payer prefund is needed.
-  const SOL_GAS_RESERVE = 0.0025;
-
   const estimatePrivateTotal = (usd: number) => {
     const net = Math.round(usd * 1_000_000);
     // MagicBlock gross-up: their 10 BPS volume fee deducted from amount before recipient gets it
     const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
     const mbFee = (mbGross - net) / 1_000_000;
-    // NEVER remove: 0.002 SOL is a mandatory MagicBlock network fee — always convert to USD and show it.
-    const gasFee = 0.002 * solPrice;
-    const usdcTotal = mbGross / 1_000_000;
-    return { total: usdcTotal, displayTotal: usdcTotal + gasFee, protocolFee: mbFee, gasFee };
+    // 0.002 SOL gasless relay fee charged as USDC — use $0.30 fallback while price loads
+    const gasFee = solPrice > 0 ? 0.002 * solPrice : 0.30;
+    return { total: mbGross / 1_000_000 + gasFee, protocolFee: mbFee, gasFee };
   };
 
   useEffect(() => {
@@ -1079,6 +1066,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [payWithLooftaError, setPayWithLooftaError] = useState<string | null>(null);
   const [payingWithWallet, setPayingWithWallet] = useState(false);
   const [payWithWalletError, setPayWithWalletError] = useState<string | null>(null);
+  const [lastFailedPayMethod, setLastFailedPayMethod] = useState<"loofta" | "wallet" | null>(null);
+  /** Actual fee confirmed by onTxBuilt — replaces the estimate once the tx is built. */
+  const [pendingFeeUsdc, setPendingFeeUsdc] = useState<number | null>(null);
   /** When set, we're waiting for on-chain confirmation; show tracker UI in Pay Now modal. */
   const [confirmingTxSignature, setConfirmingTxSignature] = useState<string | null>(null);
   const [confirmingTxSource, setConfirmingTxSource] = useState<"loofta" | "wallet" | null>(null);
@@ -1086,17 +1076,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [perTransferPhase, setPerTransferPhase] = useState<PerTransferProgress | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const { signMessage: privySignMessage } = usePrivySignMessage();
   const { wallets: solanaStandardWallets } = useSolanaWallets();
   const { signTransaction: privySolanaSignTransaction } = usePrivySolanaSignTransaction();
   const solanaPayment = useSolanaPayment({ enabled: authenticated });
-  const [showDepositModal, setShowDepositModal] = useState(false);
-  const [depositingFromPhantom, setDepositingFromPhantom] = useState(false);
-  const [embeddedSolBalance, setEmbeddedSolBalance] = useState<number | null>(null);
-  const [depositFromPhantomError, setDepositFromPhantomError] = useState<string | null>(null);
-  const [depositCrossChainSel, setDepositCrossChainSel] = useState<TokenSelection | undefined>(undefined);
-  const [depositConfirmingSig, setDepositConfirmingSig] = useState<string | null>(null);
-  const [depositAutoPayPending, setDepositAutoPayPending] = useState(false);
   const { transfer: perTransfer } = usePerPrivateTransfer();
 
   /** Overlay / Escape / close must not dismiss Pay Now while Privy, Phantom, or confirmation is in flight. */
@@ -1234,6 +1216,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const usdcSolanaToken = useMemo(() => {
     return tokens.find(t => t.symbol.toUpperCase() === 'USDC' && (t.chain === 'solana' || t.chain === 'sol'));
   }, [tokens]);
+
+  // Auto-select USDC on Solana once the token list is ready
+  useEffect(() => {
+    if (!usdcSolanaToken || fromSel) return;
+    setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
+  }, [usdcSolanaToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Rhinestone and Biconomy are not used — only USDC on Solana (Pay with Loofta / Use wallet) is supported
   const swapProviderEligible = false;
@@ -1768,25 +1756,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // This is USDC only (backend uses getTokenAccountsByOwner for USDC mint).
   // Note: Privy’s confirm modal shows the wallet’s SOL balance (for gas), not USDC — so you may see "$0.00" there even when you have USDC; gas sponsorship covers fees.
   const claimAmountUSD = parseFloat(claim?.amount || "0") || 0;
-  const { total: privatePayTotal, displayTotal: privatePayDisplayTotal, protocolFee: privatePayProtocolFee, gasFee: privatePayGasFee } = estimatePrivateTotal(claimAmountUSD);
+  const { total: privatePayTotal, protocolFee: privatePayProtocolFee, gasFee: privatePayGasFee } = estimatePrivateTotal(claimAmountUSD);
   const looftaBalanceUSD = solanaPayment.balanceUSD;
   // Sender owes gross USDC (base + privacy fee); check that, not just base.
-  const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(solPrice > 0 ? privatePayDisplayTotal : claimAmountUSD + privatePayProtocolFee);
-  const balanceData = solanaPayment.isBalanceLoading ? undefined : { balanceUSD: looftaBalanceUSD };
   // Privy wallets can take a moment to hydrate after login; guard Pay Now until the signer is present.
   const senderAddress = solanaPayment.senderAddress;
   const isPayerWalletReady = !authenticated || !senderAddress || !!solanaStandardWallets?.find((w) => w.address === senderAddress);
 
-  const hasSolForGas = embeddedSolBalance === null || embeddedSolBalance >= SOL_GAS_RESERVE;
-  const solDeficitSol = Math.max(0, SOL_GAS_RESERVE - (embeddedSolBalance ?? SOL_GAS_RESERVE));
-
-  useEffect(() => {
-    if (!senderAddress) return;
-    getSolanaSOLBalance(senderAddress, networkMode).then(setEmbeddedSolBalance).catch(() => setEmbeddedSolBalance(null));
-  }, [senderAddress, networkMode]);
-
   /** Phantom payment path. Pending recipients use burner ATA escrow; registered users use PER. */
-  async function payWithWallet() {
+  async function payWithWallet(gasless = true) {
     const effectiveRecipient = getEffectiveRecipient(claim);
     if (!claim?.id || !effectiveRecipient || !claim?.amount) {
       toast({ variant: "destructive", title: "Missing info", description: "Claim or recipient address is missing." });
@@ -1814,6 +1792,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       (claim as { recipient_pending_email?: boolean })?.recipient_pending_email;
     setPayingWithWallet(true);
     setPayWithWalletError(null);
+    setPendingFeeUsdc(null);
     setPerTransferPhase({ phase: "preparing" });
     try {
       let publicKey: PublicKey;
@@ -1853,12 +1832,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         claimId: claim.id,
         onProgress: setPerTransferPhase,
         isBurnerRecipient: isBurnerWallet,
+        gasless,
         onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
           walletFeeUsdc = feeAmountUsdc;
           walletFeeBreakdown = feeBreakdown ?? null;
           setPaidFeeUsdc(feeAmountUsdc);
           if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
-
         },
       });
       setPerTransferPhase(null);
@@ -1905,6 +1884,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       console.error("[PayWithWallet] Error:", e);
       const message = e?.message || "Could not complete payment with wallet.";
       setPayWithWalletError(message);
+      setLastFailedPayMethod("wallet");
       toast({ variant: "destructive", title: "Payment failed", description: message });
     } finally {
       setPayingWithWallet(false);
@@ -1914,7 +1894,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     }
   }
 
-  async function payWithLooftaBalance() {
+  async function payWithLooftaBalance(gasless = true) {
     const isPending = !!(claim as { recipient_pending_username?: boolean; recipient_pending_email?: boolean })?.recipient_pending_username || (claim as { recipient_pending_email?: boolean })?.recipient_pending_email;
     console.log("[PayWithLoofta] Clicked:", { claimId: claim?.id, isPending, hasBurner: !!(claim as { claim_burner_address?: string })?.claim_burner_address });
     let effectiveRecipient = getEffectiveRecipient(claim);
@@ -1985,6 +1965,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         claimId: claim.id,
         onProgress: setPerTransferPhase,
         isBurnerRecipient: isBurnerForLoofta,
+        gasless,
         onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
           looftaFeeUsdc = feeAmountUsdc;
           looftaFeeBreakdown = feeBreakdown ?? null;
@@ -2071,6 +2052,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       console.error("[PayWithLoofta] Error:", e);
       const message = e?.message || "Could not send from Loofta balance. Try again or use wallet.";
       setPayWithLooftaError(message);
+      setLastFailedPayMethod("loofta");
       toast({
         variant: "destructive",
         title: "Payment failed",
@@ -2084,96 +2066,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     }
   }
 
-  async function depositFromPhantom(amountUsdc: number, solLamports: number = 0) {
-    const embeddedAddress = solanaPayment.senderAddress;
-    if (!embeddedAddress) {
-      setDepositFromPhantomError("Your Loofta wallet address could not be found. Try logging in again.");
-      return;
-    }
-    const phantom = getPhantomProvider();
-    if (!phantom) {
-      setDepositFromPhantomError("Phantom wallet not found. Install the Phantom browser extension to deposit.");
-      return;
-    }
-    setDepositingFromPhantom(true);
-    setDepositFromPhantomError(null);
-    try {
-      let publicKey: PublicKey;
-      try {
-        const res = phantom.publicKey ? { publicKey: phantom.publicKey } : await phantom.connect();
-        publicKey = res.publicKey;
-      } catch {
-        throw new Error("Phantom connection failed. Please connect your Phantom wallet and try again.");
-      }
-      const connection = new Connection(getRpcForMode(networkMode), "confirmed");
-      const usdcMint = new PublicKey(getUsdcMintForMode(networkMode));
-      const fromAta = getAssociatedTokenAddressSync(usdcMint, publicKey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const toAta = getAssociatedTokenAddressSync(usdcMint, new PublicKey(embeddedAddress), false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
-      const amountBaseUnits = Math.ceil(amountUsdc * 1_000_000);
-      const ixs = [];
-      // SOL transfer must come first so the embedded wallet has gas before any ATA creation rent
-      if (solLamports > 0) {
-        ixs.push(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: new PublicKey(embeddedAddress), lamports: solLamports }));
-      }
-      const toAtaInfo = await connection.getAccountInfo(toAta);
-      if (!toAtaInfo) {
-        ixs.push(createAssociatedTokenAccountInstruction(publicKey, toAta, new PublicKey(embeddedAddress), usdcMint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID));
-      }
-      ixs.push(createTransferInstruction(fromAta, toAta, publicKey, amountBaseUnits, [], TOKEN_PROGRAM_ID));
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-      const msg = new TransactionMessage({ payerKey: publicKey, recentBlockhash: blockhash, instructions: ixs }).compileToV0Message();
-      const vTx = new VersionedTransaction(msg);
-      const signed = await phantom.signTransaction(vTx as unknown as VersionedTransaction);
-      const sig = await connection.sendRawTransaction((signed as unknown as VersionedTransaction).serialize(), { skipPreflight: false });
-      setDepositConfirmingSig(sig);
-      await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-
-      // Poll until the on-chain USDC balance actually reflects the deposit.
-      // "confirmed" fires before the RPC indexes the account state, so the first
-      // fetch can still return the pre-deposit balance. Retry up to ~12 s.
-      const prevBalance = solanaPayment.balanceUSD;
-      for (let attempt = 0; attempt < 8; attempt++) {
-        await new Promise(r => setTimeout(r, attempt === 0 ? 800 : 1500));
-        queryClient.removeQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
-        const result = await solanaPayment.refreshBalance();
-        if ((result.data?.balanceUSD ?? 0) > prevBalance + 0.001) break;
-      }
-
-      // Refresh SOL balance so hasSolForGas updates and auto-pay can proceed
-      if (solLamports > 0) {
-        getSolanaSOLBalance(embeddedAddress, networkMode).then(setEmbeddedSolBalance).catch(() => {});
-      }
-
-      setDepositConfirmingSig(null);
-      // Keep modal open — auto-pay screen shows, useEffect triggers payment once balance is ready
-      setDepositAutoPayPending(true);
-    } catch (e: any) {
-      setDepositConfirmingSig(null);
-      setDepositFromPhantomError(e?.message || "Deposit failed. Please try again.");
-    } finally {
-      setDepositingFromPhantom(false);
-    }
-  }
-
   // Hydrate fee data from DB (via claim.fee_paid_usdc attached by backend on findOne)
   useEffect(() => {
     if (!claim?.id || paidFeeUsdc != null) return;
     const feePaid = (claim as any).fee_paid_usdc;
     if (typeof feePaid === "number") setPaidFeeUsdc(feePaid);
   }, [claim?.id, (claim as any)?.fee_paid_usdc]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // After deposit confirms and balance has updated, auto-trigger payment.
-  // Uses a ref so the effect always calls the latest payWithLooftaBalance closure.
-  const payWithLooftaBalanceRef = React.useRef(payWithLooftaBalance);
-  useEffect(() => { payWithLooftaBalanceRef.current = payWithLooftaBalance; });
-  useEffect(() => {
-    if (!depositAutoPayPending) return;
-    if (!hasEnoughLooftaBalance || !hasSolForGas) return;
-    setDepositAutoPayPending(false);
-    setShowDepositModal(false);
-    payWithLooftaBalanceRef.current();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [depositAutoPayPending, hasEnoughLooftaBalance, hasSolForGas]);
 
   // Keep ref updated (retained for any legacy callers but auto-trigger is disabled below)
   useEffect(() => {
@@ -2603,9 +2501,43 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             <Skeleton className="h-4 w-4/5" />
             <Skeleton className="h-12 w-full rounded-xl mt-2" />
           </div>
+        ) : !authenticated ? (
+          <div className="py-16 flex flex-col items-center text-center">
+            <div className="w-16 h-16 rounded-full bg-white/10 border border-white/10 flex items-center justify-center mb-5">
+              <LogIn className="w-7 h-7 text-slate-400" />
+            </div>
+            <h3 className="text-xl font-semibold text-white mb-2">Sign in to view details</h3>
+            <p className="text-slate-400 text-base mb-6 max-w-xs">
+              This payment may be waiting for you. Sign in to check.
+            </p>
+            <button
+              onClick={() => login()}
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white hover:opacity-90 transition-opacity"
+              style={{ background: "linear-gradient(to right, #FF1301, #EAB308)" }}
+            >
+              <LogIn className="w-4 h-4" />
+              Sign in
+            </button>
+          </div>
         ) : claim ? (
           <>
-            {isRecipient &&
+            {!isCreatorView && !isRecipient ? (
+              <div className="py-16 flex flex-col items-center text-center">
+                <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-5 text-4xl select-none">
+                  🔍
+                </div>
+                <h3 className="text-xl font-semibold text-white mb-2">Payment not found</h3>
+                <p className="text-slate-400 text-base mb-6 max-w-xs">
+                  Oops — this link may not be addressed to you or may no longer exist.
+                </p>
+                <Link
+                  href="/"
+                  className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors"
+                >
+                  ← Back to Send
+                </Link>
+              </div>
+            ) : isRecipient &&
               !claim?.recipient_pending_email &&
               !claim?.recipient_pending_username &&
               String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
@@ -3368,8 +3300,71 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                 )}
 
+                {/* Payment method */}
+                {usdcSolanaToken && (
+                  <div className="mt-5">
+                    <button
+                      type="button"
+                      onClick={() => setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain })}
+                      className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
+                        ? 'border-green-400 bg-green-100'
+                        : 'border-gray-300 bg-white hover:bg-gray-50'
+                        }`}
+                    >
+                      <TokenIcon token={usdcSolanaToken} chain="solana" size={32} />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className={cn(
+                            "text-lg font-semibold",
+                            selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-900" : "text-gray-900"
+                          )}>Pay USDC on Solana</span>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
+                            FREE
+                          </span>
+                        </div>
+                        <div className={cn(
+                          "text-sm mt-0.5",
+                          selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-800" : "text-slate-200"
+                        )}>
+                          Pay now with Phantom or your Loofta balance
+                        </div>
+                      </div>
+                      {selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain && (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-600">
+                          <path d="M20 6L9 17l-5-5" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {/* Other token selector */}
+                <div className="mt-3">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="flex-1 h-px bg-white/10" />
+                    <span className="text-xs font-medium text-slate-500">or choose another token</span>
+                    <div className="flex-1 h-px bg-white/10" />
+                  </div>
+                  <TokenCombobox
+                    tokens={filteredTokens as any}
+                    value={fromSel && usdcSolanaToken && (fromSel.symbol !== usdcSolanaToken.symbol || fromSel.chain !== usdcSolanaToken.chain) ? fromSel : undefined}
+                    onChange={(sel) => {
+                      if (sel) setFromSel({ symbol: sel.symbol, chain: sel.chain });
+                      else if (usdcSolanaToken) setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
+                    }}
+                    placeholder="Choose a token"
+                    onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
+                    hideChains={['solana', 'sol']}
+                    className="w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white placeholder:text-slate-400 hover:!bg-white/20"
+                  />
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-xs text-blue-300">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    Cross-chain payments are not available yet and are coming soon to beta.
+                  </div>
+                </div>
+
                 {/* Payment breakdown */}
-                <div className="mt-5">
+                <div className="mt-4">
                   <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
                     <div className="text-sm font-medium font-sans text-gray-700 mb-2">Payment breakdown</div>
                     <div className="space-y-1.5 text-sm">
@@ -3383,7 +3378,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       </div>
                       <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                         <span className="font-medium font-sans text-gray-900">Total</span>
-                        <span className="font-semibold font-sans text-lg text-gray-900">{solPrice > 0 ? `$${privatePayDisplayTotal.toFixed(2)}` : "..."}</span>
+                        <span className="font-semibold font-sans text-lg text-gray-900">{solPrice > 0 ? `$${privatePayTotal.toFixed(2)}` : "..."}</span>
                       </div>
                     </div>
                   </div>
@@ -3404,40 +3399,40 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       >
                         Demo Mode - Payments Disabled
                       </Button>
-                    ) : (
-                      <>
-                        <GradientActionButton
-                          onClick={() => {
-                            if (!authenticated) { login(); return; }
-                            setPayWithLooftaError(null);
-                            setPayWithWalletError(null);
-                            setConfirmingTxSignature(null);
-                            setConfirmingTxSource(null);
-                            if (balanceData === undefined || (hasEnoughLooftaBalance && hasSolForGas)) {
-                              payWithLooftaBalance();
-                            } else {
-                              setDepositFromPhantomError(null);
-                              setShowDepositModal(true);
-                            }
-                          }}
-                          disabled={
-                            mainnetViewOnly
-                              ? true
-                              : claimAmountUSD < 5
+                    ) : (() => {
+                        const isCrossChainSelected = !!fromSel && !!usdcSolanaToken &&
+                          (fromSel.symbol !== usdcSolanaToken.symbol || fromSel.chain !== usdcSolanaToken.chain);
+                        return (
+                          <GradientActionButton
+                            onClick={() => {
+                              if (!authenticated) { login(); return; }
+                              setPayWithLooftaError(null);
+                              setPayWithWalletError(null);
+                              setConfirmingTxSignature(null);
+                              setConfirmingTxSource(null);
+                              setPerTransferPhase(null);
+                              setShowPayNowModal(true);
+                            }}
+                            disabled={
+                              isCrossChainSelected
                                 ? true
-                                : requiresPrivate && !isPrivateMode
+                                : mainnetViewOnly
                                   ? true
-                                  : !authenticated
-                                    ? false
-                                    : !isPayerWalletReady || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS"
-                          }
-                          loading={preparing || (authenticated && !isPayerWalletReady)}
-                          loadingText="Wallet loading…"
-                        >
-                          {!authenticated ? "Sign in to pay" : "Pay now"}
-                        </GradientActionButton>
-                      </>
-                    )}
+                                  : claimAmountUSD < 5
+                                    ? true
+                                    : requiresPrivate && !isPrivateMode
+                                      ? true
+                                      : !authenticated
+                                        ? false
+                                        : !isPayerWalletReady || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS"
+                            }
+                            loading={preparing || (authenticated && !isPayerWalletReady)}
+                            loadingText="Wallet loading…"
+                          >
+                            {isCrossChainSelected ? "Coming soon in beta" : !authenticated ? "Sign in to pay" : "Pay now"}
+                          </GradientActionButton>
+                        );
+                      })()}
                   </div>
                 </div>
               </>
@@ -3919,9 +3914,18 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             ))}
           </>
         ) : (
-          <div className="mt-6 text-center py-12">
-            <p className="text-lg font-medium text-slate-300">This payment doesn&apos;t exist.</p>
-            <Link href="/" className="inline-flex items-center gap-2 mt-4 text-sm font-medium text-slate-400 hover:text-white transition-colors">
+          <div className="py-16 flex flex-col items-center text-center">
+            <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-5 text-4xl select-none">
+              🔍
+            </div>
+            <h3 className="text-xl font-semibold text-white mb-2">Payment not found</h3>
+            <p className="text-slate-400 text-base mb-6 max-w-xs">
+              Oops — this link may have expired, been cancelled, or never existed.
+            </p>
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors"
+            >
               ← Back to Send
             </Link>
           </div>
@@ -4055,199 +4059,90 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             </>
           ) : (
             <>
-              <DialogHeader className="flex flex-col items-center justify-center text-center space-y-0 pb-6 sm:text-center" aria-hidden>
-                <div className="mb-4 flex justify-center">
-                  <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center">
-                    <Loader2 className="w-8 h-8 animate-spin text-orange-600" />
-                  </div>
-                </div>
-                <h2 className="text-xl font-semibold text-gray-900 text-center">Starting payment…</h2>
-                <p className="pt-2 text-sm text-center text-muted-foreground">Preparing your transaction.</p>
+              <DialogHeader className="flex flex-col items-center justify-center text-center space-y-0 pb-5 sm:text-center" aria-hidden>
+                <div className="mb-3 text-4xl">💳</div>
+                <h2 className="text-xl font-semibold text-gray-900 text-center">
+                  Pay ${solPrice > 0 ? privatePayTotal.toFixed(2) : claimAmountUSD.toFixed(2)}
+                </h2>
+                <p className="pt-1 text-sm text-center text-muted-foreground">Choose how to pay</p>
               </DialogHeader>
-              {payWithLooftaError && (
-                <div className="mt-2 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-800 [overflow-wrap:anywhere] whitespace-pre-wrap">
-                  <strong>Payment failed:</strong> {payWithLooftaError}
+              <div className="space-y-3">
+                {/* Pay with Loofta */}
+                {(() => {
+                  const needed = solPrice > 0 ? privatePayTotal : claimAmountUSD + privatePayProtocolFee;
+                  const hasEnough = solanaPayment.hasEnoughBalance(needed);
+                  const looftaDisabled = !authenticated || !isPayerWalletReady || (!solanaPayment.isBalanceLoading && !hasEnough);
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => payWithLooftaBalance()}
+                      disabled={looftaDisabled}
+                      className="w-full flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <LooftaIcon className="w-8 h-8 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-white">Loofta wallet</div>
+                        <div className="text-sm text-slate-400 mt-0.5">
+                          {solanaPayment.isBalanceLoading
+                            ? "Loading balance…"
+                            : hasEnough
+                              ? `Balance: $${looftaBalanceUSD.toFixed(2)}`
+                              : `Insufficient balance ($${looftaBalanceUSD.toFixed(2)} of $${needed.toFixed(2)} needed)`}
+                        </div>
+                      </div>
+                      <ArrowRight className="w-5 h-5 text-slate-400 shrink-0" />
+                    </button>
+                  );
+                })()}
+
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-px bg-white/10" />
+                  <span className="text-xs font-medium text-slate-500">or</span>
+                  <div className="flex-1 h-px bg-white/10" />
                 </div>
-              )}
+
+                {/* Pay with external wallet */}
+                <button
+                  type="button"
+                  onClick={() => payWithWallet()}
+                  className="w-full flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left"
+                >
+                  <Wallet className="w-8 h-8 shrink-0 text-slate-300" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-white">External wallet</div>
+                    <div className="text-sm text-slate-400 mt-0.5">Pay directly from Phantom or any Solana wallet</div>
+                  </div>
+                  <ArrowRight className="w-5 h-5 text-slate-400 shrink-0" />
+                </button>
+
+                {(payWithLooftaError || payWithWalletError) && (
+                  <div className="space-y-2">
+                    <div className="p-3 rounded-lg bg-red-500/15 border border-red-400/30 text-sm text-red-200 [overflow-wrap:anywhere] whitespace-pre-wrap">
+                      <strong>Payment failed:</strong> {payWithLooftaError || payWithWalletError}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPayWithLooftaError(null);
+                        setPayWithWalletError(null);
+                        if (lastFailedPayMethod === "wallet") {
+                          payWithWallet(false);
+                        } else {
+                          payWithLooftaBalance(false);
+                        }
+                      }}
+                      className="w-full py-2.5 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-sm text-slate-300 transition-colors"
+                    >
+                      Try without gas sponsorship
+                    </button>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </DialogContent>
       </Dialog>
 
-      {/* Deposit modal: shown when user wants to pay but doesn't have enough Loofta balance */}
-      <Dialog
-        open={showDepositModal}
-        onOpenChange={(open) => {
-          if (!open && (depositingFromPhantom || depositConfirmingSig || depositAutoPayPending)) return;
-          setShowDepositModal(open);
-          if (!open) {
-            setDepositFromPhantomError(null);
-            setDepositCrossChainSel(undefined);
-            setDepositConfirmingSig(null);
-            setDepositAutoPayPending(false);
-          }
-        }}
-      >
-        <DialogContent
-          className="sm:max-w-md p-0 border-white/10 bg-[#0f0f12] text-white shadow-2xl max-h-[90vh] flex flex-col [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-muted-foreground]:!text-slate-400 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.bg-red-50]:!bg-red-500/15 [&_.border-red-200]:!border-red-400/30 [&_.text-red-800]:!text-red-200 [&>*:last-child]:!text-slate-400 [&>*:last-child:hover]:!text-white [&>*:last-child:hover]:!bg-white/10"
-          aria-describedby={undefined}
-          onPointerDownOutside={(e) => { if (depositingFromPhantom || depositConfirmingSig || depositAutoPayPending) e.preventDefault(); }}
-          onEscapeKeyDown={(e) => { if (depositingFromPhantom || depositConfirmingSig || depositAutoPayPending) e.preventDefault(); }}
-        >
-          <DialogTitle className="sr-only">Top up your Loofta balance</DialogTitle>
-
-          {/* Confirming screen — shown after tx is broadcast, waiting for on-chain confirmation */}
-          {depositConfirmingSig ? (
-            <div className="p-8 flex flex-col items-center text-center gap-5">
-              <div className="w-16 h-16 rounded-full bg-orange-500/15 flex items-center justify-center">
-                <Loader2 className="w-8 h-8 animate-spin text-orange-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-semibold text-white">Confirming deposit</h2>
-                <p className="text-sm text-slate-400 mt-1">
-                  Transaction submitted. Waiting for Solana to confirm — usually a few seconds.
-                </p>
-              </div>
-              <div className="w-full space-y-3">
-                <div className="flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/20">
-                    <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-sm font-medium text-white">Signed & sent</p>
-                    <p className="text-xs text-slate-400">Transaction is on the network</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 rounded-lg border border-orange-500/30 bg-orange-500/10 p-4">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-500/20">
-                    <Loader2 className="h-5 w-5 animate-spin text-orange-400" />
-                  </div>
-                  <div className="min-w-0 flex-1 text-left">
-                    <p className="text-sm font-medium text-white">Confirming on-chain</p>
-                    <p className="text-xs text-slate-400">Once confirmed, your balance updates and you can pay</p>
-                  </div>
-                </div>
-                <a
-                  href={getExplorerTxUrl("solana", depositConfirmingSig)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 py-2.5 text-sm font-medium text-orange-400 hover:bg-white/10 transition-colors"
-                >
-                  View on Solscan
-                </a>
-              </div>
-            </div>
-          ) : depositAutoPayPending ? (
-            /* Auto-pay pending: deposit confirmed, waiting for balance to reflect then auto-paying */
-            <div className="p-8 flex flex-col items-center text-center gap-5">
-              <div className="w-16 h-16 rounded-full bg-emerald-500/15 flex items-center justify-center">
-                <CheckCircle2 className="w-8 h-8 text-emerald-400" />
-              </div>
-              <div>
-                <h2 className="text-xl font-semibold text-white">Deposit confirmed!</h2>
-                <p className="text-sm text-slate-400 mt-1">Balance updated — initiating your payment…</p>
-              </div>
-              <Loader2 className="w-6 h-6 animate-spin text-orange-400" />
-            </div>
-          ) : (
-            /* Scrollable body */
-            <div className="overflow-y-auto flex-1 p-6 space-y-4">
-              {/* Header */}
-              <div className="flex flex-col items-center text-center pb-2">
-                <div className="text-4xl mb-3">💰</div>
-                <h2 className="text-xl font-semibold text-white">Top up to pay</h2>
-                <p className="text-sm text-slate-400 mt-1">Your balance needs a top-up to complete this payment.</p>
-              </div>
-
-              {/* Balance breakdown */}
-              <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-slate-400">Your balance</span>
-                  <span className="font-medium text-white">${looftaBalanceUSD.toFixed(2)}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-slate-400">Amount needed</span>
-                  <span className="font-medium text-white">${(solPrice > 0 ? privatePayDisplayTotal : claimAmountUSD).toFixed(2)}</span>
-                </div>
-                <div className="border-t border-white/10 pt-2 flex items-center justify-between text-sm">
-                  <span className="text-amber-300 font-medium">Recommended deposit</span>
-                  <span className="font-semibold text-amber-300">
-                    ${Math.max(0.01, (solPrice > 0 ? privatePayDisplayTotal : claimAmountUSD) - looftaBalanceUSD + 0.01).toFixed(2)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Pay with label */}
-              <div className="text-sm font-medium text-slate-400">Top up with</div>
-
-              {/* USDC on Solana — primary option */}
-              <button
-                type="button"
-                disabled={depositingFromPhantom}
-                onClick={() => depositFromPhantom(
-                  Math.max(0.01, (solPrice > 0 ? privatePayDisplayTotal : claimAmountUSD) - looftaBalanceUSD + 0.01)
-                )}
-                className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-green-500/40 bg-green-500/10 hover:bg-green-500/20 transition-colors text-left disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                <TokenIcon token={usdcSolanaToken ?? undefined} chain="solana" size={32} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-white">USDC on Solana</span>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-xs font-medium border border-green-500/30">
-                      FREE
-                    </span>
-                  </div>
-                  <span className="text-sm text-slate-400 mt-0.5 block">
-                    {depositingFromPhantom ? "Transferring…" : "Open your Phantom wallet"}
-                  </span>
-                </div>
-                {depositingFromPhantom
-                  ? <Loader2 className="w-5 h-5 animate-spin text-green-400 shrink-0" />
-                  : <ArrowRight className="w-5 h-5 text-green-400 shrink-0" />}
-              </button>
-
-              {depositFromPhantomError && (
-                <div className="p-3 rounded-lg bg-red-500/15 border border-red-400/30 text-sm text-red-200 [overflow-wrap:anywhere]">
-                  {depositFromPhantomError}
-                </div>
-              )}
-
-              {/* Divider */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1 h-px bg-white/10" />
-                <span className="text-xs font-medium text-slate-500">or choose another token</span>
-                <div className="flex-1 h-px bg-white/10" />
-              </div>
-
-              {/* Other token selector */}
-              <TokenCombobox
-                tokens={filteredTokens as any}
-                value={depositCrossChainSel}
-                onChange={(sel) => setDepositCrossChainSel(sel)}
-                placeholder="Choose a token to deposit"
-                onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                hideChains={['solana', 'sol']}
-                className="bg-white/10 text-white border border-white/20 w-full h-14 text-base focus:ring-0 focus-visible:ring-0 focus:outline-none hover:bg-white/15 placeholder:text-slate-400"
-              />
-              {depositCrossChainSel ? (
-                <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/30 flex items-center gap-3">
-                  <TokenIcon
-                    token={filteredTokens.find(t => t.symbol === depositCrossChainSel.symbol && t.chain === depositCrossChainSel.chain) as any}
-                    chain={depositCrossChainSel.chain}
-                    size={24}
-                  />
-                  <div>
-                    <p className="text-sm font-semibold text-amber-300">{depositCrossChainSel.symbol} on {depositCrossChainSel.chain}</p>
-                    <p className="text-xs text-amber-400/80 mt-0.5">Cross-chain payments unavailable on mainnet beta</p>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-xs text-slate-500 text-center">Select a token to see deposit options</p>
-              )}
-            </div>
-          )} {/* closes depositConfirmingSig ternary */}
-        </DialogContent>
-      </Dialog>
 
     </>
   );

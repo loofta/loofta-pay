@@ -236,11 +236,11 @@ export class ClaimsController {
   async buildPrivateTransfer(
     @Param('id') id: string,
     @Req() req: { user?: { id: string } },
-    @Body() body: { sender_wallet: string; cluster?: 'devnet' | 'mainnet' },
+    @Body() body: { sender_wallet: string; cluster?: 'devnet' | 'mainnet'; gasless?: boolean },
   ) {
     const privyUserId = req.user?.id;
     if (!privyUserId) throw new UnauthorizedException('Login required.');
-    return this.claimsService.buildPrivateTransferForPayer(id, privyUserId, body.sender_wallet, body.cluster);
+    return this.claimsService.buildPrivateTransferForPayer(id, privyUserId, body.sender_wallet, body.cluster, body.gasless ?? true);
   }
 
   /**

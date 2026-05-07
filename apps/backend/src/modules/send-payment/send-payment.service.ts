@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { LOOFTA_FEE_BPS, appendLooftaFeeInstruction, fetchSolPriceUsd, grossUpForMagicblockFee, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import { MAGICBLOCK_GAS_SOL, fetchSolPriceUsd, grossUpForMagicblockFee, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
@@ -130,52 +130,23 @@ export class SendPaymentService {
       ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
       : new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || this.usdcMint.toBase58());
 
-    if (!this.feePayerKeypair) {
-      const grossUnits = grossUpForMagicblockFee(baseUnits);
-      const txResponse = await requestMagicblockPrivateTransfer({ from: senderWallet.trim(), to, mint: effectiveMint.toBase58(), amount: grossUnits, cluster });
-      return txResponse;
-    }
-
-    const heliusKey = this.configService.get<string>('HELIUS_API_KEY')?.trim() || process.env.HELIUS_API_KEY?.trim();
-    const sponsorRpc = cluster === 'mainnet'
-      ? (heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com')
-      : (heliusKey ? `https://devnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.devnet.solana.com');
-    const sponsorConn = new Connection(sponsorRpc, 'confirmed');
-
-    // ── Pre-calculate fees before calling MagicBlock ──────────────────────────────────────────
-    // Fee model: sender pays exactly `baseUnits`. Fee is deducted from recipient's share.
-    const MIN_SOL_LAMPORTS = 3_000_000;
-    let solRecoveryFeeUnits = 0;
-    if (cluster === 'mainnet') {
-      try {
-        const balance = await sponsorConn.getBalance(new PublicKey(senderWallet.trim()));
-        const prefundNeeded = Math.max(0, MIN_SOL_LAMPORTS - balance);
-        if (prefundNeeded > 0) {
-          const solPriceUsd = await fetchSolPriceUsd();
-          if (solPriceUsd !== null) {
-            solRecoveryFeeUnits = Math.ceil(solPriceUsd * (prefundNeeded / 1e9) * 1_000_000);
-            this.logger.log(`[SendPayment] SOL: ${prefundNeeded} lamports needed @ $${solPriceUsd.toFixed(2)}/SOL = ${solRecoveryFeeUnits} USDC units recovery`);
-          } else {
-            this.logger.warn('[SendPayment] SOL price unavailable — skipping SOL recovery fee');
-          }
-        } else {
-          this.logger.log(`[SendPayment] Sender already has enough SOL — no recovery needed`);
-        }
-      } catch (e) {
-        this.logger.warn(`[SendPayment] SOL balance check failed, skipping recovery: ${String(e)}`);
+    // MagicBlock gasless: validator is fee payer, 0.002 SOL relay fee charged as USDC.
+    let solPriceUsd: number | null = null;
+    let solFeeUnits = 0;
+    try {
+      solPriceUsd = await fetchSolPriceUsd();
+      if (solPriceUsd !== null) {
+        solFeeUnits = Math.ceil(MAGICBLOCK_GAS_SOL * solPriceUsd * 1_000_000);
       }
+    } catch (e) {
+      this.logger.warn(`[SendPayment] SOL price fetch failed: ${String(e)}`);
     }
 
-    const bpsFeeUnits = Math.ceil(baseUnits * LOOFTA_FEE_BPS / 10_000);
-    const cappedSolRecovery = Math.min(solRecoveryFeeUnits, baseUnits);
-    const totalFeeUnits = bpsFeeUnits + cappedSolRecovery;
-    // Fee model: fee is ON TOP. Recipient gets the full payment amount.
     const grossUnits = grossUpForMagicblockFee(baseUnits);
     this.logger.log(
-      `[SendPayment] amount=${amountUsd} | bps=${bpsFeeUnits} solRecovery=${cappedSolRecovery}${cappedSolRecovery < solRecoveryFeeUnits ? `(capped from ${solRecoveryFeeUnits})` : ''} totalFee=${totalFeeUnits}` +
-      ` | mbGross=${grossUnits} senderPays=${grossUnits + totalFeeUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}…`,
+      `[SendPayment] amount=${amountUsd} grossUnits=${grossUnits} solFeeUnits=${solFeeUnits}` +
+      ` solPrice=${solPriceUsd ?? 'n/a'} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… (gasless)`,
     );
-    // ─────────────────────────────────────────────────────────────────────────────────────────
 
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
@@ -183,104 +154,19 @@ export class SendPaymentService {
       mint: effectiveMint.toBase58(),
       amount: grossUnits,
       cluster,
+      gasless: true,
     });
 
-    const txBase64 = txResponse.transactionBase64;
-
-    this.logger.log(
-      `[SendPayment] Fee sponsor: preparing tx | cluster=${cluster} feePayer=${this.feePayerKeypair.publicKey.toBase58()} requiredSigners=[${txResponse.requiredSigners.join(', ')}]`,
-    );
-
-    try {
-      const txBuffer = Buffer.from(txBase64, 'base64');
-      const { blockhash, lastValidBlockHeight } = await sponsorConn.getLatestBlockhash('confirmed');
-      const feePayerPk = this.feePayerKeypair.publicKey;
-
-      // Legacy tx path
-      let finalTxBase64: string;
-      let actualTopUpLamports = 0;
-      try {
-        const legacy = Transaction.from(txBuffer);
-        legacy.recentBlockhash = blockhash;
-        legacy.feePayer = feePayerPk;
-        const serialized = legacy.serialize({ requireAllSignatures: false, verifySignatures: false });
-        this.logger.log(`[SendPayment] legacy tx ${serialized.length}b`);
-        finalTxBase64 = Buffer.from(serialized).toString('base64');
-      } catch {
-        // v0 path — keep as v0 (stays ~750b; legacy expansion hits 1232b limit)
-        const v0 = VersionedTransaction.deserialize(txBuffer);
-        const vMsg = v0.message;
-        const altAccounts: AddressLookupTableAccount[] = [];
-        for (const lookup of vMsg.addressTableLookups) {
-          const r = await sponsorConn.getAddressLookupTable(lookup.accountKey);
-          if (r.value) altAccounts.push(r.value);
-        }
-        this.logger.log(`[SendPayment] v0 tx | ALTs=${vMsg.addressTableLookups.length} resolved=${altAccounts.length}`);
-        const decompiledMsg = TransactionMessage.decompile(vMsg, { addressLookupTableAccounts: altAccounts });
-
-        // Inline SOL top-up — atomic, no wasted SOL if tx fails
-        const senderPk = vMsg.staticAccountKeys[0];
-        const senderBalance = await sponsorConn.getBalance(senderPk);
-        actualTopUpLamports = Math.max(0, MIN_SOL_LAMPORTS - senderBalance);
-        const prefundIxs: ReturnType<typeof SystemProgram.transfer>[] = [];
-        if (actualTopUpLamports > 0) {
-          prefundIxs.push(SystemProgram.transfer({ fromPubkey: feePayerPk, toPubkey: senderPk, lamports: actualTopUpLamports }));
-          this.logger.log(`[SendPayment] inline top-up +${actualTopUpLamports} lamports (sender had ${senderBalance})`);
-        } else {
-          this.logger.log(`[SendPayment] sender has ${senderBalance} lamports — no top-up needed`);
-        }
-
-        const v0Msg = new TransactionMessage({
-          payerKey: feePayerPk,
-          recentBlockhash: blockhash,
-          instructions: [...prefundIxs, ...decompiledMsg.instructions],
-        }).compileToV0Message(altAccounts);
-        const newV0Tx = new VersionedTransaction(v0Msg);
-        const ser = newV0Tx.serialize();
-        this.logger.log(`[SendPayment] rebuilt as v0 ${ser.length}b topUp=${actualTopUpLamports}`);
-        finalTxBase64 = Buffer.from(ser).toString('base64');
-      }
-
-      // Recalculate fee using actual inline top-up (may differ from balance-check estimate)
-      let actualTotalFeeUnits = totalFeeUnits;
-      if (actualTopUpLamports > 0) {
-        const solPriceUsd = await fetchSolPriceUsd();
-        if (solPriceUsd !== null) {
-          const actualSolRecovery = Math.min(
-            Math.ceil(solPriceUsd * (actualTopUpLamports / 1e9) * 1_000_000),
-            baseUnits,
-          );
-          actualTotalFeeUnits = bpsFeeUnits + actualSolRecovery;
-          if (actualTotalFeeUnits !== totalFeeUnits) {
-            this.logger.log(`[SendPayment] Fee adjusted: estimated=${totalFeeUnits} actual=${actualTotalFeeUnits} (topUp=${actualTopUpLamports} @ $${solPriceUsd.toFixed(2)})`);
-          }
-        }
-      }
-
-      if (actualTotalFeeUnits > 0) {
-        try {
-          finalTxBase64 = await appendLooftaFeeInstruction(
-            finalTxBase64,
-            senderWallet.trim(),
-            feePayerPk.toBase58(),
-            actualTotalFeeUnits,
-            effectiveMint,
-            sponsorConn,
-            feePayerPk,
-          );
-          this.logger.log(`[SendPayment] Loofta fee ix appended: totalFee=${actualTotalFeeUnits} units ($${(actualTotalFeeUnits / 1e6).toFixed(4)} USDC)`);
-        } catch (e) {
-          this.logger.warn(`[SendPayment] Fee instruction append failed (non-fatal): ${String(e)}`);
-        }
-      }
-
-      this.logger.log(`[SendPayment] Fee sponsor prepared: feePayer=${feePayerPk.toBase58()} blockhash=${blockhash.slice(0, 8)}... topUp=${actualTopUpLamports}`);
-      return { ...txResponse, transactionBase64: finalTxBase64, recentBlockhash: blockhash, lastValidBlockHeight };
-    } catch (e) {
-      this.logger.warn(`[SendPayment] Fee sponsor failed, returning unsponsored tx: ${String(e)}`);
-    }
-
-    return { ...txResponse, transactionBase64: txBase64 };
+    return {
+      ...txResponse,
+      feeAmountUsdc: solFeeUnits / 1_000_000,
+      feeBreakdown: {
+        looftaBpsUsdc: 0,
+        solRecoveryUsdc: solFeeUnits / 1_000_000,
+        solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
+        solPriceUsd: solPriceUsd ?? 0,
+      },
+    };
   }
 
   /**
