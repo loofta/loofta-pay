@@ -52,9 +52,9 @@ import {
 } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
 import { isDemoMode } from "@/config/demoMode";
-import { getUsdcAtaBalanceBaseUnits, embeddedSolanaUsdcBalanceQueryKey } from "@/services/solanaBalance";
+import { getUsdcAtaBalanceBaseUnits, embeddedSolanaUsdcBalanceQueryKey, getSolanaSOLBalance } from "@/services/solanaBalance";
 import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
-import { Connection, PublicKey, Transaction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { Connection, PublicKey, SystemProgram, Transaction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
   createTransferInstruction,
@@ -805,15 +805,18 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   });
   const solPrice = solPriceQuery.data ?? 0;
 
+  // Minimum SOL the embedded wallet must hold before payment so no fee-payer prefund is needed.
+  const SOL_GAS_RESERVE = 0.0025;
+
   const estimatePrivateTotal = (usd: number) => {
     const net = Math.round(usd * 1_000_000);
     // MagicBlock gross-up: their 10 BPS volume fee deducted from amount before recipient gets it
     const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
     const mbFee = (mbGross - net) / 1_000_000;
-    // MagicBlock gasless relay fee: 0.002 SOL fixed cost, charged as USDC in a prepended instruction.
-    // Use current SOL price or a conservative $0.30 fallback when price not yet loaded.
-    const gasFee = solPrice > 0 ? 0.002 * solPrice : 0.30;
-    return { total: mbGross / 1_000_000 + gasFee, protocolFee: mbFee, gasFee };
+    // NEVER remove: 0.002 SOL is a mandatory MagicBlock network fee — always convert to USD and show it.
+    const gasFee = 0.002 * solPrice;
+    const usdcTotal = mbGross / 1_000_000;
+    return { total: usdcTotal, displayTotal: usdcTotal + gasFee, protocolFee: mbFee, gasFee };
   };
 
   useEffect(() => {
@@ -1089,6 +1092,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const solanaPayment = useSolanaPayment({ enabled: authenticated });
   const [showDepositModal, setShowDepositModal] = useState(false);
   const [depositingFromPhantom, setDepositingFromPhantom] = useState(false);
+  const [embeddedSolBalance, setEmbeddedSolBalance] = useState<number | null>(null);
   const [depositFromPhantomError, setDepositFromPhantomError] = useState<string | null>(null);
   const [depositCrossChainSel, setDepositCrossChainSel] = useState<TokenSelection | undefined>(undefined);
   const [depositConfirmingSig, setDepositConfirmingSig] = useState<string | null>(null);
@@ -1764,14 +1768,22 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // This is USDC only (backend uses getTokenAccountsByOwner for USDC mint).
   // Note: Privy’s confirm modal shows the wallet’s SOL balance (for gas), not USDC — so you may see "$0.00" there even when you have USDC; gas sponsorship covers fees.
   const claimAmountUSD = parseFloat(claim?.amount || "0") || 0;
-  const { total: privatePayTotal, protocolFee: privatePayProtocolFee, gasFee: privatePayGasFee } = estimatePrivateTotal(claimAmountUSD);
+  const { total: privatePayTotal, displayTotal: privatePayDisplayTotal, protocolFee: privatePayProtocolFee, gasFee: privatePayGasFee } = estimatePrivateTotal(claimAmountUSD);
   const looftaBalanceUSD = solanaPayment.balanceUSD;
   // Sender owes gross USDC (base + privacy fee); check that, not just base.
-  const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(solPrice > 0 ? privatePayTotal : claimAmountUSD + privatePayProtocolFee);
+  const hasEnoughLooftaBalance = solanaPayment.hasEnoughBalance(solPrice > 0 ? privatePayDisplayTotal : claimAmountUSD + privatePayProtocolFee);
   const balanceData = solanaPayment.isBalanceLoading ? undefined : { balanceUSD: looftaBalanceUSD };
   // Privy wallets can take a moment to hydrate after login; guard Pay Now until the signer is present.
   const senderAddress = solanaPayment.senderAddress;
   const isPayerWalletReady = !authenticated || !senderAddress || !!solanaStandardWallets?.find((w) => w.address === senderAddress);
+
+  const hasSolForGas = embeddedSolBalance === null || embeddedSolBalance >= SOL_GAS_RESERVE;
+  const solDeficitSol = Math.max(0, SOL_GAS_RESERVE - (embeddedSolBalance ?? SOL_GAS_RESERVE));
+
+  useEffect(() => {
+    if (!senderAddress) return;
+    getSolanaSOLBalance(senderAddress, networkMode).then(setEmbeddedSolBalance).catch(() => setEmbeddedSolBalance(null));
+  }, [senderAddress, networkMode]);
 
   /** Phantom payment path. Pending recipients use burner ATA escrow; registered users use PER. */
   async function payWithWallet() {
@@ -2072,7 +2084,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     }
   }
 
-  async function depositFromPhantom(amountUsdc: number) {
+  async function depositFromPhantom(amountUsdc: number, solLamports: number = 0) {
     const embeddedAddress = solanaPayment.senderAddress;
     if (!embeddedAddress) {
       setDepositFromPhantomError("Your Loofta wallet address could not be found. Try logging in again.");
@@ -2099,6 +2111,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       const toAta = getAssociatedTokenAddressSync(usdcMint, new PublicKey(embeddedAddress), false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
       const amountBaseUnits = Math.ceil(amountUsdc * 1_000_000);
       const ixs = [];
+      // SOL transfer must come first so the embedded wallet has gas before any ATA creation rent
+      if (solLamports > 0) {
+        ixs.push(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: new PublicKey(embeddedAddress), lamports: solLamports }));
+      }
       const toAtaInfo = await connection.getAccountInfo(toAta);
       if (!toAtaInfo) {
         ixs.push(createAssociatedTokenAccountInstruction(publicKey, toAta, new PublicKey(embeddedAddress), usdcMint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID));
@@ -2112,7 +2128,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       setDepositConfirmingSig(sig);
       await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
 
-      // Poll until the on-chain balance actually reflects the deposit.
+      // Poll until the on-chain USDC balance actually reflects the deposit.
       // "confirmed" fires before the RPC indexes the account state, so the first
       // fetch can still return the pre-deposit balance. Retry up to ~12 s.
       const prevBalance = solanaPayment.balanceUSD;
@@ -2121,6 +2137,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         queryClient.removeQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
         const result = await solanaPayment.refreshBalance();
         if ((result.data?.balanceUSD ?? 0) > prevBalance + 0.001) break;
+      }
+
+      // Refresh SOL balance so hasSolForGas updates and auto-pay can proceed
+      if (solLamports > 0) {
+        getSolanaSOLBalance(embeddedAddress, networkMode).then(setEmbeddedSolBalance).catch(() => {});
       }
 
       setDepositConfirmingSig(null);
@@ -2147,12 +2168,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   useEffect(() => { payWithLooftaBalanceRef.current = payWithLooftaBalance; });
   useEffect(() => {
     if (!depositAutoPayPending) return;
-    if (!hasEnoughLooftaBalance) return; // wait for balance to reflect in state
+    if (!hasEnoughLooftaBalance || !hasSolForGas) return;
     setDepositAutoPayPending(false);
     setShowDepositModal(false);
     payWithLooftaBalanceRef.current();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [depositAutoPayPending, hasEnoughLooftaBalance]);
+  }, [depositAutoPayPending, hasEnoughLooftaBalance, hasSolForGas]);
 
   // Keep ref updated (retained for any legacy callers but auto-trigger is disabled below)
   useEffect(() => {
@@ -3361,8 +3382,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         <span className="font-medium text-gray-700">{solPrice > 0 ? `~$${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}` : "..."}</span>
                       </div>
                       <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
-                        <span className="font-medium font-sans text-gray-900">Total (USDC)</span>
-                        <span className="font-semibold font-sans text-lg text-gray-900">{solPrice > 0 ? `$${privatePayTotal.toFixed(2)}` : "..."}</span>
+                        <span className="font-medium font-sans text-gray-900">Total</span>
+                        <span className="font-semibold font-sans text-lg text-gray-900">{solPrice > 0 ? `$${privatePayDisplayTotal.toFixed(2)}` : "..."}</span>
                       </div>
                     </div>
                   </div>
@@ -3392,7 +3413,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             setPayWithWalletError(null);
                             setConfirmingTxSignature(null);
                             setConfirmingTxSource(null);
-                            if (balanceData === undefined || hasEnoughLooftaBalance) {
+                            if (balanceData === undefined || (hasEnoughLooftaBalance && hasSolForGas)) {
                               payWithLooftaBalance();
                             } else {
                               setDepositFromPhantomError(null);
@@ -4146,12 +4167,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-slate-400">Amount needed</span>
-                  <span className="font-medium text-white">${(solPrice > 0 ? privatePayTotal : claimAmountUSD).toFixed(2)}</span>
+                  <span className="font-medium text-white">${(solPrice > 0 ? privatePayDisplayTotal : claimAmountUSD).toFixed(2)}</span>
                 </div>
                 <div className="border-t border-white/10 pt-2 flex items-center justify-between text-sm">
                   <span className="text-amber-300 font-medium">Recommended deposit</span>
                   <span className="font-semibold text-amber-300">
-                    ${Math.max(0.01, (solPrice > 0 ? privatePayTotal : claimAmountUSD) - looftaBalanceUSD + 0.01).toFixed(2)}
+                    ${Math.max(0.01, (solPrice > 0 ? privatePayDisplayTotal : claimAmountUSD) - looftaBalanceUSD + 0.01).toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -4164,7 +4185,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 type="button"
                 disabled={depositingFromPhantom}
                 onClick={() => depositFromPhantom(
-                  Math.max(0.01, (solPrice > 0 ? privatePayTotal : claimAmountUSD) - looftaBalanceUSD + 0.01)
+                  Math.max(0.01, (solPrice > 0 ? privatePayDisplayTotal : claimAmountUSD) - looftaBalanceUSD + 0.01)
                 )}
                 className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-green-500/40 bg-green-500/10 hover:bg-green-500/20 transition-colors text-left disabled:opacity-60 disabled:cursor-not-allowed"
               >
@@ -4177,7 +4198,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </span>
                   </div>
                   <span className="text-sm text-slate-400 mt-0.5 block">
-                    {depositingFromPhantom ? "Transferring USDC…" : "Open your Phantom wallet"}
+                    {depositingFromPhantom ? "Transferring…" : "Open your Phantom wallet"}
                   </span>
                 </div>
                 {depositingFromPhantom
