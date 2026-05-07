@@ -26,7 +26,6 @@ import {
   fetchSolPriceUsd,
   grossUpForMagicblockFee,
   requestMagicblockPrivateTransfer,
-  appendLooftaFeeInstruction,
   type MagicblockPrivateTransferTxResponse,
 } from '@/common/magicblock-private-transfer';
 
@@ -763,86 +762,42 @@ export class ClaimsService {
       .eq('id', claimId);
     this.logger.log(`[PrivatePay] stamped claim ${claimId}: is_devnet=${correctIsDevnet} sender_user_id=${privyUserId}`);
 
-    // MagicBlock cost = 10 BPS volume fee + 0.002 SOL fixed gas fee (converted to USDC).
-    // Both are added to the amount so the recipient gets exactly baseUnits after MB deducts.
+    // Sender pre-funds 0.0025 SOL via the deposit modal, so MagicBlock charges the 0.002 SOL
+    // fee natively (SOL ix) rather than as a USDC relay instruction (gasless path).
+    // Gross-up only covers MB's 10 BPS volume fee so recipient gets exactly baseUnits.
     let solPriceUsd: number | null = null;
-    let solFeeUnits = 0;
     try {
       solPriceUsd = await fetchSolPriceUsd();
-      if (solPriceUsd !== null) {
-        solFeeUnits = Math.ceil(MAGICBLOCK_GAS_SOL * solPriceUsd * 1_000_000);
-      }
     } catch (e) {
-      this.logger.warn(`[PrivatePay] SOL price fetch failed, skipping gas conversion: ${String(e)}`);
+      this.logger.warn(`[PrivatePay] SOL price fetch failed: ${String(e)}`);
     }
 
-    // MagicBlock gasless: the 0.002 SOL relay fee is charged via a separate prepended USDC
-    // instruction (sender → MB sponsor). It is NOT deducted from `amount`.
-    // Gross-up only covers MB's 10 BPS volume fee so recipient gets exactly baseUnits.
     const grossUnits = grossUpForMagicblockFee(baseUnits);
     this.logger.log(
-      `[PrivatePay] claim=${claimId} amount=${amountUsd} baseUnits=${baseUnits} solFeeUnits=${solFeeUnits}` +
-      ` solPrice=${solPriceUsd ?? 'n/a'} grossUnits=${grossUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… (gasless)`,
+      `[PrivatePay] claim=${claimId} amount=${amountUsd} baseUnits=${baseUnits}` +
+      ` solPrice=${solPriceUsd ?? 'n/a'} grossUnits=${grossUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}…`,
     );
 
-    let txResponse = await requestMagicblockPrivateTransfer({
+    const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
       mint: effectiveMint.toBase58(),
       amount: grossUnits,
       cluster,
-      gasless: true,
     });
 
-    const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
-    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+    // Safety-net prefund: sender should have 0.0025 SOL from the deposit modal.
+    // This only fires if, for any reason, the balance check was skipped on the client.
     const clusterConn = this.solanaSponsor.getConnectionForCluster(cluster === 'devnet' ? 'devnet' : 'mainnet');
-
-    // Check actual SOL deficit BEFORE prefunding so we recover the exact amount spent.
-    // Round up to nearest cent ($0.01 = 10,000 units) to ensure fee payer is fully covered.
-    const PREFUND_MIN_LAMPORTS = 3_000_000;
-    let actualTopUpLamports = 0;
-    if (this.solanaSponsor.isAvailable() && solPriceUsd) {
-      try {
-        const senderBalance = await clusterConn.getBalance(new PublicKey(senderWallet.trim()));
-        actualTopUpLamports = Math.max(0, PREFUND_MIN_LAMPORTS - senderBalance);
-      } catch (e) {
-        this.logger.warn(`[PrivatePay] balance check failed, falling back to MAGICBLOCK_GAS_SOL estimate: ${String(e)}`);
-        actualTopUpLamports = Math.round(MAGICBLOCK_GAS_SOL * 1e9);
-      }
-    }
-
-    // Append USDC fee recovery instruction: sender pays fee payer back for the SOL prefund.
-    if (actualTopUpLamports > 0 && solPriceUsd && feePayerAddress && feePayerKp) {
-      const actualTopUpUsdc = (actualTopUpLamports / 1e9) * solPriceUsd * 1_000_000;
-      const feeUnitsRounded = Math.ceil(actualTopUpUsdc / 10_000) * 10_000;
-      try {
-        const modifiedTxBase64 = await appendLooftaFeeInstruction(
-          txResponse.transactionBase64,
-          senderWallet.trim(),
-          feePayerAddress,
-          feeUnitsRounded,
-          effectiveMint,
-          clusterConn,
-          feePayerKp.publicKey,
-        );
-        txResponse = { ...txResponse, transactionBase64: modifiedTxBase64 };
-        solFeeUnits = feeUnitsRounded;
-        this.logger.log(`[PrivatePay] USDC fee recovery: ${actualTopUpLamports} lamports → ${feeUnitsRounded} units ($${(feeUnitsRounded / 1_000_000).toFixed(4)}) → ${feePayerAddress.slice(0, 8)}…`);
-      } catch (e) {
-        this.logger.warn(`[PrivatePay] fee ix append failed, proceeding without: ${String(e)}`);
-      }
-    }
-
-    // Pre-fund sender SOL if below shuttle rent threshold (3M lamports).
     if (this.solanaSponsor.isAvailable()) {
       try {
         const topUp = await this.solanaSponsor.prefundSenderSolIfNeeded(
           senderWallet.trim(),
           clusterConn,
+          2_500_000,
         );
         if (topUp > 0) {
-          this.logger.log(`[PrivatePay] pre-funded sender +${topUp} lamports before MB tx`);
+          this.logger.log(`[PrivatePay] safety prefund +${topUp} lamports (sender was below 0.0025 SOL)`);
         }
       } catch (e) {
         this.logger.warn(`[PrivatePay] pre-fund failed, proceeding without: ${String(e)}`);
@@ -851,10 +806,10 @@ export class ClaimsService {
 
     return {
       ...txResponse,
-      feeAmountUsdc: solFeeUnits / 1_000_000,
+      feeAmountUsdc: 0,
       feeBreakdown: {
         looftaBpsUsdc: 0,
-        solRecoveryUsdc: solFeeUnits / 1_000_000,
+        solRecoveryUsdc: 0,
         solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
         solPriceUsd: solPriceUsd ?? 0,
       },
