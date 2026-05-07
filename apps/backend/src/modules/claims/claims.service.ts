@@ -19,6 +19,7 @@ import { Claim, ClaimIntent, ClaimStatus } from './entities/claim.entity';
 import { UsersService } from '../users/users.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
+import { EmailService } from '../email/email.service';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 import {
   MAGICBLOCK_GAS_SOL,
@@ -64,6 +65,7 @@ export class ClaimsService {
     private readonly usersService: UsersService,
     @Optional() private readonly encryption: SendPaymentEncryptionService | null,
     private readonly solanaSponsor: SolanaSponsorService,
+    @Optional() private readonly emailService: EmailService | null,
   ) {
     const defaultUsdcMint = isSolanaDevnetFromConfig(this.configService)
       ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
@@ -603,6 +605,19 @@ export class ClaimsService {
     if ((claim.status || '').toUpperCase() === 'DELETED') {
       throw new NotFoundException('This payment doesn\'t exist.');
     }
+
+    // Access control: only the creator or the intended recipient may view a claim.
+    if (!requestingUserId) {
+      throw new ForbiddenException('Authentication required to view this payment.');
+    }
+    const isCreator = !!(claim.created_by && claim.created_by === requestingUserId);
+    if (!isCreator) {
+      const { isRecipient } = await this.checkIsRecipient(id, requestingUserId);
+      if (!isRecipient) {
+        throw new NotFoundException('Payment not found.');
+      }
+    }
+
     if (claim.created_by) {
       const creator = await this.usersService.findByPrivyId(claim.created_by);
       (claim as Claim & { creator_username?: string | null }).creator_username = creator?.username ?? null;
@@ -727,6 +742,7 @@ export class ClaimsService {
     privyUserId: string,
     senderWallet: string,
     requestCluster?: 'devnet' | 'mainnet',
+    gasless = true,
   ): Promise<MagicblockPrivateTransferTxResponse> {
     const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
     const claim = await this.findOneRaw(claimId);
@@ -762,20 +778,23 @@ export class ClaimsService {
       .eq('id', claimId);
     this.logger.log(`[PrivatePay] stamped claim ${claimId}: is_devnet=${correctIsDevnet} sender_user_id=${privyUserId}`);
 
-    // Sender pre-funds 0.0025 SOL via the deposit modal, so MagicBlock charges the 0.002 SOL
-    // fee natively (SOL ix) rather than as a USDC relay instruction (gasless path).
-    // Gross-up only covers MB's 10 BPS volume fee so recipient gets exactly baseUnits.
+    // MagicBlock cost = 10 BPS volume fee (gross-up so recipient gets exactly baseUnits)
+    // + 0.002 SOL gasless relay fee charged as USDC via a prepended instruction.
     let solPriceUsd: number | null = null;
+    let solFeeUnits = 0;
     try {
       solPriceUsd = await fetchSolPriceUsd();
+      if (solPriceUsd !== null) {
+        solFeeUnits = Math.ceil(MAGICBLOCK_GAS_SOL * solPriceUsd * 1_000_000);
+      }
     } catch (e) {
-      this.logger.warn(`[PrivatePay] SOL price fetch failed: ${String(e)}`);
+      this.logger.warn(`[PrivatePay] SOL price fetch failed, skipping gas conversion: ${String(e)}`);
     }
 
     const grossUnits = grossUpForMagicblockFee(baseUnits);
     this.logger.log(
-      `[PrivatePay] claim=${claimId} amount=${amountUsd} baseUnits=${baseUnits}` +
-      ` solPrice=${solPriceUsd ?? 'n/a'} grossUnits=${grossUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}…`,
+      `[PrivatePay] claim=${claimId} amount=${amountUsd} baseUnits=${baseUnits} solFeeUnits=${gasless ? solFeeUnits : 0}` +
+      ` solPrice=${solPriceUsd ?? 'n/a'} grossUnits=${grossUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… gasless=${gasless}`,
     );
 
     const txResponse = await requestMagicblockPrivateTransfer({
@@ -784,32 +803,21 @@ export class ClaimsService {
       mint: effectiveMint.toBase58(),
       amount: grossUnits,
       cluster,
+      ...(gasless ? { gasless: true } : {}),
     });
 
-    // Safety-net prefund: sender should have 0.0025 SOL from the deposit modal.
-    // This only fires if, for any reason, the balance check was skipped on the client.
-    const clusterConn = this.solanaSponsor.getConnectionForCluster(cluster === 'devnet' ? 'devnet' : 'mainnet');
-    if (this.solanaSponsor.isAvailable()) {
-      try {
-        const topUp = await this.solanaSponsor.prefundSenderSolIfNeeded(
-          senderWallet.trim(),
-          clusterConn,
-          2_500_000,
-        );
-        if (topUp > 0) {
-          this.logger.log(`[PrivatePay] safety prefund +${topUp} lamports (sender was below 0.0025 SOL)`);
-        }
-      } catch (e) {
-        this.logger.warn(`[PrivatePay] pre-fund failed, proceeding without: ${String(e)}`);
-      }
-    }
+    // Fee = what sender pays ABOVE the claim amount:
+    //   - MB 10 BPS volume fee: grossUnits was grossed-up so recipient gets exactly baseUnits
+    //   - SOL gasless relay fee: 0.002 SOL charged as USDC (gasless only)
+    const mbVolumeFeeUnits = grossUnits - baseUnits;
+    const relayFeeUnits = gasless ? solFeeUnits : 0;
 
     return {
       ...txResponse,
-      feeAmountUsdc: 0,
+      feeAmountUsdc: (mbVolumeFeeUnits + relayFeeUnits) / 1_000_000,
       feeBreakdown: {
-        looftaBpsUsdc: 0,
-        solRecoveryUsdc: 0,
+        looftaBpsUsdc: mbVolumeFeeUnits / 1_000_000,
+        solRecoveryUsdc: relayFeeUnits / 1_000_000,
         solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
         solPriceUsd: solPriceUsd ?? 0,
       },
@@ -1979,7 +1987,97 @@ export class ClaimsService {
       }
     }
 
+    // Fire-and-forget email notification — never blocks the status update path.
+    this.sendRecipientNotificationAsync(id, effectiveStatus, extra?.recipientSwept ?? false);
+
     return { id, status: effectiveStatus } as unknown as Claim;
+  }
+
+  /**
+   * Non-blocking email notification. Fires after a status change and silently catches any errors.
+   * Sends "payment received" when funds land in recipient wallet (SUCCESS + recipientSwept),
+   * or "claim ready" when funds are confirmed but waiting for an email-only recipient to sign up.
+   */
+  private sendRecipientNotificationAsync(id: string, effectiveStatus: ClaimStatus, recipientSwept: boolean): void {
+    if (!this.emailService?.isAvailable()) return;
+
+    const shouldNotify =
+      (effectiveStatus === 'SUCCESS' && recipientSwept) ||
+      effectiveStatus === 'PRIVATE_TRANSFER_PENDING';
+
+    if (!shouldNotify) return;
+
+    this.doSendRecipientNotification(id, effectiveStatus, recipientSwept).catch((err: any) => {
+      this.logger.error(`sendRecipientNotification failed for claim ${id}: ${err?.message ?? err}`);
+    });
+  }
+
+  private async doSendRecipientNotification(
+    id: string,
+    effectiveStatus: ClaimStatus,
+    recipientSwept: boolean,
+  ): Promise<void> {
+    if (!this.emailService) return;
+
+    const result = await this.fetchRawRow(id);
+    if (!result) return;
+    const row = result.row;
+
+    // Skip if already notified
+    if (row.email_notification_sent_at) return;
+
+    // Resolve recipient email
+    let recipientEmail: string | null = null;
+    const directEmail = (row.recipient_email as string | null)?.trim().toLowerCase() || null;
+    const recipientUsername = (row.recipient_username as string | null)?.replace(/^@/, '').trim() || null;
+
+    if (directEmail) {
+      recipientEmail = directEmail;
+    } else if (recipientUsername) {
+      try {
+        const user = await this.usersService.findByUsername(recipientUsername);
+        recipientEmail = user.email?.trim().toLowerCase() || null;
+      } catch {
+        // user not found — no email available
+      }
+    }
+
+    if (!recipientEmail) return;
+
+    // Resolve sender username for display
+    let senderUsername: string | null = null;
+    const createdBy = (row.created_by as string | null) || null;
+    if (createdBy) {
+      try {
+        const sender = await this.usersService.findByPrivyId(createdBy);
+        senderUsername = sender?.username || null;
+      } catch {
+        // ignore
+      }
+    }
+
+    const emailData = {
+      id,
+      amount: row.amount as string | number,
+      description: (row.description as string | null) || null,
+      senderUsername,
+      recipientEmail,
+    };
+
+    if (effectiveStatus === 'SUCCESS' && recipientSwept) {
+      await this.emailService.sendPaymentReceivedEmail(emailData);
+    } else if (effectiveStatus === 'PRIVATE_TRANSFER_PENDING') {
+      await this.emailService.sendClaimReadyEmail(emailData);
+    } else {
+      return;
+    }
+
+    // Mark as sent to prevent duplicates
+    await this.updateRow(
+      id,
+      { email_notification_sent_at: new Date().toISOString() },
+      { email_notification_sent_at: new Date().toISOString() },
+    );
   }
 
   /**

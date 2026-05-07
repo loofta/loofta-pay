@@ -8,9 +8,10 @@ import { IntentsModule } from '../intents/intents.module';
 import { UsersModule } from '../users/users.module';
 import { CronModule } from '../cron/cron.module';
 import { SendPaymentModule } from '../send-payment/send-payment.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
-  imports: [IntentsModule, UsersModule, forwardRef(() => CronModule), forwardRef(() => SendPaymentModule)],
+  imports: [IntentsModule, UsersModule, forwardRef(() => CronModule), forwardRef(() => SendPaymentModule), EmailModule],
   controllers: [ClaimsController, AdminClaimsController],
   providers: [ClaimsService, DepositService, SolanaSponsorService],
   exports: [ClaimsService, DepositService],

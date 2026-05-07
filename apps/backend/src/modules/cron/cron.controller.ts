@@ -6,6 +6,7 @@ import { LotteryProcessorService, LotteryProcessingResult } from './lottery-proc
 import { ClaimCompanionProcessorService, ClaimCompanionResult } from './claim-companion-processor.service';
 import { SwapProcessorService, SwapProcessingResult } from './swap-processor.service';
 import { SolanaTxVerifierService, TxVerifierResult } from './solana-tx-verifier.service';
+
 @ApiTags('cron')
 @Controller('cron')
 export class CronController {

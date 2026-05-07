@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   const amountBaseUnits = Math.round(amountUsdc * 1_000_000);
   const { minDelayMs, maxDelayMs } = DELAYS[cluster];
 
-  const body = {
+  const body: Record<string, unknown> = {
     from,
     to,
     mint,
@@ -34,13 +34,13 @@ export async function POST(req: NextRequest) {
     visibility: "private",
     fromBalance: "base",
     toBalance: "base",
-    cluster: "mainnet",
-    gasless: true,
+    cluster,
     initIfMissing: true,
     initAtasIfMissing: true,
     initVaultIfMissing: false,
     minDelayMs,
     maxDelayMs,
+    ...(cluster === "mainnet" ? { gasless: true } : {}),
   };
 
   console.log('body', body)

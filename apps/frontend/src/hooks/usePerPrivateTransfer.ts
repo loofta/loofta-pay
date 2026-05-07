@@ -6,7 +6,7 @@ import { Connection, Transaction, VersionedTransaction, SendTransactionError } f
 import { useAuthStore } from "@/store/auth";
 import { getRpcForMode } from "@/lib/solanaRpc";
 import { formatMagicblockPrivateDelayLogMs } from "@/services/magicblockPaymentsApi";
-import { buildClaimPrivateTransfer, countersignAndBroadcastPER } from "@/services/api/claims";
+import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { buildSendPaymentPrivateTransfer } from "@/services/api/sendPayment";
 import { getEphemeralRpcForMode } from "@/lib/per/constants";
 import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
@@ -46,16 +46,15 @@ export type PerPrivateTransferOptions = {
    * Returns the base58 transaction signature string.
    */
   privySignAndSend?: (txBytes: Uint8Array) => Promise<string>;
+  /** Default true. Pass false to retry without MB gas sponsorship (user pays SOL gas directly). */
+  gasless?: boolean;
 };
 
 /**
- * Private SPL transfer: unsigned tx is built on the **backend** (MagicBlock `/v1/spl/transfer` is server-side only)
- * so the recipient wallet is not visible in the browser network tab.
- *
- * Pre-step (mainnet only): if sender SOL balance is below the MagicBlock shuttle rent threshold,
- * a Jupiter USDC→SOL swap is executed first using Privy's sponsored signAndSendTransaction.
- * Privy covers the gas fee (sponsor: true) and broadcasts directly — no Jupiter /execute needed.
- * The swap output covers: shuttle rent (2,039,280) + tx fee buffer (100,000) + existing balance.
+ * Private SPL transfer: unsigned tx is built on the backend (MagicBlock `/v1/spl/transfer` is
+ * server-side only) so the recipient wallet is never visible in the browser network tab.
+ * MagicBlock gasless=true: their validator is the fee payer and pre-signs the tx server-side.
+ * Flow: build → sign (Privy or wallet) → broadcast → confirm.
  */
 export function usePerPrivateTransfer() {
   const networkMode = useAuthStore((s) => s.networkMode);
@@ -63,7 +62,7 @@ export function usePerPrivateTransfer() {
 
   const transfer = useCallback(
     async (wallet: Wallet, options: PerPrivateTransferOptions): Promise<string> => {
-      const { privyUserId, accessToken, claimId, sendPaymentId, onProgress, isBurnerRecipient, onSignature, onTxBuilt, privySignAndSend } = options;
+      const { privyUserId, accessToken, claimId, sendPaymentId, onProgress, isBurnerRecipient, onSignature, onTxBuilt, privySignAndSend, gasless = true } = options;
       if (!privyUserId?.trim()) {
         throw new Error("Log in to send a private transfer.");
       }
@@ -89,7 +88,7 @@ export function usePerPrivateTransfer() {
       // ─────────────────────────────────────────────────────────────────────────
       console.info(`[PrivatePay] building MB private transfer tx | cluster=${apiCluster} claim=${claimId ?? "—"} send=${sendPaymentId ?? "—"}`);
       const txData = claimId
-        ? await buildClaimPrivateTransfer(claimId, privyUserId, sender, accessToken, apiCluster)
+        ? await buildClaimPrivateTransfer(claimId, privyUserId, sender, accessToken, apiCluster, gasless)
         : await buildSendPaymentPrivateTransfer(sendPaymentId!, privyUserId, sender, accessToken, apiCluster);
 
       if (txData.feeAmountUsdc != null) {
@@ -146,37 +145,26 @@ export function usePerPrivateTransfer() {
         }
         console.info(`[PrivatePay] user signed | allSigned=${missingAfterSign.length === 0} missing=[${missingAfterSign.join(", ") || "none"}]`);
 
+        // MagicBlock gasless: MB validator is fee payer and has already pre-signed.
+        // No countersign needed — just broadcast with user's signature.
         const feePayerAfterSign =
           signedTx instanceof Transaction
             ? signedTx.feePayer?.toBase58()
             : (signedTx as VersionedTransaction).message.staticAccountKeys[0]?.toBase58();
-        const needsCountersign = feePayerAfterSign && feePayerAfterSign !== sender;
-        console.info(`[PrivatePay] feePayer=${feePayerAfterSign?.slice(0, 8)}… needsCountersign=${needsCountersign}`);
-
-        if (needsCountersign) {
+        console.info(`[PrivatePay] feePayer=${feePayerAfterSign?.slice(0, 8)}… broadcasting directly`);
+        try {
           const serialized =
             signedTx instanceof Transaction
-              ? signedTx.serialize({ requireAllSignatures: false, verifySignatures: false })
+              ? signedTx.serialize()
               : (signedTx as VersionedTransaction).serialize();
-          console.info(`[PrivatePay] sending to backend for fee payer countersign | feePayer=${feePayerAfterSign?.slice(0, 8)}…`);
-          const result = await countersignAndBroadcastPER(Buffer.from(serialized).toString("base64"), privyUserId, accessToken, apiCluster);
-          signature = result.signature;
-        } else {
-          try {
-            const serialized =
-              signedTx instanceof Transaction
-                ? signedTx.serialize()
-                : (signedTx as VersionedTransaction).serialize();
-            console.info(`[PrivatePay] broadcasting self-signed tx | bytes=${serialized.length}`);
-            signature = await broadcastConn.sendRawTransaction(serialized, { skipPreflight: false, preflightCommitment: "confirmed" });
-          } catch (e) {
-            if (e instanceof SendTransactionError) {
-              try { const logs = await e.getLogs(broadcastConn); console.error("[PrivatePay] broadcast failed:", logs); } catch { /* ignore */ }
-              throw new Error(privatePayErrorMessageForUser(e.message, cluster));
-            }
-            if (e instanceof Error) throw new Error(privatePayErrorMessageForUser(e.message, cluster));
-            throw e;
+          signature = await broadcastConn.sendRawTransaction(serialized, { skipPreflight: false, preflightCommitment: "confirmed" });
+        } catch (e) {
+          if (e instanceof SendTransactionError) {
+            try { const logs = await e.getLogs(broadcastConn); console.error("[PrivatePay] broadcast failed:", logs); } catch { /* ignore */ }
+            throw new Error(privatePayErrorMessageForUser(e.message, cluster));
           }
+          if (e instanceof Error) throw new Error(privatePayErrorMessageForUser(e.message, cluster));
+          throw e;
         }
       }
 
