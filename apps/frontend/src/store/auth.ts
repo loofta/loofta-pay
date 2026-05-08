@@ -66,10 +66,8 @@ export const useAuthStore = create<AuthState>()(
 						};
 					}
 					const newUserId = v.userId ?? state.userId;
-					// Load per-user network preference when switching accounts
-					const savedMode = newUserId && newUserId !== state.userId
-						? loadUserNetworkMode(newUserId)
-						: null;
+					// Load per-user network preference (on login and on refresh with same user)
+					const savedMode = newUserId ? loadUserNetworkMode(newUserId) : null;
 					return {
 						authenticated: true,
 						userId: newUserId,
