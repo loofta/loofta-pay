@@ -23,8 +23,8 @@ import { EmailService } from '../email/email.service';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 import {
   MAGICBLOCK_GAS_SOL,
+  MAGICBLOCK_GAS_USDC,
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
-  fetchSolPriceUsd,
   grossUpForMagicblockFee,
   requestMagicblockPrivateTransfer,
   decodeActualSenderDebit,
@@ -66,7 +66,7 @@ export class ClaimsService {
     private readonly usersService: UsersService,
     @Optional() private readonly encryption: SendPaymentEncryptionService | null,
     private readonly solanaSponsor: SolanaSponsorService,
-    @Optional() private readonly emailService: EmailService | null,
+    private readonly emailService: EmailService,
   ) {
     const defaultUsdcMint = isSolanaDevnetFromConfig(this.configService)
       ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
@@ -87,7 +87,7 @@ export class ClaimsService {
     );
     const burnerOk = !!(this.encryption?.isAvailable() || this.getClaimBurnerDecryptionKey());
     this.logger.log(
-      `ClaimsService init: encryption=${this.encryption ? (this.encryption.isAvailable() ? 'available' : 'not configured') : 'null'}, claim burner creation=${burnerOk ? 'enabled' : 'disabled (set SEND_PAYMENT_ENC_KEY)'}, sponsor=${this.solanaSponsor.isAvailable()}`,
+      `ClaimsService init: encryption=${this.encryption ? (this.encryption.isAvailable() ? 'available' : 'not configured') : 'null'}, claim burner creation=${burnerOk ? 'enabled' : 'disabled (set SEND_PAYMENT_ENC_KEY)'}, sponsor=${this.solanaSponsor.isAvailable()}, email=${this.emailService.isAvailable() ? 'available' : 'not configured (set RESEND_API_KEY)'}`,
     );
   }
 
@@ -282,17 +282,17 @@ export class ClaimsService {
     id: string,
     paymentsData: Record<string, unknown>,
     claimsData: Record<string, unknown>,
-  ): Promise<{ error: string | null }> {
+  ): Promise<{ error: string | null; table: 'payments' | 'claims' }> {
     const { data, error } = await (this.supabaseService.payments as any)
       .update(paymentsData)
       .eq('id', id)
       .select('id')
       .maybeSingle();
-    if (!error && data) return { error: null };
+    if (!error && data) return { error: null, table: 'payments' };
     const { error: claimErr } = await (this.supabaseService.claims as any)
       .update(claimsData)
       .eq('id', id);
-    return { error: claimErr ? String(claimErr.message) : null };
+    return { error: claimErr ? String(claimErr.message) : null, table: 'claims' };
   }
 
   private formatError(error: unknown): string {
@@ -780,22 +780,13 @@ export class ClaimsService {
     this.logger.log(`[PrivatePay] stamped claim ${claimId}: is_devnet=${correctIsDevnet} sender_user_id=${privyUserId}`);
 
     // MagicBlock cost = 10 BPS volume fee (gross-up so recipient gets exactly baseUnits)
-    // + 0.002 SOL gasless relay fee charged as USDC via a prepended instruction.
-    let solPriceUsd: number | null = null;
-    let solFeeUnits = 0;
-    try {
-      solPriceUsd = await fetchSolPriceUsd();
-      if (solPriceUsd !== null) {
-        solFeeUnits = Math.ceil(MAGICBLOCK_GAS_SOL * solPriceUsd * 1_000_000);
-      }
-    } catch (e) {
-      this.logger.warn(`[PrivatePay] SOL price fetch failed, skipping gas conversion: ${String(e)}`);
-    }
+    // + flat 0.2 USDC gasless relay fee charged as USDC via a prepended instruction.
+    const relayFeeUnits = gasless ? Math.round(MAGICBLOCK_GAS_USDC * 1_000_000) : 0;
 
     const grossUnits = grossUpForMagicblockFee(baseUnits);
     this.logger.log(
-      `[PrivatePay] claim=${claimId} amount=${amountUsd} baseUnits=${baseUnits} solFeeUnits=${gasless ? solFeeUnits : 0}` +
-      ` solPrice=${solPriceUsd ?? 'n/a'} grossUnits=${grossUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… gasless=${gasless}`,
+      `[PrivatePay] claim=${claimId} amount=${amountUsd} baseUnits=${baseUnits} relayFeeUnits=${relayFeeUnits}` +
+      ` grossUnits=${grossUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… gasless=${gasless}`,
     );
 
     const txResponse = await requestMagicblockPrivateTransfer({
@@ -808,13 +799,17 @@ export class ClaimsService {
     });
 
     const mbVolumeFeeUnits = grossUnits - baseUnits;
-    const relayFeeUnits = gasless ? solFeeUnits : 0;
 
     // Decode the actual debit from the transaction — ground truth over the gross estimate.
     const conn = cluster !== 'localhost' ? this.solanaSponsor.getConnectionForCluster(cluster) : undefined;
     const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, senderWallet.trim(), effectiveMint, conn);
-    const feeUnits = actualDebitUnits != null ? actualDebitUnits - baseUnits : mbVolumeFeeUnits + relayFeeUnits;
-    this.logger.log(`[PrivatePay] claim=${claimId} decoded debit=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits}`);
+    // MagicBlock private transfers are confidential; decodeActualSenderDebit only sees the relay
+    // fee instruction (not the hidden main transfer), so actualDebitUnits < baseUnits is invalid.
+    const estimatedFeeUnits = mbVolumeFeeUnits + relayFeeUnits;
+    const feeUnits = (actualDebitUnits != null && actualDebitUnits > baseUnits)
+      ? actualDebitUnits - baseUnits
+      : estimatedFeeUnits;
+    this.logger.log(`[PrivatePay] claim=${claimId} decoded debit=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits} (${actualDebitUnits != null && actualDebitUnits > baseUnits ? 'decoded' : 'estimated'})`);
 
     return {
       ...txResponse,
@@ -823,7 +818,7 @@ export class ClaimsService {
         looftaBpsUsdc: mbVolumeFeeUnits / 1_000_000,
         solRecoveryUsdc: relayFeeUnits / 1_000_000,
         solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
-        solPriceUsd: solPriceUsd ?? 0,
+        solPriceUsd: 0,
       },
     };
   }
@@ -940,6 +935,7 @@ export class ClaimsService {
     const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
     if (sweepTxHash) {
       await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
+      this.notifyRecipientAfterPayment(claimId);
       this.logger.log(`Claim ${claimId}: sweep completed immediately, marked SUCCESS`);
     } else if (claimStatus === 'SUCCESS') {
       // Status was already SUCCESS (prematurely set by sender) and burner is now empty —
@@ -982,6 +978,7 @@ export class ClaimsService {
         const { sweepTxHash } = await this.sweepClaimBurnerToWallet(claimId, freshClaim, wallet);
         if (sweepTxHash) {
           await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
+          this.notifyRecipientAfterPayment(claimId);
           this.logger.log(`Claim ${claimId}: background poll sweep succeeded, marked SUCCESS`);
           return;
         }
@@ -1969,7 +1966,7 @@ export class ClaimsService {
     delete legacyUpdateData.from_token;
     delete legacyUpdateData.fee_paid_usdc;
 
-    const { error } = await this.updateRow(id, updateData, legacyUpdateData);
+    const { error, table: updatedTable } = await this.updateRow(id, updateData, legacyUpdateData);
 
     if (error) {
       this.logger.error('Failed to update claim status:', error);
@@ -1978,7 +1975,9 @@ export class ClaimsService {
 
     this.logger.log(`Updated claim ${id} status to ${effectiveStatus}`);
 
-    if (extra?.feeBreakdown) {
+    // claim_events FK references the legacy `claims` table only — skip for `payments` table rows
+    // since fee_paid_usdc is already persisted directly on the payments row.
+    if (extra?.feeBreakdown && updatedTable === 'claims') {
       const eventPayload = {
         feeAmountUsdc: extra.feeAmountUsdc ?? null,
         ...extra.feeBreakdown,
@@ -1996,30 +1995,47 @@ export class ClaimsService {
 
   /** Fire-and-forget email after payment confirms. 5 min delay for registered recipients, 15 min for unregistered. */
   notifyRecipientAfterPayment(claimId: string): void {
-    if (!this.emailService?.isAvailable()) return;
+    this.logger.log(`[email] notifyRecipientAfterPayment called for claim ${claimId} — available=${this.emailService.isAvailable()}`);
+    if (!this.emailService.isAvailable()) return;
     this.sendPaymentEmail(claimId).catch((err: any) => {
       this.logger.error(`Email notification failed for claim ${claimId}: ${err?.message ?? err}`);
     });
   }
 
   private async sendPaymentEmail(claimId: string): Promise<void> {
-    if (!this.emailService) return;
-
     const result = await this.fetchRawRow(claimId);
     if (!result) return;
     const row = result.row;
 
     const recipientEmail = (row.recipient_email as string | null)?.trim().toLowerCase() || null;
-    if (!recipientEmail) return;
+    this.logger.log(`[email] claim ${claimId}: recipient_email=${recipientEmail ?? 'null'}, recipient_address=${row.recipient_address}`);
+    if (!recipientEmail) {
+      this.logger.warn(`[email] claim ${claimId}: no recipient_email on row — skipping (payment was sent to a wallet/username, not an email)`);
+      return;
+    }
+
+    let senderInfo: string | null = null;
+    const createdBy = (row.created_by as string | null) || null;
+    if (createdBy) {
+      try {
+        const [sender, senderEmail] = await Promise.all([
+          this.usersService.findByPrivyId(createdBy),
+          this.usersService.getEmailByPrivyId(createdBy),
+        ]);
+        senderInfo = sender?.username ? `@${sender.username}` : (senderEmail ?? null);
+      } catch { /* ignore */ }
+    }
 
     const isUnregistered = this.isPendingRecipientAddress(row.recipient_address as string);
-    const delayMs = isUnregistered ? 15 * 60 * 1000 : 5 * 60 * 1000;
-    const scheduledAt = new Date(Date.now() + delayMs).toISOString();
+    const isDev = this.configService.get<string>('NODE_ENV') === 'development';
+    const delayMs = isDev ? 0 : (isUnregistered ? 15 * 60 * 1000 : 5 * 60 * 1000);
+    const scheduledAt = delayMs > 0 ? new Date(Date.now() + delayMs).toISOString() : undefined;
 
     const emailData = {
       id: claimId,
       amount: row.amount as string | number,
       description: (row.description as string | null) || null,
+      senderInfo,
       recipientEmail,
       scheduledAt,
     };
@@ -2132,6 +2148,7 @@ export class ClaimsService {
         const { sweepTxHash } = await this.sweepClaimBurnerToWallet(claim.id, claim, recipientWallet);
         if (sweepTxHash) {
           await this.updateStatus(claim.id, 'SUCCESS', { recipientSwept: true });
+          this.notifyRecipientAfterPayment(claim.id);
           this.logger.log(`[cronSweep] Claim ${claim.id}: sweep succeeded → SUCCESS`);
         } else {
           this.logger.debug(`[cronSweep] Claim ${claim.id}: burner still empty, will retry next tick`);

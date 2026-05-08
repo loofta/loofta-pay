@@ -54,7 +54,8 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
   /** App-wide private mode or recipient requires private — sets `isPrivate` on the claim only. */
   const effectivePrivate = PRIVATE_PAYMENT_ENABLED || requirePrivate;
   const amountNum = Number(amount);
-  const minAmountUsd = 0.01;
+  const minAmountUsd = 5;
+  const belowMinAmount = !!amount && Number.isFinite(amountNum) && amountNum > 0 && amountNum < minAmountUsd;
 
   useEffect(() => {
     if (isEmail) {
@@ -90,8 +91,8 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
       login({ loginMethods: ["email"], disableSignup: false });
       return;
     }
-    if (!amount || Number(amount) <= 0) {
-      toast({ variant: "destructive", title: "Invalid amount", description: "Enter a valid amount." });
+    if (!amount || Number(amount) <= 0 || Number(amount) < minAmountUsd) {
+      toast({ variant: "destructive", title: "Invalid amount", description: "Minimum payment amount is $5.00 USDC." });
       return;
     }
     setPreparing(true);
@@ -189,6 +190,9 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           placeholder="100"
           className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500"
         />
+        {belowMinAmount && (
+          <p className="mt-1.5 text-xs text-amber-400">Min. amount is $5.00 USDC</p>
+        )}
       </div>
 
       <div>
@@ -206,7 +210,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
 
       <Button
         onClick={handleCreate}
-        disabled={authenticated && (preparing || !amount || !Number.isFinite(amountNum) || amountNum < minAmountUsd)}
+        disabled={authenticated && (preparing || !amount || !Number.isFinite(amountNum) || amountNum <= 0 || belowMinAmount)}
         className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r text-lg from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
       >
         {!authenticated

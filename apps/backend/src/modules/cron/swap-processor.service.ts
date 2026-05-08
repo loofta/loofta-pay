@@ -3,7 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { RedisService } from '@/redis/redis.service';
 import { SupabaseService } from '@/database/supabase.service';
-leimport { createPublicClient, http, formatEther, formatUnits, erc20Abi, Address } from 'viem';
+import { createPublicClient, http, formatEther, formatUnits, erc20Abi, Address } from 'viem';
 import { mainnet, base, optimism, arbitrum, polygon } from 'viem/chains';
 
 // Redis keys for claims

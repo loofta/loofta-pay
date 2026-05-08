@@ -378,7 +378,7 @@ export class ClaimsController {
     },
     @Req() req: { user?: { id: string } },
   ): Promise<Claim> {
-    return this.claimsService.updateStatus(id, body.status as any, {
+    const result = await this.claimsService.updateStatus(id, body.status as any, {
       txHash: body.txHash,
       paidWith: body.paidWith,
       isPrivate: body.isPrivate,
@@ -387,6 +387,19 @@ export class ClaimsController {
       feeAmountUsdc: body.feeAmountUsdc,
       feeBreakdown: body.feeBreakdown,
     }, req.user!.id);
+    const effectiveStatus = (result.status || '').toUpperCase();
+    if (effectiveStatus === 'SUCCESS' || effectiveStatus === 'PRIVATE_TRANSFER_PENDING') {
+      this.claimsService.notifyRecipientAfterPayment(id);
+    }
+    return result;
+  }
+
+  /** Internal: trigger email notification after payment confirmed. No auth — fire-and-forget. */
+  @Post(':id/notify')
+  @HttpCode(HttpStatus.OK)
+  async notifyPayment(@Param('id') id: string): Promise<{ ok: boolean }> {
+    this.claimsService.notifyRecipientAfterPayment(id);
+    return { ok: true };
   }
 
   /**
