@@ -17,9 +17,9 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
-import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, ArrowRight } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, ArrowRight, Copy } from "lucide-react";
 import { usePrivy } from "@privy-io/react-auth";
-import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
+import { useWallets, useSignAndSendTransaction, useFundWallet } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
 import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSend";
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
@@ -100,14 +100,14 @@ function ProgressSteps({
     if (isNearIntents) {
       const s1Status =
         step === "submitting" ? "active" :
-        ["sent", "bridging", "complete", "failed"].includes(step) ? "done" : "pending";
+          ["sent", "bridging", "complete", "failed"].includes(step) ? "done" : "pending";
       const s2Status =
         step === "sent" ? "active" :
-        ["bridging", "complete", "failed"].includes(step) ? "done" : "pending";
+          ["bridging", "complete", "failed"].includes(step) ? "done" : "pending";
       const s3Status =
         step === "bridging" ? "active" :
-        step === "complete" ? "done" :
-        step === "failed" ? "failed" : "pending";
+          step === "complete" ? "done" :
+            step === "failed" ? "failed" : "pending";
       return [
         { label: "Get bridge quote", sublabel: "Calculating best route via Near Intents", status: s1Status },
         { label: "Send USDC", sublabel: amountUSDC ? `Sending $${amountUSDC.toFixed(2)} USDC to bridge` : "Sending USDC to bridge", status: s2Status },
@@ -230,8 +230,8 @@ export function BalanceModal({
   const { toast } = useToast();
   const { data: tokens = [] } = useTokensQuery();
 
-  const [tab, setTab] = useState<"withdraw" | "history">("withdraw");
-  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [tab, setTab] = useState<"topup" | "withdraw" | "history">("topup");
+const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
@@ -253,6 +253,7 @@ export function BalanceModal({
   const { user, getAccessToken } = usePrivy();
   const { wallets: solanaWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
+  const { fundWallet } = useFundWallet();
 
   const wallet = useMemo(
     () => (solanaAddress ? solanaWallets?.find((w) => w.address === solanaAddress) : undefined),
@@ -317,7 +318,7 @@ export function BalanceModal({
       setDepositAddressForPolling(null);
       setBridgeStatus(null);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Near Intents polling via interval (mirrors useIntentStatus logic but imperative)
@@ -348,7 +349,7 @@ export function BalanceModal({
               method: "PATCH",
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
               body: JSON.stringify({ id: activeWithdrawal.id, nearIntentsStatus: s, nearIntentsComplete: SUCCESS_BRIDGE_STATUSES.has(s) }),
-            }).catch(() => {});
+            }).catch(() => { });
           });
 
           if (SUCCESS_BRIDGE_STATUSES.has(s)) {
@@ -375,7 +376,7 @@ export function BalanceModal({
       cancelled = true;
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depositAddressForPolling, withdrawStep]);
 
   // Initialise amount to full spendable balance when modal opens or balance changes
@@ -585,19 +586,34 @@ export function BalanceModal({
       <DialogContent
         className={cn(
           contentCls,
-          "left-0 right-0 top-0 translate-x-0 translate-y-0 h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-4 gap-4 overflow-y-auto",
-          "sm:left-1/2 sm:right-auto sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-md sm:rounded-lg sm:border sm:p-6"
+          "left-0 right-0 top-0 translate-x-0 translate-y-0 h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col",
+          "sm:left-1/2 sm:right-auto sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-md sm:rounded-lg sm:border sm:p-6 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block"
         )}
       >
-        <DialogHeader className="pb-1">
-          <DialogTitle className={dark ? "text-white text-lg sm:text-xl" : undefined}>Balance & Withdraw</DialogTitle>
+        {/* Drag handle — mobile only */}
+        <div className="sm:hidden flex justify-center pt-3 pb-1 shrink-0">
+          <div className={`w-10 h-1 rounded-full ${dark ? "bg-white/20" : "bg-gray-300"}`} />
+        </div>
+
+        {/* Scrollable content area */}
+        <div className="flex-1 min-h-0 overflow-y-auto sm:contents px-4 pb-4 sm:p-0 space-y-4">
+
+        <DialogHeader className="pb-1 pt-2 sm:pt-0">
+          <DialogTitle className={dark ? "text-white text-lg sm:text-xl" : undefined}>Balance</DialogTitle>
           <DialogDescription className={dark ? "text-slate-400 text-sm" : undefined}>
-            USDC on Solana = free withdrawal. Other tokens via bridge.
+            {loadingBalance ? "Loading…" : `$${balanceUSD} USDC available`}
           </DialogDescription>
         </DialogHeader>
 
         {/* Tabs */}
         <div className={`flex gap-1 p-1 rounded-lg ${dark ? "bg-white/10" : "bg-gray-100"}`}>
+          <button
+            type="button"
+            onClick={() => setTab("topup")}
+            className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "topup" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
+          >
+            Top Up
+          </button>
           <button
             type="button"
             onClick={() => setTab("withdraw")}
@@ -622,8 +638,98 @@ export function BalanceModal({
           </button>
         </div>
 
+        {/* Top Up tab */}
+        {tab === "topup" && (
+          <div className="py-2 space-y-3">
+            {devnetMode ? (
+              <div className={`rounded-xl border-2 p-6 text-center ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
+                <p className={`text-sm font-medium mb-1 ${dark ? "text-amber-400" : "text-amber-600"}`}>Mainnet only</p>
+                <p className={`text-xs ${dark ? "text-slate-400" : "text-gray-500"}`}>Top up is not available on devnet.</p>
+              </div>
+            ) : (
+              <>
+                {/* Option 1 — Deposit to wallet (active) */}
+                <button
+                  type="button"
+                  disabled={!solanaAddress}
+                  onClick={() => {
+                    if (!solanaAddress) return;
+                    fundWallet({ address: solanaAddress, options: { asset: "USDC" } });
+                  }}
+                  className={cn(
+                    "w-full flex items-start gap-4 p-4 rounded-xl border-2 text-left transition-colors",
+                    dark
+                      ? "border-white/15 bg-white/5 hover:bg-white/10 hover:border-white/25 disabled:opacity-50 disabled:cursor-not-allowed"
+                      : "border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  )}
+                >
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
+                      <rect width="20" height="14" x="2" y="5" rx="2"/><path d="M2 10h20"/>
+                    </svg>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit USDC on Solana</p>
+                    <p className={`text-sm mt-1 leading-relaxed ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      Buy with credit card or send from a Solana wallet
+                    </p>
+                  </div>
+                  <ArrowRight className={`h-4 w-4 shrink-0 mt-1.5 ${dark ? "text-slate-500" : "text-gray-400"}`} />
+                </button>
+
+                {/* Option 2 — Other networks (coming soon) */}
+                <div className={cn(
+                  "w-full flex items-start gap-4 p-4 rounded-xl border-2 opacity-40 cursor-not-allowed select-none",
+                  dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"
+                )}>
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
+                      <circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                    </svg>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cross-chain deposit</p>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-400" : "bg-gray-200 text-gray-500"}`}>Coming soon</span>
+                    </div>
+                    <p className={`text-sm mt-1 mb-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>25+ networks supported</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {["ETH", "BTC", "SOL", "ZEC", "POL", "BASE", "AVAX", "ARB", "OP", "BNB", "XRP", "NEAR", "…"].map((chain) => (
+                        <span key={chain} className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md ${dark ? "bg-white/10 text-slate-300" : "bg-gray-100 text-gray-600"}`}>
+                          {chain}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Option 3 — Transfer (coming soon) */}
+                <div className={cn(
+                  "w-full flex items-start gap-4 p-4 rounded-xl border-2 opacity-40 cursor-not-allowed select-none",
+                  dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"
+                )}>
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
+                      <path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+                    </svg>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with transfer</p>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-400" : "bg-gray-200 text-gray-500"}`}>Coming soon</span>
+                    </div>
+                    <p className={`text-sm mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      CashApp · Venmo · Revolut · Wise · PayPal
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {/* History tab */}
-        {tab === "history" ? (
+        {tab === "history" && (
           <div className="py-2 min-h-0 overflow-y-auto sm:max-h-[60vh]">
             {recentWithdrawals.length === 0 ? (
               <p className={`text-sm text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent withdrawals.</p>
@@ -707,8 +813,10 @@ export function BalanceModal({
               </ul>
             )}
           </div>
-        ) : withdrawStep !== "idle" ? (
-          /* Progress panel */
+        )}
+
+        {/* Withdraw tab — progress panel */}
+        {tab === "withdraw" && withdrawStep !== "idle" && (
           <ProgressSteps
             step={withdrawStep}
             isNearIntents={Boolean(isNearIntentsWithdraw || activeWithdrawal?.isNearIntents)}
@@ -727,8 +835,10 @@ export function BalanceModal({
               if (withdrawStep === "complete") onRefresh();
             }}
           />
-        ) : (
-          /* Withdraw form */
+        )}
+
+        {/* Withdraw tab — form */}
+        {tab === "withdraw" && withdrawStep === "idle" && (
           <div className="space-y-4 py-4">
             {/* Balance */}
             <div>
@@ -785,7 +895,7 @@ export function BalanceModal({
               )}
             </div>
 
-            {/* Amount input + estimated receive */}
+            {/* Amount input */}
             <div>
               <Label htmlFor="withdraw-amount" className={dark ? "text-slate-300" : undefined}>
                 Amount to send (USDC)
@@ -818,29 +928,6 @@ export function BalanceModal({
               {withdrawAmountNum > spendableBalance && spendableBalance > 0 && (
                 <p className="text-xs text-red-400 mt-1">Exceeds available balance of {spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC.</p>
               )}
-
-              {/* BETA_SOLANA_ONLY: cross-chain estimate — uncomment when Near Intents is re-enabled
-              {isNearIntentsWithdraw && (
-                <div className={`mt-2 flex items-center gap-2 rounded-lg border px-3 py-2 ${dark ? "border-white/10 bg-white/5" : "border-gray-100 bg-gray-50"}`}>
-                  <ArrowRight className={`h-3.5 w-3.5 shrink-0 ${dark ? "text-slate-400" : "text-gray-400"}`} />
-                  {quoteLoading ? (
-                    <span className={`text-xs flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Fetching estimate…
-                    </span>
-                  ) : quoteAmount ? (
-                    <span className={`text-xs ${dark ? "text-slate-300" : "text-gray-700"}`}>
-                      You receive ~<span className="font-semibold">
-                        {Number(quoteAmount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {effectiveToken?.symbol}
-                      </span>
-                      <span className={`ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>on {effectiveToken?.chain}</span>
-                    </span>
-                  ) : (
-                    <span className={`text-xs ${dark ? "text-slate-500" : "text-gray-400"}`}>Estimate unavailable</span>
-                  )}
-                </div>
-              )}
-              */}
             </div>
 
             {/* Destination address */}
@@ -914,6 +1001,19 @@ export function BalanceModal({
             )}
           </div>
         )}
+
+        </div>{/* end scrollable area */}
+
+        {/* Large close button — mobile only, always visible at bottom */}
+        <div className={`sm:hidden shrink-0 px-4 pt-3 pb-8 border-t ${dark ? "border-white/10 bg-[#0f0f12]" : "border-gray-100 bg-white"}`}>
+          <button
+            type="button"
+            onClick={onClose}
+            className={`w-full py-4 rounded-2xl text-sm font-semibold transition-colors ${dark ? "bg-white/10 text-white hover:bg-white/15" : "bg-gray-100 text-gray-900 hover:bg-gray-200"}`}
+          >
+            Close
+          </button>
+        </div>
       </DialogContent>
     </Dialog>
   );

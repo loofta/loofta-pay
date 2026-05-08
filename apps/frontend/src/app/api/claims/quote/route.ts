@@ -100,7 +100,7 @@ export async function POST(request: Request) {
         // Include app fees so quote matches real execution path
         appFees: [
           {
-            recipient: 'lisabey.near',
+            recipient: 'loofta.near',
             fee: 30,
           },
         ],

@@ -9,6 +9,7 @@ import { AuthProvider } from "@/providers/AuthProvider";
 // Suppress Privy hydration warnings (third-party library issue)
 import "@/lib/suppressPrivyWarnings";
 import { Analytics } from "@vercel/analytics/next"
+import { AppErrorBoundary } from "@/components/AppErrorBoundary"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -168,11 +169,13 @@ export default function RootLayout({
             }),
           }}
         />
-        <AuthProvider>
-          <QueryProvider>
-            {children}
-          </QueryProvider>
-        </AuthProvider>
+        <AppErrorBoundary>
+          <AuthProvider>
+            <QueryProvider>
+              {children}
+            </QueryProvider>
+          </AuthProvider>
+        </AppErrorBoundary>
         <Toaster />
         <Analytics />
       </body>
