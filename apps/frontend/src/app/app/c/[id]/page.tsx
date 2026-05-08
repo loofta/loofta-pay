@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useMemo, useState, type SVGProps } from "react";
+import React, { useEffect, useMemo, useRef, useState, type SVGProps } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
