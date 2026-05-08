@@ -59,6 +59,7 @@ export class ClaimsService {
   private readonly baseUrl: string;
   private readonly usdcMint: PublicKey;
   private readonly perProgramId: PublicKey;
+  private readonly emailSentAt = new Map<string, number>();
 
   constructor(
     private readonly supabaseService: SupabaseService,
@@ -1995,6 +1996,12 @@ export class ClaimsService {
 
   /** Fire-and-forget email after payment confirms. 5 min delay for registered recipients, 15 min for unregistered. */
   notifyRecipientAfterPayment(claimId: string): void {
+    const lastSent = this.emailSentAt.get(claimId);
+    if (lastSent && Date.now() - lastSent < 60 * 60 * 1000) {
+      this.logger.log(`[email] claim ${claimId}: duplicate suppressed (already sent ${Math.round((Date.now() - lastSent) / 1000)}s ago)`);
+      return;
+    }
+    this.emailSentAt.set(claimId, Date.now());
     this.logger.log(`[email] notifyRecipientAfterPayment called for claim ${claimId} — available=${this.emailService.isAvailable()}`);
     if (!this.emailService.isAvailable()) return;
     this.sendPaymentEmail(claimId).catch((err: any) => {
