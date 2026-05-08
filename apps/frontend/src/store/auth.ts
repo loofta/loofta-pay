@@ -15,12 +15,14 @@ type AuthState = {
 	networkMode: "devnet" | "mainnet";
 	openShareModal: boolean;
 	openSettingsModal: boolean;
+	isOnboardingOpen: boolean;
 	setAuth: (v: { authenticated: boolean; userId?: string; email?: string; username?: string | null }) => void;
 	setUsername: (username: string | null) => void;
 	setMainnetAccess: (access: boolean) => void;
 	setNetworkMode: (mode: "devnet" | "mainnet") => void;
 	setOpenShareModal: (open: boolean) => void;
 	setOpenSettingsModal: (open: boolean) => void;
+	setIsOnboardingOpen: (open: boolean) => void;
 };
 
 // SSR-safe storage: only use localStorage on client so Next.js build/SSR doesn't break
@@ -52,6 +54,7 @@ export const useAuthStore = create<AuthState>()(
 			networkMode: CLUSTER_DEFAULT_NETWORK_MODE,
 			openShareModal: false,
 			openSettingsModal: false,
+			isOnboardingOpen: false,
 			setAuth: (v) =>
 				set((state) => {
 					const authenticated = !!v.authenticated;
@@ -87,6 +90,7 @@ export const useAuthStore = create<AuthState>()(
 				}),
 			setOpenShareModal: (open) => set({ openShareModal: open }),
 			setOpenSettingsModal: (open) => set({ openSettingsModal: open }),
+			setIsOnboardingOpen: (open) => set({ isOnboardingOpen: open }),
 		}),
 		{
 			name: "loofta.auth.v1",
