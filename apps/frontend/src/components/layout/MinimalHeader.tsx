@@ -10,6 +10,7 @@ import { UserMenu } from "@/components/UserMenu";
 import { BalanceModal } from "@/components/BalanceModal";
 import { LooftaPayLogoLink } from "@/components/layout/LooftaPayLogoLink";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
+import { Switch } from "@/components/ui/switch";
 
 const HEADER_HEIGHT = 64;
 
@@ -22,6 +23,9 @@ function MobileMenu({
   onLogout,
   username,
   email,
+  networkMode,
+  setNetworkMode,
+  mainnetAccess,
 }: {
   open: boolean;
   onClose: () => void;
@@ -31,6 +35,9 @@ function MobileMenu({
   onLogout: () => void;
   username: string | null;
   email: string | undefined;
+  networkMode: string;
+  setNetworkMode: (mode: "mainnet" | "devnet") => void;
+  mainnetAccess: boolean;
 }) {
   const pathname = usePathname();
   if (!open) return null;
@@ -114,7 +121,24 @@ function MobileMenu({
         </nav>
 
         {/* Footer */}
-        <div className="px-3 pb-6 pt-2 border-t border-white/10 shrink-0">
+        <div className="px-3 pb-6 pt-2 border-t border-white/10 shrink-0 space-y-1">
+          {/* Network toggle */}
+          <div className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/8 transition-colors">
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm text-slate-300">
+                {networkMode === "mainnet"
+                  ? (mainnetAccess ? "Mainnet Beta" : "Mainnet (view only)")
+                  : "Devnet"}
+              </span>
+              {networkMode === "mainnet" && !mainnetAccess && (
+                <span className="text-xs text-amber-400/80 leading-tight">Payments disabled — balance &amp; withdraw only</span>
+              )}
+            </div>
+            <Switch
+              checked={networkMode === "mainnet"}
+              onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
+            />
+          </div>
           <button
             type="button"
             onClick={() => { onClose(); onLogout(); }}
@@ -133,6 +157,8 @@ export function MinimalHeader() {
   const { login: privyLogin } = usePrivy();
   const username = useAuthStore((s) => s.username ?? null);
   const networkMode = useAuthStore((s) => s.networkMode);
+  const mainnetAccess = useAuthStore((s) => s.mainnetAccess);
+  const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
   const pathname = usePathname();
   const headerRef = useRef<HTMLElement>(null);
 
@@ -300,6 +326,9 @@ export function MinimalHeader() {
           onLogout={() => logout()}
           username={username}
           email={email}
+          networkMode={networkMode}
+          setNetworkMode={setNetworkMode}
+          mainnetAccess={mainnetAccess ?? false}
         />
       )}
     </>

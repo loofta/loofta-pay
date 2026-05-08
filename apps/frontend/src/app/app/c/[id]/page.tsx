@@ -614,6 +614,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const { user, logout, login, authenticated, ready: privyReady, getAccessToken } = usePrivy();
 
   const networkMode = useAuthStore((s) => s.networkMode);
+  const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
   const [hasMainnetAccess, setHasMainnetAccess] = useState(false);
   const [mainnetAccessChecked, setMainnetAccessChecked] = useState(false);
   useEffect(() => {
@@ -707,6 +708,22 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   })();
   /** True when the user's active network doesn't match the claim's network — blocks payment to prevent wrong-chain submission. */
   const isWrongNetwork = claimExpectedNetwork !== null && networkMode !== claimExpectedNetwork;
+
+  const [showNetworkSwitchPrompt, setShowNetworkSwitchPrompt] = useState(false);
+  const networkMismatchHandledRef = useRef(false);
+
+  // Show a modal the first time a mismatch is detected between the claim's network and the
+  // user's active network. Both deps are intentional: networkMode can update after Privy
+  // resolves the user's saved preference, which may arrive after the claim API response.
+  // The ref prevents the modal from re-opening after the user has already handled it.
+  useEffect(() => {
+    if (!claimExpectedNetwork) return;
+    if (networkMismatchHandledRef.current) return;
+    if (networkMode === claimExpectedNetwork) return;
+    networkMismatchHandledRef.current = true;
+    setShowNetworkSwitchPrompt(true);
+  }, [claimExpectedNetwork, networkMode]);
+
   // Extract latest intent from claim query (merged into main GET endpoint)
   const latestIntentData = useMemo(() => {
     return claimData?.latestIntent || null;
@@ -2471,6 +2488,33 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           ) : null
         }
       >
+      <AlertDialog open={showNetworkSwitchPrompt} onOpenChange={setShowNetworkSwitchPrompt}>
+        <AlertDialogContent className="[&_.text-gray-900]:!text-white [&_.text-muted-foreground]:!text-slate-300 [&_.border]:!border-white/10 bg-[#0f0f12] border-white/10">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">
+              Switch to {claimExpectedNetwork}?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-300">
+              This payment link was created on <strong className="text-white">{claimExpectedNetwork}</strong>.
+              Switch to view it. You can change your network again anytime in the user menu.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-white/10 text-white border-white/20 hover:bg-white/20">
+              Stay on {networkMode}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (claimExpectedNetwork) setNetworkMode(claimExpectedNetwork);
+                setShowNetworkSwitchPrompt(false);
+              }}
+              className="bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+            >
+              Switch to {claimExpectedNetwork}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
         {/* Demo Mode Banner */}
         {DEMO_MODE && (
           <div className="mb-4 -mx-6 -mt-6 px-4 py-3 bg-amber-50 border-b border-amber-200 rounded-t-2xl">
