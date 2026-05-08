@@ -891,6 +891,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       });
       // Show success immediately without waiting for refetch; avoid the intermediate skeleton.
       setStatus("SUCCESS");
+      useClaimPayStore.getState().setClaimed(id, true);
       queryClient.setQueryData(["claim", id, "recipient-check", user?.id], { isRecipient: true });
       queryClient.invalidateQueries({ queryKey: ["claim", id] });
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
@@ -1261,6 +1262,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       setStatus(entry.status);
     }
     if (entry?.refundAddress) setRefundAddress(entry.refundAddress);
+    if (entry?.claimed) setClaimInitiated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -2699,11 +2701,22 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   claim?.creator_username ? `@${claim.creator_username}` : (claim?.creator_email || null);
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
                 return (
-                  <div className="mt-6 text-center py-16 px-4">
-                    <div className="mb-5 text-7xl">✅</div>
-                    <div className="text-5xl font-bold text-gray-900 mb-3">+ ${amt}</div>
-                    {senderLabel && (
-                      <p className="text-xl text-gray-500">from <span className="font-medium text-gray-700">{senderLabel}</span></p>
+                  <div className="mt-6 py-6 px-4">
+                    <div className="text-center mb-6">
+                      <div className="mb-4 text-6xl">✅</div>
+                      <div className="text-5xl font-bold text-gray-900 mb-3">+ ${amt}</div>
+                      {senderLabel && (
+                        <p className="text-xl text-gray-500">from <span className="font-medium text-gray-700">{senderLabel}</span></p>
+                      )}
+                    </div>
+                    <ClaimDescriptionMessageBox description={claim?.description} />
+                    {claim?.is_private && (
+                      <div className="mb-6 flex items-start gap-3 rounded-xl border border-orange-500/20 bg-gradient-to-b from-white/[0.08] to-white/[0.03] backdrop-blur-sm px-4 py-3 shadow-[0_0_16px_0_rgba(255,80,0,0.12)]">
+                        <span className="mt-0.5 text-base">🔒</span>
+                        <p className="text-sm text-white/70 leading-snug">
+                          This is a private payment. It may take <span className="font-medium text-white/90">a few minutes</span> for the balance to reflect and become available to withdraw.
+                        </p>
+                      </div>
                     )}
                   </div>
                 );
@@ -2718,11 +2731,22 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   claim?.creator_username ? `@${claim.creator_username}` : (claim?.creator_email || null);
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
                 return (
-                  <div className="mt-6 text-center py-16 px-4">
-                    <div className="mb-5 text-7xl">✅</div>
-                    <div className="text-5xl font-bold text-gray-900 mb-3">+ ${amt}</div>
-                    {senderLabel && (
-                      <p className="text-xl text-gray-500">from <span className="font-medium text-gray-700">{senderLabel}</span></p>
+                  <div className="mt-6 py-6 px-4">
+                    <div className="text-center mb-6">
+                      <div className="mb-4 text-6xl">✅</div>
+                      <div className="text-5xl font-bold text-gray-900 mb-3">+ ${amt}</div>
+                      {senderLabel && (
+                        <p className="text-xl text-gray-500">from <span className="font-medium text-gray-700">{senderLabel}</span></p>
+                      )}
+                    </div>
+                    <ClaimDescriptionMessageBox description={claim?.description} />
+                    {claim?.is_private && (
+                      <div className="mb-6 flex items-start gap-3 rounded-xl border border-orange-500/20 bg-gradient-to-b from-white/[0.08] to-white/[0.03] backdrop-blur-sm px-4 py-3 shadow-[0_0_16px_0_rgba(255,80,0,0.12)]">
+                        <span className="mt-0.5 text-base">🔒</span>
+                        <p className="text-sm text-white/70 leading-snug">
+                          This is a private payment. It may take <span className="font-medium text-white/90">a few minutes</span> for the balance to reflect and become available to withdraw.
+                        </p>
+                      </div>
                     )}
                   </div>
                 );
