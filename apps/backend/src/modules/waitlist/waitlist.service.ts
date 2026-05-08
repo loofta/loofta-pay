@@ -38,7 +38,7 @@ export class WaitlistService {
 
     if (search) {
       query = query.or(
-        `email.ilike.%${search}%,display_name.ilike.%${search}%,privy_user_id.ilike.%${search}%,telegram_handle.ilike.%${search}%,twitter_username.ilike.%${search}%`,
+        `email.ilike.*${search}*,display_name.ilike.*${search}*,privy_user_id.ilike.*${search}*,telegram_handle.ilike.*${search}*,twitter_username.ilike.*${search}*`,
       );
     }
 

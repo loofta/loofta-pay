@@ -89,17 +89,16 @@ export function grossUpForMagicblockFee(netBaseUnits: number): number {
 
 /**
  * Delivery delays break timing correlation between send and receive events.
- * API constraint: `maxDelayMs` must be ≤ 600_000 (10 minutes).
  *
- * Mainnet: 10s–60s random window — enough to break timing analysis, short enough UX is fine.
+ * Mainnet: 1 min–15 min random window — breaks timing analysis while keeping funds in transit ≤15 min.
  * Devnet:  30s–300s (5 min window for testing the full delay range).
  * Localhost: no delay.
  */
-export const MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS = 600_000;
+export const MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS = 900_000;
 export const MAGICBLOCK_PRIVATE_DEVNET_MIN_DELAY_MS = 30_000;
 export const MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS = 300_000;  // 5 min
-export const MAGICBLOCK_PRIVATE_MAINNET_MIN_DELAY_MS = 10_000;  // 10s
-export const MAGICBLOCK_PRIVATE_MAINNET_MAX_DELAY_MS = 60_000;  // 60s
+export const MAGICBLOCK_PRIVATE_MAINNET_MIN_DELAY_MS = 60_000;   // 1 min
+export const MAGICBLOCK_PRIVATE_MAINNET_MAX_DELAY_MS = 900_000;  // 15 min
 
 export function magicblockPrivateDelayForCluster(cluster: 'devnet' | 'mainnet' | 'localhost'): {
   minDelayMs: string;
