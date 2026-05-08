@@ -29,6 +29,9 @@ export default function Home() {
   const router = useRouter();
   const { authenticated } = useAuth();
   const username = useAuthStore((s) => s.username ?? null);
+  const networkMode = useAuthStore((s) => s.networkMode);
+  const mainnetAccess = useAuthStore((s) => s.mainnetAccess);
+  const canMultiSend = networkMode !== "mainnet" || mainnetAccess;
   const { login: privyLogin, getAccessToken } = usePrivy();
   const [activeTab, setActiveTabState] = useState<"send" | "receive">(() => {
     const fromUrl = searchParams.get("tab") === "receive" ? "receive" : null;
@@ -338,7 +341,7 @@ export default function Home() {
 
           {activeTab === "send" && (
             <>
-              {showMultiSend ? (
+              {showMultiSend && canMultiSend ? (
                 <MultiSendFlow onBack={() => { setShowMultiSend(false); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }} />
               ) : sendStep === 3 && claimId ? (
                 <div className="space-y-4 rounded-2xl border border-white/10 bg-white/5 p-6 text-white">
@@ -382,13 +385,15 @@ export default function Home() {
                     <div ref={wrapperRef} className="relative">
                       <div className="flex items-center justify-between mb-5">
                         <Label className="text-slate-300 text-xl font-sans font-medium">Send</Label>
-                        <button
-                          type="button"
-                          onClick={() => { setShowMultiSend(true); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
-                          className="text-slate-500 hover:text-slate-300 text-sm font-medium transition-colors"
-                        >
-                          Try multi send
-                        </button>
+                        {canMultiSend && (
+                          <button
+                            type="button"
+                            onClick={() => { setShowMultiSend(true); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
+                            className="text-slate-500 hover:text-slate-300 text-sm font-medium transition-colors"
+                          >
+                            Try multi send
+                          </button>
+                        )}
                       </div>
 
                       <div className="rounded-2xl mt-3 mb-6">
