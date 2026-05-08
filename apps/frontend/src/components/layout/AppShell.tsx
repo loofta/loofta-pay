@@ -1,6 +1,6 @@
 'use client'
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useState, useEffect } from "react";
 import { ChevronRight } from "lucide-react";
 import { Footer } from "./Footer";
 import { BottomNav } from "./BottomNav";
@@ -13,6 +13,10 @@ function ShellContent({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const networkMode = useAuthStore((s) => s.networkMode);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  useEffect(() => {
+    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
+  }, [pathname]);
+
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
   const showBottomNav = !isCheckoutPage && (
     pathname === '/' || pathname === '/app' ||
