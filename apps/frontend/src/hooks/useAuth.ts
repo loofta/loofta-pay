@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
+import { useMultiSendStore } from "@/store/multiSend";
 
 export function useAuth() {
 	const { login, logout, user, ready, authenticated, getAccessToken } = usePrivy();
@@ -14,6 +15,12 @@ export function useAuth() {
 
 	useEffect(() => {
 		if (!ready) return;
+		if (!authenticated) {
+			// Clear per-user UI state so it doesn't bleed into the next session
+			const ms = useMultiSendStore.getState();
+			ms.setShowMultiSend(false);
+			ms.clear();
+		}
 		setAuth({ authenticated: !!authenticated, userId: privyUserId, email: privyEmail });
 	}, [ready, authenticated, privyUserId, privyEmail, setAuth]);
 
