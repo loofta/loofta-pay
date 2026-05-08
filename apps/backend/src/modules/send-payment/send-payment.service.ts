@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { MAGICBLOCK_GAS_SOL, fetchSolPriceUsd, grossUpForMagicblockFee, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import { MAGICBLOCK_GAS_SOL, fetchSolPriceUsd, grossUpForMagicblockFee, decodeActualSenderDebit, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
@@ -157,11 +157,16 @@ export class SendPaymentService {
       gasless: true,
     });
 
+    const mbVolumeFeeUnits = grossUnits - baseUnits;
+    const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, senderWallet.trim(), effectiveMint, this.connection);
+    const feeUnits = actualDebitUnits != null ? actualDebitUnits - baseUnits : mbVolumeFeeUnits + solFeeUnits;
+    this.logger.log(`[SendPayment] decoded debit=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits}`);
+
     return {
       ...txResponse,
-      feeAmountUsdc: solFeeUnits / 1_000_000,
+      feeAmountUsdc: feeUnits / 1_000_000,
       feeBreakdown: {
-        looftaBpsUsdc: 0,
+        looftaBpsUsdc: mbVolumeFeeUnits / 1_000_000,
         solRecoveryUsdc: solFeeUnits / 1_000_000,
         solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
         solPriceUsd: solPriceUsd ?? 0,

@@ -23,7 +23,6 @@ export * from './organizations';
 export * from './claims';
 export * from './payments';
 export * from './tokens';
-export * from './lottery';
 export * from './checkout';
 export * from './adminClaims';
 export * from './sendPayment';
@@ -33,7 +32,6 @@ import { organizationsApi } from './organizations';
 import { claimsApi } from './claims';
 import { paymentsApi } from './payments';
 import { tokensApi } from './tokens';
-import { lotteryApi } from './lottery';
 import { checkoutApi } from './checkout';
 import { adminClaimsApi } from './adminClaims';
 import * as sendPaymentApi from './sendPayment';
@@ -47,7 +45,6 @@ export const api = {
   claims: claimsApi,
   payments: paymentsApi,
   tokens: tokensApi,
-  lottery: lotteryApi,
   checkout: checkoutApi,
   adminClaims: adminClaimsApi,
   sendPayment: sendPaymentApi,

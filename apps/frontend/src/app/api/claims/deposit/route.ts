@@ -5,11 +5,6 @@ import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
 import { getRefundToForChain } from "@/lib/refundAddresses";
 import { getDefuseAssetIdFor } from "@/lib/tokenlist";
-import { 
-  isRhinestoneChainSupported, 
-  isRhinestoneSwapSupported,
-  getRhinestoneChainId,
-} from "@/config/rhinestoneChains";
 
 function getEnv(name: string, fallbacks: string[] = []) {
   const all = [name, ...fallbacks];
@@ -209,69 +204,11 @@ export async function POST(request: Request) {
         }, { status: 400 });
       }
       
-      // EVM chain, different token → Use companion wallet swap
-      const chainId = getRhinestoneChainId(originChain);
-      if (!chainId) {
-        return NextResponse.json({
-          error: `Chain ${originChain} is not supported for swaps. Supported: Ethereum, Base, Optimism, Arbitrum, Polygon, zkSync.`,
-          code: "CHAIN_NOT_SUPPORTED",
-        }, { status: 400 });
-      }
-      
-      // Check if tokens are supported for swap
-      const fromSymbol = String(fromToken.symbol || "").toUpperCase();
-      const toSymbol = String(claim.to_symbol || "").toUpperCase();
-      
-      if (!isRhinestoneSwapSupported(fromSymbol, toSymbol, chainId)) {
-        return NextResponse.json({
-          error: `Swap ${fromSymbol} → ${toSymbol} not supported on ${originChain}. Supported tokens: ETH, WETH, USDC, USDT.`,
-          code: "TOKENS_NOT_SUPPORTED",
-        }, { status: 400 });
-      }
-      
-      // Create companion swap
-      console.log("[claims/deposit] EVM chain + different token → Companion swap");
-      try {
-        const companionSwapResponse = await fetch(new URL("/api/claims/companion-swap", request.url).toString(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            claimId,
-            fromToken: {
-              symbol: fromSymbol,
-              chain: originChain,
-              decimals: fromToken.decimals,
-            },
-            toToken: {
-              symbol: toSymbol,
-              chain: destChain,
-              decimals: 6, // Will be updated by swap endpoint
-              amount: String(claim.amount),
-            },
-            recipientAddress: claim.recipient_address,
-            amountUsd: Number(claim.amount || 0),
-          }),
-        });
-        
-        const companionSwapData = await companionSwapResponse.json();
-        
-        if (companionSwapResponse.ok && companionSwapData.success) {
-          console.log("[claims/deposit] Companion swap created successfully");
-          return NextResponse.json(companionSwapData, { status: 200 });
-        } else {
-          console.error("[claims/deposit] Companion swap failed:", companionSwapData.error);
-          return NextResponse.json({
-            error: companionSwapData.error || "Failed to create swap route",
-            code: companionSwapData.code || "SWAP_FAILED",
-          }, { status: 400 });
-        }
-      } catch (swapError: any) {
-        console.error("[claims/deposit] Companion swap error:", swapError?.message);
-        return NextResponse.json({
-          error: "Failed to create swap route. Please try another token.",
-          code: "SWAP_ERROR",
-        }, { status: 500 });
-      }
+      // EVM chain, different token — same-chain EVM swaps are not supported
+      return NextResponse.json({
+        error: `Paying with ${fromToken.symbol} for a ${claim.to_symbol} payment on the same chain is not supported. Please pay with ${claim.to_symbol} directly or use a cross-chain route.`,
+        code: "SAME_CHAIN_SWAP_NOT_SUPPORTED",
+      }, { status: 400 });
     }
     
     // For EXACT_OUTPUT we need destination token decimals to convert human -> atomic
@@ -460,51 +397,7 @@ export async function POST(request: Request) {
         console.error("[claims/deposit] Amount might be below minimum for this route");
       }
       
-      // If error is "Invalid input data", try 2-hop via companion wallet
-      if (errorMsg?.includes("Invalid input") || errorBody?.message?.includes("Invalid input") || errorMsg?.includes("Failed to get quote")) {
-        console.error("[claims/deposit] Direct route failed, trying 2-hop via ETH mainnet...");
-        console.error("[claims/deposit]   - Route attempted:", fromToken.tokenId, "->", destinationAsset);
-        
-        // Try 2-hop via companion wallet (source → ETH mainnet → destination)
-        try {
-          const companionResponse = await fetch(new URL("/api/claims/companion", request.url).toString(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              claimId,
-              fromToken,
-              destinationAsset,
-              destinationAmount: amountOutAtomic,
-              recipientAddress,
-              amountUsd: Number(claim.amount || 0),
-            }),
-          });
-          
-          const companionData = await companionResponse.json();
-          
-          if (companionResponse.ok && companionData.success) {
-            console.log("[claims/deposit] 2-hop route created successfully");
-            return NextResponse.json({
-              ...companionData,
-              twoHop: true,
-            }, { status: 200 });
-          } else {
-            console.error("[claims/deposit] 2-hop also failed:", companionData.error);
-            return NextResponse.json({ 
-              error: companionData.error || "Route not available. Please try another token.",
-              code: companionData.code || "ROUTE_NOT_AVAILABLE"
-            }, { status: 400 });
-          }
-        } catch (companionError: any) {
-          console.error("[claims/deposit] 2-hop companion error:", companionError?.message);
-          return NextResponse.json({ 
-            error: "Route not available. Please try another token.",
-            code: "ROUTE_NOT_AVAILABLE"
-          }, { status: 400 });
-        }
-      } else {
       throw quoteError;
-      }
     }
     const q = (raw as any)?.quote || raw || {};
 

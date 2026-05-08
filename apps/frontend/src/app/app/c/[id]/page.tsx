@@ -43,7 +43,8 @@ import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Sh
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
-import { isEvmChainId } from "@/config/biconomy";
+const EVM_CHAIN_SET = new Set(["eth","ethereum","arb","arbitrum","base","op","optimism","bsc","avax","avalanche","polygon","matic","fantom","ftm","gnosis","linea","scroll","zksync","zk","blast","pol"]);
+function isEvmChainId(chain?: string): boolean { return EVM_CHAIN_SET.has(String(chain || "").toLowerCase()); }
 import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
 import {
   useWallets as useSolanaWallets,
@@ -798,12 +799,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
   const estimatePrivateTotal = (usd: number) => {
     const net = Math.round(usd * 1_000_000);
-    // MagicBlock gross-up: their 10 BPS volume fee deducted from amount before recipient gets it
     const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
     const mbFee = (mbGross - net) / 1_000_000;
-    // 0.002 SOL gasless relay fee charged as USDC — use $0.30 fallback while price loads
     const gasFee = solPrice > 0 ? 0.002 * solPrice : 0.30;
-    return { total: mbGross / 1_000_000 + gasFee, protocolFee: mbFee, gasFee };
+    // Round total fee up to nearest $0.01 so estimate is always on the high side
+    const feeEstimate = Math.ceil((mbFee + gasFee) * 100) / 100;
+    return { total: usd + feeEstimate, protocolFee: mbFee, gasFee, feeEstimate };
   };
 
   useEffect(() => {

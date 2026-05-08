@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { NearIntentsService } from './near-intents.service';
 
 export interface UnifiedStatus {
-  provider: 'near-intents' | 'rhinestone' | 'unknown';
+  provider: 'near-intents' | 'unknown';
   status: string;
   normalizedStatus: 'pending' | 'processing' | 'completed' | 'failed' | 'unknown';
   txHash?: string;
@@ -40,11 +40,9 @@ export class StatusService {
    */
   async getStatus(params: {
     depositAddress?: string;
-    rhinestoneId?: string;
   }): Promise<UnifiedStatus> {
-    const { depositAddress, rhinestoneId } = params;
+    const { depositAddress } = params;
 
-    // Try Near Intents first (most common)
     if (depositAddress) {
       try {
         const status = await this.nearIntentsService.getExecutionStatus(depositAddress);
@@ -60,15 +58,6 @@ export class StatusService {
       } catch (error: any) {
         this.logger.debug('Near Intents status check failed:', error?.message);
       }
-    }
-
-    // Rhinestone (placeholder - would need companion address tracking)
-    if (rhinestoneId) {
-      return {
-        provider: 'rhinestone',
-        status: 'PENDING',
-        normalizedStatus: 'pending',
-      };
     }
 
     return {

@@ -5,11 +5,6 @@ import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
 // Removed getRefundToForChain - now using user-provided refund addresses only
 import { getDefuseAssetIdFor } from "@/lib/tokenlist";
-import { 
-  isRhinestoneChainSupported, 
-  isRhinestoneSwapSupported,
-  getRhinestoneChainId,
-} from "@/config/rhinestoneChains";
 
 function getEnv(name: string, fallbacks: string[] = []) {
   const all = [name, ...fallbacks];
@@ -199,162 +194,13 @@ export async function POST(request: Request) {
         }, { status: 400 });
       }
       
-      // EVM chain, different token → Use companion wallet swap
-      const chainId = getRhinestoneChainId(originChain);
-      if (!chainId) {
-        return NextResponse.json({
-          error: `Chain ${originChain} is not supported for swaps. Supported: Ethereum, Base, Optimism, Arbitrum, Polygon, zkSync.`,
-          code: "CHAIN_NOT_SUPPORTED",
-        }, { status: 400 });
-      }
-      
+      // EVM chain, different token — same-chain EVM swaps are not supported
       const fromSymbol = String(fromToken.symbol || "").toUpperCase();
       const toSymbol = String(organization.token_symbol || "").toUpperCase();
-      
-      if (!isRhinestoneSwapSupported(fromSymbol, toSymbol, chainId)) {
-        return NextResponse.json({
-          error: `Swap ${fromSymbol} → ${toSymbol} not supported on ${originChain}. Supported tokens: ETH, WETH, USDC, USDT.`,
-          code: "TOKENS_NOT_SUPPORTED",
-        }, { status: 400 });
-      }
-      
-      // EVM chain, different token → Use companion wallet swap
-      console.log("[organizations/deposit] EVM chain + different token → Companion swap");
-      
-      // Get token prices before calling companion swap
-      let fromTokenPrice: number | undefined;
-      let toTokenPrice: number | undefined;
-      try {
-        const tokens: any = await (OneClickService as any).getTokens();
-        const arr: any[] = Array.isArray(tokens) ? tokens : (tokens?.tokens || []);
-        
-        console.log("[organizations/deposit] Looking for token prices:", {
-          fromSymbol,
-          originChain,
-          toSymbol,
-          destChain,
-          totalTokens: arr.length,
-        });
-        
-        // Try to find by tokenId first (more reliable)
-        const fromTokenId = fromToken.tokenId || fromToken.address;
-        if (fromTokenId) {
-          const foundById = arr.find((t: any) => 
-            String(t?.tokenId || t?.assetId || "").toLowerCase() === String(fromTokenId).toLowerCase()
-          );
-          if (foundById && typeof foundById.price === "number" && foundById.price > 0) {
-            fromTokenPrice = foundById.price;
-            console.log("[organizations/deposit] Found fromToken price by ID:", fromTokenPrice);
-          } else {
-            console.warn("[organizations/deposit] fromToken price not found by ID:", {
-              tokenId: fromTokenId,
-              found: !!foundById,
-              price: foundById?.price,
-            });
-          }
-        }
-        
-        // Fallback to symbol + chain if not found by ID
-        if (!fromTokenPrice) {
-          const foundFrom = arr.find((t: any) => {
-            const symbolMatch = String(t?.symbol || "").toUpperCase() === String(fromSymbol).toUpperCase();
-            const chainMatch = String(t?.chain || t?.chainId || "").toLowerCase().includes(originChain);
-            return symbolMatch && chainMatch;
-          });
-          if (foundFrom && typeof foundFrom.price === "number" && foundFrom.price > 0) {
-            fromTokenPrice = foundFrom.price;
-            console.log("[organizations/deposit] Found fromToken price by symbol+chain:", fromTokenPrice);
-          } else {
-            console.warn("[organizations/deposit] fromToken price not found by symbol+chain:", {
-              symbol: fromSymbol,
-              chain: originChain,
-              found: !!foundFrom,
-              price: foundFrom?.price,
-            });
-          }
-        }
-        
-        // For toToken, we need to get its tokenId from the organization's token config
-        // Since we don't have it directly, try symbol + chain
-        const foundTo = arr.find((t: any) => {
-          const symbolMatch = String(t?.symbol || "").toUpperCase() === String(toSymbol).toUpperCase();
-          const chainMatch = String(t?.chain || t?.chainId || "").toLowerCase().includes(destChain);
-          return symbolMatch && chainMatch;
-        });
-        if (foundTo && typeof foundTo.price === "number" && foundTo.price > 0) {
-          toTokenPrice = foundTo.price;
-          console.log("[organizations/deposit] Found toToken price:", toTokenPrice);
-        } else {
-          console.warn("[organizations/deposit] toToken price not found:", {
-            symbol: toSymbol,
-            chain: destChain,
-            found: !!foundTo,
-            price: foundTo?.price,
-          });
-        }
-        
-        if (!fromTokenPrice) {
-          console.warn("[organizations/deposit] Could not find fromToken price for", fromSymbol, "on", originChain);
-        }
-        if (!toTokenPrice) {
-          console.warn("[organizations/deposit] Could not find toToken price for", toSymbol, "on", destChain);
-        }
-      } catch (e) {
-        console.error("[organizations/deposit] Error fetching token prices:", e);
-      }
-      
-      try {
-        const companionSwapResponse = await fetch(new URL("/api/organizations/companion-swap", request.url).toString(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            organizationId: organization.organization_id,
-            fromToken: {
-              symbol: fromSymbol,
-              chain: originChain,
-              decimals: fromToken.decimals,
-              tokenId: fromToken.tokenId || fromToken.address, // Pass tokenId for better lookup
-              price: fromTokenPrice, // Pass price if available
-            },
-            toToken: {
-              symbol: toSymbol,
-              chain: destChain,
-              decimals: 6, // Will be updated by swap endpoint
-              amount: amount, // USD amount, will be converted by endpoint
-              price: toTokenPrice, // Pass price if available
-            },
-            recipientAddress: organization.recipient_wallet,
-            amountUsd: Number(amount || 0),
-          }),
-        });
-        
-        const companionSwapData = await companionSwapResponse.json();
-        
-        if (companionSwapResponse.ok && companionSwapData.success) {
-          console.log("[organizations/deposit] Companion swap created successfully");
-          console.log("[organizations/deposit] Companion swap response:", {
-            minAmountInFormatted: companionSwapData.minAmountInFormatted,
-            estimatedTotal: companionSwapData.estimatedTotal,
-          });
-          return NextResponse.json({
-            ...companionSwapData,
-            isCompanionSwap: true,
-            minAmountInFormatted: companionSwapData.minAmountInFormatted, // This should be in token units, not USD
-          }, { status: 200 });
-        } else {
-          console.error("[organizations/deposit] Companion swap failed:", companionSwapData.error);
-          return NextResponse.json({
-            error: companionSwapData.error || "Failed to create swap route",
-            code: companionSwapData.code || "SWAP_FAILED",
-          }, { status: 400 });
-        }
-      } catch (swapError: any) {
-        console.error("[organizations/deposit] Companion swap error:", swapError?.message);
-        return NextResponse.json({
-          error: "Failed to create swap route. Please try another token.",
-          code: "SWAP_ERROR",
-        }, { status: 500 });
-      }
+      return NextResponse.json({
+        error: `Paying with ${fromSymbol} for a ${toSymbol} payment on the same chain is not supported. Please pay with ${toSymbol} directly or use a cross-chain route.`,
+        code: "SAME_CHAIN_SWAP_NOT_SUPPORTED",
+      }, { status: 400 });
     }
     
     // For EXACT_OUTPUT we need destination token decimals to convert human -> atomic

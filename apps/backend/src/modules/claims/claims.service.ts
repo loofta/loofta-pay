@@ -27,6 +27,7 @@ import {
   fetchSolPriceUsd,
   grossUpForMagicblockFee,
   requestMagicblockPrivateTransfer,
+  decodeActualSenderDebit,
   type MagicblockPrivateTransferTxResponse,
 } from '@/common/magicblock-private-transfer';
 
@@ -806,15 +807,18 @@ export class ClaimsService {
       ...(gasless ? { gasless: true } : {}),
     });
 
-    // Fee = what sender pays ABOVE the claim amount:
-    //   - MB 10 BPS volume fee: grossUnits was grossed-up so recipient gets exactly baseUnits
-    //   - SOL gasless relay fee: 0.002 SOL charged as USDC (gasless only)
     const mbVolumeFeeUnits = grossUnits - baseUnits;
     const relayFeeUnits = gasless ? solFeeUnits : 0;
 
+    // Decode the actual debit from the transaction — ground truth over the gross estimate.
+    const conn = cluster !== 'localhost' ? this.solanaSponsor.getConnectionForCluster(cluster) : undefined;
+    const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, senderWallet.trim(), effectiveMint, conn);
+    const feeUnits = actualDebitUnits != null ? actualDebitUnits - baseUnits : mbVolumeFeeUnits + relayFeeUnits;
+    this.logger.log(`[PrivatePay] claim=${claimId} decoded debit=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits}`);
+
     return {
       ...txResponse,
-      feeAmountUsdc: (mbVolumeFeeUnits + relayFeeUnits) / 1_000_000,
+      feeAmountUsdc: feeUnits / 1_000_000,
       feeBreakdown: {
         looftaBpsUsdc: mbVolumeFeeUnits / 1_000_000,
         solRecoveryUsdc: relayFeeUnits / 1_000_000,
@@ -1990,62 +1994,37 @@ export class ClaimsService {
     return { id, status: effectiveStatus } as unknown as Claim;
   }
 
-  /**
-   * Send a payment notification email to the recipient.
-   * Call this directly after a payment confirms — never from updateStatus.
-   * Fire-and-forget: errors are logged but never thrown.
-   */
+  /** Fire-and-forget email after payment confirms. 5 min delay for registered recipients, 15 min for unregistered. */
   notifyRecipientAfterPayment(claimId: string): void {
     if (!this.emailService?.isAvailable()) return;
-    this.resolveAndSendEmail(claimId).catch((err: any) => {
+    this.sendPaymentEmail(claimId).catch((err: any) => {
       this.logger.error(`Email notification failed for claim ${claimId}: ${err?.message ?? err}`);
     });
   }
 
-  private async resolveAndSendEmail(claimId: string): Promise<void> {
+  private async sendPaymentEmail(claimId: string): Promise<void> {
     if (!this.emailService) return;
 
     const result = await this.fetchRawRow(claimId);
     if (!result) return;
     const row = result.row;
 
-    let recipientEmail: string | null = null;
-    const directEmail = (row.recipient_email as string | null)?.trim().toLowerCase() || null;
-    const recipientUsername = (row.recipient_username as string | null)?.replace(/^@/, '').trim() || null;
-
-    if (directEmail) {
-      recipientEmail = directEmail;
-    } else if (recipientUsername) {
-      try {
-        const user = await this.usersService.findByUsername(recipientUsername);
-        recipientEmail = user.email?.trim().toLowerCase() || null;
-      } catch { /* no email available */ }
-    }
-
+    const recipientEmail = (row.recipient_email as string | null)?.trim().toLowerCase() || null;
     if (!recipientEmail) return;
 
-    let senderUsername: string | null = null;
-    const createdBy = (row.created_by as string | null) || null;
-    if (createdBy) {
-      try {
-        const sender = await this.usersService.findByPrivyId(createdBy);
-        senderUsername = sender?.username || null;
-      } catch { /* ignore */ }
-    }
-
-    const scheduledAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const isUnregistered = this.isPendingRecipientAddress(row.recipient_address as string);
+    const delayMs = isUnregistered ? 15 * 60 * 1000 : 5 * 60 * 1000;
+    const scheduledAt = new Date(Date.now() + delayMs).toISOString();
 
     const emailData = {
       id: claimId,
       amount: row.amount as string | number,
       description: (row.description as string | null) || null,
-      senderUsername,
       recipientEmail,
       scheduledAt,
     };
 
-    const status = (row.status as string || '').toUpperCase();
-    if (status === 'PRIVATE_TRANSFER_PENDING') {
+    if (isUnregistered) {
       await this.emailService.sendClaimReadyEmail(emailData);
     } else {
       await this.emailService.sendPaymentReceivedEmail(emailData);

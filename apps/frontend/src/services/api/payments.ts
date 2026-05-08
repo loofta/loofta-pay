@@ -90,7 +90,7 @@ export interface QuoteResult {
 export type NormalizedStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'unknown';
 
 export interface IntentStatus {
-  provider: 'near-intents' | 'rhinestone' | 'unknown';
+  provider: 'near-intents' | 'unknown';
   status: string;
   normalizedStatus: NormalizedStatus;
   txHash?: string;
@@ -100,23 +100,7 @@ export interface IntentStatus {
 
 export interface StatusRequest {
   depositAddress?: string;
-  rhinestoneId?: string;
   claimId?: string;
-}
-
-// ===========================================
-// Types - Rhinestone
-// ===========================================
-
-export interface RhinestoneEligibility {
-  eligible: boolean;
-  reason?: string;
-}
-
-export interface RhinestoneChain {
-  chainId: number;
-  name: string;
-  supported: boolean;
 }
 
 // ===========================================
@@ -166,7 +150,6 @@ export async function getQuote(params: QuoteRequest): Promise<QuoteResult> {
 export async function getStatus(params: StatusRequest): Promise<IntentStatus> {
   const query = new URLSearchParams();
   if (params.depositAddress) query.set('depositAddress', params.depositAddress);
-  if (params.rhinestoneId) query.set('rhinestoneId', params.rhinestoneId);
   if (params.claimId) query.set('claimId', params.claimId);
   return fetchApi<IntentStatus>(`/intents/status?${query}`);
 }
@@ -197,35 +180,6 @@ export async function pollStatus(
   }
 
   throw new Error('Status polling timed out');
-}
-
-// ===========================================
-// API Functions - Rhinestone
-// ===========================================
-
-/**
- * Check if a route is eligible for Rhinestone 1-click
- */
-export async function checkRhinestoneEligibility(params: {
-  fromChain: string;
-  toChain: string;
-  fromSymbol?: string;
-  toSymbol?: string;
-}): Promise<RhinestoneEligibility> {
-  const query = new URLSearchParams({
-    fromChain: params.fromChain,
-    toChain: params.toChain,
-    ...(params.fromSymbol && { fromSymbol: params.fromSymbol }),
-    ...(params.toSymbol && { toSymbol: params.toSymbol }),
-  });
-  return fetchApi<RhinestoneEligibility>(`/intents/rhinestone/eligibility?${query}`);
-}
-
-/**
- * Get supported Rhinestone chains
- */
-export async function getRhinestoneChains(): Promise<{ chains: RhinestoneChain[] }> {
-  return fetchApi<{ chains: RhinestoneChain[] }>('/intents/rhinestone/chains');
 }
 
 // ===========================================
