@@ -1235,8 +1235,7 @@ export class SendPaymentService {
     const isDevnet = dto.cluster === 'mainnet' ? false : dto.cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
 
     if (!isDevnet) {
-      const { data: waitlistRow } = await this.supabaseService.client
-        .from('waitlist')
+      const { data: waitlistRow } = await this.supabaseService.mainnetWaitlist
         .select('mainnet_access')
         .eq('privy_user_id', senderUserId)
         .eq('mainnet_access', true)
