@@ -307,14 +307,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     }
   }, [showShareModal, authenticated, getAccessToken, privyUser?.id]);
 
-  // Fetch mainnet access once when user is authenticated
+  // Fetch mainnet access on every login/mount — always re-fetch so newly granted access is picked up immediately.
+  // Apply cached value first for instant UI, then overwrite with fresh API response.
   useEffect(() => {
     if (!authenticated || !getAccessToken || !privyUser?.id) return;
     const userId = privyUser.id;
     const cached = getCachedMainnetAccess(userId);
     if (cached !== null) {
       setMainnetAccess(cached);
-      return;
     }
     const check = async () => {
       try {
@@ -326,8 +326,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
           const { mainnetAccess: access } = await res.json();
           setMainnetAccess(!!access);
           setCachedMainnetAccess(userId, !!access);
-          // If full access was revoked, keep networkMode as-is so users can still view/withdraw received funds
-          // but gating happens at the action level (pay/send disabled without mainnetAccess)
         }
       } catch { /* non-critical */ }
     };
