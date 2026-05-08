@@ -115,15 +115,26 @@ export async function getClaimsByUser(userId: string, accessToken?: string | nul
   return fetchApi<{ claims: Claim[] }>('/claims/user', { userId, accessToken });
 }
 
+export interface UpdateClaimStatusExtra {
+  txHash?: string;
+  paidWith?: string;
+  isPrivate?: boolean;
+  paidWithToken?: string;
+  paidWithChain?: string;
+  feeAmountUsdc?: number;
+  feeBreakdown?: { looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number };
+}
+
 export async function updateClaimStatus(
   id: string,
   status: ClaimStatus,
+  extra?: UpdateClaimStatusExtra,
   userId?: string,
   accessToken?: string | null,
 ): Promise<{ claim: Claim }> {
   return fetchApi<{ claim: Claim }>(`/claims/${id}/status`, {
     method: 'PATCH',
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, ...extra }),
     userId,
     accessToken,
   });

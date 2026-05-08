@@ -2007,10 +2007,30 @@ export class ClaimsService {
     if (!result) return;
     const row = result.row;
 
-    const recipientEmail = (row.recipient_email as string | null)?.trim().toLowerCase() || null;
-    this.logger.log(`[email] claim ${claimId}: recipient_email=${recipientEmail ?? 'null'}, recipient_address=${row.recipient_address}`);
+    let recipientEmail = (row.recipient_email as string | null)?.trim().toLowerCase() || null;
+    const recipientUsername = (row.recipient_username as string | null)?.trim() || null;
+    this.logger.log(`[email] claim ${claimId}: recipient_email=${recipientEmail ?? 'null'}, recipient_username=${recipientUsername ?? 'null'}, recipient_address=${row.recipient_address}`);
+
+    // Fallback 1: payment sent to @username → look up their email from account
+    if (!recipientEmail && recipientUsername) {
+      try {
+        const recipientUser = await this.usersService.findByUsername(recipientUsername);
+        recipientEmail = recipientUser.email?.trim().toLowerCase() || null;
+        this.logger.log(`[email] claim ${claimId}: resolved email from username @${recipientUsername} → ${recipientEmail ?? 'null (no email on account)'}`);
+      } catch {
+        this.logger.warn(`[email] claim ${claimId}: could not find user @${recipientUsername}`);
+      }
+    }
+
+    // Fallback 2: payment sent directly to an email address (PENDING_EMAIL:... in recipient_address)
+    const recipientAddress = (row.recipient_address as string | null) || '';
+    if (!recipientEmail && recipientAddress.startsWith(ClaimsService.PENDING_EMAIL_PREFIX)) {
+      recipientEmail = recipientAddress.slice(ClaimsService.PENDING_EMAIL_PREFIX.length).trim().toLowerCase() || null;
+      this.logger.log(`[email] claim ${claimId}: extracted email from PENDING_EMAIL address → ${recipientEmail}`);
+    }
+
     if (!recipientEmail) {
-      this.logger.warn(`[email] claim ${claimId}: no recipient_email on row — skipping (payment was sent to a wallet/username, not an email)`);
+      this.logger.warn(`[email] claim ${claimId}: no email to send to — skipping`);
       return;
     }
 

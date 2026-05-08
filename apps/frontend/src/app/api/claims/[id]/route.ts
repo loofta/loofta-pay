@@ -116,10 +116,32 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   const isCreator = !!createdBy && createdBy === requestingUserId;
   const isKnownRecipient = !!recipientUserId && recipientUserId === requestingUserId;
   if (!isCreator && !isKnownRecipient) {
-    // For PENDING_EMAIL/USERNAME claims, recipient identity can't be verified here —
-    // the backend /claims/:id/latest-intent handles this with full identity checks.
-    // Return 404 so the frontend falls through to the backend call (which is the primary source anyway).
-    return NextResponse.json({ error: "Payment not found." }, { status: 404 });
+    // For PENDING_EMAIL/USERNAME claims the recipient_user_id is null (unregistered user).
+    // Delegate identity check to the backend which has full Privy linked-account access.
+    const ra = String(rawPayment?.recipient_address ?? "").trim();
+    const isPendingIdentity = ra.startsWith(PENDING_EMAIL_PREFIX) || ra.startsWith(PENDING_USERNAME_PREFIX);
+    if (isPendingIdentity) {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const authHeader = request.headers.get("authorization");
+      const legacyId = request.headers.get("x-privy-user-id");
+      try {
+        const checkRes = await fetch(`${backendUrl}/claims/${params.id}/recipient-check`, {
+          headers: {
+            ...(authHeader ? { authorization: authHeader } : {}),
+            ...(legacyId ? { "x-privy-user-id": legacyId } : {}),
+          },
+        });
+        const checkData = checkRes.ok ? await checkRes.json().catch(() => ({})) : {};
+        if (!checkData?.isRecipient) {
+          return NextResponse.json({ error: "Payment not found." }, { status: 404 });
+        }
+        // isRecipient confirmed — fall through to return the claim
+      } catch {
+        return NextResponse.json({ error: "Payment not found." }, { status: 404 });
+      }
+    } else {
+      return NextResponse.json({ error: "Payment not found." }, { status: 404 });
+    }
   }
 
   let creator_username: string | null = null;
