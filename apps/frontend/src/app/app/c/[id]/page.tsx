@@ -1085,6 +1085,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     }
   }, [privateRequired]);
 
+  // Refresh Loofta balance every time the Pay Now modal opens so the displayed amount is current.
+  useEffect(() => {
+    if (!showPayNowModal) return;
+    queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+    queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
+  }, [showPayNowModal, queryClient]);
+
   // Prevent changing from private mode if claim requires it
   const handleSetPrivateMode = (value: boolean) => {
     if (privateRequired && !value) {
