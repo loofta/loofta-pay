@@ -1234,6 +1234,18 @@ export class SendPaymentService {
   }> {
     const isDevnet = dto.cluster === 'mainnet' ? false : dto.cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
 
+    if (!isDevnet) {
+      const { data: waitlistRow } = await this.supabaseService.client
+        .from('waitlist')
+        .select('mainnet_access')
+        .eq('privy_user_id', senderUserId)
+        .eq('mainnet_access', true)
+        .maybeSingle();
+      if (!waitlistRow) {
+        throw new ForbiddenException('Mainnet access required to use multi-send on mainnet.');
+      }
+    }
+
     const PENDING_EMAIL_PREFIX = 'PENDING_EMAIL:';
     const PENDING_USERNAME_PREFIX = 'PENDING_USERNAME:';
 

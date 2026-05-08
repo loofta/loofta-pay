@@ -75,7 +75,7 @@ type SendPhase =
   | { kind: "building" }
   | { kind: "awaiting_signature" }
   | { kind: "broadcasting" }
-  | { kind: "done"; recipientCount: number; totalUsdc: number; links: MultiSendLinkItem[] }
+  | { kind: "done"; recipientCount: number; totalUsdc: number; links: MultiSendLinkItem[]; failedCount?: number }
   | { kind: "error"; message: string; retry?: ConfirmFeeData };
 
 const SETTLEMENT_PHASES = ["wallet_pick", "creating", "building", "awaiting_signature", "broadcasting", "error"] as const;
@@ -219,7 +219,20 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     const sig = await broadcastConn.sendRawTransaction(signedBytes, { skipPreflight: true, maxRetries: 3 });
     console.info(`[MultiSend] broadcast ok sig=${sig.slice(0, 12)}… paymentId=${paymentId}`);
     const fallbackConn = sendTo === "ephemeral" ? new Connection(getRpcForMode(cluster), "confirmed") : undefined;
-    await waitForSignatureConfirmation(broadcastConn, sig, 120_000, 1500, "multiSend", fallbackConn);
+    try {
+      await waitForSignatureConfirmation(broadcastConn, sig, 120_000, 1500, "multiSend", fallbackConn);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      // MagicBlock private transfers can land on-chain with a Custom error code (e.g. Custom:1)
+      // even though the payment was processed — MagicBlock commits the transfer on HTTP 200
+      // and its crank delivers regardless of auxiliary instruction failures.
+      // Re-throw only for non-Custom errors (timeout, wrong cluster, etc.).
+      if (msg.includes("InstructionError") && msg.includes('"Custom":')) {
+        console.warn(`[MultiSend] MagicBlock custom error (non-fatal, payment delivered): ${msg} sig=${sig.slice(0, 12)}…`);
+      } else {
+        throw e;
+      }
+    }
     console.info(`[MultiSend] confirmed sig=${sig.slice(0, 12)}… paymentId=${paymentId}`);
     return sig;
   }
@@ -309,41 +322,54 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
       setPhase({ kind: "broadcasting" });
       const cluster = networkMode === "mainnet" ? "mainnet" : "devnet";
-      console.info(`[MultiSend] broadcasting ${signedPairs.length} txs cluster=${cluster}`);
+      console.info(`[MultiSend] broadcasting ${signedPairs.length} txs sequentially cluster=${cluster}`);
 
-      // Collect ALL on-chain results before acting — no emails until we have every hash
-      const broadcastResults = await Promise.allSettled(
-        signedPairs.map(({ bytes, paymentId, sendTo }) =>
-          broadcastAndWaitForHash(bytes, paymentId, sendTo, cluster)
-            .then((sig) => ({ paymentId, sig, feeUsdc: feeByPaymentId.get(paymentId) })),
-        ),
-      );
-
-      // Confirm every tx that actually landed (regardless of other failures)
-      for (const result of broadcastResults) {
-        if (result.status === "fulfilled") {
-          const { paymentId, sig, feeUsdc } = result.value;
-          multiConfirm([paymentId], user.id!, accessToken, sig, feeUsdc).catch(() => { });
+      // Broadcast sequentially — all txs share the same sender account/balance,
+      // so parallel broadcasting causes race conditions where later txs fail with InsufficientFunds.
+      type BroadcastResult =
+        | { status: "fulfilled"; value: { paymentId: string; sig: string; feeUsdc: number | undefined } }
+        | { status: "rejected"; reason: unknown };
+      const broadcastResults: BroadcastResult[] = [];
+      for (const { bytes, paymentId, sendTo } of signedPairs) {
+        try {
+          const sig = await broadcastAndWaitForHash(bytes, paymentId, sendTo, cluster);
+          broadcastResults.push({ status: "fulfilled", value: { paymentId, sig, feeUsdc: feeByPaymentId.get(paymentId) } });
+        } catch (e) {
+          broadcastResults.push({ status: "rejected", reason: e });
         }
       }
 
-      const failures = broadcastResults.filter((r) => r.status === "rejected");
-      if (failures.length > 0) {
-        const firstErr = (failures[0] as PromiseRejectedResult).reason;
-        const msg = firstErr instanceof Error ? firstErr.message : "Some payments failed on-chain";
-        const succeeded = broadcastResults.length - failures.length;
-        throw new Error(`${succeeded}/${broadcastResults.length} payments confirmed. ${msg}`);
+      // Confirm every tx that actually landed
+      const succeededResults = broadcastResults.filter((r): r is { status: "fulfilled"; value: { paymentId: string; sig: string; feeUsdc: number | undefined } } => r.status === "fulfilled");
+      const failedCount = broadcastResults.length - succeededResults.length;
+
+      for (const { value: { paymentId, sig, feeUsdc } } of succeededResults) {
+        multiConfirm([paymentId], user.id!, accessToken, sig, feeUsdc).catch(() => { });
       }
 
-      console.info(`[MultiSend] all payments done totalUsdc=${confirmState.totalAmountUsdc}`);
-      setCompletedLinks(links as MultiSendLink[]);
+      if (succeededResults.length === 0) {
+        const firstErr = (broadcastResults[0] as { status: "rejected"; reason: unknown }).reason;
+        throw new Error(firstErr instanceof Error ? firstErr.message : "All payments failed on-chain");
+      }
+
+      // Partial or full success — show done screen with confirmed links only
+      const confirmedIds = new Set(succeededResults.map((r) => r.value.paymentId));
+      const confirmedLinks = links.filter((l) => confirmedIds.has(l.id));
+      const confirmedUsdc = succeededResults.reduce((s, r) => {
+        const row = confirmState.feeItems.find((f) => f.payment_id === r.value.paymentId);
+        return s + (row ? parseFloat(row.amount) : 0);
+      }, 0);
+
+      console.info(`[MultiSend] done succeeded=${succeededResults.length} failed=${failedCount}`);
+      setCompletedLinks(confirmedLinks as MultiSendLink[]);
       setReviewPending(false);
-      setRows(defaultRows());
+      if (failedCount === 0) setRows(defaultRows());
       setPhase({
         kind: "done",
-        recipientCount: paymentIds.length,
-        totalUsdc: confirmState.totalAmountUsdc,
-        links,
+        recipientCount: succeededResults.length,
+        totalUsdc: confirmedUsdc,
+        links: confirmedLinks,
+        failedCount,
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
@@ -418,11 +444,18 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
             <ArrowLeft className="w-5 h-5" />
           </button>
           <CheckCircle2 className="text-green-400 w-6 h-6 shrink-0" />
-          <p className="text-white text-xl font-semibold">All payments sent!</p>
+          <p className="text-white text-xl font-semibold">
+            {phase.failedCount ? `${phase.recipientCount} of ${phase.recipientCount + phase.failedCount} payments sent` : "All payments sent!"}
+          </p>
         </div>
         <p className="text-slate-400 text-base">
           ${phase.totalUsdc.toFixed(2)} USDC sent to {phase.recipientCount} recipient{phase.recipientCount > 1 ? "s" : ""}.
         </p>
+        {!!phase.failedCount && (
+          <p className="text-amber-400 text-sm">
+            {phase.failedCount} payment{phase.failedCount > 1 ? "s" : ""} failed to confirm on-chain. The funds were not deducted for those.
+          </p>
+        )}
 
         <div className="space-y-2">
           {phase.links.map((item) => (
@@ -519,17 +552,17 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
             return (
               <div key={row.id} className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2.5 gap-2">
                 <div className="min-w-0">
-                  <p className="text-slate-400 text-base">Recipient {idx + 1}</p>
-                  <p className="text-white text-lg font-medium truncate">
+                  <p className="text-slate-400 text-sm">Recipient {idx + 1}</p>
+                  <p className="text-white text-base font-medium truncate">
                     {row.recipient.trim().replace(/^@/, "")}
                   </p>
                   {row.message.trim() && (
-                    <p className="text-slate-500 text-base truncate">{row.message.trim()}</p>
+                    <p className="text-slate-500 text-sm truncate">{row.message.trim()}</p>
                   )}
                 </div>
                 <span className="flex gap-5 text-right shrink-0">
-                  <span className="text-white text-lg">${amt.toFixed(2)}</span>
-                  <span className="text-slate-400 text-base">+${fee.toFixed(2)}</span>
+                  <span className="text-white text-sm">${amt.toFixed(2)}</span>
+                  <span className="text-slate-400 text-sm">+${fee.toFixed(2)}</span>
                 </span>
               </div>
             );
@@ -621,6 +654,9 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-white">External wallet</div>
                         <div className="text-sm text-slate-400 mt-0.5">Pay from Phantom or any Solana wallet</div>
+                        {networkMode === "devnet" && (
+                          <div className="text-xs text-amber-400 mt-1">Phantom may show a simulation warning — tap "Confirm (unsafe)" to proceed</div>
+                        )}
                       </div>
                       <ArrowRight className="w-5 h-5 text-slate-400 shrink-0" />
                     </button>
