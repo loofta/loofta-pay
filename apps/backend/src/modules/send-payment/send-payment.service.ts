@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { MAGICBLOCK_GAS_SOL, fetchSolPriceUsd, grossUpForMagicblockFee, decodeActualSenderDebit, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import { MAGICBLOCK_GAS_SOL, MAGICBLOCK_GAS_USDC, grossUpForMagicblockFee, decodeActualSenderDebit, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
@@ -130,22 +130,13 @@ export class SendPaymentService {
       ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
       : new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || this.usdcMint.toBase58());
 
-    // MagicBlock gasless: validator is fee payer, 0.002 SOL relay fee charged as USDC.
-    let solPriceUsd: number | null = null;
-    let solFeeUnits = 0;
-    try {
-      solPriceUsd = await fetchSolPriceUsd();
-      if (solPriceUsd !== null) {
-        solFeeUnits = Math.ceil(MAGICBLOCK_GAS_SOL * solPriceUsd * 1_000_000);
-      }
-    } catch (e) {
-      this.logger.warn(`[SendPayment] SOL price fetch failed: ${String(e)}`);
-    }
+    // MagicBlock gasless: flat 0.2 USDC relay fee charged via a prepended instruction.
+    const relayFeeUnits = Math.round(MAGICBLOCK_GAS_USDC * 1_000_000);
 
     const grossUnits = grossUpForMagicblockFee(baseUnits);
     this.logger.log(
-      `[SendPayment] amount=${amountUsd} grossUnits=${grossUnits} solFeeUnits=${solFeeUnits}` +
-      ` solPrice=${solPriceUsd ?? 'n/a'} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… (gasless)`,
+      `[SendPayment] amount=${amountUsd} grossUnits=${grossUnits} relayFeeUnits=${relayFeeUnits}` +
+      ` cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… (gasless)`,
     );
 
     const txResponse = await requestMagicblockPrivateTransfer({
@@ -159,17 +150,20 @@ export class SendPaymentService {
 
     const mbVolumeFeeUnits = grossUnits - baseUnits;
     const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, senderWallet.trim(), effectiveMint, this.connection);
-    const feeUnits = actualDebitUnits != null ? actualDebitUnits - baseUnits : mbVolumeFeeUnits + solFeeUnits;
-    this.logger.log(`[SendPayment] decoded debit=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits}`);
+    const estimatedFeeUnits = mbVolumeFeeUnits + relayFeeUnits;
+    const feeUnits = (actualDebitUnits != null && actualDebitUnits > baseUnits)
+      ? actualDebitUnits - baseUnits
+      : estimatedFeeUnits;
+    this.logger.log(`[SendPayment] decoded debit=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits} (${actualDebitUnits != null && actualDebitUnits > baseUnits ? 'decoded' : 'estimated'})`);
 
     return {
       ...txResponse,
       feeAmountUsdc: feeUnits / 1_000_000,
       feeBreakdown: {
         looftaBpsUsdc: mbVolumeFeeUnits / 1_000_000,
-        solRecoveryUsdc: solFeeUnits / 1_000_000,
+        solRecoveryUsdc: relayFeeUnits / 1_000_000,
         solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
-        solPriceUsd: solPriceUsd ?? 0,
+        solPriceUsd: 0,
       },
     };
   }

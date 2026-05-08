@@ -6,7 +6,7 @@ export interface ClaimEmailData {
   id: string;
   amount: string | number;
   description?: string | null;
-  senderUsername?: string | null;
+  senderInfo?: string | null;
   recipientEmail: string;
   scheduledAt?: string;
 }
@@ -23,7 +23,8 @@ export class EmailService {
       this.configService.get<string>('RESEND_FROM_EMAIL') || 'noreply@loofta.xyz';
     if (apiKey) {
       this.resend = new Resend(apiKey);
-      this.logger.log('EmailService initialized');
+  
+      this.logger.log('EmailService initialized', this.resend);
     } else {
       this.logger.warn('RESEND_API_KEY not set — emails will not be sent');
     }
@@ -76,8 +77,8 @@ export class EmailService {
   }
 
   private buildPaymentReceivedHtml(data: ClaimEmailData & { amountStr: string; claimUrl: string }): string {
-    const fromLine = data.senderUsername
-      ? `<p style="margin:0 0 8px;color:#6B7280;font-size:15px;">From <strong style="color:#111827;">@${data.senderUsername}</strong></p>`
+    const fromLine = data.senderInfo
+      ? `<p style="margin:0 0 8px;color:#6B7280;font-size:15px;">From <strong style="color:#111827;">${data.senderInfo}</strong></p>`
       : '';
     const descLine = data.description
       ? `<p style="margin:16px 0 0;padding:14px 18px;background:#F9FAFB;border-radius:8px;color:#374151;font-size:14px;font-style:italic;">"${data.description}"</p>`
@@ -142,8 +143,8 @@ export class EmailService {
   }
 
   private buildClaimReadyHtml(data: ClaimEmailData & { amountStr: string; claimUrl: string }): string {
-    const fromLine = data.senderUsername
-      ? `<p style="margin:0 0 8px;color:#6B7280;font-size:15px;">From <strong style="color:#111827;">@${data.senderUsername}</strong></p>`
+    const fromLine = data.senderInfo
+      ? `<p style="margin:0 0 8px;color:#6B7280;font-size:15px;">From <strong style="color:#111827;">${data.senderInfo}</strong></p>`
       : '<p style="margin:0 0 8px;color:#6B7280;font-size:15px;">Someone sent you a payment on Loofta</p>';
     const descLine = data.description
       ? `<p style="margin:16px 0 0;padding:14px 18px;background:#F9FAFB;border-radius:8px;color:#374151;font-size:14px;font-style:italic;">"${data.description}"</p>`

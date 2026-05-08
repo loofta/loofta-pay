@@ -194,7 +194,4 @@ export const paymentsApi = {
   // Status
   getStatus,
   pollStatus,
-  // Rhinestone
-  checkRhinestoneEligibility,
-  getRhinestoneChains,
 };

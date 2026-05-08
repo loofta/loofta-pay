@@ -19,6 +19,7 @@ const log = new Logger('MagicblockPrivateTransfer');
  */
 export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // deducted from USDC amount by MagicBlock
 export const MAGICBLOCK_GAS_SOL = 0.002;     // actual MagicBlock SOL charge (documented)
+export const MAGICBLOCK_GAS_USDC = 0.2;      // flat USDC relay fee charged by MagicBlock (200_000 units)
 export const MAGICBLOCK_MIN_SENDER_SOL = 0.003; // top-up target: 0.002 MB fee + tx fees + buffer
 /** Cache TTL: 60 seconds. */
 const SOL_PRICE_CACHE_TTL_MS = 60_000;
@@ -37,18 +38,18 @@ export async function fetchSolPriceUsd(): Promise<number | null> {
     return _solPriceCached;
   }
 
-  // 1. Jupiter API (authenticated)
+  // 1. Jupiter API v3 (authenticated)
   const jupKey = process.env.JUPITER_API_KEY ?? process.env.NEXT_PUBLIC_JUPITER_API_KEY;
   try {
     const res = await fetch(
-      'https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112',
+      'https://api.jup.ag/price/v3?ids=So11111111111111111111111111111111111111112',
       {
         signal: AbortSignal.timeout(3_000),
-        headers: jupKey ? { Authorization: `Bearer ${jupKey}` } : {},
+        headers: jupKey ? { 'x-api-key': jupKey } : {},
       },
     );
-    const data = await res.json() as { data?: { So11111111111111111111111111111111111111112?: { price?: string } } };
-    const price = Number(data?.data?.['So11111111111111111111111111111111111111112']?.price);
+    const data = await res.json() as { So11111111111111111111111111111111111111112?: { usdPrice?: number } };
+    const price = Number(data?.['So11111111111111111111111111111111111111112']?.usdPrice);
     if (Number.isFinite(price) && price > 0) {
       _solPriceCached = price;
       _solPriceCachedAt = now;

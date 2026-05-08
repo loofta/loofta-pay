@@ -386,51 +386,21 @@ function getPhantomProvider(): { connect: () => Promise<{ publicKey: PublicKey }
 const DEMO_MODE = isDemoMode();
 
 async function fetchClaim(id: string, authToken?: string | null) {
-  // Try backend API first (more reliable for newly created claims)
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
   const authHeaders: Record<string, string> = authToken ? { Authorization: `Bearer ${authToken}` } : {};
-  try {
-    const r = await fetch(`${backendUrl}/claims/${id}/latest-intent`, { headers: authHeaders });
-    if (r.ok) {
-      const data = await r.json();
-      const c = data.claim || {};
-      console.log("[fetchClaim] From backend:", {
-        claimId: id,
-        hasBurner: !!c.claim_burner_address,
-        isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
-      });
-      return {
-        claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean },
-        latestIntent: data.intent ? {
-          depositAddress: data.intent.deposit_address || null,
-          memo: data.intent.memo ?? null,
-          deadline: data.intent.deadline || null,
-          timeEstimate: typeof data.intent.time_estimate === "number" ? data.intent.time_estimate : null,
-          quoteId: data.intent.quote_id || null,
-          status: data.intent.status || null,
-          depositReceivedAt: data.intent.deposit_received_at || null,
-        } : null,
-      };
-    }
-  } catch (e) {
-    console.warn("[fetchClaim] Backend API failed, trying frontend API:", e);
-  }
-
-  // Fallback to frontend API route
-  const r = await fetch(`/api/claims/${id}`);
+  const r = await fetch(`/api/claims/${id}`, { headers: authHeaders });
   if (!r.ok) {
     const errorData = await r.json().catch(() => ({}));
     throw new Error(errorData?.error || errorData?.message || "Claim not found");
   }
   const data = await r.json();
   const c = data.claim || {};
-  console.log("[fetchClaim] From frontend API:", {
+  console.log("[fetchClaim]", {
     claimId: id,
     hasBurner: !!c.claim_burner_address,
     isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
-    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient" },
+    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -727,6 +697,16 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const claimData = claimQuery.data as any;
   const claim = claimData?.claim;
   const loadingClaim = claimQuery.isLoading;
+  /** The network this claim was created on, derived from is_devnet once the claim has loaded. */
+  const claimExpectedNetwork: "devnet" | "mainnet" | null = (() => {
+    if (!claim) return null;
+    const isDevnet = (claim as { is_devnet?: boolean }).is_devnet;
+    if (isDevnet === true) return "devnet";
+    if (isDevnet === false) return "mainnet";
+    return null;
+  })();
+  /** True when the user's active network doesn't match the claim's network — blocks payment to prevent wrong-chain submission. */
+  const isWrongNetwork = claimExpectedNetwork !== null && networkMode !== claimExpectedNetwork;
   // Extract latest intent from claim query (merged into main GET endpoint)
   const latestIntentData = useMemo(() => {
     return claimData?.latestIntent || null;
@@ -801,8 +781,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     const net = Math.round(usd * 1_000_000);
     const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
     const mbFee = (mbGross - net) / 1_000_000;
-    const gasFee = solPrice > 0 ? 0.002 * solPrice : 0.30;
-    // Round total fee up to nearest $0.01 so estimate is always on the high side
+    const gasFee = 0.20; // flat USDC relay fee charged by MagicBlock
     const feeEstimate = Math.ceil((mbFee + gasFee) * 100) / 100;
     return { total: usd + feeEstimate, protocolFee: mbFee, gasFee, feeEstimate };
   };
@@ -3393,6 +3372,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <a href="/app/waitlist" className="underline underline-offset-2 hover:text-amber-200">mainnet beta access</a>.
                     </div>
                   )}
+                  {isWrongNetwork && claimExpectedNetwork && (
+                    <div className="mt-4 p-3 rounded-xl bg-orange-500/10 border border-orange-500/20 text-sm text-orange-400 text-center">
+                      This payment link was created on <strong>{claimExpectedNetwork}</strong>. Switch your network to <strong>{claimExpectedNetwork}</strong> to pay.
+                    </div>
+                  )}
 
                   <div className="mt-4 flex gap-3">
                     {DEMO_MODE ? (
@@ -3422,18 +3406,20 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                 ? true
                                 : mainnetViewOnly
                                   ? true
-                                  : claimAmountUSD < 5
+                                  : isWrongNetwork
                                     ? true
-                                    : requiresPrivate && !isPrivateMode
+                                    : claimAmountUSD < 5
                                       ? true
-                                      : !authenticated
-                                        ? false
-                                        : !isPayerWalletReady || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS"
+                                      : requiresPrivate && !isPrivateMode
+                                        ? true
+                                        : !authenticated
+                                          ? false
+                                          : !isPayerWalletReady || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS"
                             }
                             loading={preparing || (authenticated && !isPayerWalletReady)}
                             loadingText="Wallet loading…"
                           >
-                            {isCrossChainSelected ? "Coming soon in beta" : !authenticated ? "Sign in to pay" : "Pay now"}
+                            {isCrossChainSelected ? "Coming soon in beta" : isWrongNetwork && claimExpectedNetwork ? `Switch to ${claimExpectedNetwork}` : !authenticated ? "Sign in to pay" : "Pay now"}
                           </GradientActionButton>
                         );
                       })()}
