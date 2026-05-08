@@ -615,6 +615,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
   const networkMode = useAuthStore((s) => s.networkMode);
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
+  const isOnboardingOpen = useAuthStore((s) => s.isOnboardingOpen);
   const [hasMainnetAccess, setHasMainnetAccess] = useState(false);
   const [mainnetAccessChecked, setMainnetAccessChecked] = useState(false);
   useEffect(() => {
@@ -716,13 +717,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // user's active network. Both deps are intentional: networkMode can update after Privy
   // resolves the user's saved preference, which may arrive after the claim API response.
   // The ref prevents the modal from re-opening after the user has already handled it.
+  // Wait for the onboarding modal to close first to avoid Radix focus-trap conflicts.
   useEffect(() => {
     if (!claimExpectedNetwork) return;
     if (networkMismatchHandledRef.current) return;
     if (networkMode === claimExpectedNetwork) return;
+    if (isOnboardingOpen) return;
     networkMismatchHandledRef.current = true;
     setShowNetworkSwitchPrompt(true);
-  }, [claimExpectedNetwork, networkMode]);
+  }, [claimExpectedNetwork, networkMode, isOnboardingOpen]);
 
   // Extract latest intent from claim query (merged into main GET endpoint)
   const latestIntentData = useMemo(() => {

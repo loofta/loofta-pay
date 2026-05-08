@@ -384,17 +384,18 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+        className="fixed inset-0 z-[100] flex flex-col sm:flex-row sm:items-center sm:justify-center sm:p-4 bg-black/80 backdrop-blur-sm"
       >
         <motion.div
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          exit={{ scale: 0.9, opacity: 0 }}
-          className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden"
+          initial={{ y: "100%", opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: "100%", opacity: 0 }}
+          transition={{ type: "spring", stiffness: 300, damping: 30 }}
+          className="bg-[#0f0f12] border-t border-white/10 sm:border sm:rounded-2xl w-full sm:max-w-sm shadow-2xl flex flex-col flex-1 sm:flex-none overflow-hidden"
         >
           {/* Add email step (before main onboarding) */}
           {showAddEmailStep && (
-            <div className="p-5 space-y-5">
+            <div className="p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] space-y-5 flex-1 flex flex-col justify-center">
               <div className="text-center">
                 <h2 className="text-xl font-medium font-sans text-white mb-1">Add a second sign-in method</h2>
                 <p className="text-md text-slate-400">
@@ -452,7 +453,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
               </div>
 
               {/* Content */}
-              <div className="relative h-[320px] overflow-hidden">
+              <div className="relative flex-1 min-h-[260px] sm:h-[320px] sm:flex-none overflow-hidden">
                 {/* Step 0: Welcome */}
                 <AnimatePresence mode="wait">
                   {step === 0 && (
@@ -769,7 +770,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
               </div>
 
               {/* Footer buttons */}
-              <div className="p-4 pt-3 border-t border-white/10">
+              <div className="p-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-white/10">
                 <div className="flex flex-col gap-2">
                   {step > 0 && (
                     <button

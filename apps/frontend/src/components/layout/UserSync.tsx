@@ -17,6 +17,7 @@ export function UserSync() {
   const username = useAuthStore((s) => s.username ?? null);
   const setUsername = useAuthStore((s) => s.setUsername);
   const setAuth = useAuthStore((s) => s.setAuth);
+  const setIsOnboardingOpen = useAuthStore((s) => s.setIsOnboardingOpen);
   const [showUsernameModal, setShowUsernameModal] = useState(false);
   const [showWelcomeOnboarding, setShowWelcomeOnboarding] = useState(false);
   /** Avoid re-opening welcome modal when Privy refreshes `user` (fixes flicker / “stuck” after skip). */
@@ -98,7 +99,10 @@ export function UserSync() {
         if (welcomeDismissedRef.current) return;
 
         timer = setTimeout(() => {
-          if (!cancelled && !welcomeDismissedRef.current) setShowWelcomeOnboarding(true);
+          if (!cancelled && !welcomeDismissedRef.current) {
+            setShowWelcomeOnboarding(true);
+            setIsOnboardingOpen(true);
+          }
         }, 600);
       } catch (error) {
         console.error("[UserSync] Error checking onboarding:", error);
@@ -153,6 +157,7 @@ export function UserSync() {
               }
             }
             setShowWelcomeOnboarding(false);
+            setIsOnboardingOpen(false);
             queueMicrotask(() => {
               void refreshUser();
             });
