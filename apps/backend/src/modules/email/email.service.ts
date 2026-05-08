@@ -98,7 +98,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="background:linear-gradient(135deg,#FF4A26,#FF8C00);padding:32px 40px 28px;text-align:center;">
-              <img src="https://pay.loofta.xyz/loofta_white.svg" alt="Loofta" width="134" height="38" style="display:block;border:0;" />
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;" />
             </td>
           </tr>
           <!-- Body -->
@@ -162,7 +162,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="background:linear-gradient(135deg,#FF4A26,#FF8C00);padding:32px 40px 28px;text-align:center;">
-              <img src="https://pay.loofta.xyz/loofta_white.svg" alt="Loofta" width="134" height="38" style="display:block;border:0;" />
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;" />
             </td>
           </tr>
           <!-- Body -->
