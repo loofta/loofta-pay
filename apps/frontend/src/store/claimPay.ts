@@ -19,6 +19,7 @@ type ClaimUiState = {
       deposit?: StoredDeposit | null;
       status?: string | null;
       refundAddress?: string | null;
+      claimed?: boolean;
       updatedAt?: number;
     }
   >;
@@ -26,6 +27,7 @@ type ClaimUiState = {
   setDeposit: (claimId: string, dep: StoredDeposit | null) => void;
   setStatus: (claimId: string, status: string | null) => void;
   setRefundAddress: (claimId: string, address: string | null) => void;
+  setClaimed: (claimId: string, claimed: boolean) => void;
   clear: (claimId: string) => void;
 };
 
@@ -48,6 +50,10 @@ export const useClaimPayStore = create<ClaimUiState>()(
       setRefundAddress: (claimId, address) =>
         set((s) => ({
           byId: { ...s.byId, [claimId]: { ...(s.byId[claimId] || {}), refundAddress: address, updatedAt: Date.now() } },
+        })),
+      setClaimed: (claimId, claimed) =>
+        set((s) => ({
+          byId: { ...s.byId, [claimId]: { ...(s.byId[claimId] || {}), claimed, updatedAt: Date.now() } },
         })),
       clear: (claimId) =>
         set((s) => {
