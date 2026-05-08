@@ -7,10 +7,12 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
+import { useMultiSendStore } from "@/store/multiSend";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SendFlowInApp } from "@/components/app/SendFlowInApp";
+import { MultiSendFlow } from "@/components/app/MultiSendFlow";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { motion, AnimatePresence } from "framer-motion";
 import { AtSign, LinkIcon, Mail, PlusIcon } from "lucide-react";
@@ -63,6 +65,7 @@ export default function Home() {
     if (searchParams.get("create") === "1") {
       setActiveTabState("receive");
       setShowClaimOverlay(true);
+      requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
     }
   }, [searchParams]);
 
@@ -77,6 +80,7 @@ export default function Home() {
   const [selectedRecipient, setSelectedRecipient] = useState<string | null>(null);
   const [sendStep, setSendStep] = useState<1 | 2 | 3>(1);
   const [claimId, setClaimId] = useState<string | null>(null);
+  const { showMultiSend, setShowMultiSend } = useMultiSendStore();
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [dropdownClosed, setDropdownClosed] = useState(false);
@@ -319,6 +323,7 @@ export default function Home() {
     }
     setSelectedRecipient(resolvedUsername);
     setSendStep(2);
+    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
   };
 
   return (
@@ -333,7 +338,9 @@ export default function Home() {
 
           {activeTab === "send" && (
             <>
-              {sendStep === 3 && claimId ? (
+              {showMultiSend ? (
+                <MultiSendFlow onBack={() => { setShowMultiSend(false); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }} />
+              ) : sendStep === 3 && claimId ? (
                 <div className="space-y-4 rounded-2xl border border-white/10 bg-white/5 p-6 text-white">
                   <div className="flex items-center justify-between">
                     <button
@@ -363,6 +370,7 @@ export default function Home() {
                   onBack={() => {
                     setSelectedRecipient(null);
                     setSendStep(1);
+                    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
                   }}
                   onClaimCreated={(id) => {
                     router.push(`/c/${id}`);
@@ -372,7 +380,16 @@ export default function Home() {
                 <>
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
                     <div ref={wrapperRef} className="relative">
-                      <Label className="text-slate-300 text-xl font-sans font-medium mb-5">Send</Label>
+                      <div className="flex items-center justify-between mb-5">
+                        <Label className="text-slate-300 text-xl font-sans font-medium">Send</Label>
+                        <button
+                          type="button"
+                          onClick={() => { setShowMultiSend(true); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
+                          className="text-slate-500 hover:text-slate-300 text-sm font-medium transition-colors"
+                        >
+                          Try multi send
+                        </button>
+                      </div>
 
                       <div className="rounded-2xl mt-3 mb-6">
                         <span
@@ -484,7 +501,7 @@ export default function Home() {
                 <>
                   <button
                     type="button"
-                    onClick={() => setShowClaimOverlay(false)}
+                    onClick={() => { setShowClaimOverlay(false); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
                     className="flex items-center gap-2 text-slate-300 hover:text-white text-sm font-medium"
                   >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -560,7 +577,7 @@ export default function Home() {
                     </p>
                     <Button
                       type="button"
-                      onClick={() => setShowClaimOverlay(true)}
+                      onClick={() => { setShowClaimOverlay(true); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
                       className="w-full h-11 rounded-xl text-base font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 border-0"
                     >
                       Create new payment link

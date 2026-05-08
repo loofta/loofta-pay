@@ -46,6 +46,14 @@ export class AdminWaitlistController {
     return this.waitlistService.setAccess(id, body.grant);
   }
 
+  @Post(':id/resend-email')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Resend beta access email by entry ID' })
+  @ApiParam({ name: 'id', description: 'Waitlist entry UUID' })
+  async resendEmail(@Param('id') id: string) {
+    return this.waitlistService.resendBetaAccessEmail(id);
+  }
+
   @Post('grant-by-email')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Grant mainnet access by email address' })

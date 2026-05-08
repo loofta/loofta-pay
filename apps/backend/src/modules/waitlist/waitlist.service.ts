@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
+import { EmailService } from '../email/email.service';
 
 const VALID_SORT_COLS = new Set([
   'created_at', 'display_name', 'email', 'occupation', 'payment_volume', 'mainnet_access',
@@ -17,7 +18,10 @@ export interface WaitlistListOptions {
 
 @Injectable()
 export class WaitlistService {
-  constructor(private readonly supabase: SupabaseService) {}
+  constructor(
+    private readonly supabase: SupabaseService,
+    private readonly emailService: EmailService,
+  ) {}
 
   async findAll(opts: WaitlistListOptions = {}) {
     const page = Math.max(1, opts.page ?? 1);
@@ -50,11 +54,36 @@ export class WaitlistService {
   }
 
   async setAccess(id: string, grant: boolean) {
+    const { data: entry, error: fetchError } = await this.supabase.mainnetWaitlist
+      .select('email')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchError) throw new Error(fetchError.message);
+
     const { error } = await this.supabase.mainnetWaitlist
       .update({ mainnet_access: grant })
       .eq('id', id);
 
     if (error) throw new Error(error.message);
+
+    if (grant && entry?.email) {
+      await this.emailService.sendBetaAccessEmail(entry.email as string);
+    }
+
+    return { ok: true };
+  }
+
+  async resendBetaAccessEmail(id: string) {
+    const { data: entry, error } = await this.supabase.mainnetWaitlist
+      .select('email')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    if (!entry?.email) throw new NotFoundException(`No email found for waitlist entry: ${id}`);
+
+    await this.emailService.sendBetaAccessEmail(entry.email as string);
     return { ok: true };
   }
 
@@ -89,6 +118,8 @@ export class WaitlistService {
 
       if (insertError) throw new Error(insertError.message);
     }
+
+    await this.emailService.sendBetaAccessEmail(normalised);
 
     return { ok: true };
   }

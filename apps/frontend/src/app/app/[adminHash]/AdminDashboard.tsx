@@ -477,6 +477,7 @@ export default function AdminDashboard() {
   const [waitlistSortCol, setWaitlistSortCol] = useState("created_at");
   const [waitlistSortDir, setWaitlistSortDir] = useState<"asc" | "desc">("desc");
   const [grantingAccess, setGrantingAccess] = useState<string | null>(null);
+  const [resendingEmail, setResendingEmail] = useState<string | null>(null);
   const [grantEmailInput, setGrantEmailInput] = useState("");
   const [grantingByEmail, setGrantingByEmail] = useState(false);
 
@@ -626,6 +627,23 @@ export default function AdminDashboard() {
       toast({ variant: "destructive", title: "Failed", description: err.message });
     } finally {
       setGrantingAccess(null);
+    }
+  }, [authHeaders, toast]);
+
+  // ── Resend beta access email ─────────────────────────────────────────────────
+  const resendBetaEmail = useCallback(async (id: string) => {
+    setResendingEmail(id);
+    try {
+      const res = await fetch(`/api/admin/waitlist/${id}/resend-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      toast({ title: "Beta access email resent" });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Failed to resend", description: err.message });
+    } finally {
+      setResendingEmail(null);
     }
   }, [authHeaders, toast]);
 
@@ -902,18 +920,38 @@ export default function AdminDashboard() {
                       <td className="px-4 py-2.5 font-mono text-gray-500 max-w-[120px] truncate" title={e.privy_user_id}>{e.privy_user_id || "—"}</td>
                       <td className="px-4 py-2.5 text-gray-500 tabular-nums whitespace-nowrap">{new Date(e.created_at).toLocaleDateString()}</td>
                       <td className="px-4 py-2.5">
-                        <button
-                          type="button"
-                          disabled={grantingAccess === e.id}
-                          onClick={() => grantWaitlistAccess(e.id, !e.mainnet_access)}
-                          className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-50 ${
-                            e.mainnet_access
-                              ? "bg-green-900/60 text-green-400 hover:bg-green-900"
-                              : "bg-gray-800 text-gray-500 hover:bg-gray-700 hover:text-gray-300"
-                          }`}
-                        >
-                          {grantingAccess === e.id ? "…" : e.mainnet_access ? "Granted" : "Grant"}
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          {e.mainnet_access ? (
+                            <button
+                              type="button"
+                              disabled={grantingAccess === e.id}
+                              onClick={() => grantWaitlistAccess(e.id, false)}
+                              className="group px-2.5 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-50 bg-green-900/60 text-green-400 hover:bg-red-900/60 hover:text-red-400"
+                            >
+                              {grantingAccess === e.id ? "…" : <><span className="group-hover:hidden">Granted</span><span className="hidden group-hover:inline">Revoke</span></>}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={grantingAccess === e.id}
+                              onClick={() => grantWaitlistAccess(e.id, true)}
+                              className="px-2.5 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-50 bg-gray-800 text-gray-500 hover:bg-gray-700 hover:text-gray-300"
+                            >
+                              {grantingAccess === e.id ? "…" : "Grant"}
+                            </button>
+                          )}
+                          {e.mainnet_access && e.email && (
+                            <button
+                              type="button"
+                              disabled={resendingEmail === e.id}
+                              onClick={() => resendBetaEmail(e.id)}
+                              className="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-50"
+                              title="Resend beta access email"
+                            >
+                              {resendingEmail === e.id ? "…" : "✉︎"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
