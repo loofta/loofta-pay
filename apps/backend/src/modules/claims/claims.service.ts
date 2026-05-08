@@ -2055,7 +2055,7 @@ export class ClaimsService {
 
     const isUnregistered = this.isPendingRecipientAddress(row.recipient_address as string);
     const isDev = this.configService.get<string>('NODE_ENV') === 'development';
-    const delayMs = isDev ? 0 : (isUnregistered ? 15 * 60 * 1000 : 5 * 60 * 1000);
+    const delayMs = isDev ? 0 : 15 * 60 * 1000;
     const scheduledAt = delayMs > 0 ? new Date(Date.now() + delayMs).toISOString() : undefined;
 
     const emailData = {
