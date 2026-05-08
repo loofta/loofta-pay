@@ -874,13 +874,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       queryClient.setQueryData(["claim", id, "recipient-check", user?.id], { isRecipient: true });
       queryClient.invalidateQueries({ queryKey: ["claim", id] });
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
-      // Wait for RPC to index the sweep tx before refetching balance.
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
-        queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
-        queryClient.refetchQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
-        queryClient.refetchQueries({ queryKey: ["solanaPaymentBalance"] });
-      }, 2000);
+      // Retry balance refresh 5× at 2s intervals — RPC indexing can lag after sweep.
+      for (let i = 1; i <= 5; i++) {
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+          queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
+          queryClient.refetchQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+          queryClient.refetchQueries({ queryKey: ["solanaPaymentBalance"] });
+        }, i * 2000);
+      }
     },
     onError: (error: unknown) => {
       const message = error instanceof Error ? error.message : "Claim failed";
