@@ -1051,7 +1051,9 @@ export class SendPaymentService {
       }
       if (!email) continue;
       const claimUrl = `${this.baseUrl}/c/${row.id}`;
-      const emailData = { id: row.id, amount: String(row.amount), description: (row.description as string | null) ?? undefined, recipientEmail: email, claimUrl };
+      const isDev = this.configService.get<string>('NODE_ENV') === 'development';
+      const scheduledAt = isDev ? undefined : new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      const emailData = { id: row.id, amount: String(row.amount), description: (row.description as string | null) ?? undefined, recipientEmail: email, claimUrl, scheduledAt };
       if (row.recipient_was_unregistered) {
         this.emailService.sendClaimReadyEmail(emailData).catch((e: unknown) =>
           this.logger.warn(`[MultiSend] sendClaimReadyEmail failed for ${email}: ${String(e)}`));
