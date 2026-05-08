@@ -8,7 +8,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/history",
     "/settings",
     "/claim",
-    "/lottery",
   ];
   const now = new Date();
   return urls.map((path) => ({

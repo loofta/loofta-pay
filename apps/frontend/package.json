@@ -12,7 +12,6 @@
     "postinstall": "mkdir -p node_modules/@lightprotocol/hasher.rs/dist/browser-fat/es && (test -f node_modules/@lightprotocol/hasher.rs/dist/hasher_wasm_simd_bg.wasm && cp node_modules/@lightprotocol/hasher.rs/dist/hasher_wasm_simd_bg.wasm node_modules/@lightprotocol/hasher.rs/dist/browser-fat/es/ || true) && (test -f node_modules/@lightprotocol/hasher.rs/dist/light_wasm_hasher_bg.wasm && cp node_modules/@lightprotocol/hasher.rs/dist/light_wasm_hasher_bg.wasm node_modules/@lightprotocol/hasher.rs/dist/browser-fat/es/ || true)"
   },
   "dependencies": {
-    "@biconomy/abstractjs": "^1.1.18",
     "@coral-xyz/anchor": "^0.32.1",
     "@defuse-protocol/one-click-sdk-typescript": "0.1.1",
     "@duneanalytics/client-sdk": "^0.2.5",
@@ -39,8 +38,6 @@
     "@radix-ui/react-tabs": "^1.1.0",
     "@radix-ui/react-toast": "^1.2.1",
     "@radix-ui/react-tooltip": "^1.1.2",
-    "@rhinestone/module-sdk": "^0.4.0",
-    "@rhinestone/sdk": "^1.0.34",
     "@solana-program/memo": "^0.8.0",
     "@solana-program/system": "^0.7.0",
     "@solana-program/token": "^0.5.1",

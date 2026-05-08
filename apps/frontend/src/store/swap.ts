@@ -6,12 +6,12 @@ type SwapState = {
 	fromSel: TokenSelection | null;
 	toSel: TokenSelection | null;
 	amount: string;
-	provider: "near-intents" | "biconomy";
+	provider: "near-intents" | "evm";
 	hydrated: boolean;
 	setFromSel: (s: TokenSelection | null) => void;
 	setToSel: (s: TokenSelection | null) => void;
 	setAmount: (a: string) => void;
-	setProvider: (p: "near-intents" | "biconomy") => void;
+	setProvider: (p: "near-intents" | "evm") => void;
 	setHydrated: (h: boolean) => void;
 	reset: () => void;
 };

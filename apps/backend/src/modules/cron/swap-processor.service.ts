@@ -3,10 +3,8 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { RedisService } from '@/redis/redis.service';
 import { SupabaseService } from '@/database/supabase.service';
-import { privateKeyToAccount } from 'viem/accounts';
-import { createPublicClient, http, formatEther, formatUnits, encodeFunctionData, erc20Abi, Address } from 'viem';
+leimport { createPublicClient, http, formatEther, formatUnits, erc20Abi, Address } from 'viem';
 import { mainnet, base, optimism, arbitrum, polygon } from 'viem/chains';
-import { RhinestoneSDK } from '@rhinestone/sdk';
 
 // Redis keys for claims
 const SWAP_COMPANION_PREFIX = 'claim:swap:';
@@ -102,7 +100,6 @@ export interface SwapProcessingResult {
 export class SwapProcessorService {
   private readonly logger = new Logger(SwapProcessorService.name);
   private isProcessing = false;
-  private readonly rhinestoneApiKey: string;
   private readonly feePercent: number;
 
   constructor(
@@ -110,7 +107,6 @@ export class SwapProcessorService {
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
   ) {
-    this.rhinestoneApiKey = this.configService.get<string>('RHINESTONE_API_KEY', '');
     this.feePercent = this.configService.get<number>('LOOFTA_FEE_PERCENT', 0.01);
   }
 
@@ -142,16 +138,6 @@ export class SwapProcessorService {
     } catch (e: any) {
       this.logger.error('expireOpenPayments error:', e?.message);
     }
-  }
-
-  /**
-   * Get SDK instance
-   */
-  private getSDK(): RhinestoneSDK {
-    if (!this.rhinestoneApiKey) {
-      throw new Error('Missing RHINESTONE_API_KEY');
-    }
-    return new RhinestoneSDK({ apiKey: this.rhinestoneApiKey });
   }
 
   /**
@@ -366,160 +352,15 @@ export class SwapProcessorService {
   }
 
   /**
-   * Execute swap and transfer via Rhinestone
+   * Execute swap and transfer (EVM companion swaps no longer supported)
    */
-  private async executeSwapAndTransfer(data: SwapCompanionData): Promise<{
+  private async executeSwapAndTransfer(_data: SwapCompanionData): Promise<{
     success: boolean;
     swapTxHash?: string;
     transferTxHash?: string;
     error?: string;
   }> {
-    try {
-      const sdk = this.getSDK() as any;
-      const account = privateKeyToAccount(data.companionPrivateKey as `0x${string}`);
-
-      // Get companion account
-      const companionAccount = await sdk.getCompanionAccount({
-        signerAddress: account.address,
-        chainId: data.chainId,
-      });
-
-      // Check balance
-      const balance = await this.getTokenBalance(data.companionAddress, data.fromToken, data.chainId);
-
-      if (balance.raw === BigInt(0)) {
-        return { success: false, error: 'No balance received' };
-      }
-
-      // Calculate amounts
-      const feeAmount = (balance.raw * BigInt(Math.floor(this.feePercent * 10000))) / BigInt(10000);
-      const amountAfterFee = balance.raw - feeAmount;
-
-      // Same token - direct transfer
-      if (data.fromToken === data.toToken) {
-        const calls: any[] = [];
-
-        if (data.fromToken === 'ETH') {
-          calls.push({
-            to: data.recipientAddress,
-            value: amountAfterFee,
-            data: '0x',
-          });
-
-          if (feeAmount > BigInt(0)) {
-            calls.push({
-              to: data.feeRecipient,
-              value: feeAmount,
-              data: '0x',
-            });
-          }
-        } else {
-          const tokenAddress = TOKEN_ADDRESSES[data.chainId]?.[data.fromToken];
-          if (!tokenAddress) {
-            return { success: false, error: `Token address not found for ${data.fromToken}` };
-          }
-
-          calls.push({
-            to: tokenAddress,
-            value: BigInt(0),
-            data: encodeFunctionData({
-              abi: erc20Abi,
-              functionName: 'transfer',
-              args: [data.recipientAddress as Address, amountAfterFee],
-            }),
-          });
-
-          if (feeAmount > BigInt(0)) {
-            calls.push({
-              to: tokenAddress,
-              value: BigInt(0),
-              data: encodeFunctionData({
-                abi: erc20Abi,
-                functionName: 'transfer',
-                args: [data.feeRecipient as Address, feeAmount],
-              }),
-            });
-          }
-        }
-
-        const chain = CHAIN_CONFIGS[data.chainId];
-        const orchestrator = await sdk.getOrchestrator({ chainId: data.chainId });
-        const bundle = await orchestrator.encodeExecutionBundle({
-          account: companionAccount,
-          calls,
-          signer: account,
-        });
-
-        const txHash = await orchestrator.sendTransaction(bundle);
-
-        return { success: true, transferTxHash: txHash };
-      }
-
-      // Different tokens - swap via Rhinestone
-
-      try {
-        const swapResult = await sdk.swap({
-          account: companionAccount,
-          chainId: data.chainId,
-          fromToken: data.fromToken === 'ETH' ? 'native' : (TOKEN_ADDRESSES[data.chainId]?.[data.fromToken] || ''),
-          toToken: data.toToken === 'ETH' ? 'native' : (TOKEN_ADDRESSES[data.chainId]?.[data.toToken] || ''),
-          amount: amountAfterFee.toString(),
-          recipient: data.recipientAddress as Address,
-          signer: account,
-        });
-
-        return {
-          success: true,
-          swapTxHash: swapResult.txHash,
-          transferTxHash: swapResult.txHash,
-        };
-      } catch (swapError: any) {
-        this.logger.error(`Swap error: ${swapError?.message}`);
-
-        // Fallback: refund original token
-        const calls: any[] = [];
-
-        if (data.fromToken === 'ETH') {
-          calls.push({
-            to: data.recipientAddress,
-            value: amountAfterFee,
-            data: '0x',
-          });
-        } else {
-          const tokenAddress = TOKEN_ADDRESSES[data.chainId]?.[data.fromToken];
-          if (tokenAddress) {
-            calls.push({
-              to: tokenAddress,
-              value: BigInt(0),
-              data: encodeFunctionData({
-                abi: erc20Abi,
-                functionName: 'transfer',
-                args: [data.recipientAddress as Address, amountAfterFee],
-              }),
-            });
-          }
-        }
-
-        const orchestrator = await sdk.getOrchestrator({ chainId: data.chainId });
-        const bundle = await orchestrator.encodeExecutionBundle({
-          account: companionAccount,
-          calls,
-          signer: account,
-        });
-
-        const refundTxHash = await orchestrator.sendTransaction(bundle);
-
-        return {
-          success: false,
-          transferTxHash: refundTxHash,
-          error: `Swap failed: ${swapError?.message}. Refunded original token.`,
-        };
-      }
-
-    } catch (e: any) {
-      this.logger.error(`Execute error: ${e?.message}`);
-      return { success: false, error: e?.message };
-    }
+    return { success: false, error: 'EVM companion swaps are no longer supported' };
   }
 
   /**

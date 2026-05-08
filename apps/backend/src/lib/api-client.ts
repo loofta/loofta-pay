@@ -169,11 +169,9 @@ class ApiClient {
 
     status: (params: {
       depositAddress?: string;
-      rhinestoneId?: string;
     }) => {
       const searchParams = new URLSearchParams();
       if (params.depositAddress) searchParams.set('depositAddress', params.depositAddress);
-      if (params.rhinestoneId) searchParams.set('rhinestoneId', params.rhinestoneId);
       return this.request<{
         provider: string;
         status: string;
@@ -181,50 +179,6 @@ class ApiClient {
         txHash?: string;
       }>('GET', `/intents/status?${searchParams.toString()}`);
     },
-
-    rhinestone: {
-      eligibility: (fromChain: string, toChain: string, fromSymbol?: string, toSymbol?: string) => {
-        const params = new URLSearchParams({ fromChain, toChain });
-        if (fromSymbol) params.set('fromSymbol', fromSymbol);
-        if (toSymbol) params.set('toSymbol', toSymbol);
-        return this.request<{ eligible: boolean; reason?: string }>(
-          'GET',
-          `/intents/rhinestone/eligibility?${params.toString()}`,
-        );
-      },
-      chains: () =>
-        this.request<{ chainIds: number[] }>('GET', '/intents/rhinestone/chains'),
-    },
-  };
-
-  // Lottery
-  lottery = {
-    contract: () =>
-      this.request<{
-        address: string;
-        chain: string;
-        chainId: number;
-        referralCode: string;
-      }>('GET', '/lottery/contract'),
-
-    encode: (recipientAddress: string) =>
-      this.request<{ calldata: string; contractAddress: string }>(
-        'POST',
-        '/lottery/encode',
-        { recipientAddress },
-      ),
-
-    estimate: (ethAmount: number) =>
-      this.request<{ ethAmount: number; estimatedTickets: number }>(
-        'GET',
-        `/lottery/estimate?ethAmount=${ethAmount}`,
-      ),
-
-    calculateEth: (tickets: number) =>
-      this.request<{ tickets: number; ethNeeded: number }>(
-        'GET',
-        `/lottery/calculate-eth?tickets=${tickets}`,
-      ),
   };
 
   // Cron (admin only)

@@ -15,7 +15,6 @@ import { OrganizationsModule } from './modules/organizations/organizations.modul
 import { ClaimsModule } from './modules/claims/claims.module';
 import { IntentsModule } from './modules/intents/intents.module';
 import { TokensModule } from './modules/tokens/tokens.module';
-import { LotteryModule } from './modules/lottery/lottery.module';
 import { CronModule } from './modules/cron/cron.module';
 import { HealthModule } from './modules/health/health.module';
 import { UsersModule } from './modules/users/users.module';
@@ -70,7 +69,6 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module';
     ClaimsModule,
     IntentsModule,
     TokensModule,
-    LotteryModule,
     CronModule,
     UsersModule,
     SendPaymentModule,

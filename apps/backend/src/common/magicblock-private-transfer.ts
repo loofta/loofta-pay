@@ -5,12 +5,7 @@
 
 import { Logger } from '@nestjs/common';
 import { PublicKey, Transaction, VersionedTransaction, TransactionMessage, AddressLookupTableAccount } from '@solana/web3.js';
-import {
-  createTransferInstruction,
-  createAssociatedTokenAccountInstruction,
-  getAssociatedTokenAddress,
-  getAccount,
-} from '@solana/spl-token';
+import { getAssociatedTokenAddress } from '@solana/spl-token';
 import type { Connection } from '@solana/web3.js';
 
 const log = new Logger('MagicblockPrivateTransfer');
@@ -18,13 +13,11 @@ const log = new Logger('MagicblockPrivateTransfer');
 /**
  * CONFIRMED fee mechanics (from live devnet test):
  *  - `amount` = gross USDC taken from sender. MagicBlock deducts 10 BPS before routing to recipient.
- *  - 0.002 SOL flat fee is charged in native SOL from the sender's wallet (mainnet only, separate ix).
- *  - Loofta appends its own 10 BPS USDC transfer instruction to the same transaction.
+ *  - 0.002 SOL flat fee is charged as USDC from the sender via a gasless relay instruction.
  *
  * Gross-up formula: to ensure recipient gets exactly N units, send ceil(N * 10000 / 9990).
  */
 export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // deducted from USDC amount by MagicBlock
-export const LOOFTA_FEE_BPS = 10;            // Loofta fee via appended ix (10 BPS of net)
 export const MAGICBLOCK_GAS_SOL = 0.002;     // actual MagicBlock SOL charge (documented)
 export const MAGICBLOCK_MIN_SENDER_SOL = 0.003; // top-up target: 0.002 MB fee + tx fees + buffer
 /** Cache TTL: 60 seconds. */
@@ -44,11 +37,15 @@ export async function fetchSolPriceUsd(): Promise<number | null> {
     return _solPriceCached;
   }
 
-  // 1. Jupiter lite API
+  // 1. Jupiter API (authenticated)
+  const jupKey = process.env.JUPITER_API_KEY ?? process.env.NEXT_PUBLIC_JUPITER_API_KEY;
   try {
     const res = await fetch(
-      'https://lite-api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112',
-      { signal: AbortSignal.timeout(3_000) },
+      'https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112',
+      {
+        signal: AbortSignal.timeout(3_000),
+        headers: jupKey ? { Authorization: `Bearer ${jupKey}` } : {},
+      },
     );
     const data = await res.json() as { data?: { So11111111111111111111111111111111111111112?: { price?: string } } };
     const price = Number(data?.data?.['So11111111111111111111111111111111111111112']?.price);
@@ -59,7 +56,7 @@ export async function fetchSolPriceUsd(): Promise<number | null> {
     }
   } catch { /* fall through */ }
 
-  // 2. Binance public ticker (no API key required)
+  // 2. Binance public ticker (fallback)
   try {
     const res = await fetch(
       'https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT',
@@ -198,74 +195,72 @@ export async function requestMagicblockPrivateTransfer(params: {
   return data as MagicblockPrivateTransferTxResponse;
 }
 
+const TOKEN_PROGRAM_STR = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+
 /**
- * Appends a USDC SPL transfer instruction to the MagicBlock transaction so Loofta
- * collects its fee (10 BPS + SOL gas recovery) from the sender in the same atomic tx.
+ * Decodes the actual total USDC debit from the sender's ATA by summing all SPL Transfer
+ * instructions in the MagicBlock-built transaction. Returns units, or null on parse failure.
  *
- * `feeUnits` must be pre-calculated by the caller (bps fee + sol recovery in USDC units).
- * The MagicBlock `amount` must already be net of this fee (sender pays exactly the stated amount).
- *
- * Supports both legacy and v0 (ALT-based) transactions. v0 is decompiled, fee ix appended,
- * and recompiled as v0 so the tx stays compact (~750b instead of ~1210b legacy expansion).
+ * actualFee = decodedDebit - netBaseUnits
  */
-export async function appendLooftaFeeInstruction(
+export async function decodeActualSenderDebit(
   transactionBase64: string,
   senderWallet: string,
-  feeCollectorWallet: string,
-  feeUnits: number,
   usdcMint: PublicKey,
-  connection: Connection,
-  feePayer: PublicKey,
-): Promise<string> {
-  if (feeUnits <= 0) return transactionBase64;
-
-  const txBytes = Buffer.from(transactionBase64, 'base64');
-
-  const sender = new PublicKey(senderWallet);
-  const feeCollector = new PublicKey(feeCollectorWallet);
-  const senderAta = await getAssociatedTokenAddress(usdcMint, sender);
-  const feeCollectorAta = await getAssociatedTokenAddress(usdcMint, feeCollector);
-
-  const feeIxs: ReturnType<typeof createTransferInstruction>[] = [];
+  connection?: Connection,
+): Promise<number | null> {
   try {
-    await getAccount(connection, feeCollectorAta);
-  } catch {
-    log.log(`[FeeCollector] Creating USDC ATA for fee collector ${feeCollector.toBase58()}…`);
-    feeIxs.push(createAssociatedTokenAccountInstruction(feePayer, feeCollectorAta, feeCollector, usdcMint) as never);
-  }
-  feeIxs.push(createTransferInstruction(senderAta, feeCollectorAta, sender, feeUnits) as never);
+    const senderAta = await getAssociatedTokenAddress(usdcMint, new PublicKey(senderWallet));
+    const senderAtaStr = senderAta.toBase58();
+    const txBytes = Buffer.from(transactionBase64, 'base64');
 
-  log.log(
-    `[FeeCollector] *** FEE COLLECTION ***\n` +
-    `  fee_collector : ${feeCollector.toBase58()}\n` +
-    `  fee_collector_ata: ${feeCollectorAta.toBase58()}\n` +
-    `  sender        : ${senderWallet}\n` +
-    `  TOTAL_FEE     : ${feeUnits} units ($${(feeUnits / 1_000_000).toFixed(6)} USDC)`,
-  );
+    type IxInfo = { programId: string; accounts: string[]; data: Buffer };
+    let instructions: IxInfo[];
 
-  // Legacy tx path
-  let legacyTx: Transaction | null = null;
-  try { legacyTx = Transaction.from(txBytes); } catch { legacyTx = null; }
-  if (legacyTx) {
-    for (const ix of feeIxs) legacyTx.add(ix);
-    return legacyTx.serialize({ requireAllSignatures: false }).toString('base64');
-  }
+    let legacyTx: Transaction | null = null;
+    try { legacyTx = Transaction.from(txBytes); } catch { /* fall through to v0 */ }
 
-  // v0 tx path — resolve ALTs, decompile, append fee ixs, recompile as v0 (stays compact)
-  const v0Tx = VersionedTransaction.deserialize(txBytes);
-  const altAccounts: AddressLookupTableAccount[] = [];
-  for (const lookup of v0Tx.message.addressTableLookups) {
-    const r = await connection.getAddressLookupTable(lookup.accountKey);
-    if (r.value) altAccounts.push(r.value);
+    if (legacyTx) {
+      instructions = legacyTx.instructions.map(ix => ({
+        programId: ix.programId.toBase58(),
+        accounts: ix.keys.map(k => k.pubkey.toBase58()),
+        data: Buffer.from(ix.data),
+      }));
+    } else {
+      const v0Tx = VersionedTransaction.deserialize(txBytes);
+      const altAccounts: AddressLookupTableAccount[] = [];
+      if (connection && v0Tx.message.addressTableLookups.length > 0) {
+        for (const lookup of v0Tx.message.addressTableLookups) {
+          const r = await connection.getAddressLookupTable(lookup.accountKey);
+          if (r.value) altAccounts.push(r.value);
+        }
+      }
+      const decompiledMsg = TransactionMessage.decompile(v0Tx.message, { addressLookupTableAccounts: altAccounts });
+      instructions = decompiledMsg.instructions.map(ix => ({
+        programId: ix.programId.toBase58(),
+        accounts: ix.keys.map(k => k.pubkey.toBase58()),
+        data: Buffer.from(ix.data),
+      }));
+    }
+
+    let totalDebit = 0;
+    for (const ix of instructions) {
+      if (ix.programId !== TOKEN_PROGRAM_STR) continue;
+      if (ix.data.length < 9) continue;
+      const disc = ix.data[0];
+      // SPL Transfer = 3, TransferChecked = 12 — both have source as accounts[0]
+      if (disc !== 3 && disc !== 12) continue;
+      if (ix.accounts[0] !== senderAtaStr) continue;
+      totalDebit += Number(ix.data.readBigUInt64LE(1));
+    }
+
+    if (totalDebit === 0) {
+      log.warn(`[decode] no sender transfers found for ${senderWallet.slice(0, 8)}…`);
+      return null;
+    }
+    return totalDebit;
+  } catch (e) {
+    log.warn(`[decode] failed to decode sender debit: ${String(e)}`);
+    return null;
   }
-  const decompiledMsg = TransactionMessage.decompile(v0Tx.message, { addressLookupTableAccounts: altAccounts });
-  const newV0Msg = new TransactionMessage({
-    payerKey: decompiledMsg.payerKey,
-    recentBlockhash: decompiledMsg.recentBlockhash,
-    instructions: [...decompiledMsg.instructions, ...feeIxs],
-  }).compileToV0Message(altAccounts);
-  const newV0Tx = new VersionedTransaction(newV0Msg);
-  const ser = newV0Tx.serialize();
-  log.log(`[FeeCollector] v0 fee ix appended | tx size: ${txBytes.length}b → ${ser.length}b`);
-  return Buffer.from(ser).toString('base64');
 }

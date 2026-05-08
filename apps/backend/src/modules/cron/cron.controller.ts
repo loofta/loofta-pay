@@ -2,8 +2,6 @@ import { Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiSecurity } from '@nestjs/swagger';
 import { CronGuard } from '@/common/guards';
 import { ClaimProcessorService, ProcessingResult } from './claim-processor.service';
-import { LotteryProcessorService, LotteryProcessingResult } from './lottery-processor.service';
-import { ClaimCompanionProcessorService, ClaimCompanionResult } from './claim-companion-processor.service';
 import { SwapProcessorService, SwapProcessingResult } from './swap-processor.service';
 import { SolanaTxVerifierService, TxVerifierResult } from './solana-tx-verifier.service';
 
@@ -12,8 +10,6 @@ import { SolanaTxVerifierService, TxVerifierResult } from './solana-tx-verifier.
 export class CronController {
   constructor(
     private readonly claimProcessorService: ClaimProcessorService,
-    private readonly lotteryProcessorService: LotteryProcessorService,
-    private readonly claimCompanionProcessorService: ClaimCompanionProcessorService,
     private readonly swapProcessorService: SwapProcessorService,
     private readonly solanaTxVerifierService: SolanaTxVerifierService,
   ) {}
@@ -37,39 +33,8 @@ export class CronController {
   }
 
   /**
-   * Process lottery (companion wallet) payments
-   */
-  @Get('process-lottery')
-  @UseGuards(CronGuard)
-  @ApiSecurity('Bearer')
-  @ApiOperation({ summary: 'Process lottery companion wallet payments' })
-  @ApiResponse({ status: 200, description: 'Processing results' })
-  async processLottery(): Promise<{
-    success: boolean;
-    processed: number;
-    results: LotteryProcessingResult[];
-  }> {
-    const { processed, results } = await this.lotteryProcessorService.triggerProcessing();
-    return { success: true, processed, results };
-  }
-
-  /**
    * Process two-hop claim companions (ETH → token)
    */
-  @Get('process-claim-companions')
-  @UseGuards(CronGuard)
-  @ApiSecurity('Bearer')
-  @ApiOperation({ summary: 'Process two-hop claim companions' })
-  @ApiResponse({ status: 200, description: 'Processing results' })
-  async processClaimCompanions(): Promise<{
-    success: boolean;
-    processed: number;
-    results: ClaimCompanionResult[];
-  }> {
-    const { processed, results } = await this.claimCompanionProcessorService.triggerProcessing();
-    return { success: true, processed, results };
-  }
-
   /**
    * Process same-chain swaps (claims and organizations)
    */
@@ -117,15 +82,11 @@ export class CronController {
     success: boolean;
     timestamp: string;
     intents: { processed: number; results: ProcessingResult[]; skipped?: boolean };
-    lottery: { processed: number; results: LotteryProcessingResult[] };
-    claimCompanions: { processed: number; results: ClaimCompanionResult[] };
     swaps: { processed: number; results: SwapProcessingResult[] };
     solanaTxs: { processed: number; results: TxVerifierResult[] };
   }> {
-    const [intents, lottery, claimCompanions, swaps, solanaTxs] = await Promise.all([
+    const [intents, swaps, solanaTxs] = await Promise.all([
       this.claimProcessorService.triggerProcessing(),
-      this.lotteryProcessorService.triggerProcessing(),
-      this.claimCompanionProcessorService.triggerProcessing(),
       this.swapProcessorService.triggerProcessing(),
       this.solanaTxVerifierService.triggerProcessing(),
     ]);
@@ -134,8 +95,6 @@ export class CronController {
       success: true,
       timestamp: new Date().toISOString(),
       intents,
-      lottery,
-      claimCompanions,
       swaps,
       solanaTxs,
     };
