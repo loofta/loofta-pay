@@ -231,7 +231,7 @@ export function BalanceModal({
   const { data: tokens = [] } = useTokensQuery();
 
   const [tab, setTab] = useState<"topup" | "withdraw" | "history">("topup");
-const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
@@ -598,424 +598,418 @@ const [withdrawAmount, setWithdrawAmount] = useState("");
         {/* Scrollable content area */}
         <div className="flex-1 min-h-0 overflow-y-auto sm:contents px-4 pb-4 sm:p-0 space-y-4">
 
-        <DialogHeader className="pb-1 pt-2 sm:pt-0">
-          <DialogTitle className={dark ? "text-white text-lg sm:text-xl" : undefined}>Balance</DialogTitle>
-          <DialogDescription className={dark ? "text-slate-400 text-sm" : undefined}>
-            {loadingBalance ? "Loading…" : `$${balanceUSD} USDC available`}
-          </DialogDescription>
-        </DialogHeader>
+          <DialogHeader className="pb-1 pt-2 sm:pt-0">
+            <DialogTitle className={dark ? "text-white text-lg sm:text-xl" : undefined}>Balance</DialogTitle>
+            <DialogDescription className={dark ? "text-slate-400 text-sm" : undefined}>
+              {loadingBalance ? "Loading…" : `$${balanceUSD} USDC available`}
+            </DialogDescription>
+          </DialogHeader>
 
-        {/* Tabs */}
-        <div className={`flex gap-1 p-1 rounded-lg ${dark ? "bg-white/10" : "bg-gray-100"}`}>
-          <button
-            type="button"
-            onClick={() => setTab("topup")}
-            className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "topup" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
-          >
-            Top Up
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("withdraw")}
-            className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "withdraw" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
-          >
-            {withdrawStep !== "idle" && withdrawStep !== "complete" && withdrawStep !== "failed" ? (
-              <span className="flex items-center justify-center gap-1.5">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                In Progress
-              </span>
-            ) : "Withdraw"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setRecentWithdrawals(getWithdrawalHistory());
-              setTab("history");
-            }}
-            className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "history" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
-          >
-            Recent
-          </button>
-        </div>
+          {/* Tabs */}
+          <div className={`flex gap-1 p-1 rounded-lg ${dark ? "bg-white/10" : "bg-gray-100"}`}>
+            <button
+              type="button"
+              onClick={() => setTab("topup")}
+              className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "topup" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
+            >
+              Top Up
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("withdraw")}
+              className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "withdraw" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
+            >
+              {withdrawStep !== "idle" && withdrawStep !== "complete" && withdrawStep !== "failed" ? (
+                <span className="flex items-center justify-center gap-1.5">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  In Progress
+                </span>
+              ) : "Withdraw"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setRecentWithdrawals(getWithdrawalHistory());
+                setTab("history");
+              }}
+              className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "history" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
+            >
+              Recent
+            </button>
+          </div>
 
-        {/* Top Up tab */}
-        {tab === "topup" && (
-          <div className="py-2 space-y-3">
-            {devnetMode ? (
-              <div className={`rounded-xl border-2 p-4 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
-                <p className={`text-base font-semibold mb-1 ${dark ? "text-white" : "text-gray-900"}`}>Deposit USDC (devnet)</p>
-                <p className={`text-sm mb-3 ${dark ? "text-slate-400" : "text-gray-500"}`}>Send devnet USDC directly to your wallet address.</p>
-                {solanaAddress && (
-                  <div className={`flex items-center gap-2 rounded-lg p-3 ${dark ? "bg-white/5" : "bg-white border border-gray-200"}`}>
-                    <p className={`text-sm font-mono flex-1 break-all ${dark ? "text-slate-300" : "text-gray-700"}`}>{solanaAddress}</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(solanaAddress);
-                        toast({ title: "Copied!", description: "Wallet address copied to clipboard." });
-                      }}
-                      className={`shrink-0 p-1.5 rounded-lg transition-colors ${dark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-gray-100 text-gray-400 hover:text-gray-700"}`}
-                    >
-                      <Copy className="h-4 w-4" />
-                    </button>
+          {/* Top Up tab */}
+          {tab === "topup" && (
+            <div className="py-2 space-y-3">
+              {devnetMode ? (
+                <div className={`rounded-xl border-2 p-4 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
+                  <p className={`text-base font-semibold mb-1 ${dark ? "text-white" : "text-gray-900"}`}>Deposit USDC (devnet)</p>
+                  <p className={`text-sm mb-3 ${dark ? "text-slate-400" : "text-gray-500"}`}>Send devnet USDC directly to your wallet address.</p>
+                  {solanaAddress && (
+                    <div className={`flex items-center gap-2 rounded-lg p-3 ${dark ? "bg-white/5" : "bg-white border border-gray-200"}`}>
+                      <p className={`text-sm font-mono flex-1 break-all ${dark ? "text-slate-300" : "text-gray-700"}`}>{solanaAddress}</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(solanaAddress);
+                          toast({ title: "Copied!", description: "Wallet address copied to clipboard." });
+                        }}
+                        className={`shrink-0 p-1.5 rounded-lg transition-colors ${dark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-gray-100 text-gray-400 hover:text-gray-700"}`}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
+                  {/* Option 1 — Deposit to wallet (active) */}
+                  <button
+                    type="button"
+                    disabled={!solanaAddress}
+                    onClick={() => {
+                      if (!solanaAddress) return;
+                      fundWallet({ address: solanaAddress, options: { asset: "USDC" } });
+                    }}
+                    className={cn(
+                      "w-full flex items-start gap-4 p-4 rounded-xl border-2 text-left transition-colors",
+                      dark
+                        ? "border-white/15 bg-white/5 hover:bg-white/10 hover:border-white/25 disabled:opacity-50 disabled:cursor-not-allowed"
+                        : "border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
+                  >
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
+                        <rect width="20" height="14" x="2" y="5" rx="2" /><path d="M2 10h20" />
+                      </svg>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit USDC on Solana</p>
+                      <p className={`text-sm mt-1 leading-relaxed ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        Buy with credit card or send from a Solana wallet
+                      </p>
+                    </div>
+                    <ArrowRight className={`h-4 w-4 shrink-0 mt-1.5 ${dark ? "text-slate-500" : "text-gray-400"}`} />
+                  </button>
+
+                  {/* Option 2 — Other networks (coming soon) */}
+                  <div className={cn(
+                    "w-full flex items-start gap-4 p-4 rounded-xl border-2 opacity-40 cursor-not-allowed select-none",
+                    dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"
+                  )}>
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
+                        <circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                      </svg>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cross-chain deposit</p>
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-400" : "bg-gray-200 text-gray-500"}`}>Coming soon</span>
+                      </div>
+                      <p className={`text-sm mt-1 mb-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>25+ networks & 250+ tokens  supported</p>
+
+                    </div>
                   </div>
+
+                  {/* Option 3 — Transfer (coming soon) */}
+                  <div className={cn(
+                    "w-full flex items-start gap-4 p-4 rounded-xl border-2 opacity-40 cursor-not-allowed select-none",
+                    dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"
+                  )}>
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
+                        <path d="M17 1l4 4-4 4" /><path d="M3 11V9a4 4 0 0 1 4-4h14" /><path d="M7 23l-4-4 4-4" /><path d="M21 13v2a4 4 0 0 1-4 4H3" />
+                      </svg>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with transfer</p>
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-400" : "bg-gray-200 text-gray-500"}`}>Coming soon</span>
+                      </div>
+                      <p className={`text-sm mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        CashApp · Venmo · Revolut · Wise · PayPal
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* History tab */}
+          {tab === "history" && (
+            <div className="py-2 min-h-0 overflow-y-auto sm:max-h-[60vh]">
+              {recentWithdrawals.length === 0 ? (
+                <p className={`text-sm text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent withdrawals.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {recentWithdrawals.map((item) => {
+                    const isInProgress = item.isNearIntents && !item.nearIntentsComplete;
+                    return (
+                      <li key={item.id}>
+                        <div
+                          className={`rounded-lg border p-3 transition-colors ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className={`font-semibold text-sm ${dark ? "text-white" : "text-gray-900"}`}>
+                                ${item.amountUSDC.toFixed(2)} → {item.destinationToken}
+                                {item.estimatedOut && (
+                                  <span className={`font-normal text-xs ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                                    (~{Number(item.estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} received)
+                                  </span>
+                                )}
+                              </p>
+                              <p className={`text-xs font-mono mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                                To {shortAddr(item.destinationAddress)} · {item.destinationChain}
+                              </p>
+                              <p className={`text-xs mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                                {new Date(item.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                              </p>
+                            </div>
+                            <div className="flex flex-col items-end gap-1.5 shrink-0">
+                              {isInProgress ? (
+                                <span className="flex items-center gap-1 text-xs font-medium text-blue-400">
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  Bridging
+                                </span>
+                              ) : item.nearIntentsComplete && item.nearIntentsStatus ? (
+                                <span className={`text-xs font-medium ${SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "text-emerald-400" : "text-amber-400"}`}>
+                                  {SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "Completed" : item.nearIntentsStatus}
+                                </span>
+                              ) : !item.isNearIntents ? (
+                                <span className="text-xs font-medium text-emerald-400">Sent</span>
+                              ) : null}
+                              <a
+                                href={getExplorerTxUrl("solana", item.txSignature)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className={`${dark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-600"}`}
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                              </a>
+                            </div>
+                          </div>
+
+                          {/* Bridge status for in-progress */}
+                          {isInProgress && item.nearIntentsStatus && (
+                            <p className={`text-xs mt-2 pt-2 border-t ${dark ? "border-white/10 text-slate-400" : "border-gray-100 text-gray-500"}`}>
+                              {bridgeStatusLabel(item.nearIntentsStatus)}
+                            </p>
+                          )}
+
+                          {/* Track button for in-progress near intents */}
+                          {isInProgress && item.depositAddress && withdrawStep !== "bridging" && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveWithdrawal(item);
+                                setBridgeStatus(item.nearIntentsStatus ?? null);
+                                setWithdrawStep("bridging");
+                                setDepositAddressForPolling(item.depositAddress!);
+                                setTab("withdraw");
+                              }}
+                              className={`mt-2 text-xs font-medium underline underline-offset-2 ${dark ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"}`}
+                            >
+                              Track progress →
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* Withdraw tab — progress panel */}
+          {tab === "withdraw" && withdrawStep !== "idle" && (
+            <ProgressSteps
+              step={withdrawStep}
+              isNearIntents={Boolean(isNearIntentsWithdraw || activeWithdrawal?.isNearIntents)}
+              txSignature={activeWithdrawal?.txSignature}
+              bridgeStatus={bridgeStatus}
+              destinationToken={activeWithdrawal?.destinationToken || effectiveToken?.symbol}
+              destinationChain={activeWithdrawal?.destinationChain || effectiveToken?.chain}
+              estimatedOut={activeWithdrawal?.estimatedOut || quoteAmount || undefined}
+              amountUSDC={activeWithdrawal?.amountUSDC || withdrawAmountNum || payFromBalanceNum}
+              dark={dark}
+              onDone={() => {
+                setWithdrawStep("idle");
+                setActiveWithdrawal(null);
+                setBridgeStatus(null);
+                setDepositAddressForPolling(null);
+                if (withdrawStep === "complete") onRefresh();
+              }}
+            />
+          )}
+
+          {/* Withdraw tab — form */}
+          {tab === "withdraw" && withdrawStep === "idle" && (
+            <div className="space-y-4 py-4">
+              {/* Balance */}
+              <div>
+                <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                  {isNearIntentsWithdraw ? "Paying from (USDC on Solana)" : "Available balance"}
+                </Label>
+                <div className={`p-4 rounded-xl border-2 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${dark ? "bg-white/10 border border-white/10" : "bg-white border border-gray-200"}`}>
+                      {(isNearIntentsWithdraw ? usdcSolanaToken : effectiveToken) && (
+                        <TokenIcon
+                          token={(isNearIntentsWithdraw ? usdcSolanaToken : effectiveToken)!}
+                          chain={isNearIntentsWithdraw ? "solana" : effectiveToken?.chain}
+                          size={24}
+                        />
+                      )}
+                    </div>
+                    <div>
+                      <p className={`text-sm font-medium ${dark ? "text-slate-300" : "text-gray-600"}`}>
+                        {isNearIntentsWithdraw ? "USDC / Solana" : `${effectiveToken?.symbol || "USDC"} / ${effectiveToken?.chain || "Solana"}`}
+                      </p>
+                      <p className={`text-xl font-semibold mt-0.5 ${dark ? "text-white" : "text-gray-900"}`}>
+                        {loadingBalance ? "…" : `$${balanceUSD}`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                {!loadingBalance && payFromBalanceNum <= 0 && isUSDCOnSolana && (
+                  <p className={`text-sm mt-2 ${dark ? "text-amber-400" : "text-amber-600"}`}>No balance to withdraw.</p>
                 )}
               </div>
-            ) : (
-              <>
-                {/* Option 1 — Deposit to wallet (active) */}
-                <button
-                  type="button"
-                  disabled={!solanaAddress}
-                  onClick={() => {
-                    if (!solanaAddress) return;
-                    fundWallet({ address: solanaAddress, options: { asset: "USDC" } });
-                  }}
-                  className={cn(
-                    "w-full flex items-start gap-4 p-4 rounded-xl border-2 text-left transition-colors",
-                    dark
-                      ? "border-white/15 bg-white/5 hover:bg-white/10 hover:border-white/25 disabled:opacity-50 disabled:cursor-not-allowed"
-                      : "border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  )}
-                >
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
-                      <rect width="20" height="14" x="2" y="5" rx="2"/><path d="M2 10h20"/>
-                    </svg>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit USDC on Solana</p>
-                    <p className={`text-sm mt-1 leading-relaxed ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                      Buy with credit card or send from a Solana wallet
-                    </p>
-                  </div>
-                  <ArrowRight className={`h-4 w-4 shrink-0 mt-1.5 ${dark ? "text-slate-500" : "text-gray-400"}`} />
-                </button>
 
-                {/* Option 2 — Other networks (coming soon) */}
-                <div className={cn(
-                  "w-full flex items-start gap-4 p-4 rounded-xl border-2 opacity-40 cursor-not-allowed select-none",
-                  dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"
-                )}>
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
-                      <circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                    </svg>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cross-chain deposit</p>
-                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-400" : "bg-gray-200 text-gray-500"}`}>Coming soon</span>
-                    </div>
-                    <p className={`text-sm mt-1 mb-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>25+ networks supported</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {["ETH", "BTC", "SOL", "ZEC", "POL", "BASE", "AVAX", "ARB", "OP", "BNB", "XRP", "NEAR", "…"].map((chain) => (
-                        <span key={chain} className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md ${dark ? "bg-white/10 text-slate-300" : "bg-gray-100 text-gray-600"}`}>
-                          {chain}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Option 3 — Transfer (coming soon) */}
-                <div className={cn(
-                  "w-full flex items-start gap-4 p-4 rounded-xl border-2 opacity-40 cursor-not-allowed select-none",
-                  dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"
-                )}>
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
-                      <path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
-                    </svg>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with transfer</p>
-                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-400" : "bg-gray-200 text-gray-500"}`}>Coming soon</span>
-                    </div>
-                    <p className={`text-sm mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                      CashApp · Venmo · Revolut · Wise · PayPal
-                    </p>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* History tab */}
-        {tab === "history" && (
-          <div className="py-2 min-h-0 overflow-y-auto sm:max-h-[60vh]">
-            {recentWithdrawals.length === 0 ? (
-              <p className={`text-sm text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent withdrawals.</p>
-            ) : (
-              <ul className="space-y-2">
-                {recentWithdrawals.map((item) => {
-                  const isInProgress = item.isNearIntents && !item.nearIntentsComplete;
-                  return (
-                    <li key={item.id}>
-                      <div
-                        className={`rounded-lg border p-3 transition-colors ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="min-w-0 flex-1">
-                            <p className={`font-semibold text-sm ${dark ? "text-white" : "text-gray-900"}`}>
-                              ${item.amountUSDC.toFixed(2)} → {item.destinationToken}
-                              {item.estimatedOut && (
-                                <span className={`font-normal text-xs ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                                  (~{Number(item.estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} received)
-                                </span>
-                              )}
-                            </p>
-                            <p className={`text-xs font-mono mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                              To {shortAddr(item.destinationAddress)} · {item.destinationChain}
-                            </p>
-                            <p className={`text-xs mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
-                              {new Date(item.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                            </p>
-                          </div>
-                          <div className="flex flex-col items-end gap-1.5 shrink-0">
-                            {isInProgress ? (
-                              <span className="flex items-center gap-1 text-xs font-medium text-blue-400">
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                                Bridging
-                              </span>
-                            ) : item.nearIntentsComplete && item.nearIntentsStatus ? (
-                              <span className={`text-xs font-medium ${SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "text-emerald-400" : "text-amber-400"}`}>
-                                {SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "Completed" : item.nearIntentsStatus}
-                              </span>
-                            ) : !item.isNearIntents ? (
-                              <span className="text-xs font-medium text-emerald-400">Sent</span>
-                            ) : null}
-                            <a
-                              href={getExplorerTxUrl("solana", item.txSignature)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className={`${dark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-600"}`}
-                            >
-                              <ExternalLink className="h-4 w-4" />
-                            </a>
-                          </div>
-                        </div>
-
-                        {/* Bridge status for in-progress */}
-                        {isInProgress && item.nearIntentsStatus && (
-                          <p className={`text-xs mt-2 pt-2 border-t ${dark ? "border-white/10 text-slate-400" : "border-gray-100 text-gray-500"}`}>
-                            {bridgeStatusLabel(item.nearIntentsStatus)}
-                          </p>
-                        )}
-
-                        {/* Track button for in-progress near intents */}
-                        {isInProgress && item.depositAddress && withdrawStep !== "bridging" && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActiveWithdrawal(item);
-                              setBridgeStatus(item.nearIntentsStatus ?? null);
-                              setWithdrawStep("bridging");
-                              setDepositAddressForPolling(item.depositAddress!);
-                              setTab("withdraw");
-                            }}
-                            className={`mt-2 text-xs font-medium underline underline-offset-2 ${dark ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"}`}
-                          >
-                            Track progress →
-                          </button>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        )}
-
-        {/* Withdraw tab — progress panel */}
-        {tab === "withdraw" && withdrawStep !== "idle" && (
-          <ProgressSteps
-            step={withdrawStep}
-            isNearIntents={Boolean(isNearIntentsWithdraw || activeWithdrawal?.isNearIntents)}
-            txSignature={activeWithdrawal?.txSignature}
-            bridgeStatus={bridgeStatus}
-            destinationToken={activeWithdrawal?.destinationToken || effectiveToken?.symbol}
-            destinationChain={activeWithdrawal?.destinationChain || effectiveToken?.chain}
-            estimatedOut={activeWithdrawal?.estimatedOut || quoteAmount || undefined}
-            amountUSDC={activeWithdrawal?.amountUSDC || withdrawAmountNum || payFromBalanceNum}
-            dark={dark}
-            onDone={() => {
-              setWithdrawStep("idle");
-              setActiveWithdrawal(null);
-              setBridgeStatus(null);
-              setDepositAddressForPolling(null);
-              if (withdrawStep === "complete") onRefresh();
-            }}
-          />
-        )}
-
-        {/* Withdraw tab — form */}
-        {tab === "withdraw" && withdrawStep === "idle" && (
-          <div className="space-y-4 py-4">
-            {/* Balance */}
-            <div>
-              <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                {isNearIntentsWithdraw ? "Paying from (USDC on Solana)" : "Available balance"}
-              </Label>
-              <div className={`p-4 rounded-xl border-2 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${dark ? "bg-white/10 border border-white/10" : "bg-white border border-gray-200"}`}>
-                    {(isNearIntentsWithdraw ? usdcSolanaToken : effectiveToken) && (
-                      <TokenIcon
-                        token={(isNearIntentsWithdraw ? usdcSolanaToken : effectiveToken)!}
-                        chain={isNearIntentsWithdraw ? "solana" : effectiveToken?.chain}
-                        size={24}
-                      />
-                    )}
-                  </div>
-                  <div>
-                    <p className={`text-sm font-medium ${dark ? "text-slate-300" : "text-gray-600"}`}>
-                      {isNearIntentsWithdraw ? "USDC / Solana" : `${effectiveToken?.symbol || "USDC"} / ${effectiveToken?.chain || "Solana"}`}
-                    </p>
-                    <p className={`text-xl font-semibold mt-0.5 ${dark ? "text-white" : "text-gray-900"}`}>
-                      {loadingBalance ? "…" : `$${balanceUSD}`}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              {!loadingBalance && payFromBalanceNum <= 0 && isUSDCOnSolana && (
-                <p className={`text-sm mt-2 ${dark ? "text-amber-400" : "text-amber-600"}`}>No balance to withdraw.</p>
-              )}
-            </div>
-
-            {/* Token selector */}
-            <div>
-              <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-300" : "text-gray-700"}`}>
-                Withdraw to
-              </Label>
-              <TokenCombobox
-                tokens={withdrawTokens}
-                value={fromSel ?? (usdcSolanaToken ? { symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain } : undefined)}
-                onChange={setFromSel}
-                placeholder="USDC on Solana (free) or other token"
-                className={dark ? "w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white text-center placeholder:text-slate-400" : "w-full h-12 rounded-xl border-2 border-gray-200 bg-white text-center"}
-                defaultShowAllChains
-              />
-              {BETA_SOLANA_ONLY && !isUSDCOnSolana ? (
-                <p className={`text-xs mt-1.5 font-medium ${dark ? "text-amber-400" : "text-amber-600"}`}>
-                  Cross-chain withdrawals coming soon — only USDC on Solana is available in beta.
-                </p>
-              ) : (
-                <p className={`text-xs mt-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                  Free withdrawal to any Solana wallet.
-                </p>
-              )}
-            </div>
-
-            {/* Amount input */}
-            <div>
-              <Label htmlFor="withdraw-amount" className={dark ? "text-slate-300" : undefined}>
-                Amount to send (USDC)
-              </Label>
-              <div className="mt-1 flex gap-2">
-                <Input
-                  id="withdraw-amount"
-                  type="number"
-                  min="1"
-                  step="0.01"
-                  max={payFromBalanceNum}
-                  placeholder="0.00"
-                  value={withdrawAmount}
-                  onChange={(e) => setWithdrawAmount(e.target.value)}
-                  className={`flex-1 font-mono text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+              {/* Token selector */}
+              <div>
+                <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-300" : "text-gray-700"}`}>
+                  Withdraw to
+                </Label>
+                <TokenCombobox
+                  tokens={withdrawTokens}
+                  value={fromSel ?? (usdcSolanaToken ? { symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain } : undefined)}
+                  onChange={setFromSel}
+                  placeholder="USDC on Solana (free) or other token"
+                  className={dark ? "w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white text-center placeholder:text-slate-400" : "w-full h-12 rounded-xl border-2 border-gray-200 bg-white text-center"}
+                  defaultShowAllChains
                 />
+                {BETA_SOLANA_ONLY && !isUSDCOnSolana ? (
+                  <p className={`text-xs mt-1.5 font-medium ${dark ? "text-amber-400" : "text-amber-600"}`}>
+                    Cross-chain withdrawals coming soon — only USDC on Solana is available in beta.
+                  </p>
+                ) : (
+                  <p className={`text-xs mt-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    Free withdrawal to any Solana wallet.
+                  </p>
+                )}
+              </div>
+
+              {/* Amount input */}
+              <div>
+                <Label htmlFor="withdraw-amount" className={dark ? "text-slate-300" : undefined}>
+                  Amount to send (USDC)
+                </Label>
+                <div className="mt-1 flex gap-2">
+                  <Input
+                    id="withdraw-amount"
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    max={payFromBalanceNum}
+                    placeholder="0.00"
+                    value={withdrawAmount}
+                    onChange={(e) => setWithdrawAmount(e.target.value)}
+                    className={`flex-1 font-mono text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setWithdrawAmount(spendableBalance.toFixed(6).replace(/\.?0+$/, ""))}
+                    className={`shrink-0 px-3 text-xs ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}
+                  >
+                    Max
+                  </Button>
+                </div>
+                {withdrawAmountNum > 0 && withdrawAmountNum < 1 && (
+                  <p className="text-xs text-red-400 mt-1">Minimum withdrawal is $1.00 USDC.</p>
+                )}
+                {withdrawAmountNum > spendableBalance && spendableBalance > 0 && (
+                  <p className="text-xs text-red-400 mt-1">Exceeds available balance of {spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC.</p>
+                )}
+              </div>
+
+              {/* Destination address */}
+              <div>
+                <Label htmlFor="withdraw-address" className={dark ? "text-slate-300" : undefined}>
+                  {isUSDCOnSolana ? "Destination Solana wallet" : `Destination address (${effectiveToken?.chain || "recipient"})`}
+                </Label>
+                <Input
+                  id="withdraw-address"
+                  placeholder={isUSDCOnSolana ? "Enter Solana address" : `Enter ${effectiveToken?.chain || "destination"} address`}
+                  value={withdrawAddress}
+                  onChange={(e) => setWithdrawAddress(e.target.value)}
+                  className={`mt-1 font-mono text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                />
+                {isUSDCOnSolana && addressRiskStatus === "checking" && (
+                  <p className={`text-xs mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                    Checking address with Range…
+                  </p>
+                )}
+                {isUSDCOnSolana && addressRiskStatus === "safe" && (
+                  <p className="text-xs text-emerald-400 mt-1.5 flex items-center gap-1.5 font-medium">
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                    Address compliant — safe to withdraw
+                  </p>
+                )}
+                {isUSDCOnSolana && addressRiskStatus === "unsafe" && (
+                  <p className="text-xs text-red-400 mt-1.5 flex items-center gap-1.5 font-medium">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    Address flagged — withdrawal blocked
+                  </p>
+                )}
+              </div>
+
+              {devnetMode && (
+                <p className={`text-xs text-center ${dark ? "text-amber-400" : "text-amber-600"}`}>
+                  Withdrawals are not available on devnet.
+                </p>
+              )}
+
+              <div className="flex gap-2 pt-2">
+                <Button variant="outline" onClick={onClose} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
+                  Cancel
+                </Button>
                 <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setWithdrawAmount(spendableBalance.toFixed(6).replace(/\.?0+$/, ""))}
-                  className={`shrink-0 px-3 text-xs ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}
+                  onClick={handleWithdraw}
+                  disabled={
+                    devnetMode ||
+                    withdrawing ||
+                    (BETA_SOLANA_ONLY && !isUSDCOnSolana) ||
+                    withdrawAmountNum < 1 ||
+                    withdrawAmountNum > spendableBalance ||
+                    !withdrawAddress.trim() ||
+                    !wallet ||
+                    (isUSDCOnSolana ? addressRiskStatus !== "safe" : !destinationAddressValid)
+                  }
+                  className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Max
+                  {withdrawing ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {stepLabel(withdrawStep, Boolean(isNearIntentsWithdraw))}
+                    </span>
+                  ) : (
+                    isNearIntentsWithdraw ? `Bridge to ${effectiveToken?.symbol}` : "Withdraw USDC"
+                  )}
                 </Button>
               </div>
-              {withdrawAmountNum > 0 && withdrawAmountNum < 1 && (
-                <p className="text-xs text-red-400 mt-1">Minimum withdrawal is $1.00 USDC.</p>
-              )}
-              {withdrawAmountNum > spendableBalance && spendableBalance > 0 && (
-                <p className="text-xs text-red-400 mt-1">Exceeds available balance of {spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC.</p>
+              {!loadingBalance && payFromBalanceNum <= 0 && (
+                <p className={`text-xs text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>Add funds to withdraw.</p>
               )}
             </div>
-
-            {/* Destination address */}
-            <div>
-              <Label htmlFor="withdraw-address" className={dark ? "text-slate-300" : undefined}>
-                {isUSDCOnSolana ? "Destination Solana wallet" : `Destination address (${effectiveToken?.chain || "recipient"})`}
-              </Label>
-              <Input
-                id="withdraw-address"
-                placeholder={isUSDCOnSolana ? "Enter Solana address" : `Enter ${effectiveToken?.chain || "destination"} address`}
-                value={withdrawAddress}
-                onChange={(e) => setWithdrawAddress(e.target.value)}
-                className={`mt-1 font-mono text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
-              />
-              {isUSDCOnSolana && addressRiskStatus === "checking" && (
-                <p className={`text-xs mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-                  Checking address with Range…
-                </p>
-              )}
-              {isUSDCOnSolana && addressRiskStatus === "safe" && (
-                <p className="text-xs text-emerald-400 mt-1.5 flex items-center gap-1.5 font-medium">
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                  Address compliant — safe to withdraw
-                </p>
-              )}
-              {isUSDCOnSolana && addressRiskStatus === "unsafe" && (
-                <p className="text-xs text-red-400 mt-1.5 flex items-center gap-1.5 font-medium">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  Address flagged — withdrawal blocked
-                </p>
-              )}
-            </div>
-
-            {devnetMode && (
-              <p className={`text-xs text-center ${dark ? "text-amber-400" : "text-amber-600"}`}>
-                Withdrawals are not available on devnet.
-              </p>
-            )}
-
-            <div className="flex gap-2 pt-2">
-              <Button variant="outline" onClick={onClose} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
-                Cancel
-              </Button>
-              <Button
-                onClick={handleWithdraw}
-                disabled={
-                  devnetMode ||
-                  withdrawing ||
-                  (BETA_SOLANA_ONLY && !isUSDCOnSolana) ||
-                  withdrawAmountNum < 1 ||
-                  withdrawAmountNum > spendableBalance ||
-                  !withdrawAddress.trim() ||
-                  !wallet ||
-                  (isUSDCOnSolana ? addressRiskStatus !== "safe" : !destinationAddressValid)
-                }
-                className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {withdrawing ? (
-                  <span className="flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    {stepLabel(withdrawStep, Boolean(isNearIntentsWithdraw))}
-                  </span>
-                ) : (
-                  isNearIntentsWithdraw ? `Bridge to ${effectiveToken?.symbol}` : "Withdraw USDC"
-                )}
-              </Button>
-            </div>
-            {!loadingBalance && payFromBalanceNum <= 0 && (
-              <p className={`text-xs text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>Add funds to withdraw.</p>
-            )}
-          </div>
-        )}
+          )}
 
         </div>{/* end scrollable area */}
 
