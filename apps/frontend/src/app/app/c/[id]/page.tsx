@@ -4065,6 +4065,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         {perTransferPhase.walletTransactionCount === 1 ? "" : "s"}
                       </span>{" "}
                       in one approval. Do not close this tab until you finish signing.
+                      {payingWithWallet && networkMode === "devnet" && (
+                        <span className="block mt-2 text-amber-600 font-medium">
+                          Phantom will show a simulation warning — tap "Confirm (unsafe)" to proceed.
+                        </span>
+                      )}
                     </>
                   )}
                   {perTransferPhase.phase === "broadcasting" && (
@@ -4145,6 +4150,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-white">External wallet</div>
                     <div className="text-sm text-slate-400 mt-0.5">Pay directly from Phantom or any Solana wallet</div>
+                    {networkMode === "devnet" && (
+                      <div className="text-sm text-amber-400 mt-1">Phantom may show a simulation warning — tap "Confirm (unsafe)" to proceed</div>
+                    )}
                   </div>
                   <ArrowRight className="w-5 h-5 text-slate-400 shrink-0" />
                 </button>
