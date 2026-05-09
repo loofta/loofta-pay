@@ -37,9 +37,9 @@ export class EmailService {
 
   async sendPaymentReceivedEmail(data: ClaimEmailData): Promise<void> {
     if (!this.resend) return;
-    const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)} USDC`;
+    const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
     const claimUrl = data.claimUrl ?? `https://pay.loofta.xyz/c/${data.id}`;
-    const subject = `You received ${amountStr} on Loofta`;
+    const subject = `You received ${amountStr} on Loofta 🎉`;
     const html = this.buildPaymentReceivedHtml({ ...data, amountStr, claimUrl });
 
     try {
@@ -58,7 +58,7 @@ export class EmailService {
 
   async sendClaimReadyEmail(data: ClaimEmailData): Promise<void> {
     if (!this.resend) return;
-    const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)} USDC`;
+    const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
     const claimUrl = data.claimUrl ?? `https://pay.loofta.xyz/c/${data.id}`;
     const subject = `You have ${amountStr} waiting for you on Loofta`;
     const html = this.buildClaimReadyHtml({ ...data, amountStr, claimUrl });
@@ -106,18 +106,18 @@ export class EmailService {
     @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/P6VJ47S3OYMUC7HYSJLTK7PEIK5O2NPQ/TK62VLUWA76PMTK2XWBNDZB7QVXJGYE3/I5W5NEJGYVFUC5I4XOXVET63OE5PSVHJ.woff2') format('woff2'); font-weight:700; font-display:swap; }
   </style>
 </head>
-<body style="margin:0;padding:0;background:#F3F4F6;font-family:'Clash Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F3F4F6;padding:40px 16px;">
+<body style="margin:0;padding:0;background:#0f0f12;font-family:'Clash Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
     <tr>
       <td align="center">
-        <table width="100%" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
           <tr>
-            <td style="background:linear-gradient(135deg,#FF4A26,#FF8C00);padding:32px 40px 28px;text-align:center;">
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
               <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
             </td>
           </tr>
           <tr>
-            <td style="padding:40px 40px 32px;color:#374151;font-size:15px;line-height:1.7;">
+            <td style="padding:36px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
               <p style="margin:0 0 16px;">hey!</p>
               <p style="margin:0 0 16px;">Lisa's here, the founder of Loofta.</p>
               <p style="margin:0 0 16px;">Congrats — you now have access to our beta! 🎉</p>
@@ -125,20 +125,20 @@ export class EmailService {
               <ul style="margin:0 0 16px;padding-left:20px;">
                 <li style="margin-bottom:8px;">You can switch between mainnet and devnet from your user menu anytime.</li>
                 <li style="margin-bottom:8px;">Some features might not be available yet — but you'll be the first to know as we roll them out.</li>
-                <li style="margin-bottom:8px;">You can send payments to anyone using their X username, email address, or a Loofta username (starts with <strong>loo-</strong>).</li>
+                <li style="margin-bottom:8px;">You can send payments to anyone using their X username, email address, or a Loofta username (starts with <strong style="color:#ffffff;">loo-</strong>).</li>
                 <li style="margin-bottom:8px;">Multi send is available too — send to multiple people at once!</li>
               </ul>
               <p style="margin:0 0 32px;">So excited to have you with us. Try it out and tell me what you think — just reply here!</p>
               <div style="text-align:center;">
-                <a href="https://pay.loofta.xyz" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                <a href="https://pay.loofta.xyz" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
                   Go to Loofta
                 </a>
               </div>
             </td>
           </tr>
           <tr>
-            <td style="padding:20px 40px 28px;border-top:1px solid #F3F4F6;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#9CA3AF;">
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">
                 <a href="https://pay.loofta.xyz" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz</a>
               </p>
             </td>
@@ -153,10 +153,10 @@ export class EmailService {
 
   private buildPaymentReceivedHtml(data: ClaimEmailData & { amountStr: string; claimUrl: string }): string {
     const fromLine = data.senderInfo
-      ? `<p style="margin:0 0 8px;color:#6B7280;font-size:15px;">From <strong style="color:#111827;">${data.senderInfo}</strong></p>`
+      ? `<p style="margin:0 0 6px;font-size:14px;color:#6b7280;">From <strong style="color:#e5e7eb;font-weight:500;">${data.senderInfo}</strong></p>`
       : '';
     const descLine = data.description
-      ? `<p style="margin:16px 0 0;padding:14px 18px;background:#F9FAFB;border-radius:8px;color:#374151;font-size:14px;font-style:italic;">"${data.description}"</p>`
+      ? `<p style="margin:12px 0 0;padding:12px 16px;background:#1e1e23;border-radius:8px;color:#9ca3af;font-size:14px;font-style:italic;">"${data.description}"</p>`
       : '';
 
     return `<!DOCTYPE html>
@@ -172,33 +172,34 @@ export class EmailService {
     @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/P6VJ47S3OYMUC7HYSJLTK7PEIK5O2NPQ/TK62VLUWA76PMTK2XWBNDZB7QVXJGYE3/I5W5NEJGYVFUC5I4XOXVET63OE5PSVHJ.woff2') format('woff2'); font-weight:700; font-display:swap; }
   </style>
 </head>
-<body style="margin:0;padding:0;background:#F3F4F6;font-family:'Clash Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F3F4F6;padding:40px 16px;">
+<body style="margin:0;padding:0;background:#0f0f12;font-family:'Clash Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
     <tr>
       <td align="center">
-        <table width="100%" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
           <!-- Header -->
           <tr>
-            <td style="background:linear-gradient(135deg,#FF4A26,#FF8C00);padding:32px 40px 28px;text-align:center;">
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
               <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
             </td>
           </tr>
           <!-- Body -->
           <tr>
-            <td style="padding:40px 40px 32px;">
-              <p style="margin:0 0 24px;font-size:17px;color:#374151;font-weight:500;">Your payment has arrived 🎉</p>
-              <div style="background:linear-gradient(135deg,#FF4A26,#FF8C00);border-radius:12px;padding:28px 24px;text-align:center;margin-bottom:20px;">
-                <p style="margin:0 0 6px;font-size:12px;color:rgba(255,255,255,0.8);font-weight:600;letter-spacing:0.08em;text-transform:uppercase;">Amount received</p>
-                <p style="margin:0;font-size:40px;font-weight:700;color:#ffffff;letter-spacing:-1px;">${data.amountStr}</p>
+            <td style="padding:36px 40px 32px;">
+              <p style="margin:0 0 8px;font-size:32px;text-align:center;line-height:1;">🎉</p>
+              <p style="margin:0 0 24px;font-size:18px;color:#ffffff;font-weight:500;text-align:center;">Your payment has arrived</p>
+              <div style="background:#0f0f12;border:1px solid #3a1a10;border-radius:12px;padding:24px;text-align:center;margin-bottom:20px;">
+                <p style="margin:0 0 4px;font-size:12px;color:#6b7280;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;">Amount received</p>
+                <p style="margin:0;font-size:40px;font-weight:500;color:#FF4A26;letter-spacing:-1px;">${data.amountStr}</p>
               </div>
               ${fromLine}
               ${descLine}
-              <div style="margin-top:32px;text-align:center;">
-                <a href="${data.claimUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+              <div style="margin-top:28px;text-align:center;">
+                <a href="${data.claimUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
                   View payment
                 </a>
               </div>
-              <p style="margin:24px 0 0;font-size:13px;color:#9CA3AF;text-align:center;">
+              <p style="margin:20px 0 0;font-size:13px;color:#4b5563;text-align:center;">
                 Or copy this link:<br>
                 <a href="${data.claimUrl}" style="color:#FF4A26;word-break:break-all;">${data.claimUrl}</a>
               </p>
@@ -206,8 +207,8 @@ export class EmailService {
           </tr>
           <!-- Footer -->
           <tr>
-            <td style="padding:20px 40px 28px;border-top:1px solid #F3F4F6;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#9CA3AF;">
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">
                 You're receiving this because someone sent you a payment via Loofta.<br>
                 <a href="https://pay.loofta.xyz" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz</a>
               </p>
@@ -223,10 +224,10 @@ export class EmailService {
 
   private buildClaimReadyHtml(data: ClaimEmailData & { amountStr: string; claimUrl: string }): string {
     const fromLine = data.senderInfo
-      ? `<p style="margin:0 0 8px;color:#6B7280;font-size:15px;">From <strong style="color:#111827;">${data.senderInfo}</strong></p>`
-      : '<p style="margin:0 0 8px;color:#6B7280;font-size:15px;">Someone sent you a payment on Loofta</p>';
+      ? `<p style="margin:0 0 6px;font-size:14px;color:#6b7280;">From <strong style="color:#e5e7eb;font-weight:500;">${data.senderInfo}</strong></p>`
+      : '<p style="margin:0 0 6px;font-size:14px;color:#6b7280;">Someone sent you a payment on Loofta</p>';
     const descLine = data.description
-      ? `<p style="margin:16px 0 0;padding:14px 18px;background:#F9FAFB;border-radius:8px;color:#374151;font-size:14px;font-style:italic;">"${data.description}"</p>`
+      ? `<p style="margin:12px 0 0;padding:12px 16px;background:#1e1e23;border-radius:8px;color:#9ca3af;font-size:14px;font-style:italic;">"${data.description}"</p>`
       : '';
 
     return `<!DOCTYPE html>
@@ -242,33 +243,34 @@ export class EmailService {
     @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/P6VJ47S3OYMUC7HYSJLTK7PEIK5O2NPQ/TK62VLUWA76PMTK2XWBNDZB7QVXJGYE3/I5W5NEJGYVFUC5I4XOXVET63OE5PSVHJ.woff2') format('woff2'); font-weight:700; font-display:swap; }
   </style>
 </head>
-<body style="margin:0;padding:0;background:#F3F4F6;font-family:'Clash Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F3F4F6;padding:40px 16px;">
+<body style="margin:0;padding:0;background:#0f0f12;font-family:'Clash Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
     <tr>
       <td align="center">
-        <table width="100%" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
           <!-- Header -->
           <tr>
-            <td style="background:linear-gradient(135deg,#FF4A26,#FF8C00);padding:32px 40px 28px;text-align:center;">
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
               <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
             </td>
           </tr>
           <!-- Body -->
           <tr>
-            <td style="padding:40px 40px 32px;">
-              <p style="margin:0 0 24px;font-size:17px;color:#374151;font-weight:500;">You've got money waiting 💸</p>
-              <div style="background:linear-gradient(135deg,#FF4A26,#FF8C00);border-radius:12px;padding:28px 24px;text-align:center;margin-bottom:20px;">
-                <p style="margin:0 0 6px;font-size:12px;color:rgba(255,255,255,0.8);font-weight:600;letter-spacing:0.08em;text-transform:uppercase;">Ready to claim</p>
-                <p style="margin:0;font-size:40px;font-weight:700;color:#ffffff;letter-spacing:-1px;">${data.amountStr}</p>
+            <td style="padding:36px 40px 32px;">
+              <p style="margin:0 0 8px;font-size:32px;text-align:center;line-height:1;">💸</p>
+              <p style="margin:0 0 24px;font-size:18px;color:#ffffff;font-weight:500;text-align:center;">You've got money waiting</p>
+              <div style="background:#0f0f12;border:1px solid #3a1a10;border-radius:12px;padding:24px;text-align:center;margin-bottom:20px;">
+                <p style="margin:0 0 4px;font-size:12px;color:#6b7280;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;">Ready to claim</p>
+                <p style="margin:0;font-size:40px;font-weight:500;color:#FF4A26;letter-spacing:-1px;">${data.amountStr}</p>
               </div>
               ${fromLine}
               ${descLine}
-              <div style="margin-top:32px;text-align:center;">
-                <a href="${data.claimUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+              <div style="margin-top:28px;text-align:center;">
+                <a href="${data.claimUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
                   Claim your payment
                 </a>
               </div>
-              <p style="margin:24px 0 0;font-size:13px;color:#9CA3AF;text-align:center;">
+              <p style="margin:20px 0 0;font-size:13px;color:#4b5563;text-align:center;">
                 Or copy this link:<br>
                 <a href="${data.claimUrl}" style="color:#FF4A26;word-break:break-all;">${data.claimUrl}</a>
               </p>
@@ -276,8 +278,8 @@ export class EmailService {
           </tr>
           <!-- Footer -->
           <tr>
-            <td style="padding:20px 40px 28px;border-top:1px solid #F3F4F6;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#9CA3AF;">
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">
                 You're receiving this because someone sent you a payment via Loofta.<br>
                 <a href="https://pay.loofta.xyz" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz</a>
               </p>
