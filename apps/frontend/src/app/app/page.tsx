@@ -159,10 +159,10 @@ export default function Home() {
       answer: (
         <>
           <p className="mb-3 last:mb-0">
-            Private payments on Loofta Pay carry a flat <span className="font-medium text-slate-300">0.2%</span> fee charged to the sender — <span className="font-medium text-slate-300">0.1%</span> goes to MagicBlock&apos;s privacy infrastructure and <span className="font-medium text-slate-300">0.1%</span> to Loofta, which covers the sponsored gas. The recipient always receives the exact amount requested.
+            Private payments on Loofta Pay carry a flat fee charged to the sender — <span className="font-medium text-slate-300">10 BPS</span> of the transfer amount plus a <span className="font-medium text-slate-300">0.002 SOL</span> gas fee, both paid in USDC. All fees go directly to MagicBlock&apos;s privacy infrastructure. Loofta takes no cut. The recipient always receives the exact amount requested.
           </p>
           <p className="mb-0">
-            Compared to other privacy tools on Solana (Umbra, Privacy Cash, Houdini Swap) which charge 0.4%–4.4%+ at small amounts, Loofta&apos;s flat 0.2% is consistently the lowest across all transfer sizes.
+            Compared to other privacy tools on Solana (Umbra, Privacy Cash, Houdini Swap) which charge 0.4%–4.4%+ at small amounts, Loofta&apos;s flat fee is consistently the lowest across all transfer sizes.
           </p>
         </>
       ),
@@ -593,7 +593,7 @@ export default function Home() {
       </div>
 
       {/* FAQ — below the fold, above footer (same styling as /about), wider than main column */}
-      <section className="md:pb-16 px-4 pb-24">
+      <section className="md:pb-16 px-4 mt-2 pb-24">
         <div className="max-w-xl mx-auto">
           <h2 className="text-3xl md:text-4xl font-medium font-sans text-white text-center mb-8 md:mb-10">
             Frequently asked<br />questions
