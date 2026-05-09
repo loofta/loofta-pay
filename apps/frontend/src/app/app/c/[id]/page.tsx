@@ -691,9 +691,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const claimQuery = useQuery({
     queryKey: ["claim", id, user?.id],
     queryFn: async () => {
-      const token = user?.id ? await getAccessToken() : null;
+      const token = await getAccessToken();
       return fetchClaim(id, token);
     },
+    enabled: !!user?.id,
     staleTime: 60_000,
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: false,
