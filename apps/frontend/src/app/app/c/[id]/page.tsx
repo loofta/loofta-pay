@@ -3218,27 +3218,21 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             ) : (
               <>
                 {!embedInApp && (
-                  <div className="mb-3 flex items-start justify-between">
+                  <div className="mb-3">
                     <div className="text-xl font-sans font-medium text-slate-300">
-                      {(claim as { direction?: string } | null)?.direction === "from_sender" ? "Payment to" : "Payment request"}
+                      {(claim as { direction?: string } | null)?.direction === "from_sender" ? (
+                        <>
+                          {"Payment to "}
+                          {(claim as { recipient_pending_username_value?: string } | null)?.recipient_pending_username_value
+                            ? `@${(claim as { recipient_pending_username_value?: string }).recipient_pending_username_value}`
+                            : (claim as { recipient_pending_email_value?: string } | null)?.recipient_pending_email_value
+                              ? (claim as { recipient_pending_email_value?: string }).recipient_pending_email_value
+                              : claim?.recipient_username
+                                ? `@${claim.recipient_username}`
+                                : null}
+                        </>
+                      ) : "Payment request"}
                     </div>
-                    {(claim as { direction?: string } | null)?.direction === "from_sender" ? (
-                      <div className="text-sm text-gray-600">
-                        {(claim as { recipient_pending_username_value?: string } | null)?.recipient_pending_username_value
-                          ? `@${(claim as { recipient_pending_username_value?: string }).recipient_pending_username_value}`
-                          : (claim as { recipient_pending_email_value?: string } | null)?.recipient_pending_email_value
-                            ? (claim as { recipient_pending_email_value?: string }).recipient_pending_email_value
-                            : claim?.recipient_username
-                              ? `@${claim.recipient_username}`
-                              : null}
-                      </div>
-                    ) : claim?.created_by ? (
-                      <div className="text-sm text-gray-600">
-                        {claim.creator_username ? `@${claim.creator_username}` : 'User'}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-500">@ Anonymous</div>
-                    )}
                   </div>
                 )}
                 {!embedInApp && claim?.description && (
@@ -3307,7 +3301,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                   </div>
                 )}
-                {!embedInApp && <div className="text-base mt-2 text-slate-500">Amount requested</div>}
+                {!embedInApp && <div className="text-base mt-2 text-slate-500">{(claim as { direction?: string } | null)?.direction === "from_sender" ? "Amount to send" : "Amount requested"}</div>}
                 <div className={embedInApp ? "mt-2 flex items-baseline justify-between" : "mt-1 flex items-baseline justify-between"}>
                   <div className="text-3xl md:text-4xl font-sans font-semibold text-gray-900 leading-none">
                     {destUSD != null ? `$${destUSD.toFixed(2)}` : `—`}
@@ -3315,7 +3309,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   <div className="text-base text-gray-500">
                     <span className="inline-flex items-center gap-1">
                       <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
-                      {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol} {destToken?.chain ? `on ${destToken.chain.charAt(0).toUpperCase() + destToken.chain.slice(1)}` : ""}
+                      {destTokenAmount != null ? Number(parseFloat(String(destTokenAmount)).toFixed(4)) : "—"} {claim.to_symbol} {destToken?.chain ? `on ${destToken.chain.charAt(0).toUpperCase() + destToken.chain.slice(1)}` : ""}
                     </span>
                   </div>
                 </div>
