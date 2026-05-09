@@ -170,6 +170,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   if (ra.startsWith(PENDING_EMAIL_PREFIX)) {
     claim.recipient_address = undefined;
     claim.recipient_pending_email = true;
+    claim.recipient_pending_email_value = ra.slice(PENDING_EMAIL_PREFIX.length).trim();
     if (burner) claim.claim_burner_address = burner;
   } else if (ra.startsWith(PENDING_USERNAME_PREFIX)) {
     claim.recipient_address = undefined;
