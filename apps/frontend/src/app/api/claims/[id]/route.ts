@@ -144,15 +144,18 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     }
   }
 
-  let creator_username: string | null = null;
-  if (createdBy.includes('did:privy:')) {
-    const { data: appUser } = await supabase
-      .from("app_users")
-      .select("username")
-      .eq("privy_user_id", createdBy)
-      .maybeSingle();
-    creator_username = appUser?.username ?? null;
-  }
+  // Run creator username lookup and intent fetch in parallel
+  const creatorUsernamePromise = createdBy.includes('did:privy:')
+    ? supabase.from("app_users").select("username").eq("privy_user_id", createdBy).maybeSingle()
+    : Promise.resolve({ data: null });
+
+  const intentPromise = isLegacy
+    ? supabase.from("claim_intents").select("deposit_address, memo, deadline, time_estimate, quote_id, status, deposit_received_at").eq("claim_id", params.id).order("created_at", { ascending: false }).limit(1).maybeSingle()
+    : supabase.from("payment_intents").select("deposit_address, memo, deadline, time_estimate, quote_id, status").eq("payment_id", params.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+
+  const [{ data: appUser }, { data: intentData }] = await Promise.all([creatorUsernamePromise, intentPromise]);
+
+  const creator_username: string | null = (appUser as { username?: string } | null)?.username ?? null;
 
   const claim: Record<string, unknown> = {
     ...rawPayment,
@@ -187,27 +190,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     delete claim.recipient_address;
   }
 
-  // Fetch latest intent (payment_intents for new records, claim_intents for legacy)
-  let intent: Record<string, unknown> | null = null;
-  if (isLegacy) {
-    const { data } = await supabase
-      .from("claim_intents")
-      .select("deposit_address, memo, deadline, time_estimate, quote_id, status, deposit_received_at")
-      .eq("claim_id", params.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    intent = data as Record<string, unknown> | null;
-  } else {
-    const { data } = await supabase
-      .from("payment_intents")
-      .select("deposit_address, memo, deadline, time_estimate, quote_id, status")
-      .eq("payment_id", params.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    intent = data as Record<string, unknown> | null;
-  }
+  const intent = intentData as Record<string, unknown> | null;
 
   return NextResponse.json({
     claim,
