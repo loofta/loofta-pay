@@ -1332,7 +1332,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   useEffect(() => {
     (async () => {
       setQuote(null);
-      if (!claim || !selectedFrom) {
+      if (!claim || !selectedFrom || sameTokenAndChain) {
         setQuoteLoading(false);
         return;
       }
@@ -1381,7 +1381,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         setQuoteLoading(false);
       }
     })();
-  }, [id, claim, selectedFrom, destToken?.tokenId, destToken?.price, destToken?.decimals]);
+  }, [id, claim, selectedFrom, destToken?.tokenId, destToken?.price, destToken?.decimals, sameTokenAndChain]);
 
   async function onPrepare() {
     // Prevent double payment - check if claim is already paid
@@ -1761,7 +1761,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   /** Phantom payment path. Pending recipients use burner ATA escrow; registered users use PER. */
   async function payWithWallet(gasless = true) {
     const effectiveRecipient = getEffectiveRecipient(claim);
-    if (!claim?.id || !effectiveRecipient || !claim?.amount) {
+    const isRegisteredRecipient = !!(claim as { recipient_is_registered?: boolean }).recipient_is_registered;
+    if (!claim?.id || (!effectiveRecipient && !isRegisteredRecipient) || !claim?.amount) {
       toast({ variant: "destructive", title: "Missing info", description: "Claim or recipient address is missing." });
       return;
     }
@@ -1799,12 +1800,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       }
       if (!publicKey) throw new Error("Could not get wallet address from Phantom.");
 
-      const rawRecipient = effectiveRecipient.replace(/\s/g, "");
-      if (/^0x/i.test(rawRecipient)) {
-        throw new Error("This payment link is for a different network. Use Pay with Loofta.");
-      }
-      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(rawRecipient)) {
-        throw new Error("Recipient address is not a valid Solana address.");
+      if (effectiveRecipient) {
+        const rawRecipient = effectiveRecipient.replace(/\s/g, "");
+        if (/^0x/i.test(rawRecipient)) {
+          throw new Error("This payment link is for a different network. Use Pay with Loofta.");
+        }
+        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(rawRecipient)) {
+          throw new Error("Recipient address is not a valid Solana address.");
+        }
       }
 
       const anchorWallet = phantomWalletToAnchorWallet({
@@ -1901,7 +1904,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       effectiveRecipient = getEffectiveRecipient(freshClaim ?? null);
       console.log("[PayWithLoofta] After refetch:", { hasBurner: !!(freshClaim as { claim_burner_address?: string } | null)?.claim_burner_address, recipientFound: !!effectiveRecipient });
     }
-    if (!claim?.id || !effectiveRecipient || !claim?.amount) {
+    const isRegisteredRecipient = !!(claim as { recipient_is_registered?: boolean }).recipient_is_registered;
+    if (!claim?.id || (!effectiveRecipient && !isRegisteredRecipient) || !claim?.amount) {
       console.warn("[PayWithLoofta] Missing recipient:", { claimId: claim?.id, recipientFound: !!effectiveRecipient, isPending });
       const description = isPending && !effectiveRecipient
         ? "This payment link is for someone who hasn't signed up yet. The burner address could not be loaded — try refreshing the page or use a different browser."
@@ -1927,12 +1931,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     setPendingFeeUsdc(null);
     try {
       // Normalize and validate Solana recipient (base58) — use burner when recipient not yet claimed
-      const rawRecipient = effectiveRecipient.replace(/\s/g, "");
-      if (/^0x/i.test(rawRecipient)) {
-        throw new Error("This payment link is for a different network. Use another payment method.");
-      }
-      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(rawRecipient)) {
-        throw new Error("Recipient address is not a valid Solana address for this payment.");
+      if (effectiveRecipient) {
+        const rawRecipient = effectiveRecipient.replace(/\s/g, "");
+        if (/^0x/i.test(rawRecipient)) {
+          throw new Error("This payment link is for a different network. Use another payment method.");
+        }
+        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(rawRecipient)) {
+          throw new Error("Recipient address is not a valid Solana address for this payment.");
+        }
       }
 
       const wallet = solanaStandardWallets?.find((w) => w.address === senderAddress);
