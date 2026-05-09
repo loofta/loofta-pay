@@ -155,14 +155,40 @@ export async function POST(request: Request) {
       if (sameToken) {
         // Same chain, same token → Direct transfer to recipient (no need for swap)
         console.log("[claims/deposit] Same chain + same token → Direct transfer to recipient");
-        
+
+        // Privacy: fetch burner address from DB — never return the real recipient wallet to the sender
+        let directRecipient: string | null = null;
+        const { data: paymentRow } = await supabase
+          .from("payments")
+          .select("burner_address")
+          .eq("id", claimId)
+          .maybeSingle();
+        if (paymentRow) {
+          directRecipient = (paymentRow as any).burner_address || null;
+        } else {
+          const { data: claimRow } = await supabase
+            .from("claims")
+            .select("claim_burner_address")
+            .eq("id", claimId)
+            .maybeSingle();
+          directRecipient = (claimRow as any)?.claim_burner_address || null;
+        }
+
+        if (!directRecipient) {
+          console.error("[claims/deposit] No burner address for direct transfer — rejecting to protect recipient privacy");
+          return NextResponse.json({
+            error: "Please use the in-app send flow to complete this payment securely.",
+            code: "USE_PRIVATE_TRANSFER",
+          }, { status: 400 });
+        }
+
         // Get token price to convert USD → token amount
         let tokenPrice: number | undefined = undefined;
         let tokenDecimals = Number(fromToken.decimals) || 18;
         try {
           const tokens: any = await (OneClickService as any).getTokens();
           const arr: any[] = Array.isArray(tokens) ? tokens : (tokens?.tokens || []);
-          const foundToken = arr.find((t: any) => 
+          const foundToken = arr.find((t: any) =>
             String(t?.symbol || "").toUpperCase() === String(fromToken.symbol || "").toUpperCase() &&
             String(t?.chain || t?.chainId || "").toLowerCase().includes(originChain)
           );
@@ -171,7 +197,7 @@ export async function POST(request: Request) {
         } catch (e) {
           console.error("[claims/deposit] Error fetching token price:", e);
         }
-        
+
         // Calculate token amount from USD
         const amountUsd = Number(claim.amount || 0);
         let tokenAmount = "0";
@@ -180,17 +206,17 @@ export async function POST(request: Request) {
           // Round up to 6 decimals
           tokenAmount = (Math.ceil(rawAmount * 1000000) / 1000000).toFixed(6);
         }
-        
+
         console.log("[claims/deposit] Direct transfer - USD:", amountUsd, "Token price:", tokenPrice, "Token amount:", tokenAmount);
-        
+
         return NextResponse.json({
           directTransfer: true,
-          depositAddress: claim.recipient_address,
+          depositAddress: directRecipient,
           depositToken: fromToken.symbol,
           depositChain: originChain,
           amount: tokenAmount,
           minAmountInFormatted: tokenAmount,
-          message: `Send ${claim.to_symbol} directly to the recipient address.`,
+          message: `Send ${claim.to_symbol} directly to the payment address.`,
         }, { status: 200 });
       }
       
