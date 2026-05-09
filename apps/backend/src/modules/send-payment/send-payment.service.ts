@@ -980,7 +980,7 @@ export class SendPaymentService {
   async confirmMultiSend(senderUserId: string, paymentIds: string[], txHash?: string, feeUsdc?: number): Promise<void> {
     if (!paymentIds.length) return;
 
-    // Fetch rows first so we can split registered vs unregistered
+    // Fetch rows first so we can split registered vs unregistered and compute per-row fees
     const { data: rows, error: fetchError } = await this.supabaseService.payments
       .select('id, amount, recipient_email, recipient_username, recipient_was_unregistered, description')
       .in('id', paymentIds);
@@ -991,47 +991,44 @@ export class SendPaymentService {
 
     const now = new Date().toISOString();
     const allRows = rows ?? [];
-    const unregisteredIds = allRows.filter((r) => r.recipient_was_unregistered).map((r) => r.id as string);
-    const registeredIds = allRows.filter((r) => !r.recipient_was_unregistered).map((r) => r.id as string);
+
+    // Compute fee per payment from stored amount (server-side; frontend value used as hint only)
+    const computedFeeByPaymentId = new Map<string, number>(
+      allRows.map((row) => {
+        const amountUsd = parseFloat(String(row.amount || '0'));
+        const baseUnits = Math.round(amountUsd * 1_000_000);
+        const grossUnits = grossUpForMagicblockFee(baseUnits);
+        const computed = (grossUnits - baseUnits + Math.round(MAGICBLOCK_GAS_USDC * 1_000_000)) / 1_000_000;
+        // Prefer frontend-passed value when available (may be more precise), otherwise fall back to estimate
+        return [row.id as string, feeUsdc ?? computed];
+      }),
+    );
 
     // Track which IDs were successfully updated so we only email after confirmed DB write
     const successfullyUpdatedIds = new Set<string>();
 
-    // Registered recipients: MagicBlock private transfer landed in their wallet → SUCCESS
-    if (registeredIds.length) {
+    // Update each payment individually so each gets its own computed fee
+    for (const row of allRows) {
+      const paymentId = row.id as string;
+      const rowFee = computedFeeByPaymentId.get(paymentId);
+      const isUnregistered = !!row.recipient_was_unregistered;
+      const status = isUnregistered ? 'PRIVATE_TRANSFER_PENDING' : 'SUCCESS';
+      const updatePayload: Record<string, unknown> = {
+        status,
+        sender_user_id: senderUserId,
+        fee_paid_usdc: rowFee,
+        ...(txHash ? { sender_tx_hash: txHash } : {}),
+        ...(!isUnregistered ? { paid_at: now } : {}),
+      };
       const { error } = await this.supabaseService.payments
-        .update({
-          status: 'SUCCESS',
-          paid_at: now,
-          sender_user_id: senderUserId,
-          ...(txHash ? { sender_tx_hash: txHash } : {}),
-          ...(feeUsdc !== undefined ? { fee_paid_usdc: feeUsdc } : {}),
-        })
-        .in('id', registeredIds)
+        .update(updatePayload)
+        .eq('id', paymentId)
         .eq('sender_user_id', senderUserId);
       if (error) {
-        this.logger.warn(`[MultiSend] confirmMultiSend registered update failure: ${error.message}`);
+        this.logger.warn(`[MultiSend] confirmMultiSend update failure id=${paymentId}: ${error.message}`);
       } else {
-        this.logger.log(`[MultiSend] marked ${registeredIds.length} registered payments SUCCESS txHash=${txHash?.slice(0, 12) ?? 'n/a'}`);
-        registeredIds.forEach((id) => successfullyUpdatedIds.add(id));
-      }
-    }
-
-    // Unregistered recipients: funds landed in burner wallet, recipient still needs to claim
-    if (unregisteredIds.length) {
-      const { error } = await this.supabaseService.payments
-        .update({
-          status: 'PRIVATE_TRANSFER_PENDING',
-          sender_user_id: senderUserId,
-          ...(txHash ? { sender_tx_hash: txHash } : {}),
-        })
-        .in('id', unregisteredIds)
-        .eq('sender_user_id', senderUserId);
-      if (error) {
-        this.logger.warn(`[MultiSend] confirmMultiSend unregistered update failure: ${error.message}`);
-      } else {
-        this.logger.log(`[MultiSend] marked ${unregisteredIds.length} unregistered payments PRIVATE_TRANSFER_PENDING`);
-        unregisteredIds.forEach((id) => successfullyUpdatedIds.add(id));
+        this.logger.log(`[MultiSend] marked payment=${paymentId} ${status} fee=${rowFee?.toFixed(4) ?? 'n/a'} txHash=${txHash?.slice(0, 12) ?? 'n/a'}`);
+        successfullyUpdatedIds.add(paymentId);
       }
     }
 

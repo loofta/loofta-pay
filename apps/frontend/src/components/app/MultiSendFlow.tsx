@@ -27,7 +27,7 @@ import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { PlusIcon, XIcon, CheckCircle2, Copy, ExternalLink, Wallet, ArrowRight, Loader2, ArrowLeft } from "lucide-react";
 import { MessageInput } from "@/components/MessageInput";
@@ -268,17 +268,23 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         const wallet = solanaWallets.find((w) => w.address === senderWallet) ?? solanaWallets[0];
         if (!wallet) throw new Error("Loofta wallet not found. Try logging out and back in.");
 
-        console.info(`[MultiSend] signing ${txResults.length} txs with Loofta wallet`);
-        signedPairs = [];
-        for (let i = 0; i < txResults.length; i++) {
-          const txData = txResults[i];
-          const { signedTransaction } = await privySolanaSignTransaction({
-            transaction: Buffer.from(txData.transactionBase64, "base64"),
-            wallet,
-            chain,
-          });
-          signedPairs.push({ bytes: signedTransaction, paymentId: paymentIds[i], sendTo: txData.sendTo });
-        }
+        console.info(`[MultiSend] batch-signing ${txResults.length} txs with Loofta wallet (no per-tx modal)`);
+        const inputs = txResults.map((txData) => ({
+          transaction: Buffer.from(txData.transactionBase64, "base64") as Uint8Array,
+          wallet,
+          chain,
+          options: { uiOptions: { showWalletUIs: false } },
+        }));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const signedOutputs = await (privySolanaSignTransaction as any)(...inputs);
+        const outputArray: Array<{ signedTransaction: Uint8Array }> = Array.isArray(signedOutputs)
+          ? signedOutputs
+          : [signedOutputs];
+        signedPairs = outputArray.map((out, i) => ({
+          bytes: out.signedTransaction,
+          paymentId: paymentIds[i],
+          sendTo: txResults[i].sendTo,
+        }));
       } else {
         const phantom = getPhantomProvider();
         if (!phantom) throw new Error("Phantom not found. Install the Phantom extension.");
@@ -604,7 +610,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           onOpenChange={(open) => { if (!open) closeSettlementModal(); }}
         >
           <DialogContent
-            className="sm:max-w-sm p-6 border-white/10 bg-[#0f0f12] text-white"
+            className="sm:max-w-sm p-6 border-white/10 bg-[#0f0f12] text-white [&_.text-gray-900]:!text-white [&_.text-muted-foreground]:!text-slate-400 [&_.bg-orange-100]:!bg-orange-500/20 [&_.text-orange-600]:!text-orange-300 [&_.bg-amber-50\/90]:!bg-amber-500/15 [&_.border-amber-200]:!border-amber-400/30 [&_.text-amber-950]:!text-amber-200"
             onPointerDownOutside={(e) => { if (isBusy) e.preventDefault(); }}
             onEscapeKeyDown={(e) => { if (isBusy) e.preventDefault(); }}
             aria-describedby={undefined}
@@ -665,66 +671,38 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
               );
             })()}
 
-            {/* creating */}
-            {phase.kind === "creating" && (
+            {/* creating / building / awaiting_signature / broadcasting */}
+            {(phase.kind === "creating" || phase.kind === "building" || phase.kind === "awaiting_signature" || phase.kind === "broadcasting") && (
               <>
-                <DialogTitle className="text-white text-lg font-semibold mb-1">Creating payments</DialogTitle>
-                <div className="flex items-center gap-3 pt-4">
-                  <Loader2 className="w-5 h-5 animate-spin text-white shrink-0" />
-                  <span className="text-slate-300 text-sm">Creating payments…</span>
-                </div>
-                <p className="text-slate-500 text-xs text-center mt-4">Do not close this window.</p>
-              </>
-            )}
-
-            {/* building / awaiting_signature / broadcasting */}
-            {(phase.kind === "building" || phase.kind === "awaiting_signature" || phase.kind === "broadcasting") && (
-              <>
-                <DialogTitle className="text-white text-lg font-semibold mb-1">
-                  {phase.kind === "building" ? "Preparing payment" :
-                    phase.kind === "awaiting_signature" ? "Confirm in wallet" :
-                      "Broadcasting"}
-                </DialogTitle>
-                <div className="space-y-4 pt-2">
-                  <div className="space-y-3 p-4 rounded-xl border border-white/10 bg-white/5">
-                    <div className="flex items-center gap-3">
-                      {phase.kind === "building" ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-white shrink-0" />
-                      ) : (
-                        <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0" />
-                      )}
-                      <span className={phase.kind === "building" ? "text-white text-sm" : "text-slate-400 text-sm"}>
-                        Preparing payment
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {phase.kind === "awaiting_signature" ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-white shrink-0" />
-                      ) : phase.kind === "broadcasting" ? (
-                        <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0" />
-                      ) : (
-                        <div className="w-4 h-4 rounded-full border border-white/20 shrink-0" />
-                      )}
-                      <span className={
-                        phase.kind === "awaiting_signature" ? "text-white text-sm" :
-                          phase.kind === "broadcasting" ? "text-slate-400 text-sm" :
-                            "text-slate-500 text-sm"
-                      }>
-                        Awaiting signature
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {phase.kind === "broadcasting" ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-white shrink-0" />
-                      ) : (
-                        <div className="w-4 h-4 rounded-full border border-white/20 shrink-0" />
-                      )}
-                      <span className={phase.kind === "broadcasting" ? "text-white text-sm" : "text-slate-500 text-sm"}>
-                        Broadcasting
-                      </span>
+                <DialogHeader className="flex flex-col items-center justify-center text-center space-y-0 pb-4 sm:text-center" aria-hidden>
+                  <div className="mb-4 flex justify-center">
+                    <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center">
+                      <Loader2 className="w-8 h-8 animate-spin text-orange-600" />
                     </div>
                   </div>
-                  <p className="text-slate-500 text-xs text-center">Do not close this window.</p>
+                  <DialogTitle className="text-xl font-semibold text-gray-900 text-center">
+                    {(phase.kind === "creating" || phase.kind === "building") && "Preparing payments"}
+                    {phase.kind === "awaiting_signature" && "Approve in your wallet"}
+                    {phase.kind === "broadcasting" && "Finishing on-chain steps"}
+                  </DialogTitle>
+                  <p className="pt-2 text-sm text-center text-muted-foreground max-w-sm">
+                    {(phase.kind === "creating" || phase.kind === "building") &&
+                      "Setting up transactions. Please keep this window open."}
+                    {phase.kind === "awaiting_signature" && (
+                      <>
+                        Your wallet may show{" "}
+                        <span className="font-medium text-orange-600">
+                          {filledRows.length} transaction{filledRows.length === 1 ? "" : "s"}
+                        </span>{" "}
+                        in one approval. Do not close this tab until you finish signing.
+                      </>
+                    )}
+                    {phase.kind === "broadcasting" &&
+                      "Broadcasting to Solana. Confirmations can take a few seconds each."}
+                  </p>
+                </DialogHeader>
+                <div className="rounded-lg border border-amber-200 bg-amber-50/90 p-3 text-center text-sm text-amber-950">
+                  Stay on this page until the payment completes.
                 </div>
               </>
             )}
@@ -762,11 +740,16 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   // ── Main form ──────────────────────────────────────────────────────────────
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-white text-xl font-semibold">Multi Send</p>
-        <button type="button" onClick={onBack} className="text-slate-400 hover:text-white text-sm font-medium">
-          Back
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-slate-400 hover:text-white transition-colors"
+          aria-label="Back"
+        >
+          <ArrowLeft className="w-5 h-5" />
         </button>
+        <p className="text-white text-xl font-semibold">Multi Send</p>
       </div>
 
       <div className="space-y-3">

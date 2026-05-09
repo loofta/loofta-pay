@@ -81,7 +81,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
   const { data: paymentRow } = await supabase
     .from("payments")
-    .select("id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id")
+    .select("id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc")
     .eq("id", params.id)
     .maybeSingle();
 

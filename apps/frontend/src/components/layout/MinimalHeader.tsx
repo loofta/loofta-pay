@@ -50,13 +50,8 @@ function MobileMenu({
 
   return (
     <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
-      />
       {/* Drawer */}
-      <div className="fixed top-0 right-0 bottom-0 z-50 w-72 flex flex-col bg-[#0f0f12] border-l border-white/10 shadow-2xl animate-in slide-in-from-right duration-200">
+      <div className="fixed inset-0 z-50 flex flex-col bg-[#0f0f12] shadow-2xl animate-in slide-in-from-right duration-200">
         {/* Header */}
         <div className="flex items-center justify-between px-5 h-16 border-b border-white/10 shrink-0">
           <div className="min-w-0">

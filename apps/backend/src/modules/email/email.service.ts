@@ -99,15 +99,21 @@ export class EmailService {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>You're in!</title>
+  <style>
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/O462VY6O6FTQCS72XVMTQHXAM4NN5CY3/TWF57ITZORMJ3MEWLQQIVO6BMXIB6FUR/MJQFMMOTEGNXDVM7HBBDTQHTVB2M7Y6G.woff2') format('woff2'); font-weight:400; font-display:swap; }
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/2SAK53YLUN7RMYJU4MYLSBV6SSSJEJZB/RXS4DPGJRKOUFZMF5X5BVUGNNKJT65XZ/DJS4RYGIUYUXJQOHY5VCZPKSTXUSHTSP.woff2') format('woff2'); font-weight:500; font-display:swap; }
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/MKEEQN57GWBZOSYWCRODNJOOZNPLMAKN/5SPTSZGHEACWWLF34DQ4WAA4OGU6PQIF/KN7DX4F6PXB74R6L2K2Y4NH3CB7FC53Q.woff2') format('woff2'); font-weight:600; font-display:swap; }
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/P6VJ47S3OYMUC7HYSJLTK7PEIK5O2NPQ/TK62VLUWA76PMTK2XWBNDZB7QVXJGYE3/I5W5NEJGYVFUC5I4XOXVET63OE5PSVHJ.woff2') format('woff2'); font-weight:700; font-display:swap; }
+  </style>
 </head>
-<body style="margin:0;padding:0;background:#F3F4F6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:'Clash Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#F3F4F6;padding:40px 16px;">
     <tr>
       <td align="center">
         <table width="100%" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
           <tr>
             <td style="background:linear-gradient(135deg,#FF4A26,#FF8C00);padding:32px 40px 28px;text-align:center;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;" />
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
             </td>
           </tr>
           <tr>
@@ -159,8 +165,14 @@ export class EmailService {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Payment received</title>
+  <style>
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/O462VY6O6FTQCS72XVMTQHXAM4NN5CY3/TWF57ITZORMJ3MEWLQQIVO6BMXIB6FUR/MJQFMMOTEGNXDVM7HBBDTQHTVB2M7Y6G.woff2') format('woff2'); font-weight:400; font-display:swap; }
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/2SAK53YLUN7RMYJU4MYLSBV6SSSJEJZB/RXS4DPGJRKOUFZMF5X5BVUGNNKJT65XZ/DJS4RYGIUYUXJQOHY5VCZPKSTXUSHTSP.woff2') format('woff2'); font-weight:500; font-display:swap; }
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/MKEEQN57GWBZOSYWCRODNJOOZNPLMAKN/5SPTSZGHEACWWLF34DQ4WAA4OGU6PQIF/KN7DX4F6PXB74R6L2K2Y4NH3CB7FC53Q.woff2') format('woff2'); font-weight:600; font-display:swap; }
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/P6VJ47S3OYMUC7HYSJLTK7PEIK5O2NPQ/TK62VLUWA76PMTK2XWBNDZB7QVXJGYE3/I5W5NEJGYVFUC5I4XOXVET63OE5PSVHJ.woff2') format('woff2'); font-weight:700; font-display:swap; }
+  </style>
 </head>
-<body style="margin:0;padding:0;background:#F3F4F6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:'Clash Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#F3F4F6;padding:40px 16px;">
     <tr>
       <td align="center">
@@ -168,16 +180,16 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="background:linear-gradient(135deg,#FF4A26,#FF8C00);padding:32px 40px 28px;text-align:center;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;" />
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
             </td>
           </tr>
           <!-- Body -->
           <tr>
             <td style="padding:40px 40px 32px;">
               <p style="margin:0 0 24px;font-size:17px;color:#374151;font-weight:500;">Your payment has arrived 🎉</p>
-              <div style="background:#FFF7F5;border:2px solid #FF4A26;border-radius:12px;padding:24px;text-align:center;margin-bottom:20px;">
-                <p style="margin:0 0 4px;font-size:13px;color:#FF4A26;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;">Amount received</p>
-                <p style="margin:0;font-size:40px;font-weight:800;color:#FF4A26;letter-spacing:-1px;">${data.amountStr}</p>
+              <div style="background:linear-gradient(135deg,#FF4A26,#FF8C00);border-radius:12px;padding:28px 24px;text-align:center;margin-bottom:20px;">
+                <p style="margin:0 0 6px;font-size:12px;color:rgba(255,255,255,0.8);font-weight:600;letter-spacing:0.08em;text-transform:uppercase;">Amount received</p>
+                <p style="margin:0;font-size:40px;font-weight:700;color:#ffffff;letter-spacing:-1px;">${data.amountStr}</p>
               </div>
               ${fromLine}
               ${descLine}
@@ -223,8 +235,14 @@ export class EmailService {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Payment waiting</title>
+  <style>
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/O462VY6O6FTQCS72XVMTQHXAM4NN5CY3/TWF57ITZORMJ3MEWLQQIVO6BMXIB6FUR/MJQFMMOTEGNXDVM7HBBDTQHTVB2M7Y6G.woff2') format('woff2'); font-weight:400; font-display:swap; }
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/2SAK53YLUN7RMYJU4MYLSBV6SSSJEJZB/RXS4DPGJRKOUFZMF5X5BVUGNNKJT65XZ/DJS4RYGIUYUXJQOHY5VCZPKSTXUSHTSP.woff2') format('woff2'); font-weight:500; font-display:swap; }
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/MKEEQN57GWBZOSYWCRODNJOOZNPLMAKN/5SPTSZGHEACWWLF34DQ4WAA4OGU6PQIF/KN7DX4F6PXB74R6L2K2Y4NH3CB7FC53Q.woff2') format('woff2'); font-weight:600; font-display:swap; }
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/P6VJ47S3OYMUC7HYSJLTK7PEIK5O2NPQ/TK62VLUWA76PMTK2XWBNDZB7QVXJGYE3/I5W5NEJGYVFUC5I4XOXVET63OE5PSVHJ.woff2') format('woff2'); font-weight:700; font-display:swap; }
+  </style>
 </head>
-<body style="margin:0;padding:0;background:#F3F4F6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:'Clash Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#F3F4F6;padding:40px 16px;">
     <tr>
       <td align="center">
@@ -232,16 +250,16 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="background:linear-gradient(135deg,#FF4A26,#FF8C00);padding:32px 40px 28px;text-align:center;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;" />
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
             </td>
           </tr>
           <!-- Body -->
           <tr>
             <td style="padding:40px 40px 32px;">
               <p style="margin:0 0 24px;font-size:17px;color:#374151;font-weight:500;">You've got money waiting 💸</p>
-              <div style="background:#FFF7F5;border:2px solid #FF4A26;border-radius:12px;padding:24px;text-align:center;margin-bottom:20px;">
-                <p style="margin:0 0 4px;font-size:13px;color:#FF4A26;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;">Ready to claim</p>
-                <p style="margin:0;font-size:40px;font-weight:800;color:#FF4A26;letter-spacing:-1px;">${data.amountStr}</p>
+              <div style="background:linear-gradient(135deg,#FF4A26,#FF8C00);border-radius:12px;padding:28px 24px;text-align:center;margin-bottom:20px;">
+                <p style="margin:0 0 6px;font-size:12px;color:rgba(255,255,255,0.8);font-weight:600;letter-spacing:0.08em;text-transform:uppercase;">Ready to claim</p>
+                <p style="margin:0;font-size:40px;font-weight:700;color:#ffffff;letter-spacing:-1px;">${data.amountStr}</p>
               </div>
               ${fromLine}
               ${descLine}

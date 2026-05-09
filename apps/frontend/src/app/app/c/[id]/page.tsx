@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState, type SVGProps } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenCombobox } from "@/components/TokenCombobox";
@@ -92,18 +92,23 @@ function formatPerTransferStepName(step: string): string {
 function ClaimPayLayout({
   embedInApp,
   topRight,
+  from,
   children,
 }: {
   embedInApp?: boolean;
   topRight?: React.ReactNode;
+  from?: string | null;
   children: React.ReactNode;
 }) {
+  const backHref = from === "history" ? "/history" : "/";
+  const backLabel = from === "history" ? "← Back to History" : "← Back to Send";
+
   if (embedInApp) {
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-2">
-          <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
-            ← Back to Send
+          <Link href={backHref} className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
+            {backLabel}
           </Link>
           {topRight}
         </div>
@@ -123,8 +128,8 @@ function ClaimPayLayout({
           <SendReceiveTabs activeTab="send" visualOnly />
         </div>
         <div className="flex items-center justify-between gap-2 mt-4 mb-4">
-          <Link href="/" className="items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
-            ← Back to Send
+          <Link href={backHref} className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
+            {backLabel}
           </Link>
           {topRight}
         </div>
@@ -604,6 +609,8 @@ function ClaimDescriptionMessageBox({ description }: { description?: string | nu
 function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
   const id = claimId;
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const from = searchParams.get("from");
   const [isClaimPageLocalhost, setIsClaimPageLocalhost] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1962,7 +1969,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       }
 
       const connection = new Connection(getRpcForMode(networkMode), "confirmed");
-      const anchorWallet = privyStandardWalletToAnchorWallet(wallet, privySolanaSignTransaction, getPrivySolanaChainForMode(networkMode));
+      // Sign silently — user already approved in our modal; no per-tx Privy popup needed.
+      const silentSign: Parameters<typeof privyStandardWalletToAnchorWallet>[1] = (input) =>
+        privySolanaSignTransaction({ ...input, options: { uiOptions: { showWalletUIs: false } } });
+      const anchorWallet = privyStandardWalletToAnchorWallet(wallet, silentSign, getPrivySolanaChainForMode(networkMode));
       const isBurnerForLoofta = !!((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
       if (!user?.id) {
         throw new Error("Log in to pay with Loofta.");
@@ -2001,6 +2011,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               transaction: txBytes,
               wallet,
               chain,
+              options: { uiOptions: { showWalletUIs: false } },
             });
             signedTxBytes = result.signedTransaction;
           } catch (e: unknown) {
@@ -2431,6 +2442,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
       <ClaimPayLayout
         embedInApp={embedInApp}
+        from={from}
         topRight={
           user?.id && claim?.created_by === user.id && ["OPEN", "PENDING_DEPOSIT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
             <>
@@ -2572,10 +2584,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   Oops — this link may not be addressed to you or may no longer exist.
                 </p>
                 <Link
-                  href="/"
+                  href={from === "history" ? "/history" : "/"}
                   className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors"
                 >
-                  ← Back to Send
+                  {from === "history" ? "← Back to History" : "← Back to Send"}
                 </Link>
               </div>
             ) : isRecipient &&
@@ -2957,8 +2969,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <p className="text-gray-600 text-base mb-4">
                   ${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay. When they do, it’ll show up here and in your Loofta account.
                 </p>
-                <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900">
-                  ← Back to Send
+                <Link href={from === "history" ? "/history" : "/"} className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900">
+                  {from === "history" ? "← Back to History" : "← Back to Send"}
                 </Link>
               </div>
             ) : ["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) ? (
@@ -3993,10 +4005,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               Oops — this link may have expired, been cancelled, or never existed.
             </p>
             <Link
-              href="/"
+              href={from === "history" ? "/history" : "/"}
               className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors"
             >
-              ← Back to Send
+              {from === "history" ? "← Back to History" : "← Back to Send"}
             </Link>
           </div>
         )}
@@ -4229,7 +4241,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
 export default function ClaimPayPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = React.use(params);
-  return <ClaimPayView claimId={id} />;
+  return (
+    <React.Suspense>
+      <ClaimPayView claimId={id} />
+    </React.Suspense>
+  );
 }
 
 function StatusBadge({ status }: { status: string }) {
