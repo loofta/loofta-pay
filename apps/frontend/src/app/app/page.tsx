@@ -344,27 +344,27 @@ export default function Home() {
               {showMultiSend && canMultiSend ? (
                 <MultiSendFlow onBack={() => { setShowMultiSend(false); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }} />
               ) : sendStep === 3 && claimId ? (
-                <div className="space-y-4 rounded-2xl border border-white/10 bg-white/5 p-6 text-white">
-                  <div className="flex items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setClaimId(null);
-                        setSelectedRecipient(null);
-                        setSendStep(1);
-                      }}
-                      className="text-slate-300 hover:text-white text-sm font-medium"
-                    >
-                      ← New payment
-                    </button>
-                  </div>
-                  <p className="text-slate-200 mb-4">Payment link created. Share it or open it to view status.</p>
-                  <Link
-                    href={`/c/${claimId}`}
-                    className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90"
+                <div className="space-y-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClaimId(null);
+                      setSelectedRecipient(null);
+                      setSendStep(1);
+                    }}
+                    className="text-slate-400 hover:text-white text-sm font-medium"
                   >
-                    View payment
-                  </Link>
+                    ← New payment
+                  </button>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white space-y-4">
+                    <p className="text-slate-200">Payment link created. Share it or open it to view status.</p>
+                    <Link
+                      href={`/c/${claimId}`}
+                      className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90"
+                    >
+                      View payment
+                    </Link>
+                  </div>
                 </div>
               ) : selectedRecipient ? (
                 <SendFlowInApp
@@ -507,12 +507,9 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => { setShowClaimOverlay(false); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
-                    className="flex items-center gap-2 text-slate-300 hover:text-white text-sm font-medium"
+                    className="text-slate-400 hover:text-white text-sm font-medium"
                   >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M19 12H5M12 19l-7-7 7-7" />
-                    </svg>
-                    Back to receive
+                    ← Back to receive
                   </button>
                   <ClaimPageContent embedInApp />
                 </>

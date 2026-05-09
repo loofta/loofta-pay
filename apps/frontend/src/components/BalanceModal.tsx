@@ -642,9 +642,24 @@ const [withdrawAmount, setWithdrawAmount] = useState("");
         {tab === "topup" && (
           <div className="py-2 space-y-3">
             {devnetMode ? (
-              <div className={`rounded-xl border-2 p-6 text-center ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
-                <p className={`text-sm font-medium mb-1 ${dark ? "text-amber-400" : "text-amber-600"}`}>Mainnet only</p>
-                <p className={`text-xs ${dark ? "text-slate-400" : "text-gray-500"}`}>Top up is not available on devnet.</p>
+              <div className={`rounded-xl border-2 p-4 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
+                <p className={`text-base font-semibold mb-1 ${dark ? "text-white" : "text-gray-900"}`}>Deposit USDC (devnet)</p>
+                <p className={`text-sm mb-3 ${dark ? "text-slate-400" : "text-gray-500"}`}>Send devnet USDC directly to your wallet address.</p>
+                {solanaAddress && (
+                  <div className={`flex items-center gap-2 rounded-lg p-3 ${dark ? "bg-white/5" : "bg-white border border-gray-200"}`}>
+                    <p className={`text-sm font-mono flex-1 break-all ${dark ? "text-slate-300" : "text-gray-700"}`}>{solanaAddress}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(solanaAddress);
+                        toast({ title: "Copied!", description: "Wallet address copied to clipboard." });
+                      }}
+                      className={`shrink-0 p-1.5 rounded-lg transition-colors ${dark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-gray-100 text-gray-400 hover:text-gray-700"}`}
+                    >
+                      <Copy className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <>
