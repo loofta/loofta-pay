@@ -181,9 +181,8 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     claim.recipient_is_registered = true;
     if (burner) {
       claim.claim_burner_address = burner;
-      delete claim.recipient_address;
     }
-    // No burner: keep recipient_address in the response — it IS the payment destination for direct-wallet links
+    delete claim.recipient_address; // Never expose real wallet address to either party
   } else {
     delete claim.recipient_address;
   }
