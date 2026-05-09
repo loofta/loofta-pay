@@ -174,7 +174,13 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                 <ImageIcon className="h-5 w-5" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-[350px] sm:w-[400px] p-0 border-0 shadow-xl" align="end" side="top">
+            <PopoverContent
+              className="w-[min(calc(100vw-1rem),400px)] p-0 border-0 shadow-xl"
+              align="end"
+              side="top"
+              sideOffset={8}
+              collisionPadding={8}
+            >
               <div className="bg-white rounded-lg">
                 {!gf ? (
                   <div className="p-6 text-center">
@@ -230,7 +236,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                     </div>
 
                     {/* GIF Grid */}
-                    <div className="max-h-[400px] overflow-y-auto p-3">
+                    <div className="max-h-[min(400px,50vh)] overflow-y-auto p-3">
                       {isLoadingGifs ? (
                         <div className="flex items-center justify-center py-8">
                           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>

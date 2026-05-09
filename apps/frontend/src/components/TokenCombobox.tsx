@@ -183,7 +183,7 @@ export function TokenCombobox({
 						"inset-0 h-[100dvh] w-screen rounded-none border-0",
 						// Desktop: centered modal
 						"sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2",
-						"sm:h-auto sm:w-[min(96vw,640px)] sm:max-w-[640px] sm:rounded-lg sm:border",
+						"sm:h-auto sm:max-h-[min(600px,85vh)] sm:w-[min(96vw,520px)] sm:max-w-[520px] sm:rounded-lg sm:border",
 						"p-0 overflow-hidden"
 					)}
 				>
@@ -260,7 +260,7 @@ export function TokenCombobox({
 						<div className="flex-1 min-w-0 min-h-0 overflow-hidden">
 							<Command className="h-full">
 								<CommandInput placeholder="Search token, network or address" value={query} onValueChange={setQuery} />
-								<CommandList className="max-h-[calc(100dvh-140px)] sm:max-h-[55vh] overflow-y-auto">
+								<CommandList className="max-h-[calc(100dvh-140px)] sm:max-h-[380px] overflow-y-auto">
 									{loading ? (
 										<div className="py-4 text-center text-sm text-muted-foreground">Searching…</div>
 									) : null}
