@@ -181,7 +181,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                     <div className="text-sm text-gray-600 mb-2">
                       Giphy API key not configured
                     </div>
-                    <div className="text-xs text-gray-500 mb-4">
+                    <div className="text-sm text-gray-500 mb-4">
                       Get a free API key at{' '}
                       <a
                         href="https://developers.giphy.com/dashboard/"
@@ -192,7 +192,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                         developers.giphy.com
                       </a>
                     </div>
-                    <div className="text-xs text-gray-500">
+                    <div className="text-sm text-gray-500">
                       Add to <code className="bg-gray-100 px-1 py-0.5 rounded">.env.local</code>:
                       <br />
                       <code className="bg-gray-100 px-1 py-0.5 rounded">NEXT_PUBLIC_GIPHY_API_KEY=your_key</code>
@@ -277,7 +277,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
         </div>
       </div>
       {maxLength && (
-        <div className="text-xs text-gray-500 mt-1 text-right">
+        <div className="text-sm text-gray-500 mt-1 text-right">
           {value.length}/{maxLength}
         </div>
       )}

@@ -59,7 +59,7 @@ function MobileMenu({
               {username ? `@${username}` : (email ?? "Account")}
             </p>
             {username && email && (
-              <p className="text-xs text-slate-400 truncate">{email}</p>
+              <p className="text-sm text-slate-400 truncate">{email}</p>
             )}
           </div>
           <button
@@ -82,7 +82,7 @@ function MobileMenu({
             className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-white/8 border border-white/10 hover:bg-white/12 transition-colors text-left"
           >
             <div>
-              <p className="text-xs text-slate-400 mb-0.5">Balance</p>
+              <p className="text-sm text-slate-400 mb-0.5">Balance</p>
               <p className="text-lg font-bold text-white tabular-nums">
                 {loadingBalance ? "…" : `$${balanceUSD}`}
               </p>
@@ -126,7 +126,7 @@ function MobileMenu({
                   : "Devnet"}
               </span>
               {networkMode === "mainnet" && !mainnetAccess && (
-                <span className="text-xs text-amber-400/80 leading-tight">Payments disabled — balance &amp; withdraw only</span>
+                <span className="text-sm text-amber-400/80 leading-tight">Payments disabled — balance &amp; withdraw only</span>
               )}
             </div>
             <Switch

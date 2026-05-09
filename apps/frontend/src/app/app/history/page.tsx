@@ -335,7 +335,7 @@ export default function HistoryPage() {
                             <IconBubble active={typeFilter === "sent"} variant="sent">
                                 <ArrowUp />
                             </IconBubble>
-                            <p className="text-slate-300 text-xs font-medium uppercase tracking-wide">
+                            <p className="text-slate-300 text-sm font-medium uppercase tracking-wide">
                                 Amount sent
                             </p>
                         </div>
@@ -358,7 +358,7 @@ export default function HistoryPage() {
                             <IconBubble active={typeFilter === "received"} variant="received">
                                 <ArrowDown />
                             </IconBubble>
-                            <p className="text-slate-300 text-xs font-medium uppercase tracking-wide">
+                            <p className="text-slate-300 text-sm font-medium uppercase tracking-wide">
                                 Amount received
                             </p>
                         </div>
@@ -453,7 +453,7 @@ export default function HistoryPage() {
                             </div>
                           )}
                           <div className="flex items-center justify-between gap-2 mt-2">
-                            <span className="text-xs text-slate-500">
+                            <span className="text-sm text-slate-500">
                               {new Date(claim.created_at).toLocaleDateString(undefined, {
                                 month: "short",
                                 day: "numeric",

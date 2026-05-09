@@ -477,7 +477,7 @@ export function NearSwapWidget({
 												href={`https://explorer.near-intents.org/transactions/${deposit.depositAddress}`}
 												target="_blank"
 												rel="noreferrer"
-												className="text-xs underline text-gray-600 hover:text-gray-900"
+												className="text-sm underline text-gray-600 hover:text-gray-900"
 											>
 												View on Explorer
 											</a>
@@ -542,7 +542,7 @@ export function NearSwapWidget({
 										<div className="font-mono text-sm text-gray-800">{short(deposit.depositAddress)}</div>
 										<button
 											type="button"
-											className="text-xs underline text-gray-600 hover:text-gray-900"
+											className="text-sm underline text-gray-600 hover:text-gray-900"
 											onClick={async () => {
 												try {
 													await navigator.clipboard.writeText(deposit.depositAddress || "");
@@ -578,7 +578,7 @@ export function NearSwapWidget({
 												href={`https://explorer.near-intents.org/transactions/${deposit.depositAddress}`}
 												target="_blank"
 												rel="noreferrer"
-												className="text-xs underline text-gray-600 hover:text-gray-900"
+												className="text-sm underline text-gray-600 hover:text-gray-900"
 											>
 												View on Explorer
 											</a>
@@ -604,7 +604,7 @@ export function NearSwapWidget({
 								{speedUpOpen && (
 									<div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
 										<div className="text-sm font-semibold text-gray-900 mb-1">Speed up processing</div>
-										<div className="text-xs text-gray-600 mb-3">
+										<div className="text-sm text-gray-600 mb-3">
 											If you've already deposited, enter your transaction hash to speed up processing.
 										</div>
 										<Input
@@ -763,7 +763,7 @@ export function NearSwapWidget({
 											const isZec = ((selectedTo?.symbol || "").toUpperCase() === "ZEC") || inferFamilyFromChain(selectedTo?.chain) === "zcash";
 											if (!isZec) return null;
 											return (
-												<div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs px-3 py-2">
+												<div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm px-3 py-2">
 													<div className="font-medium">Privacy tip</div>
 													<div>Payment will only be private if you use a shielded address as the recipient.</div>
 												</div>
@@ -790,7 +790,7 @@ export function NearSwapWidget({
 												})()}
 												className="mt-1 w-full rounded-xl border border-gray-200 bg-white text-gray-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400"
 											/>
-											{recipientError ? <div className="text-xs text-red-600 mt-1">{recipientError}</div> : null}
+											{recipientError ? <div className="text-sm text-red-600 mt-1">{recipientError}</div> : null}
 										</div>
 										{/* Refund Address Step */}
 										{currentStep === "refund" && (
@@ -798,7 +798,7 @@ export function NearSwapWidget({
 												<label className="text-sm font-medium text-gray-700">
 													Refund Address ({inferFamilyFromChain(selectedFrom?.chain).toUpperCase()}) *
 												</label>
-												<p className="text-xs text-gray-500 mt-1 mb-2">
+												<p className="text-sm text-gray-500 mt-1 mb-2">
 													Funds will be refunded to this address if the swap fails or expires
 												</p>
 												<input
@@ -812,7 +812,7 @@ export function NearSwapWidget({
 													className="mt-1 w-full rounded-xl border border-gray-200 bg-white text-gray-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400"
 													autoFocus
 												/>
-												{refundAddressError ? <div className="text-xs text-red-600 mt-1">{refundAddressError}</div> : null}
+												{refundAddressError ? <div className="text-sm text-red-600 mt-1">{refundAddressError}</div> : null}
 											</div>
 										)}
 										<div className="mt-4 flex justify-end gap-2">
