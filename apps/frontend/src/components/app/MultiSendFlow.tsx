@@ -661,7 +661,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                         <div className="font-semibold text-white">External wallet</div>
                         <div className="text-sm text-slate-400 mt-0.5">Pay from Phantom or any Solana wallet</div>
                         {networkMode === "devnet" && (
-                          <div className="text-xs text-amber-400 mt-1">Phantom may show a simulation warning — tap "Confirm (unsafe)" to proceed</div>
+                          <div className="text-sm text-amber-400 mt-1">Phantom may show a simulation warning — tap "Confirm (unsafe)" to proceed</div>
                         )}
                       </div>
                       <ArrowRight className="w-5 h-5 text-slate-400 shrink-0" />
