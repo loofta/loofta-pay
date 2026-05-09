@@ -11,8 +11,6 @@ import { Label } from "@/components/ui/label";
 import { MessageInput } from "@/components/MessageInput";
 import { createClaimFromUsername } from "@/lib/createClaimFromUsername";
 import { createClaimFromEmail } from "@/lib/createClaimFromEmail";
-import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
-
 function looksLikeEmail(s: string): boolean {
   const t = (s || "").trim();
   return t.includes("@") && /.+@.+\..+/.test(t);
@@ -44,15 +42,12 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
   const [description, setDescription] = useState("");
   const [gifUrl, setGifUrl] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
-  const [requirePrivate, setRequirePrivate] = useState(false);
   const isEmail = looksLikeEmail(recipientUsername);
   const [loadingUser, setLoadingUser] = useState(!isEmail);
   const [userError, setUserError] = useState<string | null>(null);
   /** When username lookup fails we still allow creating a link (burner); they claim when they sign up. */
   const [usernameNotOnLoofta, setUsernameNotOnLoofta] = useState(false);
 
-  /** App-wide private mode or recipient requires private — sets `isPrivate` on the claim only. */
-  const effectivePrivate = PRIVATE_PAYMENT_ENABLED || requirePrivate;
   const amountNum = Number(amount);
   const minAmountUsd = 5;
   const belowMinAmount = !!amount && Number.isFinite(amountNum) && amountNum > 0 && amountNum < minAmountUsd;
@@ -67,16 +62,14 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
     let cancelled = false;
     setUsernameNotOnLoofta(false);
     fetchUserByUsername(recipientUsername)
-      .then((data) => {
+      .then(() => {
         if (!cancelled) {
           setUsernameNotOnLoofta(false);
-          setRequirePrivate(!!data?.user?.requirePrivatePayments);
           if (initialAmount) setAmount(initialAmount);
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setRequirePrivate(false);
           setUsernameNotOnLoofta(true);
         }
       })
@@ -105,7 +98,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           amount,
           userId: user?.id,
           accessToken,
-          isPrivate: effectivePrivate,
+          isPrivate: true,
           description: fullDescription,
           cluster: apiCluster,
         });
@@ -118,7 +111,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           amount,
           userId: user?.id,
           accessToken,
-          isPrivate: effectivePrivate,
+          isPrivate: true,
           description: fullDescription,
           cluster: apiCluster,
         });

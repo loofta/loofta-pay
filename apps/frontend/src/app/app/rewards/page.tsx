@@ -154,10 +154,10 @@ function SparksTotal({ total, max }: { total: number; max: number }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-6 mb-6">
       <div className="flex items-center justify-between mb-1">
-        <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+        <p className="text-sm font-medium text-slate-400 uppercase tracking-wider">
           Your Sparks
         </p>
-        <p className="text-xs text-slate-500">{total.toLocaleString()} / {max.toLocaleString()}</p>
+        <p className="text-sm text-slate-500">{total.toLocaleString()} / {max.toLocaleString()}</p>
       </div>
       <div className="flex items-end gap-3 mt-2 mb-4">
         <span className="text-4xl font-bold text-white tabular-nums leading-none">
@@ -171,7 +171,7 @@ function SparksTotal({ total, max }: { total: number; max: number }) {
           style={{ width: `${pct}%` }}
         />
       </div>
-      <p className="text-xs text-slate-500 mt-2">{pct}% of all Sparks earned</p>
+      <p className="text-sm text-slate-500 mt-2">{pct}% of all Sparks earned</p>
     </div>
   );
 }
@@ -285,7 +285,7 @@ export default function RewardsPage() {
             <button
               type="button"
               onClick={() => refetch()}
-              className="mt-3 text-xs text-slate-400 hover:text-white underline"
+              className="mt-3 text-sm text-slate-400 hover:text-white underline"
             >
               Try again
             </button>
@@ -295,10 +295,10 @@ export default function RewardsPage() {
             <SparksTotal total={data.totalSparks} max={maxSparks} />
 
             <div className="mb-3 flex items-center justify-between">
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+              <p className="text-sm font-medium text-slate-400 uppercase tracking-wider">
                 Missions
               </p>
-              <p className="text-xs text-slate-500">
+              <p className="text-sm text-slate-500">
                 {data.tasks.filter((t) => t.completed).length}/{data.tasks.length} completed
               </p>
             </div>

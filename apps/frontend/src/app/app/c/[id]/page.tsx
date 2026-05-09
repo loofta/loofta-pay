@@ -26,7 +26,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
@@ -52,7 +51,6 @@ import {
 } from "@privy-io/react-auth/solana";
 import { isDemoMode } from "@/config/demoMode";
 import { getUsdcAtaBalanceBaseUnits } from "@/services/solanaBalance";
-import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { Connection, PublicKey, Transaction, VersionedTransaction } from "@solana/web3.js";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
@@ -68,7 +66,6 @@ import {
   privatePaymentFundsAppearCopy,
   privatePaymentWaitingAfterSenderCopy,
 } from "@/lib/privatePaymentCopy";
-import { CROSS_CHAIN_ENABLED } from "@/lib/features";
 import { getCachedMainnetAccess, setCachedMainnetAccess } from "@/lib/mainnetAccessCache";
 
 function formatPerTransferStepName(step: string): string {
@@ -1095,10 +1092,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const payNowModalDismissLocked =
     confirmingTxSignature !== null || payingWithLoofta || payingWithWallet || perTransferPhase !== null;
 
-  // Global env flag now acts as private-only mode everywhere.
-  const requiresPrivate = claim?.is_private === true;
-  const privateRequired = PRIVATE_PAYMENT_ENABLED || requiresPrivate;
-  const privatePayActive = privateRequired || isPrivateMode;
+  // All payments are private via MagicBlock PER.
+  const requiresPrivate = true;
+  const privateRequired = true;
+  const privatePayActive = true;
   const isCreatorView = !!user?.id && claim?.created_by === user.id;
   const isSenderPendingFundedView =
     isCreatorView &&
@@ -1122,23 +1119,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
   }, [showPayNowModal, queryClient]);
 
-  // Prevent changing from private mode if claim requires it
-  const handleSetPrivateMode = (value: boolean) => {
-    if (privateRequired && !value) {
-      toast({
-        variant: "destructive",
-        title: "Private payment is always on",
-        description: "This app is configured for private payments only.",
-      });
-      return;
-    }
-    setIsPrivateMode(value);
-  };
-
   const selectedFrom = findTokenBySelection(tokens, fromSel || null);
-  /** True when user picks a non-USDC/Solana token on mainnet beta — show "unavailable" instead of quote. */
-  const crossChainUnavailableOnBeta = networkMode === "mainnet" && !CROSS_CHAIN_ENABLED && !!selectedFrom &&
-    !(selectedFrom.symbol === "USDC" && ["solana", "sol"].includes((selectedFrom.chain ?? "").toLowerCase()));
   const destToken = useMemo(() => {
     if (!claim?.to_symbol || !claim?.to_chain) return null;
     // Try exact match first
@@ -1575,11 +1556,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   }
 
   async function onPayPrivately() {
-    if (PRIVATE_PAYMENT_COMING_SOON) {
-      toast({ title: "Coming soon", description: "Private payments will be available soon." });
-      return;
-    }
-    console.log("[PrivateTransfer] onPayPrivately called", { claimId: claim?.id, isPrivate: claim?.is_private, isPrivateMode, authenticated });
+    console.log("[PrivateTransfer] onPayPrivately called", { claimId: claim?.id, authenticated });
     // Enforce private mode if claim requires it
     if (claim?.is_private && !isPrivateMode) {
       console.log("[PrivateTransfer] Enforcing private mode");
@@ -3318,48 +3295,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
             {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) && (!deposit ? (
               <>
-                {/* Private payment switch — hidden when app defaults all links to private */}
-                {!requiresPrivate && !PRIVATE_PAYMENT_ENABLED && (
-                  <div className="mt-5 p-4 rounded-xl border border-gray-200 bg-gray-50">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-base font-semibold text-gray-900">
-                          🔒 Private payment
-                        </span>
-                        {PRIVATE_PAYMENT_COMING_SOON && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
-                            Coming soon
-                          </span>
-                        )}
-                      </div>
-                      <Switch
-                        checked={PRIVATE_PAYMENT_COMING_SOON ? false : isPrivateMode}
-                        onCheckedChange={PRIVATE_PAYMENT_COMING_SOON ? () => { } : handleSetPrivateMode}
-                        disabled={PRIVATE_PAYMENT_COMING_SOON}
-                        aria-label={PRIVATE_PAYMENT_COMING_SOON ? "Private payment — coming soon" : "Private payment"}
-                      />
-                    </div>
-                    <p className="text-sm text-gray-600 mt-3 w-full block">
-                      {PRIVATE_PAYMENT_COMING_SOON
-                        ? "When available, payment will be processed through privacy pools for complete privacy."
-                        : "Payment via MagicBlock Private Ephemeral Rollup for privacy. Funds go to recipient directly or to burner if they have no account."}
-                    </p>
-                  </div>
-                )}
-
-                {/* Show private-only indicator if claim requires it */}
-                {privateRequired && (
-                  <div className="mt-5 flex gap-2 text-sm text-gray-600">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0 mt-0.5">
-                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                    </svg>
-                    <p className="min-w-0 leading-relaxed">
-                      {PRIVATE_PAYMENT_COMING_SOON
-                        ? "Private payment — coming soon."
-                        : PRIVATE_PAYMENT_ALL_PRIVATE_LINE}
-                    </p>
-                  </div>
-                )}
+                {/* Private-only indicator */}
+                <div className="mt-5 flex gap-2 text-sm text-gray-600">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0 mt-0.5">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  </svg>
+                  <p className="min-w-0 leading-relaxed">{PRIVATE_PAYMENT_ALL_PRIVATE_LINE}</p>
+                </div>
 
                 {/* Minimum amount notice */}
                 {claimAmountUSD > 0 && claimAmountUSD < 5 && (
@@ -3411,7 +3353,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <div className="mt-3">
                   <div className="flex items-center gap-3 mb-3">
                     <div className="flex-1 h-px bg-white/10" />
-                    <span className="text-xs font-medium text-slate-500">or choose another token</span>
+                    <span className="text-sm font-medium text-slate-500">or choose another token</span>
                     <div className="flex-1 h-px bg-white/10" />
                   </div>
                   <TokenCombobox
@@ -3426,7 +3368,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     hideChains={['solana', 'sol']}
                     className="w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white placeholder:text-slate-400 hover:!bg-white/20"
                   />
-                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-xs text-blue-300">
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-sm text-blue-300">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                     Cross-chain payments are not available yet and are coming soon to beta.
                   </div>
@@ -3907,7 +3849,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           {String(status || "").toUpperCase() === "PRIVATE_TRANSFER_PENDING" && claim?.is_private && (
                             <div className="mb-6 p-4 rounded-xl border-2 border-amber-200 bg-amber-50">
                               <p className="text-sm text-amber-900">
-                                {PRIVATE_PAYMENT_COMING_SOON ? "Private payments — coming soon." : "Processing private transfer…"}
+                                Processing private transfer…
                               </p>
                             </div>
                           )}
@@ -4068,7 +4010,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-gray-900">Signed & sent</p>
-                    <p className="text-xs text-gray-600">Transaction is on the network</p>
+                    <p className="text-sm text-gray-600">Transaction is on the network</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 rounded-lg border border-orange-200 bg-orange-50 p-4">
@@ -4077,7 +4019,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-gray-900">Confirming</p>
-                    <p className="text-xs text-gray-900">Waiting for on-chain confirmation…</p>
+                    <p className="text-sm text-gray-900">Waiting for on-chain confirmation…</p>
                   </div>
                   <Loader2 className="h-5 w-5 shrink-0 animate-spin text-orange-500" />
                 </div>
@@ -4140,7 +4082,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <h2 className="text-xl font-semibold text-gray-900 text-center">
                   Pay ${solPrice > 0 ? privatePayTotal.toFixed(2) : claimAmountUSD.toFixed(2)}
                 </h2>
-                <p className="pt-0.5 text-xs text-center text-muted-foreground">
+                <p className="pt-0.5 text-sm text-center text-muted-foreground">
                   ${claimAmountUSD.toFixed(2)} + ~$
                   {pendingFeeUsdc != null
                     ? pendingFeeUsdc.toFixed(3)
@@ -4182,7 +4124,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
                 <div className="flex items-center gap-3">
                   <div className="flex-1 h-px bg-white/10" />
-                  <span className="text-xs font-medium text-slate-500">or</span>
+                  <span className="text-sm font-medium text-slate-500">or</span>
                   <div className="flex-1 h-px bg-white/10" />
                 </div>
 
@@ -4239,123 +4181,6 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
     <React.Suspense>
       <ClaimPayView claimId={id} />
     </React.Suspense>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const s = String(status || "").toUpperCase();
-  const map: Record<string, { label: string; classes: string; icon: React.ReactNode }> = {
-    INCOMPLETE_DEPOSIT: {
-      label: "Incomplete deposit",
-      classes: "bg-amber-50 text-amber-800 border-amber-200",
-      icon: (
-        <svg className="h-4 w-4 text-amber-600" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
-          <path d="M12 7v5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-          <circle cx="12" cy="16" r="1" fill="currentColor" />
-        </svg>
-      ),
-    },
-    PENDING_DEPOSIT: {
-      label: "Waiting for deposit",
-      classes: "bg-amber-50 text-amber-800 border-amber-200",
-      icon: (
-        <svg className="h-4 w-4 text-amber-500" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
-          <path d="M12 7v5l3 2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      ),
-    },
-    PENDING: {
-      label: "Pending",
-      classes: "bg-amber-50 text-amber-800 border-amber-200",
-      icon: (
-        <svg className="h-4 w-4 text-amber-500" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
-          <path d="M12 7v5l3 2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      ),
-    },
-    PROCESSING: {
-      label: "Processing",
-      classes: "bg-blue-50 text-blue-800 border-blue-200",
-      icon: <Loader2 className="h-4 w-4 text-blue-500" />,
-    },
-    SUCCESS: {
-      label: "Completed",
-      classes: "bg-emerald-50 text-emerald-800 border-emerald-200",
-      icon: (
-        <svg className="h-4 w-4 text-emerald-600" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      ),
-    },
-    REFUNDED: {
-      label: "Refunded",
-      classes: "bg-sky-50 text-sky-800 border-sky-200",
-      icon: (
-        <svg className="h-4 w-4 text-sky-600" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M7 7H4V4M4 7a9 9 0 1 1-2 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      ),
-    },
-    EXPIRED: {
-      label: "Expired",
-      classes: "bg-gray-100 text-gray-700 border-gray-200",
-      icon: (
-        <svg className="h-4 w-4 text-gray-600" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
-          <path d="M12 7v5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-          <path d="M12 12l3 3" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-        </svg>
-      ),
-    },
-    FAILED: {
-      label: "Failed",
-      classes: "bg-red-50 text-red-800 border-red-200",
-      icon: (
-        <svg className="h-4 w-4 text-red-600" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        </svg>
-      ),
-    },
-  };
-  const cfg = map[s] || map.PENDING_DEPOSIT;
-  return (
-    <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm ${cfg.classes}`}>
-      {cfg.icon}
-      {cfg.label}
-    </span>
-  );
-}
-
-function MoneyIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
-      <rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" strokeWidth="2" />
-      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
-      <path d="M6 9h0M18 15h0" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function ChainIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
-      <path d="M10 14l4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <rect x="3" y="9" width="8" height="6" rx="3" stroke="currentColor" strokeWidth="2" />
-      <rect x="13" y="9" width="8" height="6" rx="3" stroke="currentColor" strokeWidth="2" />
-    </svg>
-  );
-}
-
-function ShareIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
-      <path d="M4 12v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <path d="M12 16V4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <path d="M8 8l4-4 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
   );
 }
 

@@ -199,7 +199,7 @@ export default function SendPaymentClaimPage() {
                   </div>
                 )}
 
-                <p className="mt-4 text-xs text-gray-400">
+                <p className="mt-4 text-sm text-gray-400">
                   Sent to {data.recipient_type === 'email' ? 'an email address' : 'a Twitter account'}
                 </p>
               </div>
@@ -221,7 +221,7 @@ export default function SendPaymentClaimPage() {
                     <Wallet className="mr-2 h-5 w-5" />
                     Withdraw to any chain
                   </GradientActionButton>
-                  <p className="text-center text-xs text-gray-400">
+                  <p className="text-center text-sm text-gray-400">
                     Or open Balance in the header anytime to withdraw.
                   </p>
                 </div>

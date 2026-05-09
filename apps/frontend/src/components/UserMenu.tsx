@@ -450,7 +450,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               }`}>
               {username && (
                 <div className="mb-2">
-                  <p className={`text-xs font-medium mb-1 ${isDarkPage ? "text-gray-400" : "text-gray-500"
+                  <p className={`text-sm font-medium mb-1 ${isDarkPage ? "text-gray-400" : "text-gray-500"
                     }`}>
                     Username
                   </p>
@@ -485,7 +485,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
 
               {email && (
                 <div className="mb-2">
-                  <p className={`text-xs font-medium mb-1 ${isDarkPage ? "text-gray-400" : "text-gray-500"
+                  <p className={`text-sm font-medium mb-1 ${isDarkPage ? "text-gray-400" : "text-gray-500"
                     }`}>
                     Email
                   </p>
@@ -580,7 +580,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       : "Devnet"}
                   </span>
                   {networkMode === "mainnet" && !mainnetAccess && (
-                    <span className="text-xs text-amber-400/80 leading-tight">Payments disabled — balance &amp; withdraw only</span>
+                    <span className="text-sm text-amber-400/80 leading-tight">Payments disabled — balance &amp; withdraw only</span>
                   )}
                 </div>
                 <Switch
@@ -652,18 +652,18 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+              className="fixed inset-0 z-[100] flex flex-col sm:items-center sm:justify-center sm:p-4 bg-black/70 backdrop-blur-sm"
               onClick={() => setShowShareModal(false)}
             >
               <motion.div
-                initial={{ scale: 0.9, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.9, opacity: 0 }}
-                className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                className="bg-[#0f0f12] sm:border sm:border-white/10 sm:rounded-2xl w-full sm:max-w-md shadow-2xl flex flex-col h-full sm:h-auto overflow-hidden"
                 onClick={(e) => e.stopPropagation()}
               >
-                {/* Content */}
-                <div className="p-8 text-white">
+                {/* Scrollable content */}
+                <div className="flex-1 overflow-y-auto p-6 sm:p-8 text-white">
                   {/* Icon */}
                   <motion.div
                     initial={{ scale: 0 }}
@@ -809,7 +809,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="text-slate-300">
                         <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.446 1.394c-.14.18-.357.295-.6.295-.002 0-.003 0-.005 0l.213-3.054 5.56-5.022c.24-.213-.054-.334-.373-.12l-6.869 4.326-2.96-.924c-.64-.203-.658-.64.135-.954l11.566-4.458c.538-.196 1.006.128.832.941z" />
                       </svg>
-                      <span className="text-xs font-medium text-slate-300">
+                      <span className="text-sm font-medium text-slate-300">
                         Telegram
                       </span>
                     </motion.button>
@@ -827,7 +827,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="text-slate-300">
                         <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z" />
                       </svg>
-                      <span className="text-xs font-medium text-slate-300">
+                      <span className="text-sm font-medium text-slate-300">
                         WhatsApp
                       </span>
                     </motion.button>
@@ -846,7 +846,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
                         <polyline points="22,6 12,13 2,6"></polyline>
                       </svg>
-                      <span className="text-xs font-medium text-slate-300">
+                      <span className="text-sm font-medium text-slate-300">
                         Email
                       </span>
                     </motion.button>
@@ -857,7 +857,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.4 }}
-                    className="flex flex-col gap-3"
                   >
                     <button
                       onClick={(e) => {
@@ -869,28 +868,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     >
                       {linkCopied ? (
                         <span className="flex items-center justify-center gap-2">
-                          <svg
-                            width="18"
-                            height="18"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                          >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <polyline points="20 6 9 17 4 12"></polyline>
                           </svg>
                           Copied!
                         </span>
                       ) : (
                         <span className="flex items-center justify-center gap-2">
-                          <svg
-                            width="18"
-                            height="18"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                          >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                           </svg>
@@ -898,16 +883,21 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </span>
                       )}
                     </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowShareModal(false);
-                      }}
-                      className="w-full py-3 rounded-xl font-semibold text-slate-400 hover:text-white transition-colors"
-                    >
-                      Close
-                    </button>
                   </motion.div>
+                </div>
+
+                {/* Sticky close footer */}
+                <div className="shrink-0 px-6 pb-8 sm:pb-5 pt-3 border-t border-white/10 bg-[#0f0f12]">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowShareModal(false);
+                    }}
+                    className="w-full py-3.5 rounded-xl font-semibold text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors"
+                  >
+                    Close
+                  </button>
                 </div>
               </motion.div>
             </motion.div>
@@ -921,21 +911,37 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         return null;
       })()}
 
-      {/* Settings Modal - dark, big title like Share modal */}
-      <Dialog open={showSettingsModal} onOpenChange={setShowSettingsModal}>
-        <DialogContent className="bg-[#0f0f12] border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 text-white [&>button]:text-white/70 [&>button]:hover:text-white">
-          {/* Big title like Share modal */}
-          <div className="text-center mb-6">
-            <div className="mb-3 flex justify-center">
-              <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center">
-                <Settings className="w-6 h-6 text-white" />
-              </div>
-            </div>
-            <h2 className="text-2xl font-bold text-white mb-1">Settings</h2>
-            <p className="text-sm text-gray-400">Wallet, sign-in methods, and security.</p>
-          </div>
+      {/* Settings Modal - full screen on mobile, card on desktop */}
+      {showSettingsModal && typeof window !== "undefined" && createPortal(
+        <AnimatePresence>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex flex-col sm:items-center sm:justify-center sm:p-4 bg-black/70 backdrop-blur-sm"
+            onClick={() => setShowSettingsModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="bg-[#0f0f12] sm:border sm:border-white/10 sm:rounded-2xl w-full sm:max-w-sm shadow-2xl flex flex-col h-full sm:h-auto overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Scrollable content */}
+              <div className="flex-1 overflow-y-auto p-6 text-white">
+                {/* Header */}
+                <div className="text-center mb-6">
+                  <div className="mb-3 flex justify-center">
+                    <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center">
+                      <Settings className="w-6 h-6 text-white" />
+                    </div>
+                  </div>
+                  <h2 className="text-2xl font-bold text-white mb-1">Settings</h2>
+                  <p className="text-sm text-gray-400">Wallet, sign-in methods, and security.</p>
+                </div>
 
-          <div className="space-y-4 py-0">
+                <div className="space-y-4">
             {/* Network toggle — visible to all */}
             <div>
               <Label className="text-sm font-medium mb-2 block text-gray-300">Network</Label>
@@ -947,7 +953,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       : "Devnet"}
                   </span>
                   {networkMode === "mainnet" && !mainnetAccess && (
-                    <span className="text-xs text-amber-400/80 mt-0.5">Balance &amp; withdraw only — payments require beta access</span>
+                    <span className="text-sm text-amber-400/80 mt-0.5">Balance &amp; withdraw only — payments require beta access</span>
                   )}
                 </div>
                 <Switch
@@ -963,7 +969,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               {/* Always show what's already connected */}
               {(hasEmail || hasTwitterLinked) && (
                 <div className="mb-3 p-3 rounded-xl bg-white/5 border border-white/10 space-y-2">
-                  <p className="text-xs font-medium text-gray-400 mb-1.5">Connected</p>
+                  <p className="text-sm font-medium text-gray-400 mb-1.5">Connected</p>
                   {hasEmail && linkedEmailAddress && (
                     <div className="flex items-center gap-2 text-sm text-white/90">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-gray-400">
@@ -983,7 +989,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   )}
                 </div>
               )}
-              <p className="text-xs text-gray-400 mb-3">
+              <p className="text-sm text-gray-400 mb-3">
                 Add a second method so you can recover your account.
               </p>
               <div className="space-y-1">
@@ -1031,8 +1037,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               </div>
               {canUpdateToTwitter && twitterHandle && (
                 <div className="mt-3 p-3 rounded-xl bg-white/5 border border-white/10">
-                  <p className="text-xs font-medium text-gray-300 mb-1">Payment link</p>
-                  <p className="text-xs text-gray-400 mb-2">
+                  <p className="text-sm font-medium text-gray-300 mb-1">Payment link</p>
+                  <p className="text-sm text-gray-400 mb-2">
                     Use your Twitter as your payment link: @{twitterHandle}
                   </p>
                   <Button
@@ -1102,7 +1108,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       )}
                     </button>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">{showFullAddress ? "Click to show shortened" : "Click address to copy full"}</p>
+                  <p className="text-sm text-gray-500 mt-1">{showFullAddress ? "Click to show shortened" : "Click address to copy full"}</p>
                 </div>
 
                 <div className="space-y-1">
@@ -1172,9 +1178,24 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 )}
               </div>
             )}
-          </div>
-        </DialogContent>
-      </Dialog>
+                </div>
+              </div>
+
+              {/* Sticky close footer */}
+              <div className="shrink-0 px-6 pb-8 sm:pb-5 pt-3 border-t border-white/10 bg-[#0f0f12]">
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsModal(false)}
+                  className="w-full py-3.5 rounded-xl font-semibold text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* Export Wallet Modal */}
       <Dialog open={showExportModal} onOpenChange={setShowExportModal}>

@@ -80,7 +80,7 @@ export default function SettingsPage() {
         <div className="rounded-xl bg-white/5 border border-white/10 p-4 mb-4">
           {username && (
             <div className="mb-3 last:mb-0">
-              <p className="text-xs font-medium text-slate-400 mb-1">Username</p>
+              <p className="text-sm font-medium text-slate-400 mb-1">Username</p>
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-semibold text-white truncate">@{username}</p>
                 <button
@@ -97,7 +97,7 @@ export default function SettingsPage() {
           )}
           {email && (
             <div className={username ? "" : ""}>
-              <p className="text-xs font-medium text-slate-400 mb-1">Email</p>
+              <p className="text-sm font-medium text-slate-400 mb-1">Email</p>
               <p className="text-sm text-white/90">{email}</p>
             </div>
           )}
