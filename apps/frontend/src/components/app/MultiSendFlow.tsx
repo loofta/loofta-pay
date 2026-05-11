@@ -245,47 +245,63 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       const accessToken = await getAccessToken();
       if (!user?.id) throw new Error("Not authenticated");
 
-      setPhase({ kind: "building" });
-      console.info(`[MultiSend] building ${paymentIds.length} private transfer txs`);
-      const txResults: MagicblockTxResponse[] = await Promise.all(
-        paymentIds.map((id) =>
-          buildClaimPrivateTransfer(id, user.id!, senderWallet, accessToken, apiCluster),
-        ),
-      );
-      console.info(`[MultiSend] all txs built`);
+      const cluster = networkMode === "mainnet" ? "mainnet" : "devnet";
 
-      setPhase({ kind: "awaiting_signature" });
-
-      // Map paymentId → actual fee from MagicBlock build response
-      const feeByPaymentId = new Map<string, number>(
-        txResults.map((r, i) => [paymentIds[i], r.feeAmountUsdc ?? 0])
-      );
-
-      let signedPairs: Array<{ bytes: Uint8Array; paymentId: string; sendTo: string }>;
+      type BroadcastResult =
+        | { status: "fulfilled"; value: { paymentId: string; sig: string; feeUsdc: number | undefined } }
+        | { status: "rejected"; reason: unknown };
+      const broadcastResults: BroadcastResult[] = [];
 
       if (walletType === "loofta") {
+        // Build → sign → broadcast one at a time so each tx uses a fresh blockhash
+        // and fresh MagicBlock encrypted-balance state. Batch-building all upfront causes
+        // txs 3+ to reference stale state after earlier txs modify the on-chain balance.
         const chain = getPrivySolanaChainForMode(networkMode);
         const wallet = solanaWallets.find((w) => w.address === senderWallet) ?? solanaWallets[0];
         if (!wallet) throw new Error("Loofta wallet not found. Try logging out and back in.");
 
-        console.info(`[MultiSend] batch-signing ${txResults.length} txs with Loofta wallet (no per-tx modal)`);
-        const inputs = txResults.map((txData) => ({
-          transaction: Buffer.from(txData.transactionBase64, "base64") as Uint8Array,
-          wallet,
-          chain,
-          options: { uiOptions: { showWalletUIs: false } },
-        }));
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const signedOutputs = await (privySolanaSignTransaction as any)(...inputs);
-        const outputArray: Array<{ signedTransaction: Uint8Array }> = Array.isArray(signedOutputs)
-          ? signedOutputs
-          : [signedOutputs];
-        signedPairs = outputArray.map((out, i) => ({
-          bytes: out.signedTransaction,
-          paymentId: paymentIds[i],
-          sendTo: txResults[i].sendTo,
-        }));
+        console.info(`[MultiSend] building+signing+broadcasting ${paymentIds.length} txs one-by-one with Loofta wallet cluster=${cluster}`);
+
+        for (const paymentId of paymentIds) {
+          try {
+            setPhase({ kind: "building" });
+            const txData = await buildClaimPrivateTransfer(paymentId, user.id!, senderWallet, accessToken, apiCluster);
+            const feeUsdc = txData.feeAmountUsdc ?? 0;
+
+            setPhase({ kind: "broadcasting" });
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const signedOutput = await (privySolanaSignTransaction as any)({
+              transaction: Buffer.from(txData.transactionBase64, "base64") as Uint8Array,
+              wallet,
+              chain,
+              options: { uiOptions: { showWalletUIs: false } },
+            });
+            const signedBytes: Uint8Array = signedOutput.signedTransaction;
+
+            const sig = await broadcastAndWaitForHash(signedBytes, paymentId, txData.sendTo, cluster);
+            broadcastResults.push({ status: "fulfilled", value: { paymentId, sig, feeUsdc } });
+            multiConfirm([paymentId], user.id!, accessToken, sig, feeUsdc).catch(() => { });
+          } catch (e) {
+            broadcastResults.push({ status: "rejected", reason: e });
+          }
+        }
       } else {
+        // Phantom: build all → sign all (one modal) → broadcast sequentially
+        setPhase({ kind: "building" });
+        console.info(`[MultiSend] building ${paymentIds.length} private transfer txs`);
+        const txResults: MagicblockTxResponse[] = await Promise.all(
+          paymentIds.map((id) =>
+            buildClaimPrivateTransfer(id, user.id!, senderWallet, accessToken, apiCluster),
+          ),
+        );
+        console.info(`[MultiSend] all txs built`);
+
+        const feeByPaymentId = new Map<string, number>(
+          txResults.map((r, i) => [paymentIds[i], r.feeAmountUsdc ?? 0])
+        );
+
+        setPhase({ kind: "awaiting_signature" });
+
         const phantom = getPhantomProvider();
         if (!phantom) throw new Error("Phantom not found. Install the Phantom extension.");
         let phantomPubkey = phantom.publicKey;
@@ -319,46 +335,38 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           );
         }
 
-        signedPairs = parsed.map(({ paymentId, sendTo }, i) => {
+        const signedPairs = parsed.map(({ paymentId, sendTo }, i) => {
           const signed = signedTxs[i];
           const bytes = signed instanceof VersionedTransaction ? signed.serialize() : (signed as Transaction).serialize();
           return { bytes, paymentId, sendTo };
         });
-      }
 
-      setPhase({ kind: "broadcasting" });
-      const cluster = networkMode === "mainnet" ? "mainnet" : "devnet";
-      console.info(`[MultiSend] broadcasting ${signedPairs.length} txs sequentially cluster=${cluster}`);
+        setPhase({ kind: "broadcasting" });
+        console.info(`[MultiSend] broadcasting ${signedPairs.length} txs sequentially cluster=${cluster}`);
 
-      // Broadcast sequentially — all txs share the same sender account/balance,
-      // so parallel broadcasting causes race conditions where later txs fail with InsufficientFunds.
-      type BroadcastResult =
-        | { status: "fulfilled"; value: { paymentId: string; sig: string; feeUsdc: number | undefined } }
-        | { status: "rejected"; reason: unknown };
-      const broadcastResults: BroadcastResult[] = [];
-      for (const { bytes, paymentId, sendTo } of signedPairs) {
-        try {
-          const sig = await broadcastAndWaitForHash(bytes, paymentId, sendTo, cluster);
-          broadcastResults.push({ status: "fulfilled", value: { paymentId, sig, feeUsdc: feeByPaymentId.get(paymentId) } });
-        } catch (e) {
-          broadcastResults.push({ status: "rejected", reason: e });
+        for (const { bytes, paymentId, sendTo } of signedPairs) {
+          try {
+            const sig = await broadcastAndWaitForHash(bytes, paymentId, sendTo, cluster);
+            broadcastResults.push({ status: "fulfilled", value: { paymentId, sig, feeUsdc: feeByPaymentId.get(paymentId) } });
+          } catch (e) {
+            broadcastResults.push({ status: "rejected", reason: e });
+          }
+        }
+
+        const phantomSucceeded = broadcastResults.filter((r): r is { status: "fulfilled"; value: { paymentId: string; sig: string; feeUsdc: number | undefined } } => r.status === "fulfilled");
+        for (const { value: { paymentId, sig, feeUsdc } } of phantomSucceeded) {
+          multiConfirm([paymentId], user.id!, accessToken, sig, feeUsdc).catch(() => { });
         }
       }
 
-      // Confirm every tx that actually landed
       const succeededResults = broadcastResults.filter((r): r is { status: "fulfilled"; value: { paymentId: string; sig: string; feeUsdc: number | undefined } } => r.status === "fulfilled");
       const failedCount = broadcastResults.length - succeededResults.length;
-
-      for (const { value: { paymentId, sig, feeUsdc } } of succeededResults) {
-        multiConfirm([paymentId], user.id!, accessToken, sig, feeUsdc).catch(() => { });
-      }
 
       if (succeededResults.length === 0) {
         const firstErr = (broadcastResults[0] as { status: "rejected"; reason: unknown }).reason;
         throw new Error(firstErr instanceof Error ? firstErr.message : "All payments failed on-chain");
       }
 
-      // Partial or full success — show done screen with confirmed links only
       const confirmedIds = new Set(succeededResults.map((r) => r.value.paymentId));
       const confirmedLinks = links.filter((l) => confirmedIds.has(l.id));
       const confirmedUsdc = succeededResults.reduce((s, r) => {

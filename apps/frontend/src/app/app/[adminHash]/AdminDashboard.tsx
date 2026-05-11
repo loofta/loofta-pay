@@ -13,7 +13,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import {
   Loader2, RefreshCw, Shield, Search, ChevronDown, ChevronRight,
-  ExternalLink, Pencil, AlertTriangle, Copy, Zap,
+  ExternalLink, Pencil, AlertTriangle, Copy, Zap, BarChart2,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -458,7 +458,7 @@ export default function AdminDashboard() {
   const [saving, setSaving] = useState(false);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist">("payments");
+  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist" | "analytics">("payments");
 
   // Sparks leaderboard
   const [sparksData, setSparksData] = useState<any[]>([]);
@@ -482,6 +482,26 @@ export default function AdminDashboard() {
   const [grantingByEmail, setGrantingByEmail] = useState(false);
   const [grantTwitterInput, setGrantTwitterInput] = useState("");
   const [grantingByTwitter, setGrantingByTwitter] = useState(false);
+
+  // Analytics
+  type AnalyticsData = {
+    volume_devnet: number;
+    volume_mainnet: number;
+    volume_devnet_total: number;
+    volume_mainnet_total: number;
+    tx_devnet_success: number;
+    tx_mainnet_success: number;
+    tx_devnet_total: number;
+    tx_mainnet_total: number;
+    total_users: number;
+    users_with_email: number;
+    waitlist_total: number;
+    waitlist_granted: number;
+    waitlist_with_twitter: number;
+  };
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
 
   // Keep userId stable in callbacks via ref
   const userIdRef = useRef(userId);
@@ -583,6 +603,21 @@ export default function AdminDashboard() {
       toast({ variant: "destructive", title: "Failed to load waitlist" });
     } finally {
       setWaitlistLoading(false);
+    }
+  }, [authHeaders, toast]);
+
+  const fetchAnalytics = useCallback(async () => {
+    setAnalyticsLoading(true);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch("/api/admin/analytics", { headers });
+      if (!res.ok) throw new Error("Failed to load analytics");
+      setAnalyticsData(await res.json());
+      setAnalyticsLoaded(true);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load analytics" });
+    } finally {
+      setAnalyticsLoading(false);
     }
   }, [authHeaders, toast]);
 
@@ -820,8 +855,13 @@ export default function AdminDashboard() {
         <Button
           variant="outline"
           size="sm"
-          onClick={activeTab === "payments" ? refresh : activeTab === "sparks" ? fetchSparks : () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })}
-          disabled={loading || sparksLoading || waitlistLoading}
+          onClick={
+            activeTab === "payments" ? refresh :
+            activeTab === "sparks" ? fetchSparks :
+            activeTab === "analytics" ? fetchAnalytics :
+            () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })
+          }
+          disabled={loading || sparksLoading || waitlistLoading || analyticsLoading}
           className="border-gray-700 text-gray-300 bg-gray-900 hover:bg-gray-800"
         >
           {(loading || sparksLoading || waitlistLoading) ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -853,6 +893,14 @@ export default function AdminDashboard() {
         >
           Waitlist
           {waitlistLoaded && <span className="text-xs bg-green-900/50 text-green-400 rounded px-1.5 py-0.5">{waitlistTotal}</span>}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setActiveTab("analytics"); if (!analyticsLoaded) fetchAnalytics(); }}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "analytics" ? "border-purple-500 text-purple-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+        >
+          <BarChart2 className="w-3.5 h-3.5" />
+          Analytics
         </button>
       </div>
 
@@ -1038,6 +1086,110 @@ export default function AdminDashboard() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Analytics tab ── */}
+      {activeTab === "analytics" && (
+        <div className="space-y-6">
+          {analyticsLoading && (
+            <div className="flex items-center gap-2 text-sm text-gray-400 py-12 justify-center">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading analytics…
+            </div>
+          )}
+          {!analyticsLoading && !analyticsLoaded && (
+            <div className="text-gray-600 text-sm py-12 text-center">Click Refresh to load analytics.</div>
+          )}
+          {!analyticsLoading && analyticsLoaded && analyticsData && (() => {
+            const emailPct = analyticsData.total_users > 0
+              ? Math.round((analyticsData.users_with_email / analyticsData.total_users) * 100)
+              : 0;
+            const twitterFromSparks = sparksLoaded
+              ? sparksData.filter((u: any) => u.tasks.find((t: any) => t.key === "connect_twitter")?.completed).length
+              : null;
+            const twitterPct = twitterFromSparks != null && sparksData.length > 0
+              ? Math.round((twitterFromSparks / sparksData.length) * 100)
+              : null;
+
+            return (
+              <>
+                {/* Volume section */}
+                <div>
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Transaction Volume</h3>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-[10px] text-orange-400 uppercase tracking-wider mb-1 font-medium">Devnet Volume</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">
+                        {analyticsData.volume_devnet.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-0.5">USDC success</div>
+                      <div className="text-xs text-gray-600 mt-0.5">
+                        {analyticsData.volume_devnet_total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total
+                      </div>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-[10px] text-orange-400 uppercase tracking-wider mb-1 font-medium">Devnet Transactions</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.tx_devnet_success.toLocaleString()}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">success · {analyticsData.tx_devnet_total.toLocaleString()} total</div>
+                    </div>
+                    <div className="bg-gray-900 border border-green-900 rounded-lg p-4">
+                      <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Mainnet Volume</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">
+                        {analyticsData.volume_mainnet.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-0.5">USDC success</div>
+                      <div className="text-xs text-gray-600 mt-0.5">
+                        {analyticsData.volume_mainnet_total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total
+                      </div>
+                    </div>
+                    <div className="bg-gray-900 border border-green-900 rounded-lg p-4">
+                      <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Mainnet Transactions</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.tx_mainnet_success.toLocaleString()}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">success · {analyticsData.tx_mainnet_total.toLocaleString()} total</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Users section */}
+                <div>
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Users</h3>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-1 font-medium">Total Users</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.total_users.toLocaleString()}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">registered accounts</div>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-1 font-medium">Email Connected</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{emailPct}%</div>
+                      <div className="text-xs text-gray-500 mt-0.5">{analyticsData.users_with_email.toLocaleString()} of {analyticsData.total_users.toLocaleString()} users</div>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-[10px] text-sky-400 uppercase tracking-wider mb-1 font-medium">X Connected</div>
+                      {twitterFromSparks != null ? (
+                        <>
+                          <div className="text-2xl font-bold text-white tabular-nums">{twitterFromSparks.toLocaleString()}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            {twitterPct}% of {sparksData.length} tracked users
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-2xl font-bold text-gray-600">—</div>
+                          <div className="text-xs text-gray-600 mt-0.5">load Sparks tab first</div>
+                        </>
+                      )}
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-[10px] text-purple-400 uppercase tracking-wider mb-1 font-medium">Waitlist Applicants</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.waitlist_total.toLocaleString()}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">{analyticsData.waitlist_granted.toLocaleString()} granted · {analyticsData.waitlist_with_twitter.toLocaleString()} with X</div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 
