@@ -60,4 +60,11 @@ export class AdminWaitlistController {
   async grantByEmail(@Body() body: { email: string }) {
     return this.waitlistService.grantAccessByEmail(body.email);
   }
+
+  @Post('grant-by-twitter')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Grant mainnet access by Twitter username' })
+  async grantByTwitter(@Body() body: { twitterUsername: string }) {
+    return this.waitlistService.grantAccessByTwitterUsername(body.twitterUsername);
+  }
 }

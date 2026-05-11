@@ -717,19 +717,28 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
   const [showNetworkSwitchPrompt, setShowNetworkSwitchPrompt] = useState(false);
   const networkMismatchHandledRef = useRef(false);
+  // Keep a ref so the deferred timeout below can read the latest value without a stale closure.
+  const isOnboardingOpenRef = useRef(isOnboardingOpen);
+  useEffect(() => { isOnboardingOpenRef.current = isOnboardingOpen; }, [isOnboardingOpen]);
 
   // Show a modal the first time a mismatch is detected between the claim's network and the
   // user's active network. Both deps are intentional: networkMode can update after Privy
   // resolves the user's saved preference, which may arrive after the claim API response.
   // The ref prevents the modal from re-opening after the user has already handled it.
   // Wait for the onboarding modal to close first to avoid Radix focus-trap conflicts.
+  // UserSync opens onboarding after a 600 ms delay, so we defer by 800 ms and re-check
+  // via the ref — otherwise the network-switch modal races ahead and both appear at once.
   useEffect(() => {
     if (!claimExpectedNetwork) return;
     if (networkMismatchHandledRef.current) return;
     if (networkMode === claimExpectedNetwork) return;
     if (isOnboardingOpen) return;
-    networkMismatchHandledRef.current = true;
-    setShowNetworkSwitchPrompt(true);
+    const timer = setTimeout(() => {
+      if (isOnboardingOpenRef.current) return;
+      networkMismatchHandledRef.current = true;
+      setShowNetworkSwitchPrompt(true);
+    }, 800);
+    return () => clearTimeout(timer);
   }, [claimExpectedNetwork, networkMode, isOnboardingOpen]);
 
   // Extract latest intent from claim query (merged into main GET endpoint)

@@ -87,6 +87,28 @@ export class WaitlistService {
     return { ok: true };
   }
 
+  async grantAccessByTwitterUsername(twitterUsername: string) {
+    const handle = twitterUsername.trim().replace(/^@/, '').toLowerCase();
+
+    const { data: updated, error: updateError } = await this.supabase.mainnetWaitlist
+      .update({ mainnet_access: true })
+      .ilike('twitter_username', handle)
+      .select('id, email');
+
+    if (updateError) throw new Error(updateError.message);
+    if (!updated || updated.length === 0) {
+      throw new NotFoundException(`No waitlist entry found with Twitter username: @${handle}`);
+    }
+
+    for (const entry of updated) {
+      if (entry.email) {
+        await this.emailService.sendBetaAccessEmail(entry.email as string);
+      }
+    }
+
+    return { ok: true, updated: updated.length };
+  }
+
   async grantAccessByEmail(email: string) {
     const normalised = email.trim().toLowerCase();
 
