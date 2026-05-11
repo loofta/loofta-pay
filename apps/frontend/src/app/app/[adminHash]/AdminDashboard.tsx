@@ -480,6 +480,8 @@ export default function AdminDashboard() {
   const [resendingEmail, setResendingEmail] = useState<string | null>(null);
   const [grantEmailInput, setGrantEmailInput] = useState("");
   const [grantingByEmail, setGrantingByEmail] = useState(false);
+  const [grantTwitterInput, setGrantTwitterInput] = useState("");
+  const [grantingByTwitter, setGrantingByTwitter] = useState(false);
 
   // Keep userId stable in callbacks via ref
   const userIdRef = useRef(userId);
@@ -608,6 +610,31 @@ export default function AdminDashboard() {
       setGrantingByEmail(false);
     }
   }, [grantEmailInput, authHeaders, toast, fetchWaitlist, waitlistPage, waitlistSearch, waitlistAccessFilter, waitlistSortCol, waitlistSortDir]);
+
+  // ── Grant access by Twitter username ────────────────────────────────────────
+  const grantAccessByTwitter = useCallback(async () => {
+    const handle = grantTwitterInput.trim().replace(/^@/, "");
+    if (!handle) return;
+    setGrantingByTwitter(true);
+    try {
+      const res = await fetch("/api/admin/waitlist/grant-by-twitter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({ twitterUsername: handle }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message ?? "Failed");
+      }
+      toast({ title: `Mainnet access granted to @${handle}` });
+      setGrantTwitterInput("");
+      fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Failed", description: err.message });
+    } finally {
+      setGrantingByTwitter(false);
+    }
+  }, [grantTwitterInput, authHeaders, toast, fetchWaitlist, waitlistPage, waitlistSearch, waitlistAccessFilter, waitlistSortCol, waitlistSortDir]);
 
   // ── Grant / revoke mainnet access ───────────────────────────────────────────
   const grantWaitlistAccess = useCallback(async (id: string, grant: boolean) => {
@@ -879,6 +906,25 @@ export default function AdminDashboard() {
               className="bg-green-700 hover:bg-green-600 text-white shrink-0"
             >
               {grantingByEmail ? <Loader2 className="w-4 h-4 animate-spin" /> : "Grant Access"}
+            </Button>
+          </div>
+
+          {/* Grant by Twitter username */}
+          <div className="flex gap-2">
+            <Input
+              placeholder="Grant mainnet access by Twitter username (e.g. @handle)…"
+              value={grantTwitterInput}
+              onChange={(e) => setGrantTwitterInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && grantAccessByTwitter()}
+              className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-sm flex-1"
+            />
+            <Button
+              size="sm"
+              onClick={grantAccessByTwitter}
+              disabled={grantingByTwitter || !grantTwitterInput.trim()}
+              className="bg-sky-700 hover:bg-sky-600 text-white shrink-0"
+            >
+              {grantingByTwitter ? <Loader2 className="w-4 h-4 animate-spin" /> : "Grant Access"}
             </Button>
           </div>
 
