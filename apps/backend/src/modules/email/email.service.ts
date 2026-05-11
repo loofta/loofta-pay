@@ -38,7 +38,9 @@ export class EmailService {
   async sendPaymentReceivedEmail(data: ClaimEmailData): Promise<void> {
     if (!this.resend) return;
     const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
-    const claimUrl = data.claimUrl ?? `https://pay.loofta.xyz/c/${data.id}`;
+    const claimUrl = data.claimUrl
+      ? `https://pay.loofta.xyz${new URL(data.claimUrl, 'https://pay.loofta.xyz').pathname}`
+      : `https://pay.loofta.xyz/c/${data.id}`;
     const subject = `You received ${amountStr} on Loofta 🎉`;
     const html = this.buildPaymentReceivedHtml({ ...data, amountStr, claimUrl });
 
@@ -59,7 +61,9 @@ export class EmailService {
   async sendClaimReadyEmail(data: ClaimEmailData): Promise<void> {
     if (!this.resend) return;
     const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
-    const claimUrl = data.claimUrl ?? `https://pay.loofta.xyz/c/${data.id}`;
+    const claimUrl = data.claimUrl
+      ? `https://pay.loofta.xyz${new URL(data.claimUrl, 'https://pay.loofta.xyz').pathname}`
+      : `https://pay.loofta.xyz/c/${data.id}`;
     const subject = `You have ${amountStr} waiting for you on Loofta`;
     const html = this.buildClaimReadyHtml({ ...data, amountStr, claimUrl });
 
