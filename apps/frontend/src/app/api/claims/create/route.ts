@@ -3,6 +3,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { isNonMainnetCluster } from "@/lib/solanaCluster";
+import { generateShortId } from "@/lib/shortId";
 
 export async function POST(request: Request) {
   try {
@@ -14,6 +15,7 @@ export async function POST(request: Request) {
     const isFromRecipient = direction === 'from_recipient';
     const uid = userId ? String(userId) : null;
     const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isNonMainnetCluster();
+    const shortId = generateShortId();
     const { data, error } = await supabase
       .from("payments")
       .insert({
@@ -29,6 +31,7 @@ export async function POST(request: Request) {
         to_token: "USDC",
         is_devnet: isDevnet,
         description: description ? String(description).slice(0, 1000) : null,
+        short_id: shortId,
       })
       .select("id")
       .single();
@@ -37,8 +40,8 @@ export async function POST(request: Request) {
     }
     const id = data?.id;
     const origin = process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.xyz";
-    const link = `${origin}/c/${id}`;
-    return NextResponse.json({ id, link }, { status: 200 });
+    const link = `${origin}/c/${shortId}`;
+    return NextResponse.json({ id, short_id: shortId, link }, { status: 200 });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Failed to create payment" }, { status: 500 });
   }
