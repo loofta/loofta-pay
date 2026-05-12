@@ -52,7 +52,7 @@ function NavItem({
             href={href}
             className={[
                 "flex flex-col items-center justify-center flex-1 py-2",
-                "text-[11px] font-semibold",
+                "text-xs font-semibold",
                 active ? "text-amber-300" : "text-slate-400 hover:text-slate-200",
             ].join(" ")}
         >

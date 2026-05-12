@@ -459,7 +459,7 @@ function TimeEstimate({
 
     return (
       <div className="text-center mt-4">
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-50 text-emerald-700 text-sm font-medium">
+        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-50 text-emerald-700 text-base sm:text-sm font-medium">
           <CheckCircle2 className="w-4 h-4" />
           Completed in {timeDisplay}
         </div>
@@ -475,7 +475,7 @@ function TimeEstimate({
 
   return (
     <div className="text-center mt-4">
-      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-50 text-blue-700 text-sm font-medium">
+      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-50 text-blue-700 text-base sm:text-sm font-medium">
         <Clock className="w-4 h-4" />
         {elapsedMinutes > 0 ? `${elapsedMinutes}m ${elapsedSeconds}s` : `${elapsedSeconds}s`} elapsed
       </div>
@@ -632,13 +632,13 @@ export function PaymentStatusTracker({
                       {step.label}
                     </h4>
                     {isActive && step.estimatedTime && (
-                      <span className="text-xs text-orange-600 font-medium">
+                      <span className="text-sm text-orange-600 font-medium">
                         ~{step.estimatedTime}s
                       </span>
                     )}
                   </div>
                   <p className={`
-                    text-sm
+                    text-base sm:text-sm
                     ${isActive ? 'text-orange-700' : isCompleted ? 'text-emerald-700' : 'text-gray-500'}
                   `}>
                     {step.description}
@@ -674,7 +674,7 @@ export function PaymentStatusTracker({
             <Zap className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
             <div className="flex-1">
               <h4 className="font-semibold text-blue-900 mb-1">What's happening now?</h4>
-              <p className="text-sm text-blue-700">
+              <p className="text-base sm:text-sm text-blue-700">
                 Your deposit has been confirmed. We're now finding the best route to swap your tokens
                 and will transfer them to the recipient once the swap is complete.
               </p>

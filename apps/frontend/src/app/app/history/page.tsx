@@ -14,6 +14,7 @@ const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
 
 export type PaymentHistoryClaim = {
   id: string;
+  short_id?: string | null;
   amount: string;
   direction: "from_sender" | "from_recipient";
   // Compat aliases — always present (new payments hard-code USDC/solana)
@@ -316,7 +317,7 @@ export default function HistoryPage() {
               </ul>
             </div>
           ) : error ? (
-            <p className="text-red-400 text-sm">{error}</p>
+            <p className="text-red-400 text-base">{error}</p>
           ) : (
             <>
                 <div className="grid grid-cols-2 gap-3 mb-6">
@@ -335,7 +336,7 @@ export default function HistoryPage() {
                             <IconBubble active={typeFilter === "sent"} variant="sent">
                                 <ArrowUp />
                             </IconBubble>
-                            <p className="text-slate-300 text-sm font-medium uppercase tracking-wide">
+                            <p className="text-slate-300 text-base font-medium uppercase tracking-wide">
                                 Amount sent
                             </p>
                         </div>
@@ -358,7 +359,7 @@ export default function HistoryPage() {
                             <IconBubble active={typeFilter === "received"} variant="received">
                                 <ArrowDown />
                             </IconBubble>
-                            <p className="text-slate-300 text-sm font-medium uppercase tracking-wide">
+                            <p className="text-slate-300 text-base font-medium uppercase tracking-wide">
                                 Amount received
                             </p>
                         </div>
@@ -370,7 +371,7 @@ export default function HistoryPage() {
 
 
                 <div className="flex items-center justify-between gap-2 mb-2">
-                <p className="text-slate-400 text-sm font-medium">Recent payments</p>
+                <p className="text-slate-400 text-base font-medium">Recent payments</p>
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
@@ -406,13 +407,13 @@ export default function HistoryPage() {
                   placeholder="Search by sender, payee or message..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full mb-3 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-white/20"
+                  className="w-full mb-3 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-slate-500 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-white/20"
                 />
               )}
               {allPayments.length === 0 ? (
-                <p className="text-slate-500 text-sm">No payments yet.</p>
+                <p className="text-slate-500 text-base">No payments yet.</p>
               ) : filteredPayments.length === 0 ? (
-                <p className="text-slate-500 text-sm">No payments match your search.</p>
+                <p className="text-slate-500 text-base">No payments match your search.</p>
               ) : (
                 <ul className="space-y-2">
                   {filteredPayments.map(({ claim, type }) => {
@@ -428,14 +429,14 @@ export default function HistoryPage() {
                           className="block rounded-xl border border-white/10 bg-white/5 p-3 hover:bg-white/10 transition-colors"
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <span className={`text-sm font-semibold ${type === "sent" ? "text-amber-400" : "text-emerald-400"}`}>
+                            <span className={`text-base font-semibold ${type === "sent" ? "text-amber-400" : "text-emerald-400"}`}>
                               {type === "sent" ? "Sent" : "Received"}
                             </span>
                             <span className="text-white font-semibold font-sans">
                               {type === "sent" ? "-" : "+"}${amount.toFixed(2)} {claim.to_symbol}
                             </span>
                           </div>
-                          <div className="mt-1.5 text-sm font-medium text-slate-300">
+                          <div className="mt-1.5 text-base font-medium text-slate-300">
                             {type === "sent" ? "To " : "From "}{senderOrPayee}
                           </div>
                           {showMessageOrGif && (
@@ -448,12 +449,12 @@ export default function HistoryPage() {
                                 />
                               )}
                               {message && (
-                                <p className="text-sm text-slate-300 line-clamp-2 italic">"{message}"</p>
+                                <p className="text-base sm:text-sm text-slate-300 line-clamp-2 italic">"{message}"</p>
                               )}
                             </div>
                           )}
                           <div className="flex items-center justify-between gap-2 mt-2">
-                            <span className="text-sm text-slate-500">
+                            <span className="text-base sm:text-sm text-slate-500">
                               {new Date(claim.created_at).toLocaleDateString(undefined, {
                                 month: "short",
                                 day: "numeric",

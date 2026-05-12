@@ -128,7 +128,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
   };
 
   const fullTexts = [
-    `Pay your friend\nsend money to @${username || "username"}`,
+    `Pay your friend\nsend money to @username`,
     "Top up with your favorite\nwallet and token",
   ];
 
@@ -612,16 +612,16 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                             )}
                           </div>
                           {usernameError && (
-                            <p className="text-xs text-red-400 text-center">{usernameError}</p>
+                            <p className="text-sm text-red-400 text-center">{usernameError}</p>
                           )}
                           {!usernameError && !usernameFromTwitter && checkingAvailability && newUsername.length > LOO_PREFIX.length && (
-                            <p className="text-xs text-slate-500 text-center">Checking availability...</p>
+                            <p className="text-sm text-slate-500 text-center">Checking availability...</p>
                           )}
                           {!usernameError && !usernameFromTwitter && !checkingAvailability && usernameAvailable === true && newUsername.length > LOO_PREFIX.length && (
-                            <p className="text-xs text-emerald-400 text-center">✓ Username available</p>
+                            <p className="text-sm text-emerald-400 text-center">✓ Username available</p>
                           )}
                           {!usernameFromTwitter && (
-                            <p className="text-xs text-slate-500 text-center">
+                            <p className="text-sm text-slate-500 text-center">
                               loo- is fixed; 1–16 letters, numbers, underscores after it.
                             </p>
                           )}
@@ -724,7 +724,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.15 }}
-                        className="text-sm text-slate-400 mb-3 text-center pt-5"
+                        className="text-base text-slate-400 mb-3 text-center pt-5"
                       >
                         Share your payment link to receive payments
                       </motion.p>
@@ -735,7 +735,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                         transition={{ delay: 0.2 }}
                         className="mb-3 p-2.5 rounded-xl bg-white/5 border border-white/10"
                       >
-                        <p className="text-xs font-medium mb-1.5 text-slate-400">Your payment link</p>
+                        <p className="text-sm font-medium mb-1.5 text-slate-400">Your payment link</p>
                         <div className="flex items-center gap-2">
                           <a
                             href={getPaymentLink()}
@@ -797,7 +797,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                     onCheckedChange={(v) => setDontShowAgain(v === true)}
                     className="shrink-0 border-white/20 bg-white/5 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500 data-[state=checked]:text-white"
                   />
-                  <label htmlFor="dontShowAgain" className="text-sm text-slate-500 cursor-pointer select-none">
+                  <label htmlFor="dontShowAgain" className="text-base text-slate-500 cursor-pointer select-none">
                     Don&apos;t show this again
                   </label>
                 </div>
