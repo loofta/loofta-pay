@@ -219,8 +219,11 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     const sig = await broadcastConn.sendRawTransaction(signedBytes, { skipPreflight: true, maxRetries: 3 });
     console.info(`[MultiSend] broadcast ok sig=${sig.slice(0, 12)}… paymentId=${paymentId}`);
     const fallbackConn = sendTo === "ephemeral" ? new Connection(getRpcForMode(cluster), "confirmed") : undefined;
+    // MagicBlock base-layer txs confirm in seconds or not at all — 30s is plenty.
+    // Ephemeral cluster may need longer due to rollup finality.
+    const timeoutMs = sendTo === "base" ? 30_000 : 120_000;
     try {
-      await waitForSignatureConfirmation(broadcastConn, sig, 120_000, 1500, "multiSend", fallbackConn);
+      await waitForSignatureConfirmation(broadcastConn, sig, timeoutMs, 1500, "multiSend", fallbackConn);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
       // MagicBlock private transfers can land on-chain with a Custom error code (e.g. Custom:1)
