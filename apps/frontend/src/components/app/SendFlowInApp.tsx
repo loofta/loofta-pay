@@ -133,7 +133,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
   if (loadingUser) {
     return (
       <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
-        <p className="text-slate-400 text-sm">Loading…</p>
+        <p className="text-slate-400 text-base">Loading…</p>
       </div>
     );
   }
@@ -141,7 +141,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
   if (userError) {
     return (
       <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
-        <p className="text-red-400 text-sm">{userError}</p>
+        <p className="text-red-400 text-base">{userError}</p>
         <Button variant="outline" onClick={onBack} className="rounded-xl border-white/10 text-slate-300">
           Back
         </Button>
@@ -158,7 +158,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
         <button
           type="button"
           onClick={onBack}
-          className="text-slate-400 hover:text-white text-sm font-medium"
+          className="text-slate-400 hover:text-white text-base font-medium"
         >
           Change
         </button>
@@ -175,7 +175,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
       )}
 
       <div>
-        <Label className="text-slate-400 text-sm">Amount (USD)</Label>
+        <Label className="text-slate-400 text-base">Amount (USD)</Label>
         <Input
           type="number"
           value={amount}
@@ -186,12 +186,12 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500"
         />
         {belowMinAmount && (
-          <p className="mt-1.5 text-xs text-amber-400">Min. amount is $5.00 USDC</p>
+          <p className="mt-1.5 text-sm text-amber-400">Min. amount is $5.00 USDC</p>
         )}
       </div>
 
       <div>
-        <Label className="text-slate-400 text-sm">Message (optional)</Label>
+        <Label className="text-slate-400 text-base">Message (optional)</Label>
         <MessageInput
           value={description}
           onChange={setDescription}

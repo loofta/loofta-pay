@@ -352,7 +352,7 @@ export default function Home() {
                       setSelectedRecipient(null);
                       setSendStep(1);
                     }}
-                    className="text-slate-400 hover:text-white text-sm font-medium"
+                    className="text-slate-400 hover:text-white text-base font-medium"
                   >
                     ← New payment
                   </button>
@@ -389,7 +389,7 @@ export default function Home() {
                           <button
                             type="button"
                             onClick={() => { setShowMultiSend(true); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
-                            className="text-slate-500 hover:text-slate-300 text-sm font-medium transition-colors"
+                            className="text-slate-500 hover:text-slate-300 text-base sm:text-sm font-medium transition-colors"
                           >
                             Try multi send
                           </button>
@@ -483,7 +483,7 @@ export default function Home() {
                           )}
                         </ul>
                       )}
-                      <p className="text-sm text-slate-400 mt-0.5 mb-1.5">
+                      <p className="text-base sm:text-sm text-slate-400 mt-0.5 mb-1.5">
                         Loofta or Twitter username, or exact email – they claim by signing in with that account.
                       </p>
                     </div>
@@ -507,7 +507,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => { setShowClaimOverlay(false); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
-                    className="text-slate-400 hover:text-white text-sm font-medium"
+                    className="text-slate-400 hover:text-white text-base font-medium"
                   >
                     ← Back to receive
                   </button>
@@ -523,11 +523,11 @@ export default function Home() {
                     </p>
                     {authenticated && username ? (
                       <>
-                        <p className="text-slate-300 text-sm">
+                        <p className="text-slate-300 text-base sm:text-sm">
                           Anyone can pay you by opening this link. You receive in your preferred token and chain.
                         </p>
                         <div className="flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5">
-                          <span className="flex-1 text-sm font-mono text-white truncate">
+                          <span className="flex-1 text-base sm:text-sm font-mono text-white truncate">
                             {typeof window !== "undefined" ? `${window.location.origin}/link/@${username}` : `/link/@${username}`}
                           </span>
                           <button
@@ -553,7 +553,7 @@ export default function Home() {
                       </>
                     ) : (
                       <>
-                        <p className="text-slate-300 text-sm">
+                        <p className="text-slate-300 text-base sm:text-sm">
                           Sign in to get your own payment link. Add Twitter later to get a unique @username.
                         </p>
                         <Button
@@ -574,7 +574,7 @@ export default function Home() {
                       <PlusIcon className={"text-orange-400 w-4 h-4"} />
                       Create new payment link
                     </p>
-                    <p className="text-slate-300 text-sm">
+                    <p className="text-slate-300 text-base sm:text-sm">
                       Create a one-off payment request. You choose amount, token, and chain. No account required to create.
                     </p>
                     <Button

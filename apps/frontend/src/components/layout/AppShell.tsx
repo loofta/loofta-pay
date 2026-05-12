@@ -35,7 +35,7 @@ function ShellContent({ children }: { children: ReactNode }) {
       {showBanner && (
         <div className="relative w-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-4 py-3 mb-3 flex items-center justify-center text-white">
           <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 min-w-0 text-center">
-            <span className="text-sm font-medium">
+            <span className="text-base sm:text-sm font-medium">
               {networkMode === "mainnet"
                 ? "Mainnet beta — send and receive private payments with real USDC. Pay anyone by email, X username, or Loofta username."
                 : "Send and receive private payments with MagicBlock PER — devnet. Pay anyone by email, X username, or Loofta username."}
@@ -44,7 +44,7 @@ function ShellContent({ children }: { children: ReactNode }) {
               href="https://t.me/looftapay"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 shrink-0 text-sm font-semibold text-white hover:underline underline-offset-2"
+              className="inline-flex items-center gap-1 shrink-0 text-base sm:text-sm font-semibold text-white hover:underline underline-offset-2"
             >
               Questions? Contact us on Telegram
               <ChevronRight className="h-4 w-4" />

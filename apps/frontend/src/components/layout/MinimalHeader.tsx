@@ -55,11 +55,11 @@ function MobileMenu({
         {/* Header */}
         <div className="flex items-center justify-between px-5 h-16 border-b border-white/10 shrink-0">
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-white truncate">
+            <p className="text-base font-semibold text-white truncate">
               {username ? `@${username}` : (email ?? "Account")}
             </p>
             {username && email && (
-              <p className="text-sm text-slate-400 truncate">{email}</p>
+              <p className="text-base text-slate-400 truncate">{email}</p>
             )}
           </div>
           <button
@@ -103,7 +103,7 @@ function MobileMenu({
                 href={link.href}
                 onClick={onClose}
                 className={[
-                  "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors",
+                  "flex items-center gap-3 px-3 py-2.5 rounded-xl text-base font-medium transition-colors",
                   active
                     ? "bg-white/10 text-white"
                     : "text-slate-300 hover:text-white hover:bg-white/8",
@@ -120,7 +120,7 @@ function MobileMenu({
           {/* Network toggle */}
           <div className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/8 transition-colors">
             <div className="flex flex-col min-w-0">
-              <span className="text-sm text-slate-300">
+              <span className="text-base text-slate-300">
                 {networkMode === "mainnet"
                   ? (mainnetAccess ? "Mainnet Beta" : "Mainnet (view only)")
                   : "Devnet"}
@@ -137,7 +137,7 @@ function MobileMenu({
           <button
             type="button"
             onClick={() => { onClose(); onLogout(); }}
-            className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium text-red-400 hover:bg-red-400/10 transition-colors"
+            className="w-full text-left px-3 py-2.5 rounded-xl text-base font-medium text-red-400 hover:bg-red-400/10 transition-colors"
           >
             Log out
           </button>

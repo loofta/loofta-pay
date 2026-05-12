@@ -283,7 +283,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
         </div>
       </div>
       {maxLength && (
-        <div className="text-sm text-gray-500 mt-1 text-right">
+        <div className="text-base sm:text-sm text-gray-500 mt-1 text-right">
           {value.length}/{maxLength}
         </div>
       )}
