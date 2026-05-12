@@ -21,6 +21,7 @@ import { UsersModule } from './modules/users/users.module';
 import { SendPaymentModule } from './modules/send-payment/send-payment.module';
 import { RewardsModule } from './modules/rewards/rewards.module';
 import { WaitlistModule } from './modules/waitlist/waitlist.module';
+import { TwitterPaymentsModule } from './modules/twitter-payments/twitter-payments.module';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module';
     SendPaymentModule,
     RewardsModule,
     WaitlistModule,
+    TwitterPaymentsModule,
   ],
   providers: [
     {

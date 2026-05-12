@@ -1,0 +1,220 @@
+'use client'
+
+import React, { useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useQuery } from '@tanstack/react-query'
+import { usePrivy } from '@privy-io/react-auth'
+import { motion } from 'framer-motion'
+import { Loader2, ArrowDown, Lock, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react'
+import { GradientActionButton } from '@/components/ui/GradientActionButton'
+
+function XLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.263 5.632L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77z" />
+    </svg>
+  )
+}
+
+
+interface TwitterPaymentRequest {
+  short_id: string
+  sender_twitter: string
+  recipient_twitter: string
+  amount_usd: number
+  status: 'pending_funding' | 'funded' | 'expired' | 'cancelled'
+  payment_id: string | null
+  is_devnet: boolean
+  expires_at: string
+}
+
+function getLinkedTwitterHandle(user: ReturnType<typeof usePrivy>['user']): string | null {
+  const account = user?.linkedAccounts?.find((a: any) =>
+    ['twitter_oauth', 'twitter_oauth2', 'twitter', 'x'].includes((a.type ?? '').toLowerCase()),
+  ) as any
+  return account?.username?.replace(/^@/, '').toLowerCase() ?? null
+}
+
+export default function TwitterPaymentPage({ params }: { params: Promise<{ short_id: string }> }) {
+  const { short_id } = React.use(params)
+  const router = useRouter()
+  const { ready, authenticated, login, user, getAccessToken } = usePrivy()
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const { data: request, isLoading } = useQuery<TwitterPaymentRequest>({
+    queryKey: ['twitter-payment', short_id],
+    queryFn: async () => {
+      const res = await fetch(`/api/twitter-payments/${short_id}`)
+      if (!res.ok) throw new Error('Not found')
+      return res.json()
+    },
+  })
+
+  const linkedHandle = getLinkedTwitterHandle(user)
+  const isSender = !!linkedHandle && linkedHandle === request?.sender_twitter
+  const isRecipient = !!linkedHandle && linkedHandle === request?.recipient_twitter
+
+  async function handleSend() {
+    if (!request) return
+    setSending(true)
+    setError(null)
+    try {
+      const token = await getAccessToken()
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'
+      const res = await fetch(`${backendUrl}/twitter-payments/${short_id}/fund`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.message ?? 'Failed to create payment')
+      // payment_link is the full URL; extract just the /c/:short_id path for in-app routing
+      const path = data.payment_link ? new URL(data.payment_link).pathname : `/c/${data.payment_id}`
+      router.push(path)
+    } catch (e: any) {
+      setError(e.message ?? 'Something went wrong')
+      setSending(false)
+    }
+  }
+
+  const amountDisplay = !request ? '' :
+    request.amount_usd % 1 === 0 ? `$${request.amount_usd}` : `$${request.amount_usd.toFixed(2)}`
+
+  // ── Loading ──────────────────────────────────────────────────────────────
+  if (isLoading || !ready) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="h-7 w-7 animate-spin text-white/30" />
+      </div>
+    )
+  }
+
+  if (!request) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3 px-6 text-center">
+        <p className="text-white font-semibold text-lg">Link not found</p>
+        <p className="text-white/40 text-base">This payment link may have expired or been cancelled.</p>
+        <Link href="/" className="text-base text-white/50 hover:text-white underline underline-offset-2 mt-2">Go to Loofta Pay</Link>
+      </div>
+    )
+  }
+
+  // Recipient with payment_id → redirect to claim page
+  if (isRecipient && request.payment_id) {
+    router.push(`/c/${request.payment_id}`)
+    return <div className="flex items-center justify-center min-h-[60vh]"><Loader2 className="h-7 w-7 animate-spin text-white/30" /></div>
+  }
+
+  return (
+    <div className="flex flex-col items-center px-4 pt-6 pb-16 min-h-[calc(100vh-64px)]">
+      <motion.div
+        className="w-full max-w-sm space-y-4"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: [0.25, 0.46, 0.45, 0.94] }}
+      >
+        {/* Card */}
+        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] overflow-hidden">
+
+          {/* Header strip */}
+          <div className="flex items-center justify-center gap-2 border-b border-white/[0.06] px-5 py-4">
+            <XLogo className="h-4 w-4 text-white/60" />
+            <span className="text-base font-semibold text-white">Pay privately on X</span>
+          </div>
+
+          {/* Transfer visual — vertical */}
+          <div className="flex flex-col items-center gap-2 px-6 py-7">
+            <span className="text-xl font-bold text-white">@{request.sender_twitter}</span>
+
+            <div className="flex flex-col items-center gap-1.5 py-2">
+              <ArrowDown className="h-4 w-4 text-white/20" />
+              <span className="text-5xl font-bold text-white tracking-tight">{amountDisplay}</span>
+              <span className="text-sm text-white/30 font-medium tracking-widest uppercase">USDC</span>
+              <ArrowDown className="h-4 w-4 text-white/20" />
+            </div>
+
+            <span className="text-xl font-bold text-white">@{request.recipient_twitter}</span>
+          </div>
+
+          {/* Privacy note */}
+          <div className="flex items-center justify-center gap-1.5 border-t border-white/[0.06] px-5 py-3">
+            <Lock className="h-3.5 w-3.5 text-white/25" />
+            <span className="text-sm text-white/30">End-to-end private via MagicBlock</span>
+          </div>
+        </div>
+
+        {/* CTA card */}
+        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-5 py-5 space-y-4">
+
+          {/* Sender already initiated — come back to finish */}
+          {isSender && request.payment_id && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-3 py-2.5">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                <p className="text-sm text-emerald-300">Payment created — finish sending it</p>
+              </div>
+              <GradientActionButton onClick={() => router.push(`/c/${request.payment_id}`)}>
+                Proceed to payment <ArrowRight className="h-4 w-4" />
+              </GradientActionButton>
+            </div>
+          )}
+
+          {/* Recipient — payment not initiated yet */}
+          {isRecipient && !request.payment_id && (
+            <div className="text-center space-y-1.5 py-2">
+              <p className="text-base font-medium text-white">You&apos;ll receive {amountDisplay}</p>
+              <p className="text-sm text-white/40">Waiting for @{request.sender_twitter} to send it. You&apos;ll get a notification once it&apos;s on its way.</p>
+            </div>
+          )}
+
+          {/* Not logged in */}
+          {!authenticated && (
+            <div className="space-y-3">
+              <p className="text-center text-base text-white/50">
+                Are you <span className="text-white font-semibold">@{request.sender_twitter}</span> on X?
+              </p>
+              <GradientActionButton onClick={login}>
+                <XLogo className="h-4 w-4" />
+                Log in to send
+              </GradientActionButton>
+            </div>
+          )}
+
+          {/* Correct sender — not yet initiated */}
+          {isSender && !request.payment_id && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-3 py-2.5">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                <p className="text-sm text-emerald-300">Logged in as @{linkedHandle}</p>
+              </div>
+              <GradientActionButton onClick={handleSend} loading={sending} loadingText="Setting up payment…">
+                Send {amountDisplay} to @{request.recipient_twitter}
+              </GradientActionButton>
+            </div>
+          )}
+
+          {/* Wrong user */}
+          {authenticated && !isSender && !isRecipient && (
+            <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-3 space-y-1">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
+                <p className="text-base font-medium text-amber-300">Wrong account</p>
+              </div>
+              <p className="text-sm text-white/50">
+                You&apos;re @{linkedHandle}. This payment is for @{request.sender_twitter} to send to @{request.recipient_twitter}.
+              </p>
+            </div>
+          )}
+
+          {error && (
+            <div className="flex items-center gap-2 rounded-xl bg-red-500/10 border border-red-500/20 px-3 py-2.5">
+              <AlertCircle className="h-4 w-4 text-red-400 shrink-0" />
+              <p className="text-sm text-red-300">{error}</p>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  )
+}
