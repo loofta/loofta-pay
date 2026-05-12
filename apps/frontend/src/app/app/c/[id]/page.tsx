@@ -972,6 +972,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       if (Date.now() < end) requestAnimationFrame(frame);
     })();
   }, [claimAsRecipientMutation.isSuccess]);
+
+  useEffect(() => {
+    if (claimAsRecipientMutation.isPending) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [claimAsRecipientMutation.isPending]);
   const [burnerDiag, setBurnerDiag] = useState<{
     claimId: string;
     claimStatus: string;
@@ -2755,7 +2761,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       initial={{ opacity: 0, scale: 0.85 }}
                       animate={{ opacity: 1, scale: 1 }}
                       transition={{ duration: 0.3 }}
-                      className="text-3xl sm:text-4xl font-bold text-gray-900 mb-2"
+                      className="text-4xl sm:text-5xl font-sans font-semibold text-gray-900 mb-2"
                     >
                       +${amt}
                     </motion.div>
@@ -2763,9 +2769,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       transition={{ delay: 0.15 }}
-                      className="text-gray-500 text-base mb-6"
+                      className="text-xl sm:text-2xl font-semibold mb-6 bg-gradient-to-r from-[#FF1301] to-[#EAB308] bg-clip-text text-transparent"
                     >
-                      On its way to your wallet…
+                      On its way to your wallet ✨
                     </motion.p>
                     <div className="flex justify-center gap-2">
                       {["#FF1301", "#EAB308", "#22c55e"].map((color, i) => (
@@ -2807,7 +2813,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.15 }}
-                        className="text-4xl sm:text-5xl font-bold text-gray-900 mb-3"
+                        className="text-5xl sm:text-6xl font-sans font-semibold text-gray-900 mb-3"
                       >
                         +${amt}
                       </motion.div>
@@ -2816,7 +2822,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
                           transition={{ delay: 0.25 }}
-                          className="text-lg sm:text-xl text-gray-500"
+                          className="text-xl text-gray-500 mt-1 mb-5"
                         >
                           from <span className="font-medium text-gray-700">{senderLabel}</span>
                         </motion.p>
