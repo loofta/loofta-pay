@@ -53,6 +53,22 @@ const ENC_IV_LENGTH = 16;
 const ENC_TAG_LENGTH = 16;
 const ENC_KEY_LENGTH = 32;
 
+const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SHORT_ID_MAX_VALID = Math.floor(256 / SHORT_ID_ALPHABET.length) * SHORT_ID_ALPHABET.length;
+
+function generateShortId(length = 8): string {
+  let result = '';
+  while (result.length < length) {
+    const bytes = randomBytes(length - result.length + 4);
+    for (const byte of bytes) {
+      if (byte < SHORT_ID_MAX_VALID && result.length < length) {
+        result += SHORT_ID_ALPHABET[byte % SHORT_ID_ALPHABET.length];
+      }
+    }
+  }
+  return result;
+}
+
 @Injectable()
 export class ClaimsService {
   private readonly logger = new Logger(ClaimsService.name);
@@ -103,7 +119,7 @@ export class ClaimsService {
   /**
    * Create a new payment claim
    */
-  async create(dto: CreateClaimDto): Promise<{ id: string; link: string }> {
+  async create(dto: CreateClaimDto): Promise<{ id: string; short_id: string; link: string }> {
     const { amount, toSel, recipient, userId, cluster } = dto;
 
     if (!amount || !toSel?.symbol || !toSel?.chain || !recipient) {
@@ -111,6 +127,7 @@ export class ClaimsService {
     }
 
     const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
+    const shortId = generateShortId();
     const { data, error } = await this.supabaseService.payments
       .insert({
         amount: Number(amount),
@@ -121,6 +138,7 @@ export class ClaimsService {
         to_chain: 'solana',
         to_token: 'USDC',
         is_devnet: isDevnet,
+        short_id: shortId,
       })
       .select('id')
       .single();
@@ -131,10 +149,10 @@ export class ClaimsService {
     }
 
     const id = data.id;
-    const link = `${this.baseUrl}/c/${id}`;
+    const link = `${this.baseUrl}/c/${shortId}`;
 
     this.logger.log(`Created claim: ${id}`);
-    return { id, link };
+    return { id, short_id: shortId, link };
   }
 
   /**
@@ -142,7 +160,7 @@ export class ClaimsService {
    * If user exists: send directly to their wallet.
    * If user does not exist: create "burner" claim with PENDING_USERNAME so they can claim later when they sign up with that username.
    */
-  async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; link: string }> {
+  async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; short_id: string | null; link: string }> {
     const { username, amount, userId, isPrivate = false, description, cluster } = dto;
     const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
     const cleanUsername = username.replace(/^@/, '').toLowerCase();
@@ -178,8 +196,9 @@ export class ClaimsService {
           to_chain: 'solana',
           to_token: 'USDC',
           is_devnet: isDevnet,
+          short_id: generateShortId(),
         })
-        .select('id')
+        .select('id, short_id')
         .single();
 
       if (claimError) {
@@ -188,9 +207,9 @@ export class ClaimsService {
       }
 
       const id = claim.id;
-      const link = `${this.baseUrl}/c/${id}`;
+      const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
       this.logger.log(`Created claim from username: ${id} for user ${cleanUsername} (private: ${finalIsPrivate}, required: ${requiresPrivate})`);
-      return { id, link };
+      return { id, short_id: claim.short_id ?? null, link };
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
       if (!(err instanceof NotFoundException)) throw err;
@@ -215,9 +234,10 @@ export class ClaimsService {
         to_token: 'USDC',
         is_devnet: isDevnet,
         recipient_was_unregistered: true,
+        short_id: generateShortId(),
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
-      .select('id')
+      .select('id, short_id')
       .single();
 
     if (claimError) {
@@ -226,9 +246,9 @@ export class ClaimsService {
     }
 
     const id = claim.id;
-    const link = `${this.baseUrl}/c/${id}`;
+    const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
     this.logger.log(`Created claim from username (pending): ${id} for @${cleanUsername} – they can claim when they sign up${burner ? ' (unique burner)' : ''}`);
-    return { id, link };
+    return { id, short_id: claim.short_id ?? null, link };
   }
 
   /** Sentinel prefix for claims created by email when recipient has no account yet; they claim by signing in with that email */
@@ -508,7 +528,7 @@ export class ClaimsService {
   /**
    * Create a claim from email. If user exists, use their wallet. If not, create with PENDING_EMAIL so they can claim by signing in later.
    */
-  async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; link: string }> {
+  async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; short_id: string | null; link: string }> {
     const { email, amount, userId, isPrivate = false, description, cluster } = dto;
     const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
     const cleanEmail = email.trim().toLowerCase();
@@ -539,8 +559,9 @@ export class ClaimsService {
           to_chain: 'solana',
           to_token: 'USDC',
           is_devnet: isDevnet,
+          short_id: generateShortId(),
         })
-        .select('id')
+        .select('id, short_id')
         .single();
 
       if (claimError) {
@@ -549,9 +570,9 @@ export class ClaimsService {
       }
 
       const id = claim.id;
-      const link = `${this.baseUrl}/c/${id}`;
+      const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
       this.logger.log(`Created claim from email (existing user): ${id} for ${cleanEmail}`);
-      return { id, link };
+      return { id, short_id: claim.short_id ?? null, link };
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
       if (!(err instanceof NotFoundException)) throw err;
@@ -577,9 +598,10 @@ export class ClaimsService {
         to_token: 'USDC',
         is_devnet: isDevnet,
         recipient_was_unregistered: true,
+        short_id: generateShortId(),
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
-      .select('id')
+      .select('id, short_id')
       .single();
 
     if (claimError) {
@@ -588,9 +610,9 @@ export class ClaimsService {
     }
 
     const id = claim.id;
-    const link = `${this.baseUrl}/c/${id}`;
+    const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
     this.logger.log(`Created claim from email (pending): ${id} for ${cleanEmail} – they claim by signing in${burner ? ' (unique burner)' : ''}`);
-    return { id, link };
+    return { id, short_id: claim.short_id ?? null, link };
   }
 
   /**
@@ -2058,6 +2080,7 @@ export class ClaimsService {
     const delayMs = isDev ? 0 : 15 * 60 * 1000;
     const scheduledAt = delayMs > 0 ? new Date(Date.now() + delayMs).toISOString() : undefined;
 
+    const shortId = (row.short_id as string | null) || null;
     const emailData = {
       id: claimId,
       amount: row.amount as string | number,
@@ -2065,6 +2088,7 @@ export class ClaimsService {
       senderInfo,
       recipientEmail,
       scheduledAt,
+      ...(shortId ? { claimUrl: `/c/${shortId}` } : {}),
     };
 
     if (isUnregistered) {

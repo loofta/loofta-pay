@@ -4,7 +4,7 @@ import { isNonMainnetCluster } from "@/lib/solanaCluster";
 
 // Only safe fields — recipient_address excluded to protect privacy
 const PAYMENT_SELECT =
-  "id, amount, direction, status, created_at, paid_at, recipient_username, sender_user_id, recipient_user_id, recipient_email, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet";
+  "id, short_id, amount, direction, status, created_at, paid_at, recipient_username, sender_user_id, recipient_user_id, recipient_email, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet";
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -12,6 +12,7 @@ const OPEN_PAYMENT_EXPIRY_DAYS = 7;
 
 export type PaymentHistoryClaim = {
   id: string;
+  short_id?: string | null;
   amount: string;
   direction: "from_sender" | "from_recipient";
   // What sender paid with
@@ -51,6 +52,7 @@ function isExpiredOpenPayment(p: PaymentHistoryClaim): boolean {
 function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & { _recipient_user_id?: string | null } {
   return {
     id: String(row.id ?? ""),
+    short_id: (row.short_id as string | null) ?? null,
     amount: String(row.amount ?? "0"),
     direction: (row.direction as "from_sender" | "from_recipient") ?? "from_sender",
     to_symbol: "USDC",

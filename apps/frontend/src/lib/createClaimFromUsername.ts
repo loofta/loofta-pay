@@ -12,7 +12,7 @@ export async function createClaimFromUsername(input: {
   isPrivate?: boolean;
   description?: string;
   cluster?: 'devnet' | 'mainnet';
-}): Promise<{ id: string }> {
+}): Promise<{ id: string; short_id?: string | null }> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
   const authHeader: Record<string, string> = input.accessToken
     ? { Authorization: `Bearer ${input.accessToken}` }
@@ -45,5 +45,5 @@ export async function createClaimFromUsername(input: {
   }
   const data = await r.json();
   if (!data?.id) throw new Error("Server response missing claim ID");
-  return { id: data.id };
+  return { id: data.id, short_id: data.short_id ?? null };
 }

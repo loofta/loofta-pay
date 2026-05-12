@@ -141,6 +141,7 @@ function ClaimPayLayout({
 /** Shown for logged-in creator of pending-recipient claim: copy/share/reclaim after payment. */
 function ClaimPageSenderShareView({
   claimId,
+  shortCode,
   amount,
   recipientLabel,
   status,
@@ -148,6 +149,8 @@ function ClaimPageSenderShareView({
   onReclaimed,
 }: {
   claimId: string;
+  /** Short URL code (8 chars) — used in the share link when available. Falls back to UUID. */
+  shortCode?: string | null;
   amount: number;
   recipientLabel?: string;
   status: string;
@@ -188,10 +191,11 @@ function ClaimPageSenderShareView({
     });
   }, [claimId, userId, isCancelled, getSenderAccessToken]);
 
+  const shareId = shortCode || claimId;
   const claimLink =
     typeof window !== "undefined"
-      ? `${window.location.origin}/c/${claimId}`
-      : `https://pay.loofta.xyz/c/${claimId}`;
+      ? `${window.location.origin}/c/${shareId}`
+      : `https://pay.loofta.xyz/c/${shareId}`;
 
   const handleReclaim = async () => {
     if (!userId) {
@@ -402,7 +406,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
     isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
-    claim: c as { id: string; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean },
+    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -2912,6 +2916,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             ) : claim?.recipient_pending_email && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
                 claimId={id}
+                shortCode={claim?.short_id}
                 amount={parseFloat(claim?.amount || "0")}
                 recipientLabel={claim?.recipient_pending_email_value || "email recipient"}
                 status={String(status || claim?.status || "").toUpperCase()}
@@ -2920,6 +2925,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
                 claimId={id}
+                shortCode={claim?.short_id}
                 amount={parseFloat(claim?.amount || "0")}
                 recipientLabel={`@${claim.recipient_pending_username_value || "username"}`}
                 status={String(status || claim?.status || "").toUpperCase()}
