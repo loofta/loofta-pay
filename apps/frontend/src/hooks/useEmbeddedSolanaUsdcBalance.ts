@@ -44,7 +44,7 @@ export function useEmbeddedSolanaUsdcBalance(
       return fetchEmbeddedSolanaUsdcBalance(address, networkMode);
     },
     staleTime: EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS,
-    refetchInterval: 30_000,
+    refetchInterval: 5_000,
     refetchIntervalInBackground: false,
     enabled:
       enabled &&
