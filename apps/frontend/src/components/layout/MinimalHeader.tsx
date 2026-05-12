@@ -51,7 +51,7 @@ function MobileMenu({
   return (
     <>
       {/* Drawer */}
-      <div className="fixed inset-0 z-50 flex flex-col bg-[#0f0f12] shadow-2xl animate-in slide-in-from-right duration-200">
+      <div className="fixed inset-0 z-50 flex flex-col bg-[#0f0f12] shadow-2xl animate-in slide-in-from-right duration-200" style={{ height: '100dvh' }}>
         {/* Header */}
         <div className="flex items-center justify-between px-5 h-16 border-b border-white/10 shrink-0">
           <div className="min-w-0">
@@ -116,7 +116,7 @@ function MobileMenu({
         </nav>
 
         {/* Footer */}
-        <div className="px-3 pb-6 pt-2 border-t border-white/10 shrink-0 space-y-1">
+        <div className="px-3 pt-2 border-t border-white/10 shrink-0 space-y-1" style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}>
           {/* Network toggle */}
           <div className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/8 transition-colors">
             <div className="flex flex-col min-w-0">
