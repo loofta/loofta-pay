@@ -42,6 +42,7 @@ import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Sh
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
+import confetti from "canvas-confetti";
 const EVM_CHAIN_SET = new Set(["eth","ethereum","arb","arbitrum","base","op","optimism","bsc","avax","avalanche","polygon","matic","fantom","ftm","gnosis","linea","scroll","zksync","zk","blast","pol"]);
 function isEvmChainId(chain?: string): boolean { return EVM_CHAIN_SET.has(String(chain || "").toLowerCase()); }
 import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
@@ -561,48 +562,37 @@ async function updateClaimStatus(
 /** Message + embedded GIF rendering for claim description (shared paid / claim flows). */
 function ClaimDescriptionMessageBox({ description }: { description?: string | null }) {
   if (!description?.trim()) return null;
-  const desc = description;
-  const gifUrlPattern = /(https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\/[^\s]*)/gi;
-  const parts: string[] = [];
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  gifUrlPattern.lastIndex = 0;
-  while ((match = gifUrlPattern.exec(desc)) !== null) {
-    if (match.index > lastIndex) parts.push(desc.slice(lastIndex, match.index));
-    parts.push(match[0]);
-    lastIndex = match.index + match[0].length;
+  const GIF_REGEX = /(https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\/[^\s]*)/gi;
+  const gifMatch = description.match(GIF_REGEX);
+  const gifUrl = gifMatch ? gifMatch[0] : null;
+  const textOnly = description.replace(GIF_REGEX, "").replace(/\s+/g, " ").trim();
+
+  let resolvedGifUrl = gifUrl;
+  if (gifUrl?.includes("giphy.com") && !gifUrl.endsWith(".gif")) {
+    const m = gifUrl.match(/giphy\.com\/media\/([^/]+)/);
+    resolvedGifUrl = m
+      ? `https://media.giphy.com/media/${m[1]}/giphy.gif`
+      : gifUrl.replace(/\/$/, "") + ".gif";
   }
-  if (lastIndex < desc.length) parts.push(desc.slice(lastIndex));
+
   return (
-    <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-      <div className="text-sm text-gray-600 mb-1">Message</div>
-      <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
-        {parts.length === 0 ? (
-          desc
-        ) : (
-          parts.map((part, idx) => {
-            if (/https?:\/\/[^\s]+(?:\.gif|giphy\.com|tenor\.com|gfycat\.com|media\.giphy\.com)/i.test(part)) {
-              let imageUrl = part;
-              if (part.includes("giphy.com") && !part.endsWith(".gif")) {
-                const giphyIdMatch = part.match(/giphy\.com\/media\/([^/]+)/);
-                if (giphyIdMatch) imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
-                else imageUrl = part.replace(/\/$/, "") + ".gif";
-              }
-              return (
-                // eslint-disable-next-line @next/next/no-img-element -- GIF URLs from user message; remote patterns vary
-                <img
-                  key={idx}
-                  src={imageUrl}
-                  alt="GIF"
-                  className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
-                  style={{ maxHeight: "200px", maxWidth: "100%" }}
-                />
-              );
-            }
-            return <span key={idx}>{part}</span>;
-          })
-        )}
-      </div>
+    <div className="mb-4 space-y-3">
+      {textOnly && (
+        <div className="px-4 py-3 rounded-xl bg-gray-50 border border-gray-200">
+          <p className="text-base text-gray-700 italic leading-relaxed">"{textOnly}"</p>
+        </div>
+      )}
+      {resolvedGifUrl && (
+        <div className="rounded-xl overflow-hidden border border-gray-200">
+          {/* eslint-disable-next-line @next/next/no-img-element -- GIF URLs from user message; remote patterns vary */}
+          <img
+            src={resolvedGifUrl}
+            alt="GIF"
+            className="w-full h-auto block"
+            style={{ maxHeight: "220px", objectFit: "cover" }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -850,68 +840,92 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       if (claimResp.ok) {
         const claimData = await claimResp.json().catch(() => ({}));
         console.info("[Claim] /claim success:", claimData);
-        // Always attempt a follow-up sweep so funds that arrive later can still be claimed in the same flow.
-        console.info("[Claim] Running retry-sweep…");
-        const retryResp = await fetch(`${backendUrl}/claims/${id}/claim-retry-sweep`, {
+        // Fire retry-sweep in the background — for private payments the backend can poll
+        // up to 90s for payer→burner delivery. We never await it so the success UI
+        // shows immediately after /claim 200.
+        const retrySweepHeaders: Record<string, string> = { "Content-Type": "application/json" };
+        if (claimToken) retrySweepHeaders["Authorization"] = `Bearer ${claimToken}`;
+        else retrySweepHeaders["x-privy-user-id"] = user!.id;
+        fetch(`${backendUrl}/claims/${id}/claim-retry-sweep`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(claimToken ? { Authorization: `Bearer ${claimToken}` } : { "x-privy-user-id": user!.id }),
-          },
-        });
-        console.info("[Claim] retry-sweep response:", retryResp.status);
-        if (retryResp.ok) {
-          const retryData = await retryResp.json().catch(() => ({}));
-          console.info("[Claim] retry-sweep result:", retryData);
-          return {
-            claimed: true,
-            sweepTxHash: retryData?.sweepTxHash || claimData?.sweepTxHash,
-            sweptAmount: retryData?.sweptAmount || claimData?.sweptAmount,
-            swept: retryData?.swept,
-          };
-        }
-        const retryErr = await retryResp.json().catch(() => ({}));
-        console.warn("[Claim] retry-sweep failed (non-fatal):", retryErr);
-        return claimData;
+          headers: retrySweepHeaders,
+        }).then(r => r.json()).then(d => console.info("[Claim] retry-sweep (bg):", d)).catch(() => {});
+        return { claimed: true, sweepTxHash: claimData?.sweepTxHash, sweptAmount: claimData?.sweptAmount };
       }
-      // If already claimed/not pending, still allow normal "Claim now" to retry sweep to wallet.
+      // If already claimed/not pending, fire a background retry-sweep for recovery.
       const err = await claimResp.json().catch(() => ({}));
       const msg = String(err?.message || "");
       console.warn("[Claim] /claim failed:", msg);
       if (/not pending claim|already been claimed|already claimed/i.test(msg)) {
-        console.info("[Claim] Already claimed — running retry-sweep…");
-        const retryResp = await fetch(`${backendUrl}/claims/${id}/claim-retry-sweep`, {
+        console.info("[Claim] Already claimed — retry-sweep in background…");
+        const retrySweepHeaders: Record<string, string> = { "Content-Type": "application/json" };
+        if (claimToken) retrySweepHeaders["Authorization"] = `Bearer ${claimToken}`;
+        else retrySweepHeaders["x-privy-user-id"] = user!.id;
+        fetch(`${backendUrl}/claims/${id}/claim-retry-sweep`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(claimToken ? { Authorization: `Bearer ${claimToken}` } : { "x-privy-user-id": user!.id }),
-          },
-        });
-        if (!retryResp.ok) {
-          const retryErr = await retryResp.json().catch(() => ({}));
-          throw new Error(retryErr?.message || `Claim retry failed: ${retryResp.status}`);
-        }
-        const retryData = await retryResp.json().catch(() => ({}));
-        console.info("[Claim] retry-sweep (already-claimed path):", retryData);
-        return {
-          claimed: true,
-          sweepTxHash: retryData?.sweepTxHash,
-          sweptAmount: retryData?.sweptAmount,
-          swept: retryData?.swept,
-        };
+          headers: retrySweepHeaders,
+        }).then(r => r.json()).then(d => console.info("[Claim] retry-sweep (already-claimed bg):", d)).catch(() => {});
+        return { claimed: true, sweepTxHash: undefined, sweptAmount: undefined };
       }
       throw new Error(err?.message || `Claim failed: ${claimResp.status}`);
     },
-    onSuccess: (data: { claimed?: boolean; sweepTxHash?: string; sweptAmount?: string; swept?: boolean } | undefined) => {
-      toast({
-        title: "Payment received!",
-        description: "Your claim completed successfully. USDC will arrive in your wallet shortly.",
+    onMutate: async () => {
+      const now = new Date().toISOString();
+      setOptimisticClaimedAt(now);
+      // Snapshot then optimistically mark the claim as SUCCESS with a paid_at timestamp.
+      await queryClient.cancelQueries({ queryKey: ["claim", id] });
+      const prevClaim = queryClient.getQueryData(["claim", id]);
+      queryClient.setQueryData(["claim", id], (old: any) =>
+        old ? { ...old, status: "SUCCESS", paid_at: now } : old,
+      );
+      // Optimistically prepend to every matching history cache (user may have several key variants).
+      const historyKeys = queryClient.getQueriesData<{ sent: any[]; received: any[] }>({
+        queryKey: ["payments", "history"],
       });
-      // Show success immediately without waiting for refetch; avoid the intermediate skeleton.
+      const prevHistories = historyKeys.map(([key, data]) => ({ key, data }));
+      if (claim) {
+        const optimisticEntry = {
+          id: claim.id,
+          amount: claim.amount,
+          direction: claim.direction ?? "from_sender",
+          to_symbol: claim.to_symbol ?? "USDC",
+          to_chain: claim.to_chain ?? "solana",
+          status: "SUCCESS",
+          created_at: claim.created_at ?? now,
+          paid_at: now,
+          recipient_address: claim.recipient_address,
+          recipient_username: claim.recipient_username ?? null,
+          creator_email: claim.creator_email ?? null,
+          creator_username: claim.creator_username ?? null,
+          created_by: claim.created_by ?? null,
+          paid_with_token: claim.paid_with_token ?? null,
+          paid_with_chain: claim.paid_with_chain ?? null,
+          is_private: claim.is_private ?? null,
+          description: claim.description ?? null,
+          short_id: (claim as any).short_id ?? null,
+        };
+        for (const [key, data] of historyKeys) {
+          if (!data) continue;
+          const alreadyIn = data.received.some((r: any) => r.id === claim.id);
+          if (!alreadyIn) {
+            queryClient.setQueryData(key, {
+              ...data,
+              received: [optimisticEntry, ...data.received],
+            });
+          }
+        }
+      }
+      return { prevClaim, prevHistories };
+    },
+    onSuccess: (data: { claimed?: boolean; sweepTxHash?: string; sweptAmount?: string; swept?: boolean } | undefined, _vars, context) => {
       setStatus("SUCCESS");
+      setShowBalanceUpdating(true);
+      setTimeout(() => setShowBalanceUpdating(false), 10000);
       useClaimPayStore.getState().setClaimed(id, true);
       queryClient.setQueryData(["claim", id, "recipient-check", user?.id], { isRecipient: true });
+      // Refetch real paid_at from DB once the sweep completes.
       queryClient.invalidateQueries({ queryKey: ["claim", id] });
+      queryClient.refetchQueries({ queryKey: ["claim", id] });
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
       // Retry balance refresh 5× at 2s intervals — RPC indexing can lag after sweep.
       for (let i = 1; i <= 5; i++) {
@@ -923,7 +937,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         }, i * 2000);
       }
     },
-    onError: (error: unknown) => {
+    onError: (error: unknown, _vars, context: any) => {
+      // Roll back optimistic claim data.
+      setOptimisticClaimedAt(null);
+      if (context?.prevClaim !== undefined) {
+        queryClient.setQueryData(["claim", id], context.prevClaim);
+      }
+      for (const { key, data } of context?.prevHistories ?? []) {
+        queryClient.setQueryData(key, data);
+      }
       const message = error instanceof Error ? error.message : "Claim failed";
       toast({ variant: "destructive", title: "Claim failed", description: message });
     },
@@ -937,6 +959,19 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [retrySweepLoading, setRetrySweepLoading] = useState(false);
   const [reclaimingSenderFunds, setReclaimingSenderFunds] = useState(false);
   const [claimInitiated, setClaimInitiated] = useState(false);
+  const [optimisticClaimedAt, setOptimisticClaimedAt] = useState<string | null>(null);
+  const [showBalanceUpdating, setShowBalanceUpdating] = useState(false);
+
+  useEffect(() => {
+    if (!claimAsRecipientMutation.isSuccess) return;
+    const end = Date.now() + 2200;
+    const colors = ["#FF1301", "#EAB308", "#22c55e", "#a855f7", "#3b82f6"];
+    (function frame() {
+      confetti({ particleCount: 6, angle: 60, spread: 55, origin: { x: 0 }, colors });
+      confetti({ particleCount: 6, angle: 120, spread: 55, origin: { x: 1 }, colors });
+      if (Date.now() < end) requestAnimationFrame(frame);
+    })();
+  }, [claimAsRecipientMutation.isSuccess]);
   const [burnerDiag, setBurnerDiag] = useState<{
     claimId: string;
     claimStatus: string;
@@ -2704,21 +2739,120 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                   )}
               </div>
-            ) : user?.id && (claimInitiated || claimAsRecipientMutation.isSuccess || claimAsRecipientMutation.isPending) ? (
+            ) : user?.id && claimAsRecipientMutation.isPending ? (
+              (() => {
+                const amt = parseFloat(claim?.amount || "0").toFixed(2);
+                return (
+                  <div className="mt-6 py-6 sm:py-10 px-4 text-center overflow-hidden">
+                    <motion.div
+                      animate={{ y: [0, -14, 0], rotate: [0, -8, 8, 0] }}
+                      transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut" }}
+                      className="text-6xl sm:text-7xl mb-4 select-none"
+                    >
+                      💸
+                    </motion.div>
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.85 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: 0.3 }}
+                      className="text-3xl sm:text-4xl font-bold text-gray-900 mb-2"
+                    >
+                      +${amt}
+                    </motion.div>
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.15 }}
+                      className="text-gray-500 text-base mb-6"
+                    >
+                      On its way to your wallet…
+                    </motion.p>
+                    <div className="flex justify-center gap-2">
+                      {["#FF1301", "#EAB308", "#22c55e"].map((color, i) => (
+                        <motion.div
+                          key={i}
+                          className="w-2.5 h-2.5 rounded-full"
+                          style={{ backgroundColor: color }}
+                          animate={{ scale: [1, 1.6, 1], opacity: [0.5, 1, 0.5] }}
+                          transition={{ duration: 0.7, repeat: Infinity, delay: i * 0.18 }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()
+            ) : user?.id && (claimInitiated || claimAsRecipientMutation.isSuccess) ? (
               (() => {
                 const senderLabel =
                   claim?.creator_username ? `@${claim.creator_username}` : (claim?.creator_email || null);
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
+                const claimedAt = claim?.paid_at || optimisticClaimedAt;
                 return (
-                  <div className="mt-6 py-6 px-4">
+                  <motion.div
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.4, ease: "easeOut" }}
+                    className="mt-6 py-6 px-4"
+                  >
                     <div className="text-center mb-6">
-                      <div className="mb-4 text-6xl">✅</div>
-                      <div className="text-5xl font-bold text-gray-900 mb-3">+ ${amt}</div>
+                      <motion.div
+                        initial={{ scale: 0.5, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ type: "spring", stiffness: 260, damping: 18, delay: 0.05 }}
+                        className="mb-3 text-5xl sm:text-6xl select-none"
+                      >
+                        🎉
+                      </motion.div>
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.15 }}
+                        className="text-4xl sm:text-5xl font-bold text-gray-900 mb-3"
+                      >
+                        +${amt}
+                      </motion.div>
                       {senderLabel && (
-                        <p className="text-xl text-gray-500">from <span className="font-medium text-gray-700">{senderLabel}</span></p>
+                        <motion.p
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.25 }}
+                          className="text-lg sm:text-xl text-gray-500"
+                        >
+                          from <span className="font-medium text-gray-700">{senderLabel}</span>
+                        </motion.p>
                       )}
                     </div>
                     <ClaimDescriptionMessageBox description={claim?.description} />
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.3 }}
+                      className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200 space-y-2"
+                    >
+                      {claim?.created_at && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600 text-sm">Created</span>
+                          <span className="text-sm text-gray-700">{formatUTCTimestamp(claim.created_at)}</span>
+                        </div>
+                      )}
+                      {claimedAt && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600 text-sm">Claimed</span>
+                          <span className="text-sm text-gray-700">{formatUTCTimestamp(claimedAt)}</span>
+                        </div>
+                      )}
+                    </motion.div>
+                    {showBalanceUpdating && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="mb-4 flex items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2"
+                      >
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-500" />
+                        <span className="text-sm text-emerald-700 font-medium">Balance updating…</span>
+                      </motion.div>
+                    )}
                     {claim?.is_private && (
                       <div className="mb-6 flex items-start gap-3 rounded-xl border border-orange-500/20 bg-gradient-to-b from-white/[0.08] to-white/[0.03] backdrop-blur-sm px-4 py-3 shadow-[0_0_16px_0_rgba(255,80,0,0.12)]">
                         <span className="mt-0.5 text-base">🔒</span>
@@ -2727,7 +2861,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         </p>
                       </div>
                     )}
-                  </div>
+                  </motion.div>
                 );
               })()
             ) : isRecipient &&

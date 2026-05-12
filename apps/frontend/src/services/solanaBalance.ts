@@ -16,7 +16,7 @@ function defaultNetworkMode(): NetworkMode {
 }
 
 /** React Query stale time shared by header + pay modal for embedded-wallet USDC reads */
-export const EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS = 60_000;
+export const EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS = 5_000;
 
 export type EmbeddedSolanaUsdcBalanceRow = {
   balanceUSD: number;
