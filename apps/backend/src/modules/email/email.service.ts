@@ -155,12 +155,28 @@ export class EmailService {
 </html>`;
   }
 
+  private buildDescriptionHtml(description: string): string {
+    const GIF_URL_REGEX = /https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\/[^\s]*/gi;
+    const gifMatch = description.match(GIF_URL_REGEX);
+    const gifUrl = gifMatch ? gifMatch[0] : null;
+    const textOnly = description.replace(GIF_URL_REGEX, '').replace(/\s+/g, ' ').trim();
+
+    const textPart = textOnly
+      ? `<p style="margin:12px 0 0;padding:12px 16px;background:#1e1e23;border-radius:8px;color:#9ca3af;font-size:14px;font-style:italic;">"${textOnly}"</p>`
+      : '';
+    const gifPart = gifUrl
+      ? `<div style="margin-top:12px;text-align:center;"><img src="${gifUrl}" alt="GIF" style="max-width:100%;border-radius:8px;display:block;margin:0 auto;" /></div>`
+      : '';
+
+    return textPart + gifPart;
+  }
+
   private buildPaymentReceivedHtml(data: ClaimEmailData & { amountStr: string; claimUrl: string }): string {
     const fromLine = data.senderInfo
       ? `<p style="margin:0 0 6px;font-size:14px;color:#6b7280;">From <strong style="color:#e5e7eb;font-weight:500;">${data.senderInfo}</strong></p>`
       : '';
     const descLine = data.description
-      ? `<p style="margin:12px 0 0;padding:12px 16px;background:#1e1e23;border-radius:8px;color:#9ca3af;font-size:14px;font-style:italic;">"${data.description}"</p>`
+      ? this.buildDescriptionHtml(data.description)
       : '';
 
     return `<!DOCTYPE html>
@@ -231,7 +247,7 @@ export class EmailService {
       ? `<p style="margin:0 0 6px;font-size:14px;color:#6b7280;">From <strong style="color:#e5e7eb;font-weight:500;">${data.senderInfo}</strong></p>`
       : '<p style="margin:0 0 6px;font-size:14px;color:#6b7280;">Someone sent you a payment on Loofta</p>';
     const descLine = data.description
-      ? `<p style="margin:12px 0 0;padding:12px 16px;background:#1e1e23;border-radius:8px;color:#9ca3af;font-size:14px;font-style:italic;">"${data.description}"</p>`
+      ? this.buildDescriptionHtml(data.description)
       : '';
 
     return `<!DOCTYPE html>
