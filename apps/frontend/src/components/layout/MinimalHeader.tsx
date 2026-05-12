@@ -134,6 +134,7 @@ function MobileMenu({
               onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
             />
           </div>
+          <div className="border-t border-white/10 my-1" />
           <button
             type="button"
             onClick={() => { onClose(); onLogout(); }}
