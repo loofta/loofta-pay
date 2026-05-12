@@ -266,7 +266,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
   if (isStandaloneClaim) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#18181F]">
-        <p className="text-slate-400 text-sm">Taking you to receive…</p>
+        <p className="text-slate-400 text-base md:text-sm">Taking you to receive…</p>
       </div>
     );
   }
@@ -447,7 +447,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
               <p className="text-gray-600 mb-2">
                 Thanks for your interest in Loofta Pay!
               </p>
-              <p className="text-gray-500 text-sm mb-6">
+              <p className="text-gray-500 text-base md:text-sm mb-6">
                 We'll notify you at <span className="font-medium text-gray-700">{userEmail}</span> as soon as we're ready for you.
               </p>
 
@@ -588,13 +588,13 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                       <p className="mt-1 text-lg md:text-xl text-gray-700 font-medium font-sans">Share this link with your recipient.</p>
                     </div>
                     <div className="mt-5">
-                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm flex items-center justify-between gap-3">
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-base md:text-sm flex items-center justify-between gap-3">
                         <a className="text-gray-900 underline decoration-gray-400 hover:decoration-gray-700 break-all" href={createdLink} target="_blank" rel="noreferrer">
                           {maskLink(createdLink)}
                         </a>
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm md:text-xs text-gray-700 hover:bg-gray-50"
                           onClick={async () => {
                             try {
                               await navigator.clipboard.writeText(createdLink);
@@ -621,7 +621,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                               href={`https://t.me/share/url?url=${url}&text=${text}`}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-base md:text-sm text-gray-700 hover:bg-gray-50"
                             >
                               <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" className="text-sky-500"><path fill="currentColor" d="M9.04 15.49 8.9 18.6a.9.9 0 0 0 1.42.77l2.05-1.39 3.3 2.42c.61.45 1.48.12 1.67-.62l3.02-11.54c.2-.76-.52-1.44-1.25-1.16l-16 6.2c-.81.31-.78 1.49.04 1.75l4.9 1.55 9.04-6.48-9.16 7.39Z" /></svg>
                               Share
@@ -630,14 +630,14 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                               href={`https://wa.me/?text=${text}%20${url}`}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-base md:text-sm text-gray-700 hover:bg-gray-50"
                             >
                               <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" className="text-green-500"><path fill="currentColor" d="M20.52 3.48A11.82 11.82 0 0 0 12.07 0C5.52.03.2 5.34.22 11.88A11.77 11.77 0 0 0 2.5 18.5L1 24l5.63-1.48a11.86 11.86 0 0 0 5.44 1.39h.01c6.55-.03 11.86-5.34 11.89-11.89a11.8 11.8 0 0 0-3.45-8.54ZM12.08 21.3h-.01c-1.75 0-3.47-.47-4.98-1.36l-.36-.21-3.34.88.89-3.26-.23-.34a9.18 9.18 0 0 1-1.41-4.94c-.02-5.08 4.12-9.23 9.21-9.25h.01c2.46 0 4.77.96 6.51 2.7a9.14 9.14 0 0 1 2.7 6.53c-.02 5.08-4.16 9.25-9.26 9.25Zm5.04-6.9c-.27-.14-1.6-.79-1.85-.88-.25-.09-.43-.14-.62.14-.18.27-.71.88-.87 1.07-.16.18-.32.2-.59.07-.27-.14-1.12-.41-2.13-1.31-.79-.7-1.32-1.56-1.47-1.82-.15-.27-.02-.41.12-.55.12-.12.27-.32.41-.48.14-.16.18-.27.27-.45.09-.18.05-.34-.02-.48-.07-.14-.62-1.5-.85-2.06-.22-.53-.45-.46-.62-.47l-.53-.01c-.18 0-.48.07-.73.34-.25.27-.97.95-.97 2.31 0 1.36.99 2.67 1.13 2.85.14.18 1.95 2.98 4.73 4.18.66.28 1.18.45 1.58.58.66.21 1.26.18 1.73.11.53-.08 1.6-.65 1.83-1.27.23-.62.23-1.15.16-1.26-.07-.11-.25-.18-.52-.31Z" /></svg>
                               WhatsApp
                             </a>
                             <a
                               href={`mailto:?subject=${encodeURIComponent("Payment request")}&body=${text}%0A%0A${url}`}
-                              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-base md:text-sm text-gray-700 hover:bg-gray-50"
                             >
                               <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
                                 <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
@@ -700,7 +700,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         </span>
                       </div>
                       {parsedAmount > 0 && (usdValue ?? parsedAmount) < 5 && (
-                        <p className="mt-1.5 text-sm text-red-400">Minimum payment amount is $5.00</p>
+                        <p className="mt-1.5 text-base md:text-sm text-red-400">Minimum payment amount is $5.00</p>
                       )}
                     </div>
 
@@ -720,20 +720,20 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                             </div>
                             <div className="flex-1 min-w-0">
                               <span className="font-semibold text-gray-900 block">Receive on Loofta</span>
-                              <span className="text-sm text-gray-500">
+                              <span className="text-base md:text-sm text-gray-500">
                                 {solanaWallet?.address && defaultLooftaToken
                                   ? `Your Loofta wallet · ${defaultLooftaToken.symbol}`
                                   : "Your Loofta wallet · USDC"}
                               </span>
                             </div>
                             {receiveDestination === "loofta" && solanaWallet?.address && defaultLooftaToken && (
-                              <span className="text-xs font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Ready</span>
+                              <span className="text-sm md:text-xs font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Ready</span>
                             )}
                           </button>
 
                           <div className="flex items-center gap-3">
                             <div className="flex-1 h-px bg-white/10" />
-                            <span className="text-sm font-medium text-gray-400">or</span>
+                            <span className="text-base md:text-sm font-medium text-gray-400">or</span>
                             <div className="flex-1 h-px bg-white/10" />
                           </div>
 
@@ -752,10 +752,10 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                             </div>
                             <div className="flex-1 min-w-0">
                               <span className="font-semibold text-gray-900 block">Use another wallet</span>
-                              <span className="text-sm text-gray-500">{crossChainEnabled ? "Different token or network" : "USDC on Solana"}</span>
+                              <span className="text-base md:text-sm text-gray-500">{crossChainEnabled ? "Different token or network" : "USDC on Solana"}</span>
                             </div>
                             {receiveDestination === "other" ? (
-                              <span className="text-xs font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Selected</span>
+                              <span className="text-sm md:text-xs font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Selected</span>
                             ) : (
                               <ArrowRight className="w-5 h-5 text-gray-400 shrink-0" />
                             )}
@@ -876,12 +876,12 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                                 🔒 Private payment
                               </span>
                               {PRIVATE_PAYMENT_COMING_SOON && (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm md:text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-400/30">
                                   Coming soon
                                 </span>
                               )}
                             </div>
-                            <p className="text-sm text-slate-400">
+                            <p className="text-base md:text-sm text-slate-400">
                               When on, payment uses MagicBlock PER. You receive in your chosen token (e.g. USDC on Solana); both addresses stay private.
                             </p>
                           </div>
@@ -901,7 +901,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                       </div>
                     ) : (
                       <div className="p-4 rounded-xl border border-amber-400/30 bg-amber-500/10">
-                        <p className="text-sm text-slate-200">
+                        <p className="text-base md:text-sm text-slate-200">
                           <span className="font-semibold text-white">🔒 Private payment</span>
                           {" "}— MagicBlock PER is on for every link you create.
                         </p>
@@ -910,7 +910,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
 
                     {/* Message + GIF */}
                     <div>
-                      <label className="text-gray-600 mb-1 block text-sm">Message <span className="text-gray-400">(optional)</span></label>
+                      <label className="text-gray-600 mb-1 block text-base md:text-sm">Message <span className="text-gray-400">(optional)</span></label>
                       <MessageInput
                         value={message}
                         onChange={setMessage}

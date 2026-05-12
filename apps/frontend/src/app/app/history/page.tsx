@@ -462,7 +462,7 @@ export default function HistoryPage() {
                               })}
                             </span>
                             <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${getStatusBadgeClass(claim.status || "")}`}
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm md:text-xs font-medium border ${getStatusBadgeClass(claim.status || "")}`}
                             >
                               {getStatusLabel(claim.status || "")}
                             </span>

@@ -179,18 +179,18 @@ export default function TestTransferPage() {
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-start justify-center pt-16 px-4">
       <div className="w-full max-w-md">
         <h1 className="text-xl font-semibold mb-1">Private Transfer Test</h1>
-        <p className="text-zinc-400 text-sm mb-8">MagicBlock private USDC transfer — no fee sponsor, wallet pays gas.</p>
+        <p className="text-zinc-400 text-base md:text-sm mb-8">MagicBlock private USDC transfer — no fee sponsor, wallet pays gas.</p>
 
         {/* Network */}
         <div className="mb-5">
-          <label className="block text-xs text-zinc-400 mb-2 uppercase tracking-wide">Network</label>
+          <label className="block text-sm md:text-xs text-zinc-400 mb-2 uppercase tracking-wide">Network</label>
           <div className="flex gap-2">
             {(["devnet", "mainnet"] as Cluster[]).map((c) => (
               <button
                 key={c}
                 onClick={() => setCluster(c)}
                 disabled={busy}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                className={`px-4 py-2 rounded-lg text-base md:text-sm font-medium transition-colors ${
                   cluster === c
                     ? "bg-violet-600 text-white"
                     : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
@@ -204,17 +204,17 @@ export default function TestTransferPage() {
 
         {/* Wallet */}
         <div className="mb-5">
-          <label className="block text-xs text-zinc-400 mb-2 uppercase tracking-wide">Sender wallet</label>
+          <label className="block text-sm md:text-xs text-zinc-400 mb-2 uppercase tracking-wide">Sender wallet</label>
           {walletAddress ? (
             <div className="flex items-center gap-2 bg-zinc-800 rounded-lg px-3 py-2">
               <div className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
-              <span className="text-sm font-mono text-zinc-200 truncate">{walletAddress}</span>
+              <span className="text-base md:text-sm font-mono text-zinc-200 truncate">{walletAddress}</span>
             </div>
           ) : (
             <button
               onClick={connectWallet}
               disabled={busy}
-              className="w-full py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm font-medium text-zinc-200 transition-colors disabled:opacity-50"
+              className="w-full py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-base md:text-sm font-medium text-zinc-200 transition-colors disabled:opacity-50"
             >
               Connect Wallet
             </button>
@@ -223,20 +223,20 @@ export default function TestTransferPage() {
 
         {/* Recipient */}
         <div className="mb-5">
-          <label className="block text-xs text-zinc-400 mb-2 uppercase tracking-wide">Recipient address</label>
+          <label className="block text-sm md:text-xs text-zinc-400 mb-2 uppercase tracking-wide">Recipient address</label>
           <input
             type="text"
             value={recipient}
             onChange={(e) => setRecipient(e.target.value)}
             placeholder="Solana wallet address"
             disabled={busy}
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-violet-500 disabled:opacity-50"
+            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-base md:text-sm font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-violet-500 disabled:opacity-50"
           />
         </div>
 
         {/* Amount */}
         <div className="mb-7">
-          <label className="block text-xs text-zinc-400 mb-2 uppercase tracking-wide">Amount (USDC)</label>
+          <label className="block text-sm md:text-xs text-zinc-400 mb-2 uppercase tracking-wide">Amount (USDC)</label>
           <div className="relative">
             <input
               type="number"
@@ -246,9 +246,9 @@ export default function TestTransferPage() {
               min="0"
               step="0.01"
               disabled={busy}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 pr-16 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-violet-500 disabled:opacity-50"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 pr-16 text-base md:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-violet-500 disabled:opacity-50"
             />
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400">USDC</span>
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm md:text-xs text-zinc-400">USDC</span>
           </div>
         </div>
 
@@ -256,7 +256,7 @@ export default function TestTransferPage() {
         <button
           onClick={sendTransfer}
           disabled={busy || !walletAddress}
-          className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-base md:text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {busy ? (statusLabel[status.type] ?? "…") : "Send Private Transfer"}
         </button>
@@ -268,7 +268,7 @@ export default function TestTransferPage() {
               href={inspectorUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xs text-zinc-400 hover:text-zinc-200 underline underline-offset-2"
+              className="text-sm md:text-xs text-zinc-400 hover:text-zinc-200 underline underline-offset-2"
             >
               Open in TX Inspector →
             </a>
@@ -277,7 +277,7 @@ export default function TestTransferPage() {
 
         {/* Status */}
         {status.type === "error" && (
-          <div className="mt-4 p-3 rounded-lg bg-red-950 border border-red-800 text-red-300 text-sm break-words">
+          <div className="mt-4 p-3 rounded-lg bg-red-950 border border-red-800 text-red-300 text-base md:text-sm break-words">
             {status.message}
           </div>
         )}
@@ -286,15 +286,15 @@ export default function TestTransferPage() {
           <div className="mt-4 p-4 rounded-lg bg-green-950 border border-green-800">
             <div className="flex items-center gap-2 mb-2">
               <div className="w-2 h-2 rounded-full bg-green-400" />
-              <span className="text-green-300 text-sm font-medium">Transaction confirmed</span>
+              <span className="text-green-300 text-base md:text-sm font-medium">Transaction confirmed</span>
             </div>
-            <p className="text-xs text-zinc-400 mb-1">Signature</p>
-            <p className="text-xs font-mono text-zinc-200 break-all mb-3">{status.signature}</p>
+            <p className="text-sm md:text-xs text-zinc-400 mb-1">Signature</p>
+            <p className="text-sm md:text-xs font-mono text-zinc-200 break-all mb-3">{status.signature}</p>
             <a
               href={explorerUrl!}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xs text-violet-400 hover:text-violet-300 underline underline-offset-2"
+              className="text-sm md:text-xs text-violet-400 hover:text-violet-300 underline underline-offset-2"
             >
               View on Explorer →
             </a>
@@ -302,7 +302,7 @@ export default function TestTransferPage() {
         )}
 
         {/* Note */}
-        <p className="mt-6 text-xs text-zinc-600 text-center">
+        <p className="mt-6 text-sm md:text-xs text-zinc-600 text-center">
           Private transfers have a random delay (devnet: 30s–5min) before the recipient sees funds.
         </p>
       </div>

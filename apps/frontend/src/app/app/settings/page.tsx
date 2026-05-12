@@ -80,9 +80,9 @@ export default function SettingsPage() {
         <div className="rounded-xl bg-white/5 border border-white/10 p-4 mb-4">
           {username && (
             <div className="mb-3 last:mb-0">
-              <p className="text-sm font-medium text-slate-400 mb-1">Username</p>
+              <p className="text-base md:text-sm font-medium text-slate-400 mb-1">Username</p>
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-white truncate">@{username}</p>
+                <p className="text-base md:text-sm font-semibold text-white truncate">@{username}</p>
                 <button
                   type="button"
                   onClick={() => copyToClipboard(`@${username}`)}
@@ -97,8 +97,8 @@ export default function SettingsPage() {
           )}
           {email && (
             <div className={username ? "" : ""}>
-              <p className="text-sm font-medium text-slate-400 mb-1">Email</p>
-              <p className="text-sm text-white/90">{email}</p>
+              <p className="text-base md:text-sm font-medium text-slate-400 mb-1">Email</p>
+              <p className="text-base md:text-sm text-white/90">{email}</p>
             </div>
           )}
         </div>
@@ -111,7 +111,7 @@ export default function SettingsPage() {
           <button
             type="button"
             onClick={() => setOpenShareModal(true)}
-            className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 text-orange-400 hover:bg-orange-400/10"
+            className="w-full text-left px-3 py-3 rounded-lg text-base md:text-sm font-medium transition-colors flex items-center gap-3 text-orange-400 hover:bg-orange-400/10"
           >
             <ShareIcon />
             Share your link
@@ -122,7 +122,7 @@ export default function SettingsPage() {
         <button
           type="button"
           onClick={() => setOpenSettingsModal(true)}
-          className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 text-white hover:bg-white/10"
+          className="w-full text-left px-3 py-3 rounded-lg text-base md:text-sm font-medium transition-colors flex items-center gap-3 text-white hover:bg-white/10"
         >
           <Settings className="w-4 h-4 shrink-0" />
           Settings
@@ -138,7 +138,7 @@ export default function SettingsPage() {
             logout();
             router.push("/");
           }}
-          className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium transition-colors text-red-400 hover:bg-red-400/10"
+          className="w-full text-left px-3 py-3 rounded-lg text-base md:text-sm font-medium transition-colors text-red-400 hover:bg-red-400/10"
         >
           Log out
         </button>

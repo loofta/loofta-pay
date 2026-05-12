@@ -143,7 +143,7 @@ export function PaymentDepositView({
         <div className="text-lg font-semibold text-red-700">
           {s === 'FAILED' ? 'Payment Failed' : 'Payment Refunded'}
         </div>
-        <div className="text-sm text-red-700/80 mt-1">
+        <div className="text-base md:text-sm text-red-700/80 mt-1">
           {s === 'FAILED' 
             ? 'The payment could not be completed. Your funds may be refunded.'
             : 'Your deposit has been refunded. Please check your wallet.'}
@@ -187,7 +187,7 @@ export function PaymentDepositView({
               style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
             />
           </div>
-          <div className="text-center text-sm text-gray-500 mt-2">
+          <div className="text-center text-base md:text-sm text-gray-500 mt-2">
             Step 1 of 4
           </div>
         </div>
@@ -258,7 +258,7 @@ export function PaymentDepositView({
           {onSpeedUp && !speedUpOpen && (
             <button
               type="button"
-              className="text-sm text-blue-600 hover:text-blue-800 underline mt-2"
+              className="text-base md:text-sm text-blue-600 hover:text-blue-800 underline mt-2"
               onClick={() => setSpeedUpOpen(true)}
             >
               Already deposited? Speed up processing
@@ -270,10 +270,10 @@ export function PaymentDepositView({
       {/* Speed Up Form */}
       {speedUpOpen && onSpeedUp && (
         <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
-          <div className="text-sm font-semibold text-blue-800 mb-2">
+          <div className="text-base md:text-sm font-semibold text-blue-800 mb-2">
             Speed up processing
           </div>
-          <p className="text-sm text-blue-700 mb-3">
+          <p className="text-base md:text-sm text-blue-700 mb-3">
             If you've already deposited, enter your transaction hash to speed up processing.
           </p>
           <div className="flex gap-2">
@@ -281,7 +281,7 @@ export function PaymentDepositView({
               value={txInput}
               onChange={(e) => setTxInput(e.target.value)}
               placeholder="0x... or transaction hash"
-              className="flex-1 text-sm font-mono"
+              className="flex-1 text-base md:text-sm font-mono"
             />
             <Button
               onClick={handleSpeedUp}
@@ -293,7 +293,7 @@ export function PaymentDepositView({
           </div>
           <button
             type="button"
-            className="text-xs text-gray-500 hover:text-gray-700 mt-2"
+            className="text-sm md:text-xs text-gray-500 hover:text-gray-700 mt-2"
             onClick={() => setSpeedUpOpen(false)}
           >
             Cancel
@@ -311,7 +311,7 @@ export function PaymentDepositView({
             style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
           />
         </div>
-        <div className="text-center text-sm text-gray-500 mt-2">
+        <div className="text-center text-base md:text-sm text-gray-500 mt-2">
           Step 0 of 4
         </div>
       </div>
@@ -338,7 +338,7 @@ export function PaymentDepositView({
             <div className="flex items-center justify-between gap-2">
               <span className="text-gray-600">Deposit to</span>
               <div className="flex items-center gap-2 flex-1 justify-end">
-                <span className="text-sm font-mono text-gray-900">
+                <span className="text-base md:text-sm font-mono text-gray-900">
                   {depositAddr.length > 20
                     ? `${depositAddr.slice(0, 6)}...${depositAddr.slice(-4)}`
                     : depositAddr}
@@ -366,7 +366,7 @@ export function PaymentDepositView({
             <div className="flex items-center justify-between gap-2">
               <span className="text-gray-600">Memo (required)</span>
               <div className="flex items-center gap-2 flex-1 justify-end min-w-0">
-                <span className="text-sm font-mono text-gray-900 truncate">{deposit.memo}</span>
+                <span className="text-base md:text-sm font-mono text-gray-900 truncate">{deposit.memo}</span>
                 <button
                   type="button"
                   onClick={async () => {
@@ -402,10 +402,10 @@ export function PaymentDepositView({
       {/* Incomplete Deposit Warning */}
       {s === 'INCOMPLETE_DEPOSIT' && (
         <div className="rounded-lg border border-orange-200 bg-orange-50 p-3">
-          <div className="text-sm font-semibold text-orange-700">
+          <div className="text-base md:text-sm font-semibold text-orange-700">
             Incomplete Deposit
           </div>
-          <div className="text-sm text-orange-700/80 mt-1">
+          <div className="text-base md:text-sm text-orange-700/80 mt-1">
             Please send the remaining amount to complete your payment.
           </div>
         </div>
@@ -426,7 +426,7 @@ export function PaymentDepositView({
 
       {/* Deadline */}
       {deposit?.deadline && (
-        <div className="text-center text-sm text-gray-600">
+        <div className="text-center text-base md:text-sm text-gray-600">
           Deadline: <span className="font-medium">{formatUTCTimestamp(deposit.deadline)}</span>
         </div>
       )}
@@ -436,7 +436,7 @@ export function PaymentDepositView({
         <button
           type="button"
           onClick={onCancel}
-          className="text-sm text-gray-500 hover:text-gray-700 underline"
+          className="text-base md:text-sm text-gray-500 hover:text-gray-700 underline"
         >
           Cancel and choose different token
         </button>

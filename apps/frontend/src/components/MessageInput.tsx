@@ -184,10 +184,10 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
               <div className="bg-white rounded-lg">
                 {!gf ? (
                   <div className="p-6 text-center">
-                    <div className="text-sm text-gray-600 mb-2">
+                    <div className="text-base md:text-sm text-gray-600 mb-2">
                       Giphy API key not configured
                     </div>
-                    <div className="text-sm text-gray-500 mb-4">
+                    <div className="text-base md:text-sm text-gray-500 mb-4">
                       Get a free API key at{' '}
                       <a
                         href="https://developers.giphy.com/dashboard/"
@@ -198,7 +198,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                         developers.giphy.com
                       </a>
                     </div>
-                    <div className="text-sm text-gray-500">
+                    <div className="text-base md:text-sm text-gray-500">
                       Add to <code className="bg-gray-100 px-1 py-0.5 rounded">.env.local</code>:
                       <br />
                       <code className="bg-gray-100 px-1 py-0.5 rounded">NEXT_PUBLIC_GIPHY_API_KEY=your_key</code>
@@ -215,7 +215,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                           value={gifSearchQuery}
                           onChange={(e) => handleGifSearch(e.target.value)}
                           placeholder="Search GIFs..."
-                          className="pl-9 pr-9 h-9 text-sm"
+                          className="pl-9 pr-9 h-9 text-base md:text-sm"
                         />
                         {gifSearchQuery && (
                           <Button
@@ -270,7 +270,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                         </div>
                       )}
                       {!isLoadingGifs && (gifSearchQuery ? searchGifs : trendingGifs).length === 0 && (
-                        <div className="text-center py-8 text-gray-500 text-sm">
+                        <div className="text-center py-8 text-gray-500 text-base md:text-sm">
                           {giphyApiKey ? 'No GIFs found' : 'Giphy API key required'}
                         </div>
                       )}

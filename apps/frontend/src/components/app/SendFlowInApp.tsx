@@ -186,7 +186,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500"
         />
         {belowMinAmount && (
-          <p className="mt-1.5 text-sm text-amber-400">Min. amount is $5.00 USDC</p>
+          <p className="mt-1.5 text-base md:text-sm text-amber-400">Min. amount is $5.00 USDC</p>
         )}
       </div>
 

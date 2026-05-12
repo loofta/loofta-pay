@@ -59,7 +59,7 @@ export function Footer() {
 
         {/* Copyright */}
         <div className="mt-12 pt-6 border-t border-gray-800">
-          <p className="text-slate-500 text-sm text-center">
+          <p className="text-slate-500 text-base md:text-sm text-center">
             © {new Date().getFullYear()} Loofta. All rights reserved.
           </p>
         </div>

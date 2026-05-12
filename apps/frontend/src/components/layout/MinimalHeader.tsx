@@ -82,7 +82,7 @@ function MobileMenu({
             className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-white/8 border border-white/10 hover:bg-white/12 transition-colors text-left"
           >
             <div>
-              <p className="text-sm text-slate-400 mb-0.5">Balance</p>
+              <p className="text-base md:text-sm text-slate-400 mb-0.5">Balance</p>
               <p className="text-lg font-bold text-white tabular-nums">
                 {loadingBalance ? "…" : `$${balanceUSD}`}
               </p>
@@ -126,7 +126,7 @@ function MobileMenu({
                   : "Devnet"}
               </span>
               {networkMode === "mainnet" && !mainnetAccess && (
-                <span className="text-sm text-amber-400/80 leading-tight">Payments disabled — balance &amp; withdraw only</span>
+                <span className="text-base md:text-sm text-amber-400/80 leading-tight">Payments disabled — balance &amp; withdraw only</span>
               )}
             </div>
             <Switch
@@ -224,7 +224,7 @@ export function MinimalHeader() {
                 <Link
                   href="/rewards"
                   className={[
-                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-base md:text-sm font-medium transition-colors",
                     isRewardsActive
                       ? "text-amber-300 bg-amber-500/10"
                       : "text-slate-300 hover:text-white hover:bg-white/10",
@@ -238,7 +238,7 @@ export function MinimalHeader() {
                 <Link
                   href="/app/waitlist"
                   className={[
-                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-base md:text-sm font-medium transition-colors",
                     pathname === "/app/waitlist"
                       ? "text-green-300 bg-green-500/10"
                       : "text-slate-300 hover:text-white hover:bg-white/10",
@@ -254,9 +254,9 @@ export function MinimalHeader() {
                   className="hidden sm:flex items-center gap-3 px-3 py-2 rounded-lg bg-white/10 text-slate-200 hover:text-white hover:bg-white/15 transition-colors border border-white/10 text-left"
                 >
                   <div className="flex flex-col min-w-0">
-                    <span className="text-sm font-medium leading-tight">Balance</span>
+                    <span className="text-base md:text-sm font-medium leading-tight">Balance</span>
                   </div>
-                  <span className="text-sm font-semibold tabular-nums shrink-0">
+                  <span className="text-base md:text-sm font-semibold tabular-nums shrink-0">
                     {loadingBalance ? "…" : `$${balanceUSD}`}
                   </span>
                 </button>
@@ -287,7 +287,7 @@ export function MinimalHeader() {
               <button
                 type="button"
                 onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}
-                className="rounded-lg px-3 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+                className="rounded-lg px-3 py-2 text-base md:text-sm font-medium text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
               >
                 Sign in
               </button>

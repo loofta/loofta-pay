@@ -459,13 +459,13 @@ export default function Home() {
                       {showDropdown && (
                         <ul className="absolute z-50 top-full left-0 right-0 mt-1 rounded-xl border border-white/10 bg-[#1a1a1f] py-1 shadow-lg max-h-48 overflow-auto">
                           {loadingSuggestions ? (
-                            <li className="px-3 py-2 text-slate-300 text-sm">Searching…</li>
+                            <li className="px-3 py-2 text-slate-300 text-base md:text-sm">Searching…</li>
                           ) : suggestions.length > 0 ? (
                             suggestions.map((u) => (
                               <li key={u}>
                                 <button
                                   type="button"
-                                  className="w-full text-left px-3 py-2 text-white hover:bg-white/10 text-sm"
+                                  className="w-full text-left px-3 py-2 text-white hover:bg-white/10 text-base md:text-sm"
                                   onClick={() => {
                                     setRecipient(u);
                                     setDropdownClosed(true);
@@ -473,13 +473,13 @@ export default function Home() {
                                 >
                                   <span>@{u}</span>
                                   {suggestions.length === 1 && isExactEmail(searchQuery) && (
-                                    <span className="text-slate-400 text-sm ml-1">(from email)</span>
+                                    <span className="text-slate-400 text-base md:text-sm ml-1">(from email)</span>
                                   )}
                                 </button>
                               </li>
                             ))
                           ) : (
-                            <li className="px-3 py-2 text-slate-400 text-sm">No users found</li>
+                            <li className="px-3 py-2 text-slate-400 text-base md:text-sm">No users found</li>
                           )}
                         </ul>
                       )}
@@ -538,7 +538,7 @@ export default function Home() {
                               setLinkCopied(true);
                               setTimeout(() => setLinkCopied(false), 2000);
                             }}
-                            className="shrink-0 px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 hover:text-white hover:bg-white/15 text-sm font-medium transition-colors"
+                            className="shrink-0 px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 hover:text-white hover:bg-white/15 text-base md:text-sm font-medium transition-colors"
                           >
                             {linkCopied ? "Copied" : "Copy"}
                           </button>

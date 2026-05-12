@@ -105,7 +105,7 @@ function ClaimPayLayout({
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-2">
-          <Link href={backHref} className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
+          <Link href={backHref} className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors">
             {backLabel}
           </Link>
           {topRight}
@@ -126,7 +126,7 @@ function ClaimPayLayout({
           <SendReceiveTabs activeTab="send" visualOnly />
         </div>
         <div className="flex items-center justify-between gap-2 mt-4 mb-4">
-          <Link href={backHref} className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors">
+          <Link href={backHref} className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors">
             {backLabel}
           </Link>
           {topRight}
@@ -272,7 +272,7 @@ function ClaimPageSenderShareView({
           <Input
             readOnly
             value={claimLink}
-            className="font-mono text-xs flex-1 bg-gray-50"
+            className="font-mono text-sm md:text-xs flex-1 bg-gray-50"
           />
           <Button
             type="button"
@@ -313,7 +313,7 @@ function ClaimPageSenderShareView({
         </div>
       )}
       {isCancelled && (
-        <p className="mt-4 text-sm text-gray-500">Payment cancelled. Any funds have been returned to your Loofta wallet.</p>
+        <p className="mt-4 text-base md:text-sm text-gray-500">Payment cancelled. Any funds have been returned to your Loofta wallet.</p>
       )}
     </div>
   );
@@ -2481,7 +2481,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               <button
                 type="button"
                 onClick={() => setShowDeleteConfirm(true)}
-                className="text-sm font-medium text-red-500 hover:text-gray-400 transition-colors"
+                className="text-base md:text-sm font-medium text-red-500 hover:text-gray-400 transition-colors"
               >
                 Delete this payment
               </button>
@@ -2571,7 +2571,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                 <path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
               </svg>
-              <span className="text-sm font-medium">Demo Mode - Payments are disabled</span>
+              <span className="text-base md:text-sm font-medium">Demo Mode - Payments are disabled</span>
             </div>
           </div>
         )}
@@ -2617,7 +2617,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 </p>
                 <Link
                   href={from === "history" ? "/history" : "/"}
-                  className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors"
+                  className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors"
                 >
                   {from === "history" ? "← Back to History" : "← Back to Send"}
                 </Link>
@@ -2640,23 +2640,23 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200 space-y-2">
                   {claim?.created_at && (
                     <div className="flex items-center justify-between">
-                      <span className="text-gray-600 text-sm">Created</span>
-                      <span className="text-sm text-gray-700">{formatUTCTimestamp(claim.created_at)}</span>
+                      <span className="text-gray-600 text-base md:text-sm">Created</span>
+                      <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.created_at)}</span>
                     </div>
                   )}
                   {claim?.paid_at && (
                     <div className="flex items-center justify-between">
-                      <span className="text-gray-600 text-sm">
+                      <span className="text-gray-600 text-base md:text-sm">
                         {claim?.recipient_pending_email || claim?.recipient_pending_username ? "Paid" : "Claimed"}
                       </span>
-                      <span className="text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
+                      <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
                     </div>
                   )}
                 </div>
                 {claim?.is_private && (
                   <div className="mb-6 flex items-start gap-3 rounded-xl border border-orange-500/20 bg-gradient-to-b from-white/[0.08] to-white/[0.03] backdrop-blur-sm px-4 py-3 shadow-[0_0_16px_0_rgba(255,80,0,0.12)]">
                     <span className="mt-0.5 text-base">🔒</span>
-                    <p className="text-sm text-white/70 leading-snug">
+                    <p className="text-base md:text-sm text-white/70 leading-snug">
                       This is a private payment. It may take <span className="font-medium text-white/90">a few minutes</span> for the balance to reflect and become available to withdraw.
                     </p>
                   </div>
@@ -2667,7 +2667,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <div className="font-medium text-amber-900">Troubleshoot payment</div>
-                          <div className="text-sm text-amber-800">
+                          <div className="text-base md:text-sm text-amber-800">
                             Check if funds are still in burner wallet or already swept.
                           </div>
                         </div>
@@ -2675,13 +2675,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           type="button"
                           onClick={runBurnerTroubleshoot}
                           disabled={burnerDiagLoading}
-                          className="inline-flex items-center justify-center rounded-lg bg-amber-500 text-white px-3 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                          className="inline-flex items-center justify-center rounded-lg bg-amber-500 text-white px-3 py-2 text-base md:text-sm font-semibold hover:opacity-90 disabled:opacity-60"
                         >
                           {burnerDiagLoading ? "Checking..." : "Run check"}
                         </button>
                       </div>
                       {burnerDiag && (
-                        <div className="mt-3 text-sm text-amber-900 space-y-1">
+                        <div className="mt-3 text-base md:text-sm text-amber-900 space-y-1">
                           <div>Burner: {burnerDiag.burnerAddress ? `${burnerDiag.burnerAddress.slice(0, 8)}...${burnerDiag.burnerAddress.slice(-6)}` : "none"}</div>
                           <div>Burner USDC: {burnerDiag.burnerUsdc}</div>
                           <div>PER deposit detected: {burnerDiag.perDepositDetected ? "yes" : "no"}</div>
@@ -2718,7 +2718,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                 type="button"
                                 onClick={retryClaimSweep}
                                 disabled={retrySweepLoading}
-                                className="inline-flex items-center justify-center rounded-lg bg-amber-600 text-white px-3 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                                className="inline-flex items-center justify-center rounded-lg bg-amber-600 text-white px-3 py-2 text-base md:text-sm font-semibold hover:opacity-90 disabled:opacity-60"
                               >
                                 {retrySweepLoading ? "Retrying..." : "Retry claim sweep"}
                               </button>
@@ -2727,7 +2727,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   type="button"
                                   onClick={reclaimBySender}
                                   disabled={reclaimingSenderFunds}
-                                  className="ml-2 inline-flex items-center justify-center rounded-lg bg-slate-800 text-white px-3 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                                  className="ml-2 inline-flex items-center justify-center rounded-lg bg-slate-800 text-white px-3 py-2 text-base md:text-sm font-semibold hover:opacity-90 disabled:opacity-60"
                                 >
                                   {reclaimingSenderFunds ? "Withdrawing..." : "Withdraw from PER"}
                                 </button>
@@ -2831,14 +2831,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     >
                       {claim?.created_at && (
                         <div className="flex items-center justify-between">
-                          <span className="text-gray-600 text-sm">Created</span>
-                          <span className="text-sm text-gray-700">{formatUTCTimestamp(claim.created_at)}</span>
+                          <span className="text-gray-600 text-base md:text-sm">Created</span>
+                          <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.created_at)}</span>
                         </div>
                       )}
                       {claimedAt && (
                         <div className="flex items-center justify-between">
-                          <span className="text-gray-600 text-sm">Claimed</span>
-                          <span className="text-sm text-gray-700">{formatUTCTimestamp(claimedAt)}</span>
+                          <span className="text-gray-600 text-base md:text-sm">Claimed</span>
+                          <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claimedAt)}</span>
                         </div>
                       )}
                     </motion.div>
@@ -2850,13 +2850,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         className="mb-4 flex items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2"
                       >
                         <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-500" />
-                        <span className="text-sm text-emerald-700 font-medium">Balance updating…</span>
+                        <span className="text-base md:text-sm text-emerald-700 font-medium">Balance updating…</span>
                       </motion.div>
                     )}
                     {claim?.is_private && (
                       <div className="mb-6 flex items-start gap-3 rounded-xl border border-orange-500/20 bg-gradient-to-b from-white/[0.08] to-white/[0.03] backdrop-blur-sm px-4 py-3 shadow-[0_0_16px_0_rgba(255,80,0,0.12)]">
                         <span className="mt-0.5 text-base">🔒</span>
-                        <p className="text-sm text-white/70 leading-snug">
+                        <p className="text-base md:text-sm text-white/70 leading-snug">
                           This is a private payment. It may take <span className="font-medium text-white/90">a few minutes</span> for the balance to reflect and become available to withdraw.
                         </p>
                       </div>
@@ -2886,7 +2886,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     {claim?.is_private && (
                       <div className="mb-6 flex items-start gap-3 rounded-xl border border-orange-500/20 bg-gradient-to-b from-white/[0.08] to-white/[0.03] backdrop-blur-sm px-4 py-3 shadow-[0_0_16px_0_rgba(255,80,0,0.12)]">
                         <span className="mt-0.5 text-base">🔒</span>
-                        <p className="text-sm text-white/70 leading-snug">
+                        <p className="text-base md:text-sm text-white/70 leading-snug">
                           This is a private payment. It may take <span className="font-medium text-white/90">a few minutes</span> for the balance to reflect and become available to withdraw.
                         </p>
                       </div>
@@ -2932,7 +2932,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     <div className="text-left max-w-md mx-auto">
                       <ClaimDescriptionMessageBox description={claim?.description} />
                     </div>
-                    <div className="flex items-center justify-center gap-2 text-sm mb-4">
+                    <div className="flex items-center justify-center gap-2 text-base md:text-sm mb-4">
                       {burnerIsChecking ? (
                         <>
                           <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
@@ -2957,7 +2957,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
                       disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
                       className={cn(
-                        "inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
+                        "hidden md:inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
                         "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
                         (claimAsRecipientMutation.isPending || waitingForBurnerFunds) &&
                         "opacity-50 cursor-not-allowed hover:opacity-50",
@@ -2967,6 +2967,25 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       Claim to wallet
                       {waitingForBurnerFunds ? " (not ready)" : ""}
                     </button>
+                    {/* Mobile: sticky above BottomNav (h-16 = 64px) */}
+                    <div className="md:hidden fixed bottom-16 left-0 right-0 z-40 px-4 py-3 bg-[#0f0f12]/95 backdrop-blur-sm border-t border-white/10">
+                      <button
+                        type="button"
+                        onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
+                        disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
+                        className={cn(
+                          "w-full flex items-center justify-center gap-2 rounded-xl py-4 font-semibold text-base transition-all",
+                          "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+                          (claimAsRecipientMutation.isPending || waitingForBurnerFunds) && "opacity-50 cursor-not-allowed hover:opacity-50",
+                        )}
+                      >
+                        {claimAsRecipientMutation.isPending ? (
+                          <><Loader2 className="h-5 w-5 animate-spin" /><span>Claiming…</span></>
+                        ) : (
+                          <><CheckCircle2 className="h-5 w-5" /><span>Claim to wallet{waitingForBurnerFunds ? " (not ready)" : ""}</span></>
+                        )}
+                      </button>
+                    </div>
                   </>
                 )}
               </div>
@@ -2977,7 +2996,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 {["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(String(claim?.status || "").toUpperCase()) ? (
                   !user?.id ? (
                     <>
-                      <p className="text-gray-500 text-sm mb-5">
+                      <p className="text-gray-500 text-base md:text-sm mb-5">
                         Sign in with @{claim.recipient_pending_username_value || "username"} on Loofta to claim.
                       </p>
                       <button
@@ -3002,7 +3021,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <div className="text-left max-w-md mx-auto">
                         <ClaimDescriptionMessageBox description={claim?.description} />
                       </div>
-                      <div className="flex items-center justify-center gap-2 text-sm mb-4">
+                      <div className="flex items-center justify-center gap-2 text-base md:text-sm mb-4">
                         {burnerIsChecking ? (
                           <>
                             <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
@@ -3027,7 +3046,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
                         disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
                         className={cn(
-                          "inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
+                          "hidden md:inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
                           "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
                           (claimAsRecipientMutation.isPending || waitingForBurnerFunds) &&
                           "opacity-50 cursor-not-allowed hover:opacity-50",
@@ -3037,6 +3056,25 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         Claim to wallet
                         {waitingForBurnerFunds ? " (not ready)" : ""}
                       </button>
+                      {/* Mobile: sticky above BottomNav (h-16 = 64px) */}
+                      <div className="md:hidden fixed bottom-16 left-0 right-0 z-40 px-4 py-3 bg-[#0f0f12]/95 backdrop-blur-sm border-t border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
+                          disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
+                          className={cn(
+                            "w-full flex items-center justify-center gap-2 rounded-xl py-4 font-semibold text-base transition-all",
+                            "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+                            (claimAsRecipientMutation.isPending || waitingForBurnerFunds) && "opacity-50 cursor-not-allowed hover:opacity-50",
+                          )}
+                        >
+                          {claimAsRecipientMutation.isPending ? (
+                            <><Loader2 className="h-5 w-5 animate-spin" /><span>Claiming…</span></>
+                          ) : (
+                            <><CheckCircle2 className="h-5 w-5" /><span>Claim to wallet{waitingForBurnerFunds ? " (not ready)" : ""}</span></>
+                          )}
+                        </button>
+                      </div>
                     </>
                   )
                 ) : (
@@ -3076,7 +3114,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     <h3 className="text-2xl font-semibold text-gray-900 mb-2">
                       A payment is waiting
                     </h3>
-                    <p className="text-gray-600 text-sm mb-5">
+                    <p className="text-gray-600 text-base md:text-sm mb-5">
                       {senderHasPaid
                         ? "Sign in to see if this payment is for you."
                         : "Someone will be able to claim this payment after signing up on Loofta."}
@@ -3102,7 +3140,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <p className="text-gray-600 text-base mb-4">
                   ${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay. When they do, it’ll show up here and in your Loofta account.
                 </p>
-                <Link href={from === "history" ? "/history" : "/"} className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900">
+                <Link href={from === "history" ? "/history" : "/"} className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-gray-600 hover:text-gray-900">
                   {from === "history" ? "← Back to History" : "← Back to Send"}
                 </Link>
               </div>
@@ -3121,7 +3159,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 {/* Display description/message if available — hidden when embedded in send flow */}
                 {!embedInApp && claim?.description && (
                   <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                    <div className="text-sm text-gray-600 mb-1">Message</div>
+                    <div className="text-base md:text-sm text-gray-600 mb-1">Message</div>
                     <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
                       {(() => {
                         const desc = claim.description || '';
@@ -3199,8 +3237,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                     {paidFeeUsdc != null && paidFeeUsdc > 0 && (
                       <div className="flex items-center justify-between">
-                        <span className="text-gray-600 text-sm">Platform fee</span>
-                        <span className="text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
+                        <span className="text-gray-600 text-base md:text-sm">Platform fee</span>
+                        <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
                       </div>
                     )}
                     {paidFeeUsdc != null && (
@@ -3230,7 +3268,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     {claim.created_at && (
                       <div className="flex items-center justify-between pt-2 border-t border-gray-200 mt-2">
                         <span className="text-gray-600">Created</span>
-                        <span className="text-sm text-gray-700">
+                        <span className="text-base md:text-sm text-gray-700">
                           {formatUTCTimestamp(claim.created_at)}
                         </span>
                       </div>
@@ -3238,7 +3276,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     {claim.paid_at && (
                       <div className="flex items-center justify-between">
                         <span className="text-gray-600">Paid</span>
-                        <span className="text-sm text-gray-700">
+                        <span className="text-base md:text-sm text-gray-700">
                           {formatUTCTimestamp(claim.paid_at)}
                         </span>
                       </div>
@@ -3251,7 +3289,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <div className="font-medium text-amber-900">Troubleshoot payment</div>
-                          <div className="text-sm text-amber-800">
+                          <div className="text-base md:text-sm text-amber-800">
                             Check if funds are still in burner wallet or already swept.
                           </div>
                         </div>
@@ -3259,13 +3297,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           type="button"
                           onClick={runBurnerTroubleshoot}
                           disabled={burnerDiagLoading}
-                          className="inline-flex items-center justify-center rounded-lg bg-amber-500 text-white px-3 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                          className="inline-flex items-center justify-center rounded-lg bg-amber-500 text-white px-3 py-2 text-base md:text-sm font-semibold hover:opacity-90 disabled:opacity-60"
                         >
                           {burnerDiagLoading ? "Checking..." : "Run check"}
                         </button>
                       </div>
                       {burnerDiag && (
-                        <div className="mt-3 text-sm text-amber-900 space-y-1">
+                        <div className="mt-3 text-base md:text-sm text-amber-900 space-y-1">
                           <div>Burner: {burnerDiag.burnerAddress ? `${burnerDiag.burnerAddress.slice(0, 8)}...${burnerDiag.burnerAddress.slice(-6)}` : "none"}</div>
                           <div>Burner USDC: {burnerDiag.burnerUsdc}</div>
                           <div>PER deposit detected: {burnerDiag.perDepositDetected ? "yes" : "no"}</div>
@@ -3302,7 +3340,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                 type="button"
                                 onClick={retryClaimSweep}
                                 disabled={retrySweepLoading}
-                                className="inline-flex items-center justify-center rounded-lg bg-amber-600 text-white px-3 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                                className="inline-flex items-center justify-center rounded-lg bg-amber-600 text-white px-3 py-2 text-base md:text-sm font-semibold hover:opacity-90 disabled:opacity-60"
                               >
                                 {retrySweepLoading ? "Retrying..." : "Retry claim sweep"}
                               </button>
@@ -3311,7 +3349,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   type="button"
                                   onClick={reclaimBySender}
                                   disabled={reclaimingSenderFunds}
-                                  className="ml-2 inline-flex items-center justify-center rounded-lg bg-slate-800 text-white px-3 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                                  className="ml-2 inline-flex items-center justify-center rounded-lg bg-slate-800 text-white px-3 py-2 text-base md:text-sm font-semibold hover:opacity-90 disabled:opacity-60"
                                 >
                                   {reclaimingSenderFunds ? "Withdrawing..." : "Withdraw from PER"}
                                 </button>
@@ -3370,7 +3408,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 )}
                 {!embedInApp && claim?.description && (
                   <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                    <div className="text-sm text-gray-600 mb-1">Message</div>
+                    <div className="text-base md:text-sm text-gray-600 mb-1">Message</div>
                     <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
                       {(() => {
                         const desc = claim.description || '';
@@ -3452,7 +3490,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) && (!deposit ? (
               <>
                 {/* Private-only indicator */}
-                <div className="mt-5 flex gap-2 text-sm text-gray-600">
+                <div className="mt-5 flex gap-2 text-base md:text-sm text-gray-600">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0 mt-0.5">
                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                   </svg>
@@ -3461,7 +3499,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
                 {/* Minimum amount notice */}
                 {claimAmountUSD > 0 && claimAmountUSD < 5 && (
-                  <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+                  <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-base md:text-sm text-amber-700">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                     <span>Minimum payment amount is <strong>$5.00 USDC</strong>. This payment link cannot be paid.</span>
                   </div>
@@ -3485,12 +3523,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             "text-lg font-semibold",
                             selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-900" : "text-gray-900"
                           )}>Pay USDC on Solana</span>
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-xs font-medium">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-sm md:text-xs font-medium">
                             FREE
                           </span>
                         </div>
                         <div className={cn(
-                          "text-sm mt-0.5",
+                          "text-base md:text-sm mt-0.5",
                           selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-800" : "text-slate-200"
                         )}>
                           Pay now with Phantom or your Loofta balance
@@ -3509,7 +3547,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <div className="mt-3">
                   <div className="flex items-center gap-3 mb-3">
                     <div className="flex-1 h-px bg-white/10" />
-                    <span className="text-sm font-medium text-slate-500">or choose another token</span>
+                    <span className="text-base md:text-sm font-medium text-slate-500">or choose another token</span>
                     <div className="flex-1 h-px bg-white/10" />
                   </div>
                   <TokenCombobox
@@ -3524,7 +3562,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     hideChains={['solana', 'sol']}
                     className="w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white placeholder:text-slate-400 hover:!bg-white/20"
                   />
-                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-sm text-blue-300">
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-base md:text-sm text-blue-300">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                     Cross-chain payments are not available yet and are coming soon to beta.
                   </div>
@@ -3533,8 +3571,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 {/* Payment breakdown */}
                 <div className="mt-4">
                   <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
-                    <div className="text-sm font-medium font-sans text-gray-700 mb-2">Payment breakdown</div>
-                    <div className="space-y-1.5 text-sm">
+                    <div className="text-base md:text-sm font-medium font-sans text-gray-700 mb-2">Payment breakdown</div>
+                    <div className="space-y-1.5 text-base md:text-sm">
                       <div className="flex items-center justify-between">
                         <span className="text-gray-600">Amount to recipient</span>
                         <span className="font-semibold font-sans text-gray-900">${claimAmountUSD.toFixed(2)}</span>
@@ -3551,13 +3589,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
 
                   {mainnetViewOnly && (
-                    <div className="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-sm text-amber-300 text-center">
+                    <div className="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-base md:text-sm text-amber-300 text-center">
                       You&apos;re viewing mainnet. Payments require{" "}
                       <a href="/app/waitlist" className="underline underline-offset-2 hover:text-amber-200">mainnet beta access</a>.
                     </div>
                   )}
                   {isWrongNetwork && claimExpectedNetwork && (
-                    <div className="mt-4 p-3 rounded-xl bg-orange-500/10 border border-orange-500/20 text-sm text-orange-400 text-center">
+                    <div className="mt-4 p-3 rounded-xl bg-orange-500/10 border border-orange-500/20 text-base md:text-sm text-orange-400 text-center">
                       This payment link was created on <strong>{claimExpectedNetwork}</strong>. Switch your network to <strong>{claimExpectedNetwork}</strong> to pay.
                     </div>
                   )}
@@ -3632,7 +3670,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         <p className="text-gray-600 text-base mb-4">
                           This payment link has expired. The deadline was {deposit.deadline ? formatUTCTimestamp(deposit.deadline) : 'not set'}.
                         </p>
-                        <p className="text-sm text-gray-500">
+                        <p className="text-base md:text-sm text-gray-500">
                           Please request a new payment link from the sender.
                         </p>
                       </div>
@@ -3709,10 +3747,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     return (
                       <>
                         <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-3">
-                          <div className="text-sm font-semibold text-red-700">
+                          <div className="text-base md:text-sm font-semibold text-red-700">
                             {s === "FAILED" ? "Deposit failed." : "Deposit was refunded."}
                           </div>
-                          <div className="text-sm  text-red-700/80 mt-1">
+                          <div className="text-base md:text-sm  text-red-700/80 mt-1">
                             Please try again with a different token or network.
                           </div>
                         </div>
@@ -3770,7 +3808,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               <div className="flex items-center justify-between">
                                 <span className="text-gray-600">Deposit address</span>
                                 <span className="text-lg font-medium text-gray-900 inline-flex items-center gap-2">
-                                  <span className="font-display  text-sm break-all">
+                                  <span className="font-display  text-base md:text-sm break-all">
                                     {depositAddr}
                                   </span>
                                   <button
@@ -3799,19 +3837,19 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           <div className="mt-4 space-y-2">
                             {/* Payment type info - subtle text only */}
                             {deposit?.isCompanionSwap ? (
-                              <div className="text-sm text-gray-600">
+                              <div className="text-base md:text-sm text-gray-600">
                                 <span className="font-medium text-gray-700">Same-chain swap:</span> Send {selectedFrom?.symbol} to this address. We'll swap to {claim?.to_symbol} and send to recipient.
                                 {deposit?.fee && <span className="ml-1 text-gray-500">({deposit.fee} fee)</span>}
                               </div>
                             ) : deposit?.isDirect ? (
-                              <div className="text-sm text-gray-600">
+                              <div className="text-base md:text-sm text-gray-600">
                                 <span className="font-medium text-gray-700">Direct transfer:</span> Send {selectedFrom?.symbol} directly to recipient. Same token, same chain.
                               </div>
                             ) : null}
 
                             {/* Incomplete deposit - subtle warning */}
                             {String(status || "").toUpperCase() === "INCOMPLETE_DEPOSIT" ? (
-                              <div className="text-sm text-gray-600 pt-1 border-t border-gray-200">
+                              <div className="text-base md:text-sm text-gray-600 pt-1 border-t border-gray-200">
                                 <span className="font-medium text-gray-700">Partial deposit:</span> {(() => {
                                   const depStr = String(statusData?.swapDetails?.depositedAmountFormatted ?? "");
                                   const minStr = String(deposit?.minDepositFormatted ?? "");
@@ -3831,7 +3869,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             {/* Speed up form - shown when speedUpOpen is true */}
                             {speedUpOpen && (
                               <div className="pt-1 border-t border-gray-200 space-y-2">
-                                <div className="text-sm text-gray-700 font-medium">Submit transaction hash</div>
+                                <div className="text-base md:text-sm text-gray-700 font-medium">Submit transaction hash</div>
                                 <div className="flex items-center gap-2">
                                   <Input
                                     value={txInput}
@@ -3854,7 +3892,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             {/* Memo - if exists */}
                             {deposit?.memo ? (
                               <div className="pt-1 border-t border-gray-200">
-                                <div className="text-sm text-gray-600">
+                                <div className="text-base md:text-sm text-gray-600">
                                   <span className="font-medium text-gray-700">Memo:</span> <span className="font-mono">{deposit.memo}</span>
                                 </div>
                               </div>
@@ -3902,7 +3940,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                       <br />
                                       <button
                                         type="button"
-                                        className="text-sm text-gray-600 hover:text-gray-900 underline mt-1"
+                                        className="text-base md:text-sm text-gray-600 hover:text-gray-900 underline mt-1"
                                         onClick={() => setSpeedUpOpen(true)}
                                       >
                                         Already deposited? Speed up processing
@@ -3994,7 +4032,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                   </div>
                                 </div>
                                 {/* Step Counter */}
-                                <div className="text-center text-sm text-gray-500">
+                                <div className="text-center text-base md:text-sm text-gray-500">
                                   Step {completedSteps} of {totalSteps - 1}
                                 </div>
                               </div>
@@ -4004,7 +4042,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           {/* PRIVATE_TRANSFER_PENDING */}
                           {String(status || "").toUpperCase() === "PRIVATE_TRANSFER_PENDING" && claim?.is_private && (
                             <div className="mb-6 p-4 rounded-xl border-2 border-amber-200 bg-amber-50">
-                              <p className="text-sm text-amber-900">
+                              <p className="text-base md:text-sm text-amber-900">
                                 Processing private transfer…
                               </p>
                             </div>
@@ -4070,7 +4108,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                 useClaimPayStore.getState().clear(id);
                                 toast({ title: "Cancelled", description: "You can now choose a different token." });
                               }}
-                              className="text-sm"
+                              className="text-base md:text-sm"
                             >
                               Cancel & Choose Different Token
                             </Button>
@@ -4079,7 +4117,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       ) : null}
                       {/* Deadline at the very bottom */}
                       {deposit?.deadline ? (
-                        <div className="mt-3 text-sm text-gray-700">Deadline: <span className="font-medium">{formatUTCTimestamp(deposit.deadline)}</span></div>
+                        <div className="mt-3 text-base md:text-sm text-gray-700">Deadline: <span className="font-medium">{formatUTCTimestamp(deposit.deadline)}</span></div>
                       ) : null}
                     </div>
                   );
@@ -4098,7 +4136,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             </p>
             <Link
               href={from === "history" ? "/history" : "/"}
-              className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition-colors"
+              className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors"
             >
               {from === "history" ? "← Back to History" : "← Back to Send"}
             </Link>
@@ -4154,7 +4192,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   Your payment is submitted. We're waiting for Solana to confirm — usually 10–30 seconds.
                 </p>
                 {confirmingTxSource && (
-                  <p className="pt-1 text-sm text-gray-500">
+                  <p className="pt-1 text-base md:text-sm text-gray-500">
                     Paying with {confirmingTxSource === "loofta" ? "Loofta balance" : "your wallet"}
                   </p>
                 )}
@@ -4165,8 +4203,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     <CheckCircle2 className="h-5 w-5 text-emerald-600" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-gray-900">Signed & sent</p>
-                    <p className="text-sm text-gray-600">Transaction is on the network</p>
+                    <p className="text-base md:text-sm font-medium text-gray-900">Signed & sent</p>
+                    <p className="text-base md:text-sm text-gray-600">Transaction is on the network</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 rounded-lg border border-orange-200 bg-orange-50 p-4">
@@ -4174,8 +4212,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     <Send className="h-5 w-5 text-orange-600" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-gray-900">Confirming</p>
-                    <p className="text-sm text-gray-900">Waiting for on-chain confirmation…</p>
+                    <p className="text-base md:text-sm font-medium text-gray-900">Confirming</p>
+                    <p className="text-base md:text-sm text-gray-900">Waiting for on-chain confirmation…</p>
                   </div>
                   <Loader2 className="h-5 w-5 shrink-0 animate-spin text-orange-500" />
                 </div>
@@ -4183,7 +4221,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   href={getExplorerTxUrl(selectedFrom?.chain ?? undefined, confirmingTxSignature)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 py-2.5 text-sm font-medium text-orange-600 hover:bg-orange-50 hover:border-orange-200 transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
+                  className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 py-2.5 text-base md:text-sm font-medium text-orange-600 hover:bg-orange-50 hover:border-orange-200 transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
                   tabIndex={0}
                 >
                   View transaction on {getExplorerName(selectedFrom?.chain ?? undefined)}
@@ -4203,7 +4241,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   {perTransferPhase.phase === "awaiting_signature" && "Approve in your wallet"}
                   {perTransferPhase.phase === "broadcasting" && "Finishing on-chain steps"}
                 </h2>
-                <p className="pt-2 text-sm text-center text-muted-foreground max-w-sm">
+                <p className="pt-2 text-base md:text-sm text-center text-muted-foreground max-w-sm">
                   {perTransferPhase.phase === "preparing" &&
                     "Setting up MagicBlock session and transactions. Please keep this window open."}
                   {perTransferPhase.phase === "awaiting_signature" && (
@@ -4232,7 +4270,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   )}
                 </p>
               </DialogHeader>
-              <div className="rounded-lg border border-amber-200 bg-amber-50/90 p-3 text-center text-sm text-amber-950">
+              <div className="rounded-lg border border-amber-200 bg-amber-50/90 p-3 text-center text-base md:text-sm text-amber-950">
                 Stay on this page until the payment completes.
               </div>
             </>
@@ -4243,7 +4281,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <h2 className="text-xl font-semibold text-gray-900 text-center">
                   Pay ${solPrice > 0 ? privatePayTotal.toFixed(2) : claimAmountUSD.toFixed(2)}
                 </h2>
-                <p className="pt-0.5 text-sm text-center text-muted-foreground">
+                <p className="pt-0.5 text-base md:text-sm text-center text-muted-foreground">
                   ${claimAmountUSD.toFixed(2)} + ~$
                   {pendingFeeUsdc != null
                     ? pendingFeeUsdc.toFixed(3)
@@ -4252,7 +4290,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       : "…"}{" "}
                   fee
                 </p>
-                <p className="pt-1 text-sm text-center text-muted-foreground">Choose how to pay</p>
+                <p className="pt-1 text-base md:text-sm text-center text-muted-foreground">Choose how to pay</p>
               </DialogHeader>
               <div className="space-y-3">
                 {/* Pay with Loofta */}
@@ -4270,7 +4308,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <LooftaIcon className="w-8 h-8 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-white">Loofta wallet</div>
-                        <div className="text-sm text-slate-400 mt-0.5">
+                        <div className="text-base md:text-sm text-slate-400 mt-0.5">
                           {solanaPayment.isBalanceLoading
                             ? "Loading balance…"
                             : hasEnough
@@ -4285,7 +4323,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
                 <div className="flex items-center gap-3">
                   <div className="flex-1 h-px bg-white/10" />
-                  <span className="text-sm font-medium text-slate-500">or</span>
+                  <span className="text-base md:text-sm font-medium text-slate-500">or</span>
                   <div className="flex-1 h-px bg-white/10" />
                 </div>
 
@@ -4298,9 +4336,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   <Wallet className="w-8 h-8 shrink-0 text-slate-300" />
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-white">External wallet</div>
-                    <div className="text-sm text-slate-400 mt-0.5">Pay directly from Phantom or any Solana wallet</div>
+                    <div className="text-base md:text-sm text-slate-400 mt-0.5">Pay directly from Phantom or any Solana wallet</div>
                     {networkMode === "devnet" && (
-                      <div className="text-sm text-amber-400 mt-1">Phantom may show a simulation warning — tap "Confirm (unsafe)" to proceed</div>
+                      <div className="text-base md:text-sm text-amber-400 mt-1">Phantom may show a simulation warning — tap "Confirm (unsafe)" to proceed</div>
                     )}
                   </div>
                   <ArrowRight className="w-5 h-5 text-slate-400 shrink-0" />
@@ -4308,7 +4346,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
                 {(payWithLooftaError || payWithWalletError) && (
                   <div className="space-y-2">
-                    <div className="p-3 rounded-lg bg-red-500/15 border border-red-400/30 text-sm text-red-200 [overflow-wrap:anywhere] whitespace-pre-wrap">
+                    <div className="p-3 rounded-lg bg-red-500/15 border border-red-400/30 text-base md:text-sm text-red-200 [overflow-wrap:anywhere] whitespace-pre-wrap">
                       <strong>Payment failed:</strong> {payWithLooftaError || payWithWalletError}
                     </div>
                     <button
@@ -4322,7 +4360,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           payWithLooftaBalance(false);
                         }
                       }}
-                      className="w-full py-2.5 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-sm text-slate-300 transition-colors"
+                      className="w-full py-2.5 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-base md:text-sm text-slate-300 transition-colors"
                     >
                       Try without gas sponsorship
                     </button>

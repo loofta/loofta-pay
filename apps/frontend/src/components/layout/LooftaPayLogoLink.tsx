@@ -41,7 +41,7 @@ export function LooftaPayLogoLink({
           className={imageClassName}
         />
         <span
-          className="absolute -top-3.5 -right-5 text-sm font-semibold px-1 py-0.5 rounded-full"
+          className="absolute -top-3.5 -right-5 text-base md:text-sm font-semibold px-1 py-0.5 rounded-full"
           style={{
             background: "linear-gradient(to right, #EAB308, #FF0F00)",
             WebkitBackgroundClip: "text",

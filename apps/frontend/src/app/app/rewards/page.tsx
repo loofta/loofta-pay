@@ -52,8 +52,8 @@ function SparksBadge({ amount, size = "md" }: { amount: number; size?: "sm" | "m
     size === "lg"
       ? "text-2xl font-bold"
       : size === "sm"
-        ? "text-xs font-semibold"
-        : "text-sm font-semibold";
+        ? "text-sm md:text-xs font-semibold"
+        : "text-base md:text-sm font-semibold";
   return (
     <span
       className={`inline-flex items-center gap-1 ${sizeClass} text-amber-300`}
@@ -69,8 +69,8 @@ function ProgressBar({ value, max }: { value: number; max: number }) {
   return (
     <div className="mt-2.5">
       <div className="flex justify-between items-center mb-1">
-        <span className="text-sm text-slate-400">{value}/{max}</span>
-        <span className="text-sm text-slate-400">{pct}%</span>
+        <span className="text-base md:text-sm text-slate-400">{value}/{max}</span>
+        <span className="text-base md:text-sm text-slate-400">{pct}%</span>
       </div>
       <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
         <div
@@ -130,7 +130,7 @@ function TaskCard({ task }: { task: TaskStatus }) {
             >
               {task.label}
             </p>
-            <p className="text-sm text-slate-400 mt-0.5 leading-snug">
+            <p className="text-base md:text-sm text-slate-400 mt-0.5 leading-snug">
               {task.description}
             </p>
             {showProgress && (
@@ -154,10 +154,10 @@ function SparksTotal({ total, max }: { total: number; max: number }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-6 mb-6">
       <div className="flex items-center justify-between mb-1">
-        <p className="text-sm font-medium text-slate-400 uppercase tracking-wider">
+        <p className="text-base md:text-sm font-medium text-slate-400 uppercase tracking-wider">
           Your Sparks
         </p>
-        <p className="text-sm text-slate-500">{total.toLocaleString()} / {max.toLocaleString()}</p>
+        <p className="text-base md:text-sm text-slate-500">{total.toLocaleString()} / {max.toLocaleString()}</p>
       </div>
       <div className="flex items-end gap-3 mt-2 mb-4">
         <span className="text-4xl font-bold text-white tabular-nums leading-none">
@@ -171,7 +171,7 @@ function SparksTotal({ total, max }: { total: number; max: number }) {
           style={{ width: `${pct}%` }}
         />
       </div>
-      <p className="text-sm text-slate-500 mt-2">{pct}% of all Sparks earned</p>
+      <p className="text-base md:text-sm text-slate-500 mt-2">{pct}% of all Sparks earned</p>
     </div>
   );
 }
@@ -279,13 +279,13 @@ export default function RewardsPage() {
           <RewardsSkeleton />
         ) : queryError ? (
           <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 text-center">
-            <p className="text-red-400 text-sm">
+            <p className="text-red-400 text-base md:text-sm">
               {(queryError as Error)?.message ?? "Failed to load rewards"}
             </p>
             <button
               type="button"
               onClick={() => refetch()}
-              className="mt-3 text-sm text-slate-400 hover:text-white underline"
+              className="mt-3 text-base md:text-sm text-slate-400 hover:text-white underline"
             >
               Try again
             </button>
@@ -295,10 +295,10 @@ export default function RewardsPage() {
             <SparksTotal total={data.totalSparks} max={maxSparks} />
 
             <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm font-medium text-slate-400 uppercase tracking-wider">
+              <p className="text-base md:text-sm font-medium text-slate-400 uppercase tracking-wider">
                 Missions
               </p>
-              <p className="text-sm text-slate-500">
+              <p className="text-base md:text-sm text-slate-500">
                 {data.tasks.filter((t) => t.completed).length}/{data.tasks.length} completed
               </p>
             </div>
@@ -313,7 +313,7 @@ export default function RewardsPage() {
               <div className="mt-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 text-center">
                 <div className="text-3xl mb-2">🏆</div>
                 <p className="text-amber-300 font-semibold">All missions complete!</p>
-                <p className="text-slate-400 text-sm mt-1">
+                <p className="text-slate-400 text-base md:text-sm mt-1">
                   You've earned all {maxSparks.toLocaleString()} Sparks. More missions coming soon.
                 </p>
               </div>

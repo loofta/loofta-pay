@@ -420,7 +420,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
           : "text-gray-700 hover:text-gray-900 hover:bg-gray-100"
           }`}
       >
-        <span className="text-sm font-medium">{username || email}</span>
+        <span className="text-base md:text-sm font-medium">{username || email}</span>
         <svg
           width="16"
           height="16"
@@ -450,12 +450,12 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               }`}>
               {username && (
                 <div className="mb-2">
-                  <p className={`text-sm font-medium mb-1 ${isDarkPage ? "text-gray-400" : "text-gray-500"
+                  <p className={`text-base md:text-sm font-medium mb-1 ${isDarkPage ? "text-gray-400" : "text-gray-500"
                     }`}>
                     Username
                   </p>
                   <div className="flex items-center justify-between">
-                    <p className={`text-sm font-semibold ${isDarkPage ? "text-white" : "text-gray-900"
+                    <p className={`text-base md:text-sm font-semibold ${isDarkPage ? "text-white" : "text-gray-900"
                       }`}>
                       @{username}
                     </p>
@@ -485,12 +485,12 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
 
               {email && (
                 <div className="mb-2">
-                  <p className={`text-sm font-medium mb-1 ${isDarkPage ? "text-gray-400" : "text-gray-500"
+                  <p className={`text-base md:text-sm font-medium mb-1 ${isDarkPage ? "text-gray-400" : "text-gray-500"
                     }`}>
                     Email
                   </p>
                   <div className="flex items-center justify-between">
-                    <p className={`text-sm ${isDarkPage ? "text-white/90" : "text-gray-700"
+                    <p className={`text-base md:text-sm ${isDarkPage ? "text-white/90" : "text-gray-700"
                       }`}>
                       {email}
                     </p>
@@ -512,7 +512,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     setIsOpen(false);
                     setShowShareModal(true);
                   }}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${isDarkPage
+                  className={`w-full text-left px-3 py-2 rounded-lg text-base md:text-sm transition-colors flex items-center gap-2 ${isDarkPage
                     ? "text-orange-400 hover:bg-orange-400/10"
                     : "text-orange-600 hover:bg-orange-50"
                     }`}
@@ -543,7 +543,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               <Link
                 href="/rewards"
                 onClick={() => setIsOpen(false)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${isDarkPage
+                className={`w-full text-left px-3 py-2 rounded-lg text-base md:text-sm transition-colors flex items-center gap-2 ${isDarkPage
                   ? "text-amber-400 hover:bg-amber-400/10"
                   : "text-amber-600 hover:bg-amber-50"
                   }`}
@@ -560,7 +560,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   setIsOpen(false);
                   setShowSettingsModal(true);
                 }}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${isDarkPage
+                className={`w-full text-left px-3 py-2 rounded-lg text-base md:text-sm transition-colors flex items-center gap-2 ${isDarkPage
                   ? "text-gray-300 hover:bg-gray-800"
                   : "text-gray-700 hover:bg-gray-100"
                   }`}
@@ -574,13 +574,13 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             <div className="mb-2">
               <div className={`flex items-center justify-between px-3 py-2 rounded-lg ${isDarkPage ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}>
                 <div className="flex flex-col min-w-0">
-                  <span className={`text-sm ${isDarkPage ? "text-gray-300" : "text-gray-700"}`}>
+                  <span className={`text-base md:text-sm ${isDarkPage ? "text-gray-300" : "text-gray-700"}`}>
                     {networkMode === "mainnet"
                       ? (mainnetAccess ? "Mainnet Beta" : "Mainnet (view only)")
                       : "Devnet"}
                   </span>
                   {networkMode === "mainnet" && !mainnetAccess && (
-                    <span className="text-sm text-amber-400/80 leading-tight">Payments disabled — balance &amp; withdraw only</span>
+                    <span className="text-base md:text-sm text-amber-400/80 leading-tight">Payments disabled — balance &amp; withdraw only</span>
                   )}
                 </div>
                 <Switch
@@ -602,7 +602,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 setIsOpen(false);
                 onLogout();
               }}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${isDarkPage
+              className={`w-full text-left px-3 py-2 rounded-lg text-base md:text-sm transition-colors ${isDarkPage
                 ? "text-red-400 hover:bg-red-400/10"
                 : "text-red-600 hover:bg-red-50"
                 }`}
@@ -709,7 +709,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     transition={{ delay: 0.2 }}
                     className="mb-6 p-4 rounded-xl bg-white/5 border border-white/10"
                   >
-                    <p className="text-sm font-medium mb-2 text-slate-400">
+                    <p className="text-base md:text-sm font-medium mb-2 text-slate-400">
                       Your payment link
                     </p>
                     <div className="flex items-center gap-2">
@@ -717,7 +717,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         href={getPaymentLink() || ""}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex-1 text-sm font-mono truncate hover:underline text-orange-400"
+                        className="flex-1 text-base md:text-sm font-mono truncate hover:underline text-orange-400"
                         onClick={(e) => e.stopPropagation()}
                       >
                         {getPaymentLink()?.replace(/^https?:\/\//, "") || ""}
@@ -771,18 +771,18 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           🔒 Private Payments
                         </span>
                         {PRIVATE_PAYMENT_ENABLED ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm md:text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                             Enabled
                           </span>
                         ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm md:text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
                             Coming soon
                           </span>
                         )}
                       </div>
 
                     </div>
-                    <p className="text-sm text-slate-400 mt-3 w-full block">
+                    <p className="text-base md:text-sm text-slate-400 mt-3 w-full block">
                       {PRIVATE_PAYMENT_ENABLED
                         ? "All payments to your link use the MagicBlock Private Ephemeral Rollup for privacy."
                         : "When available, all payments to your link will use the MagicBlock Private Ephemeral Rollup for privacy."}
@@ -809,7 +809,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="text-slate-300">
                         <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.446 1.394c-.14.18-.357.295-.6.295-.002 0-.003 0-.005 0l.213-3.054 5.56-5.022c.24-.213-.054-.334-.373-.12l-6.869 4.326-2.96-.924c-.64-.203-.658-.64.135-.954l11.566-4.458c.538-.196 1.006.128.832.941z" />
                       </svg>
-                      <span className="text-sm font-medium text-slate-300">
+                      <span className="text-base md:text-sm font-medium text-slate-300">
                         Telegram
                       </span>
                     </motion.button>
@@ -827,7 +827,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="text-slate-300">
                         <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z" />
                       </svg>
-                      <span className="text-sm font-medium text-slate-300">
+                      <span className="text-base md:text-sm font-medium text-slate-300">
                         WhatsApp
                       </span>
                     </motion.button>
@@ -846,7 +846,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
                         <polyline points="22,6 12,13 2,6"></polyline>
                       </svg>
-                      <span className="text-sm font-medium text-slate-300">
+                      <span className="text-base md:text-sm font-medium text-slate-300">
                         Email
                       </span>
                     </motion.button>
@@ -938,22 +938,22 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     </div>
                   </div>
                   <h2 className="text-2xl font-bold text-white mb-1">Settings</h2>
-                  <p className="text-sm text-gray-400">Wallet, sign-in methods, and security.</p>
+                  <p className="text-base md:text-sm text-gray-400">Wallet, sign-in methods, and security.</p>
                 </div>
 
                 <div className="space-y-4">
             {/* Network toggle — visible to all */}
             <div>
-              <Label className="text-sm font-medium mb-2 block text-gray-300">Network</Label>
+              <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">Network</Label>
               <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
                 <div className="flex flex-col min-w-0">
-                  <span className="text-sm text-white/90">
+                  <span className="text-base md:text-sm text-white/90">
                     {networkMode === "mainnet"
                       ? (mainnetAccess ? "Mainnet Beta" : "Mainnet (view only)")
                       : "Devnet"}
                   </span>
                   {networkMode === "mainnet" && !mainnetAccess && (
-                    <span className="text-sm text-amber-400/80 mt-0.5">Balance &amp; withdraw only — payments require beta access</span>
+                    <span className="text-base md:text-sm text-amber-400/80 mt-0.5">Balance &amp; withdraw only — payments require beta access</span>
                   )}
                 </div>
                 <Switch
@@ -965,13 +965,13 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
 
             {/* Sign-in methods - show connected first, then Add buttons */}
             <div>
-              <Label className="text-sm font-medium mb-2 block text-gray-300">Sign-in methods</Label>
+              <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">Sign-in methods</Label>
               {/* Always show what's already connected */}
               {(hasEmail || hasTwitterLinked) && (
                 <div className="mb-3 p-3 rounded-xl bg-white/5 border border-white/10 space-y-2">
-                  <p className="text-sm font-medium text-gray-400 mb-1.5">Connected</p>
+                  <p className="text-base md:text-sm font-medium text-gray-400 mb-1.5">Connected</p>
                   {hasEmail && linkedEmailAddress && (
-                    <div className="flex items-center gap-2 text-sm text-white/90">
+                    <div className="flex items-center gap-2 text-base md:text-sm text-white/90">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-gray-400">
                         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
                         <polyline points="22,6 12,13 2,6"></polyline>
@@ -980,7 +980,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     </div>
                   )}
                   {hasTwitterLinked && twitterHandle && (
-                    <div className="flex items-center gap-2 text-sm text-white/90">
+                    <div className="flex items-center gap-2 text-base md:text-sm text-white/90">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="shrink-0 text-gray-400">
                         <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
                       </svg>
@@ -989,7 +989,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   )}
                 </div>
               )}
-              <p className="text-sm text-gray-400 mb-3">
+              <p className="text-base md:text-sm text-gray-400 mb-3">
                 Add a second method so you can recover your account.
               </p>
               <div className="space-y-1">
@@ -1006,7 +1006,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       }
                     }}
                     title="You'll be redirected to Twitter to login"
-                    className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-3 text-orange-400 hover:bg-orange-400/10"
+                    className="w-full text-left px-3 py-2.5 rounded-xl text-base md:text-sm font-medium transition-colors flex items-center gap-3 text-orange-400 hover:bg-orange-400/10"
                   >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
                       <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
@@ -1025,7 +1025,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         // Errors are surfaced via useLinkAccount onError.
                       }
                     }}
-                    className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-3 text-gray-300 hover:bg-white/10 hover:text-white"
+                    className="w-full text-left px-3 py-2.5 rounded-xl text-base md:text-sm font-medium transition-colors flex items-center gap-3 text-gray-300 hover:bg-white/10 hover:text-white"
                   >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
                       <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
@@ -1037,8 +1037,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               </div>
               {canUpdateToTwitter && twitterHandle && (
                 <div className="mt-3 p-3 rounded-xl bg-white/5 border border-white/10">
-                  <p className="text-sm font-medium text-gray-300 mb-1">Payment link</p>
-                  <p className="text-sm text-gray-400 mb-2">
+                  <p className="text-base md:text-sm font-medium text-gray-300 mb-1">Payment link</p>
+                  <p className="text-base md:text-sm text-gray-400 mb-2">
                     Use your Twitter as your payment link: @{twitterHandle}
                   </p>
                   <Button
@@ -1079,10 +1079,10 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             {walletAddress ? (
               <>
                 <div>
-                  <Label className="text-sm font-medium mb-2 block text-gray-300">Wallet Address</Label>
+                  <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">Wallet Address</Label>
                   <div className="flex items-center gap-2 p-3 rounded-xl bg-white/5 border border-white/10">
                     <p
-                      className="flex-1 text-sm font-mono break-all cursor-pointer text-white/90 hover:opacity-80"
+                      className="flex-1 text-base md:text-sm font-mono break-all cursor-pointer text-white/90 hover:opacity-80"
                       onClick={() => {
                         setShowFullAddress(!showFullAddress);
                         if (!showFullAddress) copyToClipboard(walletAddress, false);
@@ -1108,7 +1108,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       )}
                     </button>
                   </div>
-                  <p className="text-sm text-gray-500 mt-1">{showFullAddress ? "Click to show shortened" : "Click address to copy full"}</p>
+                  <p className="text-base md:text-sm text-gray-500 mt-1">{showFullAddress ? "Click to show shortened" : "Click address to copy full"}</p>
                 </div>
 
                 <div className="space-y-1">
@@ -1117,7 +1117,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       setShowSettingsModal(false);
                       window.open(`https://solscan.io/account/${walletAddress}`, '_blank');
                     }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 rounded-xl text-base md:text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
@@ -1157,7 +1157,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         });
                       }
                     }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 rounded-xl text-base md:text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -1172,9 +1172,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             ) : (
               <div className="py-4 text-center">
                 {!privyReady ? (
-                  <p className="text-sm text-gray-400">Loading wallet...</p>
+                  <p className="text-base md:text-sm text-gray-400">Loading wallet...</p>
                 ) : (
-                  <p className="text-sm text-gray-400">Wallet will be created automatically when needed.</p>
+                  <p className="text-base md:text-sm text-gray-400">Wallet will be created automatically when needed.</p>
                 )}
               </div>
             )}
@@ -1210,9 +1210,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             {exportedPrivateKey ? (
               <>
                 <div className="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                  <Label className="text-sm font-medium mb-2 block">Your Private Key:</Label>
+                  <Label className="text-base md:text-sm font-medium mb-2 block">Your Private Key:</Label>
                   <div className="flex items-center gap-2">
-                    <code className="flex-1 text-xs font-mono break-all p-2 bg-white dark:bg-gray-800 rounded border">
+                    <code className="flex-1 text-sm md:text-xs font-mono break-all p-2 bg-white dark:bg-gray-800 rounded border">
                       {exportedPrivateKey}
                     </code>
                     <button
@@ -1240,14 +1240,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   </div>
                 </div>
                 <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
-                  <p className="text-sm text-red-800 dark:text-red-200">
+                  <p className="text-base md:text-sm text-red-800 dark:text-red-200">
                     <strong>Warning:</strong> Never share this private key with anyone. Store it securely and never store it in plain text online.
                   </p>
                 </div>
               </>
             ) : (
               <div className="text-center py-4">
-                <p className="text-sm text-gray-600 dark:text-gray-400">Loading private key...</p>
+                <p className="text-base md:text-sm text-gray-600 dark:text-gray-400">Loading private key...</p>
               </div>
             )}
           </div>

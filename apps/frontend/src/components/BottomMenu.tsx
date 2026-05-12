@@ -87,7 +87,7 @@ function MenuItem({ icon, text, href, disabled, comingSoon, isExternal }: MenuIt
         )}
       >
         <div className={iconClasses}>{icon}</div>
-        <span className="text-sm mt-1">
+        <span className="text-base md:text-sm mt-1">
           {text}
           {comingSoon && (
             <span className="absolute -top-2 -right-2 text-[8px] bg-orange-100 text-orange-600 px-1 py-0.5 rounded-full">
@@ -108,7 +108,7 @@ function MenuItem({ icon, text, href, disabled, comingSoon, isExternal }: MenuIt
       )}
     >
       <div className={iconClasses}>{icon}</div>
-      <span className="text-sm mt-1">
+      <span className="text-base md:text-sm mt-1">
         {text}
         {comingSoon && (
           <span className="absolute -top-2 -right-2 text-[8px] bg-orange-100 text-orange-600 px-1 py-0.5 rounded-full">

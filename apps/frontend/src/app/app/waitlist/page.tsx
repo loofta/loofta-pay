@@ -400,14 +400,14 @@ function LandingScreen({ onStart, onVideo, turnstileReady }: { onStart: () => vo
               type="button"
               onClick={onStart}
               disabled={!turnstileReady}
-              className="flex-1 py-3.5 rounded-xl font-semibold text-sm text-white bg-gradient-to-r from-[#FF4A26] to-[#EAB308] hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_8px_24px_rgba(255,74,38,0.25)] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 py-3.5 rounded-xl font-semibold text-base md:text-sm text-white bg-gradient-to-r from-[#FF4A26] to-[#EAB308] hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_8px_24px_rgba(255,74,38,0.25)] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {turnstileReady ? "Request access →" : "Verifying…"}
             </button>
             <button
               type="button"
               onClick={onVideo}
-              className="flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl font-semibold text-sm text-slate-300 border border-white/10 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
+              className="flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl font-semibold text-base md:text-sm text-slate-300 border border-white/10 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
             >
               <span className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center shrink-0">
                 <Play className="w-3 h-3 text-white fill-white ml-0.5" />
@@ -698,7 +698,7 @@ export default function MainnetPage() {
               <span className="text-amber-400 font-semibold">$100 cashback</span> when they start using Loofta on mainnet.
             </p>
             <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-5 text-left space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">What's included</p>
+              <p className="text-sm md:text-xs font-semibold uppercase tracking-wider text-slate-500">What's included</p>
               {[
                 "Direct notification when your access is granted",
                 "Up to $100 cashback once you're active",
@@ -709,7 +709,7 @@ export default function MainnetPage() {
                   <span className="shrink-0 w-5 h-5 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center">
                     <Check className="w-3 h-3 text-amber-400" strokeWidth={3} />
                   </span>
-                  <span className="text-sm text-slate-300">{perk}</span>
+                  <span className="text-base md:text-sm text-slate-300">{perk}</span>
                 </div>
               ))}
             </div>
@@ -770,7 +770,7 @@ export default function MainnetPage() {
                   transition={{ duration: 0.4, ease: "easeOut" }}
                 />
               </div>
-              <span className="text-xs text-slate-500 tabular-nums shrink-0">{step + 1} / {STEPS.length}</span>
+              <span className="text-sm md:text-xs text-slate-500 tabular-nums shrink-0">{step + 1} / {STEPS.length}</span>
             </div>
           </div>
         </div>
@@ -799,11 +799,11 @@ export default function MainnetPage() {
               {renderInput()}
 
               {isOptional && (
-                <p className="mt-4 text-sm text-slate-600">Optional — press Enter or Continue to skip.</p>
+                <p className="mt-4 text-base md:text-sm text-slate-600">Optional — press Enter or Continue to skip.</p>
               )}
 
               {error && (
-                <p className="mt-5 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
+                <p className="mt-5 text-base md:text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
                   {error}
                 </p>
               )}
@@ -820,7 +820,7 @@ export default function MainnetPage() {
                   </button>
                   <div className="flex items-center gap-3">
                     {currentStep.type === "text" && (
-                      <span className="text-sm text-slate-600">or press Enter ↵</span>
+                      <span className="text-base md:text-sm text-slate-600">or press Enter ↵</span>
                     )}
                     <button
                       type="button"

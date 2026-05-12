@@ -81,7 +81,7 @@ export function RequestAccessOverlay({
         {/* Content */}
         <div className="px-6 pb-6 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            <label className="block text-base md:text-sm font-medium text-gray-700 mb-1.5">
               Email address
             </label>
             <Input
@@ -116,7 +116,7 @@ export function RequestAccessOverlay({
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-gray-200" />
             </div>
-            <div className="relative flex justify-center text-sm">
+            <div className="relative flex justify-center text-base md:text-sm">
               <span className="px-2 bg-white text-gray-500">or</span>
             </div>
           </div>
@@ -136,7 +136,7 @@ export function RequestAccessOverlay({
 
         {/* Footer */}
         <div className="px-6 py-4 bg-gray-50 border-t border-gray-100">
-          <p className="text-center text-sm text-gray-500">
+          <p className="text-center text-base md:text-sm text-gray-500">
             By continuing, you agree to our{' '}
             <a href="/terms" className="text-orange-500 hover:underline">Terms</a>
             {' '}and{' '}

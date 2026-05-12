@@ -404,7 +404,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
               </div>
               {emailLinkError === "already_linked" && (
                 <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2.5">
-                  <p className="text-sm text-amber-200">
+                  <p className="text-base md:text-sm text-amber-200">
                     This email is already linked to another Loofta account. You can continue with Twitter only, or sign out and sign in with that email to use the other account.
                   </p>
                 </div>
@@ -612,16 +612,16 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                             )}
                           </div>
                           {usernameError && (
-                            <p className="text-sm text-red-400 text-center">{usernameError}</p>
+                            <p className="text-base md:text-sm text-red-400 text-center">{usernameError}</p>
                           )}
                           {!usernameError && !usernameFromTwitter && checkingAvailability && newUsername.length > LOO_PREFIX.length && (
-                            <p className="text-sm text-slate-500 text-center">Checking availability...</p>
+                            <p className="text-base md:text-sm text-slate-500 text-center">Checking availability...</p>
                           )}
                           {!usernameError && !usernameFromTwitter && !checkingAvailability && usernameAvailable === true && newUsername.length > LOO_PREFIX.length && (
-                            <p className="text-sm text-emerald-400 text-center">✓ Username available</p>
+                            <p className="text-base md:text-sm text-emerald-400 text-center">✓ Username available</p>
                           )}
                           {!usernameFromTwitter && (
-                            <p className="text-sm text-slate-500 text-center">
+                            <p className="text-base md:text-sm text-slate-500 text-center">
                               loo- is fixed; 1–16 letters, numbers, underscores after it.
                             </p>
                           )}
@@ -735,13 +735,13 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
                         transition={{ delay: 0.2 }}
                         className="mb-3 p-2.5 rounded-xl bg-white/5 border border-white/10"
                       >
-                        <p className="text-sm font-medium mb-1.5 text-slate-400">Your payment link</p>
+                        <p className="text-base md:text-sm font-medium mb-1.5 text-slate-400">Your payment link</p>
                         <div className="flex items-center gap-2">
                           <a
                             href={getPaymentLink()}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="flex-1 text-sm sm:text-base font-mono truncate hover:underline text-amber-300"
+                            className="flex-1 text-base md:text-sm sm:text-base font-mono truncate hover:underline text-amber-300"
                           >
                             {getPaymentLink().replace(/^https?:\/\//, "")}
                           </a>
