@@ -3579,11 +3579,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-gray-600">Platform fee</span>
-                        <span className="font-medium text-gray-700">{solPrice > 0 ? `~$${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}` : "..."}</span>
+                        <span className="font-medium text-gray-700">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
                       </div>
                       <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                         <span className="font-medium font-sans text-gray-900">Total</span>
-                        <span className="font-semibold font-sans text-lg text-gray-900">{solPrice > 0 ? `$${privatePayTotal.toFixed(2)}` : "..."}</span>
+                        <span className="font-semibold font-sans text-lg text-gray-900">${privatePayTotal.toFixed(2)}</span>
                       </div>
                     </div>
                   </div>
@@ -4174,7 +4174,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               : perTransferPhase
                 ? "Payment in progress"
                 : claim?.amount
-                  ? `Pay $${solPrice > 0 ? privatePayTotal.toFixed(2) : claimAmountUSD.toFixed(2)}`
+                  ? `Pay $${privatePayTotal.toFixed(2)}`
                   : "Pay now"}
           </DialogTitle>
           {confirmingTxSignature ? (
@@ -4279,15 +4279,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               <DialogHeader className="flex flex-col items-center justify-center text-center space-y-0 pb-5 sm:text-center" aria-hidden>
                 <div className="mb-3 text-4xl">💳</div>
                 <h2 className="text-xl font-semibold text-gray-900 text-center">
-                  Pay ${solPrice > 0 ? privatePayTotal.toFixed(2) : claimAmountUSD.toFixed(2)}
+                  Pay ${privatePayTotal.toFixed(2)}
                 </h2>
                 <p className="pt-0.5 text-base md:text-sm text-center text-muted-foreground">
                   ${claimAmountUSD.toFixed(2)} + ~$
                   {pendingFeeUsdc != null
                     ? pendingFeeUsdc.toFixed(3)
-                    : solPrice > 0
-                      ? (privatePayProtocolFee + privatePayGasFee).toFixed(3)
-                      : "…"}{" "}
+                    : (privatePayProtocolFee + privatePayGasFee).toFixed(3)}{" "}
                   fee
                 </p>
                 <p className="pt-1 text-base md:text-sm text-center text-muted-foreground">Choose how to pay</p>
@@ -4295,7 +4293,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               <div className="space-y-3">
                 {/* Pay with Loofta */}
                 {(() => {
-                  const needed = solPrice > 0 ? privatePayTotal : claimAmountUSD + privatePayProtocolFee;
+                  const needed = privatePayTotal;
                   const hasEnough = solanaPayment.hasEnoughBalance(needed);
                   const looftaDisabled = !authenticated || !isPayerWalletReady || (!solanaPayment.isBalanceLoading && !hasEnough);
                   return (
