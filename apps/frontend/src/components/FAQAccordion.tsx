@@ -25,7 +25,7 @@ function AccordionRow({ item }: { item: FAQItem }) {
 				aria-expanded={open}
 				aria-controls={`faq-${item.question}`}
 			>
-				<span className="text-sm md:text-base font-semibold text-gray-900">{item.question}</span>
+				<span className="text-base md:text-sm md:text-base font-semibold text-gray-900">{item.question}</span>
 				<span
 					className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-300 text-gray-700"
 					aria-hidden="true"
@@ -37,7 +37,7 @@ function AccordionRow({ item }: { item: FAQItem }) {
 				id={`faq-${item.question}`}
 				className={`grid transition-all duration-200 ease-out ${open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
 			>
-				<div className="overflow-hidden pb-4 md:pb-5 text-sm md:text-base text-gray-700">
+				<div className="overflow-hidden pb-4 md:pb-5 text-base md:text-sm md:text-base text-gray-700">
 					{item.answer}
 				</div>
 			</div>

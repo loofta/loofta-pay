@@ -40,7 +40,7 @@ export default function Title({ text, customProperties, showPrevious = false, pr
       </div>
 
       {showWallet && user?.wallet?.address && (
-        <div className="text-sm font-mono text-gray-600">
+        <div className="text-base md:text-sm font-mono text-gray-600">
           {typeof user.wallet.address === 'string'
             ? user.wallet.address.slice(0, 6) + '...' + user.wallet.address.slice(-4)
             : String(user.wallet.address).slice(0, 6) + '...' + String(user.wallet.address).slice(-4)}

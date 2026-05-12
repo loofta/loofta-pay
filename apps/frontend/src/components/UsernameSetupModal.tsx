@@ -107,7 +107,7 @@ export function UsernameSetupModal({
           <h2 className="text-2xl font-semibold text-gray-900 mb-2">
             {hasTwitter ? "Your username is your Twitter handle" : "Choose your username"}
           </h2>
-          <p className="text-gray-600 mb-6 text-sm">
+          <p className="text-gray-600 mb-6 text-base md:text-sm">
             {hasTwitter
               ? "Your payment link uses your Twitter username. It can't be changed."
               : "Your link will be @loo-yourname. The loo- part can't be changed. Add Twitter later to get @yourhandle."}
@@ -115,7 +115,7 @@ export function UsernameSetupModal({
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="username" className="block text-base md:text-sm font-medium text-gray-700 mb-2">
                 Username
               </label>
               {hasTwitter ? (
@@ -143,13 +143,13 @@ export function UsernameSetupModal({
                 </div>
               )}
               {!hasTwitter && (
-                <p className="mt-1 text-xs text-gray-500">1–16 letters, numbers, underscores after loo-</p>
+                <p className="mt-1 text-sm md:text-xs text-gray-500">1–16 letters, numbers, underscores after loo-</p>
               )}
             </div>
 
             {error && (
               <div className="p-3 rounded-lg bg-red-50 border border-red-200">
-                <p className="text-sm text-red-600">{error}</p>
+                <p className="text-base md:text-sm text-red-600">{error}</p>
               </div>
             )}
 

@@ -826,13 +826,14 @@ export class ClaimsService {
     // Decode the actual debit from the transaction — ground truth over the gross estimate.
     const conn = cluster !== 'localhost' ? this.solanaSponsor.getConnectionForCluster(cluster) : undefined;
     const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, senderWallet.trim(), effectiveMint, conn);
-    // MagicBlock private transfers are confidential; decodeActualSenderDebit only sees the relay
-    // fee instruction (not the hidden main transfer), so actualDebitUnits < baseUnits is invalid.
+    // For private transfers the main instruction is confidential; decodeActualSenderDebit only
+    // sees the relay-fee SPL transfer (actualDebitUnits ≈ relay fee << baseUnits).
+    // Total fee = estimated BPS volume fee + actual decoded relay fee.
     const estimatedFeeUnits = mbVolumeFeeUnits + relayFeeUnits;
-    const feeUnits = (actualDebitUnits != null && actualDebitUnits > baseUnits)
-      ? actualDebitUnits - baseUnits
+    const feeUnits = (actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits)
+      ? mbVolumeFeeUnits + actualDebitUnits
       : estimatedFeeUnits;
-    this.logger.log(`[PrivatePay] claim=${claimId} decoded debit=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits} (${actualDebitUnits != null && actualDebitUnits > baseUnits ? 'decoded' : 'estimated'})`);
+    this.logger.log(`[PrivatePay] claim=${claimId} decoded relay=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits} (${actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits ? 'actual-relay' : 'estimated'})`);
 
     return {
       ...txResponse,

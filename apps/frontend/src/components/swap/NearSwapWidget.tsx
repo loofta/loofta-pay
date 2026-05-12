@@ -424,7 +424,7 @@ export function NearSwapWidget({
 			</div>
 			<div className="px-5 pb-4">
 				{isSameNetwork && (
-					<div className="mb-3 rounded-md bg-red-50 border border-red-200 text-red-700 text-sm p-3 flex items-center gap-2">
+					<div className="mb-3 rounded-md bg-red-50 border border-red-200 text-red-700 text-base md:text-sm p-3 flex items-center gap-2">
 						<svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
 							<path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
 						</svg>
@@ -435,13 +435,13 @@ export function NearSwapWidget({
 					<div className="rounded-2xl bg-gray-50 border border-gray-200 p-4">
 						<div className="text-center text-lg font-semibold text-gray-800">{isSuccess ? "Swap completed" : "Deposit"}</div>
 						{!isSuccess && expired ? (
-							<div className="mt-3 rounded-md bg-red-50 text-red-700 text-sm p-3 text-center">Deposit window expired. If funds were sent, they will be refunded to your origin address.</div>
+							<div className="mt-3 rounded-md bg-red-50 text-red-700 text-base md:text-sm p-3 text-center">Deposit window expired. If funds were sent, they will be refunded to your origin address.</div>
 						) : null}
 						<div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
 							<div className="rounded-xl bg-white border border-gray-200 p-3 flex items-center gap-2">
 								<TokenIcon token={selectedFrom ?? undefined} chain={selectedFrom?.chain} size={20} />
 								<div>
-									<div className="text-sm text-gray-600">Asset</div>
+									<div className="text-base md:text-sm text-gray-600">Asset</div>
 									<div className="text-base font-semibold text-gray-900">{selectedFrom?.symbol || "-"}</div>
 								</div>
 							</div>
@@ -453,18 +453,18 @@ export function NearSwapWidget({
 									) : null;
 								})()}
 								<div>
-									<div className="text-sm text-gray-600">Network</div>
+									<div className="text-base md:text-sm text-gray-600">Network</div>
 									<div className="text-base font-semibold uppercase text-gray-900">{selectedFrom?.chain || "-"}</div>
 								</div>
 							</div>
 						</div>
 						{isSuccess ? (
 							<div className="mt-5 space-y-3">
-								<div className="text-center text-sm text-green-700 bg-green-50 border border-green-200 rounded-md px-3 py-2">Funds were delivered to the destination.</div>
-								<div className="text-sm text-gray-800">
+								<div className="text-center text-base md:text-sm text-green-700 bg-green-50 border border-green-200 rounded-md px-3 py-2">Funds were delivered to the destination.</div>
+								<div className="text-base md:text-sm text-gray-800">
 									<span className="font-semibold">Recipient:</span> {recipient ? short(recipient) : "—"}
 								</div>
-								<div className="grid grid-cols-2 gap-3 text-sm">
+								<div className="grid grid-cols-2 gap-3 text-base md:text-sm">
 									{deposit.quoteId ? (
 										<div className="col-span-2"><span className="font-semibold text-gray-900">Quote ID:</span> <span className="text-gray-800">{deposit.quoteId}</span></div>
 									) : null}
@@ -477,7 +477,7 @@ export function NearSwapWidget({
 												href={`https://explorer.near-intents.org/transactions/${deposit.depositAddress}`}
 												target="_blank"
 												rel="noreferrer"
-												className="text-sm underline text-gray-600 hover:text-gray-900"
+												className="text-base md:text-sm underline text-gray-600 hover:text-gray-900"
 											>
 												View on Explorer
 											</a>
@@ -491,7 +491,7 @@ export function NearSwapWidget({
 						) : (
 							<div className="mt-5">
 								<div className="text-base font-semibold text-gray-900 text-center">Use this deposit address</div>
-								<div className="text-sm text-gray-600 text-center">Always double‑check your deposit address — it may change without notice.</div>
+								<div className="text-base md:text-sm text-gray-600 text-center">Always double‑check your deposit address — it may change without notice.</div>
 								<div className="mt-4 flex items-center justify-center">
 									<img
 										src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(deposit.depositAddress || "")}`}
@@ -501,7 +501,7 @@ export function NearSwapWidget({
 										style={{ imageRendering: "pixelated" }}
 									/>
 								</div>
-								<div className="mt-4 flex items-center justify-between text-sm">
+								<div className="mt-4 flex items-center justify-between text-base md:text-sm">
 									<div className="text-gray-600">Minimum deposit</div>
 									<div className="font-semibold text-gray-900">
 										{deposit.minDepositFormatted ? `${deposit.minDepositFormatted} ${selectedFrom?.symbol || ""}` : "-"}
@@ -512,11 +512,11 @@ export function NearSwapWidget({
 									if (!Number.isFinite(bps) || bps < 0) return null;
 									if (bps === 0) {
 										return (
-											<div className="mt-2 flex items-center justify-between text-sm">
+											<div className="mt-2 flex items-center justify-between text-base md:text-sm">
 												<div className="text-gray-600">App fee</div>
 												<div className="inline-flex items-center gap-2">
 													<span
-														className="px-2 py-0.5 rounded-md text-xs font-semibold text-white shadow-sm"
+														className="px-2 py-0.5 rounded-md text-sm md:text-xs font-semibold text-white shadow-sm"
 														style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
 													>
 														FREE
@@ -529,7 +529,7 @@ export function NearSwapWidget({
 									const amtNum = Number(amount || "0");
 									const feeEst = Number.isFinite(amtNum) ? (amtNum * (bps / 10000)) : undefined;
 									return (
-										<div className="mt-2 flex items-center justify-between text-sm">
+										<div className="mt-2 flex items-center justify-between text-base md:text-sm">
 											<div className="text-gray-600">App fee</div>
 											<div className="text-gray-900">
 												{pct}%{feeEst ? ` • ~${trimDecimals(String(feeEst), 5)} ${selectedFrom?.symbol || ""}` : ""}
@@ -539,10 +539,10 @@ export function NearSwapWidget({
 								})()}
 								<div className="mt-2">
 									<div className="rounded-xl bg-white border border-gray-200 px-3 py-2 flex items-center justify-between">
-										<div className="font-mono text-sm text-gray-800">{short(deposit.depositAddress)}</div>
+										<div className="font-mono text-base md:text-sm text-gray-800">{short(deposit.depositAddress)}</div>
 										<button
 											type="button"
-											className="text-sm underline text-gray-600 hover:text-gray-900"
+											className="text-base md:text-sm underline text-gray-600 hover:text-gray-900"
 											onClick={async () => {
 												try {
 													await navigator.clipboard.writeText(deposit.depositAddress || "");
@@ -556,10 +556,10 @@ export function NearSwapWidget({
 										</button>
 									</div>
 								</div>
-								<div className="mt-3 rounded-md bg-amber-50 text-amber-800 text-sm p-3 text-center">
+								<div className="mt-3 rounded-md bg-amber-50 text-amber-800 text-base md:text-sm p-3 text-center">
 									Only deposit {selectedFrom?.symbol} from the {selectedFrom?.chain} network. Depositing other assets or using a different network will result in loss of funds.
 								</div>
-								<div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+								<div className="mt-3 grid grid-cols-2 gap-3 text-base md:text-sm">
 									{deposit.deadline ? (
 										<div><span className="font-semibold text-gray-900">Deadline:</span> <span className="text-gray-800">{new Date(deposit.deadline).toLocaleString()}</span>{typeof timeLeft === "number" ? <span className="text-gray-500"> ({formatRemaining(timeLeft)} left)</span> : null}</div>
 									) : null}
@@ -578,7 +578,7 @@ export function NearSwapWidget({
 												href={`https://explorer.near-intents.org/transactions/${deposit.depositAddress}`}
 												target="_blank"
 												rel="noreferrer"
-												className="text-sm underline text-gray-600 hover:text-gray-900"
+												className="text-base md:text-sm underline text-gray-600 hover:text-gray-900"
 											>
 												View on Explorer
 											</a>
@@ -591,7 +591,7 @@ export function NearSwapWidget({
 											<button
 												type="button"
 												onClick={() => setSpeedUpOpen(true)}
-												className="text-sm text-orange-600 hover:text-orange-700 underline"
+												className="text-base md:text-sm text-orange-600 hover:text-orange-700 underline"
 											>
 												Already deposited? Speed up processing
 											</button>
@@ -603,15 +603,15 @@ export function NearSwapWidget({
 								{/* Speed Up Form */}
 								{speedUpOpen && (
 									<div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
-										<div className="text-sm font-semibold text-gray-900 mb-1">Speed up processing</div>
-										<div className="text-sm text-gray-600 mb-3">
+										<div className="text-base md:text-sm font-semibold text-gray-900 mb-1">Speed up processing</div>
+										<div className="text-base md:text-sm text-gray-600 mb-3">
 											If you've already deposited, enter your transaction hash to speed up processing.
 										</div>
 										<Input
 											placeholder="Enter transaction hash"
 											value={speedUpTx}
 											onChange={(e) => setSpeedUpTx(e.target.value)}
-											className="text-sm mb-3"
+											className="text-base md:text-sm mb-3"
 										/>
 										<div className="flex items-center gap-2">
 											<Button
@@ -661,7 +661,7 @@ export function NearSwapWidget({
 									className="text-3xl md:text-4xl font-semibold border-none bg-transparent px-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-auto"
 								/>
 							</div>
-							<div className="mt-3 flex items-center justify_between text-sm">
+							<div className="mt-3 flex items-center justify_between text-base md:text-sm">
 								<span className="text-gray-500 min-h-4">
 									{loadingTokens || !selectedFrom ? (
 										<Skeleton className="h-4 w-20" />
@@ -723,7 +723,7 @@ export function NearSwapWidget({
 									{quoteLoading ? <span className="inline-block"><Skeleton className="h-8 w-24 rounded-md" /></span> : trimDecimals(rate || "0", 5)}
 								</div>
 							</div>
-							<div className="mt-3 text-sm text-gray-500 min-h-4">
+							<div className="mt-3 text-base md:text-sm text-gray-500 min-h-4">
 								{quoteError && !quoteError.toLowerCase().includes("recipient") && !quoteError.toLowerCase().includes("address") ? (
 									<span className="text-red-600">{quoteError}</span>
 								) : (loadingTokens || !selectedTo ? (
@@ -753,7 +753,7 @@ export function NearSwapWidget({
 												<div className="mt-3 flex items-center justify-between">
 													<div className="flex items-center gap-2">
 														<Shield className="h-4 w-4 text-emerald-600" />
-														<div className="text-sm text-gray-800 font-semibold">Private payment (shielded)</div>
+														<div className="text-base md:text-sm text-gray-800 font-semibold">Private payment (shielded)</div>
 													</div>
 													<Switch checked={useShielded} onCheckedChange={setUseShielded} aria-label="Private payment (shielded)" />
 												</div>
@@ -763,7 +763,7 @@ export function NearSwapWidget({
 											const isZec = ((selectedTo?.symbol || "").toUpperCase() === "ZEC") || inferFamilyFromChain(selectedTo?.chain) === "zcash";
 											if (!isZec) return null;
 											return (
-												<div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm px-3 py-2">
+												<div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-base md:text-sm px-3 py-2">
 													<div className="font-medium">Privacy tip</div>
 													<div>Payment will only be private if you use a shielded address as the recipient.</div>
 												</div>
@@ -771,7 +771,7 @@ export function NearSwapWidget({
 										})()}
 										{/* Manual recipient input */}
 										<div className="mt-4">
-											<label className="text-sm font-medium text-gray-700">
+											<label className="text-base md:text-sm font-medium text-gray-700">
 												{(() => {
 													const isZec = ((selectedTo?.symbol || "").toUpperCase() === "ZEC") || inferFamilyFromChain(selectedTo?.chain) === "zcash";
 													return isZec && useShielded ? "Recipient shielded address" : "Recipient address";
@@ -790,15 +790,15 @@ export function NearSwapWidget({
 												})()}
 												className="mt-1 w-full rounded-xl border border-gray-200 bg-white text-gray-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400"
 											/>
-											{recipientError ? <div className="text-sm text-red-600 mt-1">{recipientError}</div> : null}
+											{recipientError ? <div className="text-base md:text-sm text-red-600 mt-1">{recipientError}</div> : null}
 										</div>
 										{/* Refund Address Step */}
 										{currentStep === "refund" && (
 											<div className="mt-4">
-												<label className="text-sm font-medium text-gray-700">
+												<label className="text-base md:text-sm font-medium text-gray-700">
 													Refund Address ({inferFamilyFromChain(selectedFrom?.chain).toUpperCase()}) *
 												</label>
-												<p className="text-sm text-gray-500 mt-1 mb-2">
+												<p className="text-base md:text-sm text-gray-500 mt-1 mb-2">
 													Funds will be refunded to this address if the swap fails or expires
 												</p>
 												<input
@@ -812,7 +812,7 @@ export function NearSwapWidget({
 													className="mt-1 w-full rounded-xl border border-gray-200 bg-white text-gray-900 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400"
 													autoFocus
 												/>
-												{refundAddressError ? <div className="text-sm text-red-600 mt-1">{refundAddressError}</div> : null}
+												{refundAddressError ? <div className="text-base md:text-sm text-red-600 mt-1">{refundAddressError}</div> : null}
 											</div>
 										)}
 										<div className="mt-4 flex justify-end gap-2">
@@ -843,7 +843,7 @@ export function NearSwapWidget({
 									</motion.div>
 								) : null}
 							</AnimatePresence>
-							{depositError ? <div className="text-sm text-red-600 mt-2">{depositError}</div> : null}
+							{depositError ? <div className="text-base md:text-sm text-red-600 mt-2">{depositError}</div> : null}
 						</>
 						) : null}
 					</>

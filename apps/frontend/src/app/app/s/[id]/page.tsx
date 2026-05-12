@@ -126,7 +126,7 @@ export default function SendPaymentClaimPage() {
             <div className="flex flex-col items-center gap-4">
               <Loader2 className="h-12 w-12 animate-spin text-amber-400" />
               <p className="text-white/80 font-medium">Loading payment…</p>
-              <p className="text-sm text-white/50">Checking link and amount</p>
+              <p className="text-base md:text-sm text-white/50">Checking link and amount</p>
             </div>
           </div>
         </main>
@@ -199,7 +199,7 @@ export default function SendPaymentClaimPage() {
                   </div>
                 )}
 
-                <p className="mt-4 text-sm text-gray-400">
+                <p className="mt-4 text-base md:text-sm text-gray-400">
                   Sent to {data.recipient_type === 'email' ? 'an email address' : 'a Twitter account'}
                 </p>
               </div>
@@ -210,7 +210,7 @@ export default function SendPaymentClaimPage() {
                   <div className="rounded-xl bg-green-50 p-6 text-center">
                     <CheckCircle2 className="mx-auto h-14 w-14 text-green-500" />
                     <h2 className="mt-3 text-lg font-semibold text-gray-900">You claimed it!</h2>
-                    <p className="mt-1 text-sm text-gray-600">
+                    <p className="mt-1 text-base md:text-sm text-gray-600">
                       ${data.amount} {data.token} is in your Loofta wallet. Withdraw to any chain whenever you’re ready.
                     </p>
                   </div>
@@ -221,7 +221,7 @@ export default function SendPaymentClaimPage() {
                     <Wallet className="mr-2 h-5 w-5" />
                     Withdraw to any chain
                   </GradientActionButton>
-                  <p className="text-center text-sm text-gray-400">
+                  <p className="text-center text-base md:text-sm text-gray-400">
                     Or open Balance in the header anytime to withdraw.
                   </p>
                 </div>
@@ -231,7 +231,7 @@ export default function SendPaymentClaimPage() {
               {isClaimed && isSender && !reclaimed && (
                 <div className="mt-8 space-y-4 rounded-xl border border-amber-200 bg-amber-50/50 p-6">
                   <p className="text-center font-medium text-gray-900">Recipient already claimed</p>
-                  <p className="text-center text-sm text-gray-600">
+                  <p className="text-center text-base md:text-sm text-gray-600">
                     You can reclaim any leftover funds that may still be in this link.
                   </p>
                   <Button
@@ -250,7 +250,7 @@ export default function SendPaymentClaimPage() {
               {isClaimed && isSender && reclaimed && (
                 <div className="mt-8 rounded-xl bg-gray-50 p-6 text-center">
                   <p className="font-medium text-gray-700">Recipient claimed this payment.</p>
-                  <p className="mt-1 text-sm text-gray-500">Any leftover has been reclaimed to your wallet.</p>
+                  <p className="mt-1 text-base md:text-sm text-gray-500">Any leftover has been reclaimed to your wallet.</p>
                 </div>
               )}
 
@@ -258,7 +258,7 @@ export default function SendPaymentClaimPage() {
               {isCancelled && (
                 <div className="mt-8 rounded-xl bg-gray-50 p-6 text-center">
                   <p className="font-medium text-gray-700">This link is no longer active.</p>
-                  <p className="mt-1 text-sm text-gray-500">The payment was cancelled or already reclaimed.</p>
+                  <p className="mt-1 text-base md:text-sm text-gray-500">The payment was cancelled or already reclaimed.</p>
                 </div>
               )}
 
@@ -278,7 +278,7 @@ export default function SendPaymentClaimPage() {
               {/* Logged in, recipient — claim button */}
               {canClaim && authenticated && !isSender && (
                 <div className="mt-8 space-y-4">
-                  <p className="text-center text-sm text-gray-500">
+                  <p className="text-center text-base md:text-sm text-gray-500">
                     Funds will go to your Loofta embedded wallet. You can withdraw to any chain after.
                   </p>
                   <GradientActionButton
@@ -298,7 +298,7 @@ export default function SendPaymentClaimPage() {
               {canClaim && authenticated && isSender && (
                 <div className="mt-8 space-y-4 rounded-xl border border-amber-200 bg-amber-50/50 p-6">
                   <p className="text-center font-medium text-gray-900">You sent this payment</p>
-                  <p className="text-center text-sm text-gray-600">If the recipient hasn’t claimed it, you can take the funds back.</p>
+                  <p className="text-center text-base md:text-sm text-gray-600">If the recipient hasn’t claimed it, you can take the funds back.</p>
                   <Button
                     onClick={handleReclaim}
                     disabled={reclaiming}

@@ -122,7 +122,7 @@ function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
             <a
               key={item.label}
               href={item.href}
-              className="cursor-pointer px-3 py-2 font-grotesk text-sm text-slate-400 transition-colors hover:text-white"
+              className="cursor-pointer px-3 py-2 font-grotesk text-base md:text-sm text-slate-400 transition-colors hover:text-white"
             >
               {item.label}
             </a>
@@ -132,7 +132,7 @@ function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
       <div className="flex items-center gap-3">
         <Link
           href={APP_URL}
-          className={`group inline-flex items-center gap-2.5 rounded-full px-5 py-3 font-display text-sm font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] ${BRAND_GRADIENT}`}
+          className={`group inline-flex items-center gap-2.5 rounded-full px-5 py-3 font-display text-base md:text-sm font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] ${BRAND_GRADIENT}`}
         >
           Launch app
           <ArrowRight className="h-[15px] w-[15px]" strokeWidth={2} />
@@ -424,7 +424,7 @@ function Hero({ onHowItWorks }: { onHowItWorks: () => void }) {
         <div>
           {/* POV toggle */}
           <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.06 }} className="mb-7">
-            <div className="inline-flex rounded-full border border-white/10 bg-white/[0.04] p-1 font-display text-sm font-medium">
+            <div className="inline-flex rounded-full border border-white/10 bg-white/[0.04] p-1 font-display text-base md:text-sm font-medium">
               {([
                 { k: "receive", label: "I want to get paid" },
                 { k: "send", label: "I want to send" },
@@ -785,7 +785,7 @@ function Privacy() {
                     </div>
                   ))}
                 </div>
-                <div className="flex items-center gap-2 border-t border-white/[0.06] bg-white/[0.02] px-6 py-3.5 font-grotesk text-xs text-slate-500">
+                <div className="flex items-center gap-2 border-t border-white/[0.06] bg-white/[0.02] px-6 py-3.5 font-grotesk text-sm md:text-xs text-slate-500">
                   <Image src="/images/icons/shield-icon.png" alt="" width={18} height={18} />
                   Ephemeral rollup · Verified
                 </div>
@@ -926,7 +926,7 @@ function Business() {
         meta: "Passport 🇩🇪 · $2,500 released",
       },
       {
-        icon: <span className="text-sm">🪪</span>,
+        icon: <span className="text-base md:text-sm">🪪</span>,
         iconBg: "bg-yellow-500/15",
         border: "border-yellow-500/25",
         bg: "bg-yellow-500/[0.05]",
@@ -1117,7 +1117,7 @@ function Business() {
             href="https://calendly.com/lisa-bechina"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex shrink-0 items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-sm whitespace-nowrap"
+            className="inline-flex shrink-0 items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-base md:text-sm whitespace-nowrap"
           >
             Book a business demo <ArrowRight className="h-[15px] w-[15px]" strokeWidth={2} />
           </a>
@@ -1147,7 +1147,7 @@ function Business() {
             </p>
             <div className="inline-flex items-center gap-2.5 rounded-full border border-[rgba(255,19,1,0.3)] bg-[rgba(255,19,1,0.1)] px-3.5 py-2">
               <span className="h-1.5 w-1.5 rounded-full bg-[#FF1301] shadow-[0_0_8px_#FF1301]" />
-              <span className="font-grotesk text-xs font-medium text-white">200+ recipients · one tx</span>
+              <span className="font-grotesk text-sm md:text-xs font-medium text-white">200+ recipients · one tx</span>
             </div>
           </div>
 
@@ -1168,7 +1168,7 @@ function Business() {
             {bulkRows.map((r, i) => (
               <div
                 key={i}
-                className={`grid grid-cols-[auto_1fr_auto_auto] items-center gap-3.5 px-[18px] py-[11px] font-grotesk text-xs ${i < bulkRows.length - 1 ? "border-b border-white/[0.04]" : ""
+                className={`grid grid-cols-[auto_1fr_auto_auto] items-center gap-3.5 px-[18px] py-[11px] font-grotesk text-sm md:text-xs ${i < bulkRows.length - 1 ? "border-b border-white/[0.04]" : ""
                   }`}
               >
                 <span className="w-5 text-center text-base">{r.flag}</span>
@@ -1197,7 +1197,7 @@ function Business() {
                 <h3 className="mb-2.5 font-display text-[26px] font-medium leading-[1.1] tracking-[-0.02em] text-white">
                   {f.title}
                 </h3>
-                <p className="font-grotesk text-sm leading-[1.55] text-slate-400">{f.body}</p>
+                <p className="font-grotesk text-base md:text-sm leading-[1.55] text-slate-400">{f.body}</p>
               </div>
               <div className="mt-auto">{f.preview}</div>
             </motion.div>
@@ -1216,7 +1216,7 @@ function Business() {
             style={{ background: "radial-gradient(ellipse, #FF1301, transparent 70%)" }}
           />
           <div className="relative min-w-[280px] flex-1 basis-[420px]">
-            <div className="mb-2.5 font-grotesk text-xs font-medium uppercase tracking-[0.14em] text-[#FF6A00]">
+            <div className="mb-2.5 font-grotesk text-sm md:text-xs font-medium uppercase tracking-[0.14em] text-[#FF6A00]">
               Talk to us
             </div>
             <h3 className="mb-2.5 font-display text-[clamp(1.8rem,2.8vw,2.6rem)] font-medium leading-[1.05] tracking-[-0.025em] text-white">
@@ -1610,10 +1610,10 @@ function BuiltOn() {
               transition={{ ...fadeUp.transition, delay: 0.2 }}
               className="flex flex-wrap gap-3"
             >
-              <a href="#" className="inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-sm">
+              <a href="#" className="inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-base md:text-sm">
                 Read the architecture
               </a>
-              <a href="#" className="inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-sm">
+              <a href="#" className="inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-base md:text-sm">
                 How PER works
               </a>
             </motion.div>
@@ -1655,7 +1655,7 @@ function BuiltOn() {
                 <div className="text-right">
                   <div className="font-display text-[22px] font-medium tabular-nums text-[#14F195]">
                     400
-                    <span className="ml-0.5 text-sm text-slate-500">ms</span>
+                    <span className="ml-0.5 text-base md:text-sm text-slate-500">ms</span>
                   </div>
                   <div className="font-grotesk text-[11px] text-slate-500">finality</div>
                 </div>

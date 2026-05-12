@@ -199,9 +199,9 @@ function TxCell({ hash, chain, isDevnet }: { hash: string | null; chain: string 
 }
 
 function UserChip({ user, privyId }: { user: AppUser | null; privyId: string | null }) {
-  if (!privyId) return <span className="text-gray-600 text-xs">anon</span>;
+  if (!privyId) return <span className="text-gray-600 text-sm md:text-xs">anon</span>;
   return (
-    <span className="inline-flex items-center gap-1 text-xs">
+    <span className="inline-flex items-center gap-1 text-sm md:text-xs">
       {user ? (
         <span>
           {user.username && <span className="text-white font-medium">@{user.username}</span>}
@@ -240,7 +240,7 @@ function SortableHeader({ col, label, sortCol, sortDir, onSort }: {
 function RecipientCell({ p }: { p: Payment }) {
   const hasUserIdButNoProfile = p.recipient_user_id && !p.recipient_user;
   return (
-    <span className="inline-flex items-center gap-1 text-xs">
+    <span className="inline-flex items-center gap-1 text-sm md:text-xs">
       {p.recipient_username && <span className="text-white font-medium">@{p.recipient_username}</span>}
       {!p.recipient_username && p.recipient_email && (
         <span className="text-gray-300">{trunc(p.recipient_email, 18)}</span>
@@ -300,9 +300,9 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-0.5">
           {rawFields.map(([k, v]) => (
             <div key={k} className="flex gap-2 min-w-0">
-              <span className="text-gray-500 text-xs w-40 shrink-0">{k}</span>
+              <span className="text-gray-500 text-sm md:text-xs w-40 shrink-0">{k}</span>
               <span
-                className="font-mono text-xs text-gray-300 break-all cursor-pointer hover:text-white"
+                className="font-mono text-sm md:text-xs text-gray-300 break-all cursor-pointer hover:text-white"
                 onClick={() => v != null && onCopy(String(v))}
                 title="Click to copy"
               >
@@ -321,7 +321,7 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
             {p.sender_user && (
               <div className="bg-gray-800 rounded p-3">
                 <div className="text-[9px] text-gray-500 uppercase mb-1">Sender</div>
-                <div className="font-mono text-xs space-y-0.5 text-gray-300">
+                <div className="font-mono text-sm md:text-xs space-y-0.5 text-gray-300">
                   <div>@{p.sender_user.username ?? <span className="text-gray-600">no username</span>}</div>
                   <div>{p.sender_user.email ?? <span className="text-gray-600">no email</span>}</div>
                   <div className="text-gray-500 text-[10px] break-all">{p.sender_user.privy_user_id}</div>
@@ -331,7 +331,7 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
             {p.recipient_user && (
               <div className="bg-gray-800 rounded p-3">
                 <div className="text-[9px] text-gray-500 uppercase mb-1">Recipient</div>
-                <div className="font-mono text-xs space-y-0.5 text-gray-300">
+                <div className="font-mono text-sm md:text-xs space-y-0.5 text-gray-300">
                   <div>@{p.recipient_user.username ?? <span className="text-gray-600">no username</span>}</div>
                   <div>{p.recipient_user.email ?? <span className="text-gray-600">no email</span>}</div>
                   <div className="text-gray-500 text-[10px] break-all">{p.recipient_user.privy_user_id}</div>
@@ -351,7 +351,7 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
           </h4>
           <div className="space-y-2">
             {intents.map((intent) => (
-              <div key={intent.id} className="bg-gray-800 rounded p-3 font-mono text-xs">
+              <div key={intent.id} className="bg-gray-800 rounded p-3 font-mono text-sm md:text-xs">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-gray-400">{trunc(intent.id, 16)}</span>
                   <span className={`px-1.5 py-0.5 rounded border text-[10px] ${
@@ -396,7 +396,7 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
           </h4>
           <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
             {events.map((ev) => (
-              <div key={ev.id} className="bg-gray-800 rounded p-2 text-xs">
+              <div key={ev.id} className="bg-gray-800 rounded p-2 text-sm md:text-xs">
                 <div className="flex items-center gap-3">
                   <span className="text-gray-500 font-mono text-[10px]">{fmtFull(ev.created_at)}</span>
                   <span className="font-semibold text-blue-400">{ev.type}</span>
@@ -416,7 +416,7 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
       )}
 
       {intents.length === 0 && events.length === 0 && (
-        <p className="text-gray-600 text-xs">No intents or events recorded.</p>
+        <p className="text-gray-600 text-sm md:text-xs">No intents or events recorded.</p>
       )}
     </div>
   );
@@ -828,7 +828,7 @@ export default function AdminDashboard() {
           {!authenticated ? (
             <Button onClick={login}>Log In</Button>
           ) : (
-            <p className="text-sm text-gray-500">Not authorized. UID: {userId}</p>
+            <p className="text-base md:text-sm text-gray-500">Not authorized. UID: {userId}</p>
           )}
         </div>
       </div>
@@ -874,14 +874,14 @@ export default function AdminDashboard() {
         <button
           type="button"
           onClick={() => setActiveTab("payments")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === "payments" ? "border-blue-500 text-blue-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+          className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors ${activeTab === "payments" ? "border-blue-500 text-blue-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
           Payments
         </button>
         <button
           type="button"
           onClick={() => { setActiveTab("sparks"); if (!sparksLoaded) fetchSparks(); }}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "sparks" ? "border-amber-500 text-amber-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+          className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "sparks" ? "border-amber-500 text-amber-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
           <Zap className="w-3.5 h-3.5" />
           Sparks
@@ -889,15 +889,15 @@ export default function AdminDashboard() {
         <button
           type="button"
           onClick={() => { setActiveTab("waitlist"); if (!waitlistLoaded) fetchWaitlist(1, { search: "", access: "all", sortCol: "created_at", sortDir: "desc" }); }}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "waitlist" ? "border-green-500 text-green-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+          className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "waitlist" ? "border-green-500 text-green-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
           Waitlist
-          {waitlistLoaded && <span className="text-xs bg-green-900/50 text-green-400 rounded px-1.5 py-0.5">{waitlistTotal}</span>}
+          {waitlistLoaded && <span className="text-sm md:text-xs bg-green-900/50 text-green-400 rounded px-1.5 py-0.5">{waitlistTotal}</span>}
         </button>
         <button
           type="button"
           onClick={() => { setActiveTab("analytics"); if (!analyticsLoaded) fetchAnalytics(); }}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "analytics" ? "border-purple-500 text-purple-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+          className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "analytics" ? "border-purple-500 text-purple-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
           <BarChart2 className="w-3.5 h-3.5" />
           Analytics
@@ -917,7 +917,7 @@ export default function AdminDashboard() {
                 value={waitlistSearchInput}
                 onChange={(e) => setWaitlistSearchInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && applyWaitlistSearch()}
-                className="pl-9 bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-sm"
+                className="pl-9 bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-base md:text-sm"
               />
             </div>
             <Select value={waitlistAccessFilter} onValueChange={(v: "all" | "granted" | "not_granted") => {
@@ -945,7 +945,7 @@ export default function AdminDashboard() {
               value={grantEmailInput}
               onChange={(e) => setGrantEmailInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && grantAccessByEmail()}
-              className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-sm flex-1"
+              className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-base md:text-sm flex-1"
             />
             <Button
               size="sm"
@@ -964,7 +964,7 @@ export default function AdminDashboard() {
               value={grantTwitterInput}
               onChange={(e) => setGrantTwitterInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && grantAccessByTwitter()}
-              className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-sm flex-1"
+              className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-base md:text-sm flex-1"
             />
             <Button
               size="sm"
@@ -984,7 +984,7 @@ export default function AdminDashboard() {
               </div>
             )}
             {!waitlistLoading && waitlistLoaded && (
-              <table className="w-full text-xs text-gray-300">
+              <table className="w-full text-sm md:text-xs text-gray-300">
                 <thead>
                   <tr className="border-b border-gray-800 bg-gray-900/60 text-gray-500 uppercase tracking-wider text-left text-[10px]">
                     <th className="px-4 py-2.5">#</th>
@@ -1020,7 +1020,7 @@ export default function AdminDashboard() {
                               type="button"
                               disabled={grantingAccess === e.id}
                               onClick={() => grantWaitlistAccess(e.id, false)}
-                              className="group px-2.5 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-50 bg-green-900/60 text-green-400 hover:bg-red-900/60 hover:text-red-400"
+                              className="group px-2.5 py-1 rounded-full text-sm md:text-xs font-medium transition-colors disabled:opacity-50 bg-green-900/60 text-green-400 hover:bg-red-900/60 hover:text-red-400"
                             >
                               {grantingAccess === e.id ? "…" : <><span className="group-hover:hidden">Granted</span><span className="hidden group-hover:inline">Revoke</span></>}
                             </button>
@@ -1029,7 +1029,7 @@ export default function AdminDashboard() {
                               type="button"
                               disabled={grantingAccess === e.id}
                               onClick={() => grantWaitlistAccess(e.id, true)}
-                              className="px-2.5 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-50 bg-gray-800 text-gray-500 hover:bg-gray-700 hover:text-gray-300"
+                              className="px-2.5 py-1 rounded-full text-sm md:text-xs font-medium transition-colors disabled:opacity-50 bg-gray-800 text-gray-500 hover:bg-gray-700 hover:text-gray-300"
                             >
                               {grantingAccess === e.id ? "…" : "Grant"}
                             </button>
@@ -1039,7 +1039,7 @@ export default function AdminDashboard() {
                               type="button"
                               disabled={resendingEmail === e.id}
                               onClick={() => resendBetaEmail(e.id)}
-                              className="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-50"
+                              className="px-2.5 py-1 rounded-full text-sm md:text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-50"
                               title="Resend beta access email"
                             >
                               {resendingEmail === e.id ? "…" : "✉︎"}
@@ -1056,13 +1056,13 @@ export default function AdminDashboard() {
               </table>
             )}
             {!waitlistLoading && !waitlistLoaded && (
-              <div className="text-gray-600 text-sm py-8 text-center">Click Refresh to load waitlist.</div>
+              <div className="text-gray-600 text-base md:text-sm py-8 text-center">Click Refresh to load waitlist.</div>
             )}
           </div>
 
           {/* Pagination */}
           {waitlistTotal > WAITLIST_LIMIT && (
-            <div className="flex items-center justify-between text-sm text-gray-400">
+            <div className="flex items-center justify-between text-base md:text-sm text-gray-400">
               <span>{waitlistTotal} total · page {waitlistPage} of {Math.ceil(waitlistTotal / WAITLIST_LIMIT)}</span>
               <div className="flex gap-2">
                 <Button
@@ -1093,12 +1093,12 @@ export default function AdminDashboard() {
       {activeTab === "analytics" && (
         <div className="space-y-6">
           {analyticsLoading && (
-            <div className="flex items-center gap-2 text-sm text-gray-400 py-12 justify-center">
+            <div className="flex items-center gap-2 text-base md:text-sm text-gray-400 py-12 justify-center">
               <Loader2 className="w-4 h-4 animate-spin" /> Loading analytics…
             </div>
           )}
           {!analyticsLoading && !analyticsLoaded && (
-            <div className="text-gray-600 text-sm py-12 text-center">Click Refresh to load analytics.</div>
+            <div className="text-gray-600 text-base md:text-sm py-12 text-center">Click Refresh to load analytics.</div>
           )}
           {!analyticsLoading && analyticsLoaded && analyticsData && (() => {
             const emailPct = analyticsData.total_users > 0
@@ -1115,75 +1115,75 @@ export default function AdminDashboard() {
               <>
                 {/* Volume section */}
                 <div>
-                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Transaction Volume</h3>
+                  <h3 className="text-sm md:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Transaction Volume</h3>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-orange-400 uppercase tracking-wider mb-1 font-medium">Devnet Volume</div>
                       <div className="text-2xl font-bold text-white tabular-nums">
                         {analyticsData.volume_devnet.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
-                      <div className="text-xs text-gray-500 mt-0.5">USDC success</div>
-                      <div className="text-xs text-gray-600 mt-0.5">
+                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC success</div>
+                      <div className="text-sm md:text-xs text-gray-600 mt-0.5">
                         {analyticsData.volume_devnet_total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total
                       </div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-orange-400 uppercase tracking-wider mb-1 font-medium">Devnet Transactions</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.tx_devnet_success.toLocaleString()}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">success · {analyticsData.tx_devnet_total.toLocaleString()} total</div>
+                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">success · {analyticsData.tx_devnet_total.toLocaleString()} total</div>
                     </div>
                     <div className="bg-gray-900 border border-green-900 rounded-lg p-4">
                       <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Mainnet Volume</div>
                       <div className="text-2xl font-bold text-white tabular-nums">
                         {analyticsData.volume_mainnet.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
-                      <div className="text-xs text-gray-500 mt-0.5">USDC success</div>
-                      <div className="text-xs text-gray-600 mt-0.5">
+                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC success</div>
+                      <div className="text-sm md:text-xs text-gray-600 mt-0.5">
                         {analyticsData.volume_mainnet_total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total
                       </div>
                     </div>
                     <div className="bg-gray-900 border border-green-900 rounded-lg p-4">
                       <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Mainnet Transactions</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.tx_mainnet_success.toLocaleString()}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">success · {analyticsData.tx_mainnet_total.toLocaleString()} total</div>
+                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">success · {analyticsData.tx_mainnet_total.toLocaleString()} total</div>
                     </div>
                   </div>
                 </div>
 
                 {/* Users section */}
                 <div>
-                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Users</h3>
+                  <h3 className="text-sm md:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Users</h3>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-1 font-medium">Total Users</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.total_users.toLocaleString()}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">registered accounts</div>
+                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">registered accounts</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-1 font-medium">Email Connected</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{emailPct}%</div>
-                      <div className="text-xs text-gray-500 mt-0.5">{analyticsData.users_with_email.toLocaleString()} of {analyticsData.total_users.toLocaleString()} users</div>
+                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">{analyticsData.users_with_email.toLocaleString()} of {analyticsData.total_users.toLocaleString()} users</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-sky-400 uppercase tracking-wider mb-1 font-medium">X Connected</div>
                       {twitterFromSparks != null ? (
                         <>
                           <div className="text-2xl font-bold text-white tabular-nums">{twitterFromSparks.toLocaleString()}</div>
-                          <div className="text-xs text-gray-500 mt-0.5">
+                          <div className="text-sm md:text-xs text-gray-500 mt-0.5">
                             {twitterPct}% of {sparksData.length} tracked users
                           </div>
                         </>
                       ) : (
                         <>
                           <div className="text-2xl font-bold text-gray-600">—</div>
-                          <div className="text-xs text-gray-600 mt-0.5">load Sparks tab first</div>
+                          <div className="text-sm md:text-xs text-gray-600 mt-0.5">load Sparks tab first</div>
                         </>
                       )}
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-purple-400 uppercase tracking-wider mb-1 font-medium">Waitlist Applicants</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.waitlist_total.toLocaleString()}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">{analyticsData.waitlist_granted.toLocaleString()} granted · {analyticsData.waitlist_with_twitter.toLocaleString()} with X</div>
+                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">{analyticsData.waitlist_granted.toLocaleString()} granted · {analyticsData.waitlist_with_twitter.toLocaleString()} with X</div>
                     </div>
                   </div>
                 </div>
@@ -1197,15 +1197,15 @@ export default function AdminDashboard() {
       {activeTab === "sparks" && (
         <div>
           {sparksLoading && (
-            <div className="flex items-center gap-2 text-sm text-gray-400 py-8">
+            <div className="flex items-center gap-2 text-base md:text-sm text-gray-400 py-8">
               <Loader2 className="w-4 h-4 animate-spin" /> Loading Sparks…
             </div>
           )}
           {!sparksLoading && sparksLoaded && (
             <div className="overflow-x-auto rounded-xl border border-gray-800">
-              <table className="w-full text-sm">
+              <table className="w-full text-base md:text-sm">
                 <thead>
-                  <tr className="border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wide">
+                  <tr className="border-b border-gray-800 text-gray-400 text-sm md:text-xs uppercase tracking-wide">
                     <th className="text-left px-4 py-2.5">#</th>
                     <th className="text-left px-4 py-2.5">User</th>
                     <th className="text-right px-4 py-2.5">⚡ Sparks</th>
@@ -1226,7 +1226,7 @@ export default function AdminDashboard() {
                         <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
                         <td className="px-4 py-2.5">
                           <div className="font-medium text-white">{u.username ? `@${u.username}` : "—"}</div>
-                          <div className="text-xs text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
+                          <div className="text-sm md:text-xs text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
                         </td>
                         <td className="px-4 py-2.5 text-right font-bold text-amber-400 tabular-nums">{u.totalSparks.toLocaleString()}</td>
                         {["connect_email","connect_twitter","first_payment","payment_to_unregistered","payment_link_paid","ten_payments"].map((key) => (
@@ -1234,11 +1234,11 @@ export default function AdminDashboard() {
                             {byKey[key]?.completed
                               ? <span className="text-green-400">✓</span>
                               : key === "ten_payments" && byKey[key]?.progress > 0
-                                ? <span className="text-amber-400 text-xs">{byKey[key].progress}/10</span>
+                                ? <span className="text-amber-400 text-sm md:text-xs">{byKey[key].progress}/10</span>
                                 : <span className="text-gray-700">–</span>}
                           </td>
                         ))}
-                        <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-xs">
+                        <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-sm md:text-xs">
                           {byKey["ten_payments"]?.progress ?? 0}
                         </td>
                       </tr>
@@ -1252,7 +1252,7 @@ export default function AdminDashboard() {
             </div>
           )}
           {!sparksLoading && !sparksLoaded && (
-            <div className="text-gray-600 text-sm py-8 text-center">Click Refresh to load Sparks data.</div>
+            <div className="text-gray-600 text-base md:text-sm py-8 text-center">Click Refresh to load Sparks data.</div>
           )}
         </div>
       )}
@@ -1261,7 +1261,7 @@ export default function AdminDashboard() {
       {activeTab === "payments" && <>
 
       {/* Stats bar */}
-      <div className="flex flex-wrap gap-2 mb-4 text-xs">
+      <div className="flex flex-wrap gap-2 mb-4 text-sm md:text-xs">
         <span className="text-gray-400">
           Loaded <span className="text-white font-semibold">{payments.length}</span>
           {" "}/ total <span className="text-white font-semibold">{total}</span>
@@ -1282,7 +1282,7 @@ export default function AdminDashboard() {
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && applySearch()}
-            className="pl-9 bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-sm"
+            className="pl-9 bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-base md:text-sm"
           />
         </div>
         <Select value={devnetFilter} onValueChange={(v: "all" | "devnet" | "mainnet") => setDevnetFilter(v)}>
@@ -1317,7 +1317,7 @@ export default function AdminDashboard() {
 
       {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-gray-800">
-        <table className="w-full text-xs border-collapse">
+        <table className="w-full text-sm md:text-xs border-collapse">
           <thead>
             <tr className="bg-gray-900 text-gray-500 text-[10px] uppercase tracking-wider border-b border-gray-800">
               <th className="w-5 px-2 py-2" />
@@ -1469,7 +1469,7 @@ export default function AdminDashboard() {
 
       {/* Pagination */}
       {total > LIMIT && (
-        <div className="flex items-center justify-between mt-4 text-sm text-gray-400">
+        <div className="flex items-center justify-between mt-4 text-base md:text-sm text-gray-400">
           <span>{total} total payments · page {currentPage} of {totalPages}</span>
           <div className="flex gap-2">
             <Button
@@ -1507,7 +1507,7 @@ export default function AdminDashboard() {
 
           <div className="space-y-4 py-2">
             <div>
-              <Label className="text-gray-400 text-xs mb-1.5 block">Status</Label>
+              <Label className="text-gray-400 text-sm md:text-xs mb-1.5 block">Status</Label>
               <Select
                 value={editForm.status}
                 onValueChange={(v) => setEditForm((f) => ({ ...f, status: v }))}
@@ -1524,7 +1524,7 @@ export default function AdminDashboard() {
             </div>
 
             <div>
-              <Label className="text-gray-400 text-xs mb-1.5 block">Expires at</Label>
+              <Label className="text-gray-400 text-sm md:text-xs mb-1.5 block">Expires at</Label>
               <Input
                 type="datetime-local"
                 value={editForm.expires_at}
@@ -1534,7 +1534,7 @@ export default function AdminDashboard() {
             </div>
 
             <div>
-              <Label className="text-gray-400 text-xs mb-1.5 block">Paid at</Label>
+              <Label className="text-gray-400 text-sm md:text-xs mb-1.5 block">Paid at</Label>
               <Input
                 type="datetime-local"
                 value={editForm.paid_at}
@@ -1544,22 +1544,22 @@ export default function AdminDashboard() {
             </div>
 
             <div>
-              <Label className="text-gray-400 text-xs mb-1.5 block">Description</Label>
+              <Label className="text-gray-400 text-sm md:text-xs mb-1.5 block">Description</Label>
               <Textarea
                 value={editForm.description}
                 onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
-                className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs"
+                className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm md:text-xs"
                 rows={2}
                 placeholder="Optional message"
               />
             </div>
 
             <div>
-              <Label className="text-gray-400 text-xs mb-1.5 block">Recipient address (Solana)</Label>
+              <Label className="text-gray-400 text-sm md:text-xs mb-1.5 block">Recipient address (Solana)</Label>
               <Input
                 value={editForm.recipient_address}
                 onChange={(e) => setEditForm((f) => ({ ...f, recipient_address: e.target.value }))}
-                className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs"
+                className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm md:text-xs"
                 placeholder="Solana wallet address"
               />
             </div>

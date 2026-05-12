@@ -14,7 +14,7 @@ export default function WithdrawalsPage() {
   }, [router]);
   return (
     <div className="min-h-[40vh] flex items-center justify-center">
-      <p className="text-sm text-gray-500">Redirecting…</p>
+      <p className="text-base md:text-sm text-gray-500">Redirecting…</p>
     </div>
   );
 }

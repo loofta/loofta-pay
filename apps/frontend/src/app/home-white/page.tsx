@@ -80,11 +80,11 @@ export default function LandingPageWhite() {
           className="relative z-10 mt-24 w-full max-w-xs mx-auto"
         >
           <div className="rounded-2xl border border-black/[0.07] bg-white p-7 text-left shadow-xl shadow-black/[0.06]">
-            <p className="text-slate-400 text-sm font-medium mb-2">Send</p>
+            <p className="text-slate-400 text-base md:text-sm font-medium mb-2">Send</p>
             <p className="text-[#0f0f12] font-bold tabular-nums mb-1" style={{ fontSize: "3.2rem", lineHeight: 1 }}>
               $150 <span className="text-slate-300 text-2xl font-semibold">USD</span>
             </p>
-            <p className="text-slate-400 text-sm font-medium mt-5 mb-2">To</p>
+            <p className="text-slate-400 text-base md:text-sm font-medium mt-5 mb-2">To</p>
             <div className="flex items-center gap-2 rounded-xl bg-slate-50 border border-black/[0.07] px-3 py-3">
               <span className="text-slate-400 text-base">@</span>
               <span className="text-[#0f0f12] text-base font-mono">satoshi</span>
@@ -93,7 +93,7 @@ export default function LandingPageWhite() {
               Continue →
             </div>
           </div>
-          <div className="absolute -top-3 -right-3 rounded-full border border-black/[0.07] bg-white px-3 py-1.5 text-xs text-slate-500 font-medium shadow-md">
+          <div className="absolute -top-3 -right-3 rounded-full border border-black/[0.07] bg-white px-3 py-1.5 text-sm md:text-xs text-slate-500 font-medium shadow-md">
             🔒 Private payment
           </div>
         </motion.div>
@@ -216,7 +216,7 @@ export default function LandingPageWhite() {
             <div className="relative z-10 grid md:grid-cols-2 gap-14 items-center">
               <div>
                 <div
-                  className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium text-white mb-8"
+                  className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-base md:text-sm font-medium text-white mb-8"
                   style={{ background: GRAD }}
                 >
                   <Icon3DShield size={18} />
@@ -249,7 +249,7 @@ export default function LandingPageWhite() {
                 <div className="w-full max-w-xs rounded-2xl border border-black/[0.07] bg-[#fafaf8] p-6 space-y-4 shadow-sm">
                   <div className="flex items-center justify-between">
                     <span className="text-slate-600 text-base font-medium">Payment link</span>
-                    <span className="text-xs font-semibold px-3 py-1 rounded-full text-white" style={{ background: GRAD }}>Private</span>
+                    <span className="text-sm md:text-xs font-semibold px-3 py-1 rounded-full text-white" style={{ background: GRAD }}>Private</span>
                   </div>
                   <div className="h-px bg-black/[0.05]" />
                   {[
@@ -285,7 +285,7 @@ export default function LandingPageWhite() {
             viewport={{ once: true, margin: "-60px" }}
             transition={{ duration: 0.55 }}
           >
-            <p className="text-sm font-semibold uppercase tracking-widest mb-6">
+            <p className="text-base md:text-sm font-semibold uppercase tracking-widest mb-6">
               <GradientText>Earn</GradientText>
             </p>
             <h2 className="text-5xl md:text-6xl lg:text-7xl font-bold leading-[0.95] tracking-tight mb-8 text-[#0f0f12]">

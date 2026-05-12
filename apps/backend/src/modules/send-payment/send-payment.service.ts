@@ -153,10 +153,12 @@ export class SendPaymentService {
     const mbVolumeFeeUnits = grossUnits - baseUnits;
     const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, senderWallet.trim(), effectiveMint, this.connection);
     const estimatedFeeUnits = mbVolumeFeeUnits + relayFeeUnits;
-    const feeUnits = (actualDebitUnits != null && actualDebitUnits > baseUnits)
-      ? actualDebitUnits - baseUnits
+    // For private transfers the main instruction is confidential; actualDebitUnits ≈ relay fee only.
+    // Total fee = estimated BPS + actual decoded relay.
+    const feeUnits = (actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits)
+      ? mbVolumeFeeUnits + actualDebitUnits
       : estimatedFeeUnits;
-    this.logger.log(`[SendPayment] decoded debit=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits} (${actualDebitUnits != null && actualDebitUnits > baseUnits ? 'decoded' : 'estimated'})`);
+    this.logger.log(`[SendPayment] decoded relay=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits} (${actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits ? 'actual-relay' : 'estimated'})`);
 
     return {
       ...txResponse,

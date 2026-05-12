@@ -28,7 +28,7 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
 
   return (
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] flex items-center justify-center">
-      <p className="text-slate-400 text-sm">Taking you to Send…</p>
+      <p className="text-slate-400 text-base md:text-sm">Taking you to Send…</p>
     </div>
   );
 }

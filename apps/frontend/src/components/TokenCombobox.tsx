@@ -159,7 +159,7 @@ export function TokenCombobox({
 							{selectedToken ? selectedToken.symbol : placeholder}
 						</span>
 						{selectedToken ? (
-							<span className="text-xs text-muted-foreground ml-1">
+							<span className="text-sm md:text-xs text-muted-foreground ml-1">
 								{formatChainLabel(selectedToken.chain)}
 							</span>
 						) : null}
@@ -195,7 +195,7 @@ export function TokenCombobox({
 
 					{/* Header */}
 					<div className="px-4 py-3 border-b shrink-0">
-						<DialogTitle className="text-sm font-medium text-muted-foreground">Select token</DialogTitle>
+						<DialogTitle className="text-base md:text-sm font-medium text-muted-foreground">Select token</DialogTitle>
 					</div>
 
 					{/* Body: stacked on mobile, side-by-side on desktop */}
@@ -207,7 +207,7 @@ export function TokenCombobox({
 							"overflow-x-auto sm:overflow-x-hidden sm:overflow-y-auto",
 							"sm:w-40 p-1"
 						)}>
-							<div className="hidden sm:block px-3 py-2 text-xs font-medium text-muted-foreground">
+							<div className="hidden sm:block px-3 py-2 text-sm md:text-xs font-medium text-muted-foreground">
 								Select network
 							</div>
 							<div className="flex flex-row sm:flex-col gap-1 p-1">
@@ -216,7 +216,7 @@ export function TokenCombobox({
 									type="button"
 									onClick={() => setSelectedChain(undefined)}
 									className={cn(
-										"whitespace-nowrap text-left rounded-xl px-3 py-2 text-sm transition-colors",
+										"whitespace-nowrap text-left rounded-xl px-3 py-2 text-base md:text-sm transition-colors",
 										!selectedChain ? "bg-muted font-semibold" : "hover:bg-muted/60"
 									)}
 								>
@@ -230,7 +230,7 @@ export function TokenCombobox({
 											type="button"
 											onClick={() => setSelectedChain(c)}
 											className={cn(
-												"whitespace-nowrap text-left rounded-xl px-3 py-2 text-sm transition-colors",
+												"whitespace-nowrap text-left rounded-xl px-3 py-2 text-base md:text-sm transition-colors",
 												active ? "bg-muted font-semibold" : "hover:bg-muted/60"
 											)}
 										>
@@ -262,7 +262,7 @@ export function TokenCombobox({
 								<CommandInput placeholder="Search token, network or address" value={query} onValueChange={setQuery} />
 								<CommandList className="max-h-[calc(100dvh-140px)] sm:max-h-[380px] overflow-y-auto">
 									{loading ? (
-										<div className="py-4 text-center text-sm text-muted-foreground">Searching…</div>
+										<div className="py-4 text-center text-base md:text-sm text-muted-foreground">Searching…</div>
 									) : null}
 									<CommandEmpty>No token found.</CommandEmpty>
 									{isSearching ? (
@@ -283,7 +283,7 @@ export function TokenCombobox({
 															<TokenIcon token={it.token} chain={it.chain} size={22} />
 															<div className="flex-1 overflow-hidden">
 																<div className="font-semibold truncate">{it.symbol}</div>
-																<div className="text-xs text-muted-foreground truncate">
+																<div className="text-sm md:text-xs text-muted-foreground truncate">
 																	{it.name} · {formatChainLabel(it.chain)}
 																</div>
 															</div>
@@ -317,7 +317,7 @@ export function TokenCombobox({
 															<TokenIcon token={tok ?? g} chain={effectiveChain} size={22} />
 															<div className="flex-1 overflow-hidden">
 																<div className="font-semibold truncate">{g.symbol}</div>
-																<div className="text-xs text-muted-foreground truncate">
+																<div className="text-sm md:text-xs text-muted-foreground truncate">
 																	{g.name} · {formatChainLabel(effectiveChain)}
 																	{showMultiChain && (
 																		<span className="ml-1 text-primary/70">+{availableChains.length - 1} more</span>

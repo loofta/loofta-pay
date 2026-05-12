@@ -141,14 +141,14 @@ function ProgressSteps({
               {s.status === "active" && <Loader2 className="h-5 w-5 text-blue-400 animate-spin" />}
               {s.status === "failed" && <AlertTriangle className="h-5 w-5 text-red-400" />}
               {s.status === "pending" && (
-                <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-xs font-bold ${dark ? "border-white/20 text-slate-500" : "border-gray-300 text-gray-400"}`}>
+                <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-sm md:text-xs font-bold ${dark ? "border-white/20 text-slate-500" : "border-gray-300 text-gray-400"}`}>
                   {i + 1}
                 </span>
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <p className={`text-sm font-medium ${textBase}`}>{s.label}</p>
-              {s.sublabel && <p className={`text-sm mt-0.5 ${textSub}`}>{s.sublabel}</p>}
+              <p className={`text-base md:text-sm font-medium ${textBase}`}>{s.label}</p>
+              {s.sublabel && <p className={`text-base md:text-sm mt-0.5 ${textSub}`}>{s.sublabel}</p>}
             </div>
           </div>
         ))}
@@ -159,8 +159,8 @@ function ProgressSteps({
         <div className={`rounded-xl border p-3 flex items-center gap-3 ${borderBase}`}>
           <ArrowRight className={`h-4 w-4 shrink-0 ${dark ? "text-slate-400" : "text-gray-400"}`} />
           <div>
-            <p className={`text-sm ${textSub}`}>You receive (estimated)</p>
-            <p className={`text-sm font-semibold ${textBase}`}>
+            <p className={`text-base md:text-sm ${textSub}`}>You receive (estimated)</p>
+            <p className={`text-base md:text-sm font-semibold ${textBase}`}>
               ~{Number(estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 6 })} {destinationToken}
               <span className={`font-normal ml-1 ${textSub}`}>on {destinationChain}</span>
             </p>
@@ -174,7 +174,7 @@ function ProgressSteps({
           href={getExplorerTxUrl("solana", txSignature)}
           target="_blank"
           rel="noreferrer"
-          className={`flex items-center gap-2 text-sm rounded-lg border px-3 py-2 transition-colors ${dark ? "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10" : "border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100"}`}
+          className={`flex items-center gap-2 text-base md:text-sm rounded-lg border px-3 py-2 transition-colors ${dark ? "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10" : "border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100"}`}
         >
           <ExternalLink className="h-3.5 w-3.5 shrink-0" />
           View Solana transaction
@@ -600,7 +600,7 @@ export function BalanceModal({
 
           <DialogHeader className="pb-1 pt-2 sm:pt-0">
             <DialogTitle className={dark ? "text-white text-lg sm:text-xl" : undefined}>Balance</DialogTitle>
-            <DialogDescription className={dark ? "text-slate-400 text-sm" : undefined}>
+            <DialogDescription className={dark ? "text-slate-400 text-base md:text-sm" : undefined}>
               {loadingBalance ? "Loading…" : `$${balanceUSD} USDC available`}
             </DialogDescription>
           </DialogHeader>
@@ -610,14 +610,14 @@ export function BalanceModal({
             <button
               type="button"
               onClick={() => setTab("topup")}
-              className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "topup" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
+              className={`flex-1 rounded-md py-2 text-base md:text-sm font-medium ${tab === "topup" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
             >
               Top Up
             </button>
             <button
               type="button"
               onClick={() => setTab("withdraw")}
-              className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "withdraw" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
+              className={`flex-1 rounded-md py-2 text-base md:text-sm font-medium ${tab === "withdraw" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
             >
               {withdrawStep !== "idle" && withdrawStep !== "complete" && withdrawStep !== "failed" ? (
                 <span className="flex items-center justify-center gap-1.5">
@@ -632,7 +632,7 @@ export function BalanceModal({
                 setRecentWithdrawals(getWithdrawalHistory());
                 setTab("history");
               }}
-              className={`flex-1 rounded-md py-2 text-sm font-medium ${tab === "history" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
+              className={`flex-1 rounded-md py-2 text-base md:text-sm font-medium ${tab === "history" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
             >
               Recent
             </button>
@@ -644,10 +644,10 @@ export function BalanceModal({
               {devnetMode ? (
                 <div className={`rounded-xl border-2 p-4 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
                   <p className={`text-base font-semibold mb-1 ${dark ? "text-white" : "text-gray-900"}`}>Deposit USDC (devnet)</p>
-                  <p className={`text-sm mb-3 ${dark ? "text-slate-400" : "text-gray-500"}`}>Send devnet USDC directly to your wallet address.</p>
+                  <p className={`text-base md:text-sm mb-3 ${dark ? "text-slate-400" : "text-gray-500"}`}>Send devnet USDC directly to your wallet address.</p>
                   {solanaAddress && (
                     <div className={`flex items-center gap-2 rounded-lg p-3 ${dark ? "bg-white/5" : "bg-white border border-gray-200"}`}>
-                      <p className={`text-sm font-mono flex-1 break-all ${dark ? "text-slate-300" : "text-gray-700"}`}>{solanaAddress}</p>
+                      <p className={`text-base md:text-sm font-mono flex-1 break-all ${dark ? "text-slate-300" : "text-gray-700"}`}>{solanaAddress}</p>
                       <button
                         type="button"
                         onClick={() => {
@@ -685,7 +685,7 @@ export function BalanceModal({
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit USDC on Solana</p>
-                      <p className={`text-sm mt-1 leading-relaxed ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      <p className={`text-base md:text-sm mt-1 leading-relaxed ${dark ? "text-slate-400" : "text-gray-500"}`}>
                         Buy with credit card or send from a Solana wallet
                       </p>
                     </div>
@@ -707,7 +707,7 @@ export function BalanceModal({
                         <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cross-chain deposit</p>
                         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-400" : "bg-gray-200 text-gray-500"}`}>Coming soon</span>
                       </div>
-                      <p className={`text-sm mt-1 mb-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>25+ networks & 250+ tokens  supported</p>
+                      <p className={`text-base md:text-sm mt-1 mb-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>25+ networks & 250+ tokens  supported</p>
 
                     </div>
                   </div>
@@ -727,7 +727,7 @@ export function BalanceModal({
                         <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with transfer</p>
                         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-400" : "bg-gray-200 text-gray-500"}`}>Coming soon</span>
                       </div>
-                      <p className={`text-sm mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      <p className={`text-base md:text-sm mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
                         CashApp · Venmo · Revolut · Wise · PayPal
                       </p>
                     </div>
@@ -741,7 +741,7 @@ export function BalanceModal({
           {tab === "history" && (
             <div className="py-2 min-h-0 overflow-y-auto sm:max-h-[60vh]">
               {recentWithdrawals.length === 0 ? (
-                <p className={`text-sm text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent withdrawals.</p>
+                <p className={`text-base md:text-sm text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent withdrawals.</p>
               ) : (
                 <ul className="space-y-2">
                   {recentWithdrawals.map((item) => {
@@ -753,33 +753,33 @@ export function BalanceModal({
                         >
                           <div className="flex items-center gap-3">
                             <div className="min-w-0 flex-1">
-                              <p className={`font-semibold text-sm ${dark ? "text-white" : "text-gray-900"}`}>
+                              <p className={`font-semibold text-base md:text-sm ${dark ? "text-white" : "text-gray-900"}`}>
                                 ${item.amountUSDC.toFixed(2)} → {item.destinationToken}
                                 {item.estimatedOut && (
-                                  <span className={`font-normal text-sm ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                                  <span className={`font-normal text-base md:text-sm ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
                                     (~{Number(item.estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} received)
                                   </span>
                                 )}
                               </p>
-                              <p className={`text-sm font-mono mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                              <p className={`text-base md:text-sm font-mono mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
                                 To {shortAddr(item.destinationAddress)} · {item.destinationChain}
                               </p>
-                              <p className={`text-sm mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                              <p className={`text-base md:text-sm mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
                                 {new Date(item.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                               </p>
                             </div>
                             <div className="flex flex-col items-end gap-1.5 shrink-0">
                               {isInProgress ? (
-                                <span className="flex items-center gap-1 text-sm font-medium text-blue-400">
+                                <span className="flex items-center gap-1 text-base md:text-sm font-medium text-blue-400">
                                   <Loader2 className="h-3 w-3 animate-spin" />
                                   Bridging
                                 </span>
                               ) : item.nearIntentsComplete && item.nearIntentsStatus ? (
-                                <span className={`text-sm font-medium ${SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "text-emerald-400" : "text-amber-400"}`}>
+                                <span className={`text-base md:text-sm font-medium ${SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "text-emerald-400" : "text-amber-400"}`}>
                                   {SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "Completed" : item.nearIntentsStatus}
                                 </span>
                               ) : !item.isNearIntents ? (
-                                <span className="text-sm font-medium text-emerald-400">Sent</span>
+                                <span className="text-base md:text-sm font-medium text-emerald-400">Sent</span>
                               ) : null}
                               <a
                                 href={getExplorerTxUrl("solana", item.txSignature)}
@@ -794,7 +794,7 @@ export function BalanceModal({
 
                           {/* Bridge status for in-progress */}
                           {isInProgress && item.nearIntentsStatus && (
-                            <p className={`text-sm mt-2 pt-2 border-t ${dark ? "border-white/10 text-slate-400" : "border-gray-100 text-gray-500"}`}>
+                            <p className={`text-base md:text-sm mt-2 pt-2 border-t ${dark ? "border-white/10 text-slate-400" : "border-gray-100 text-gray-500"}`}>
                               {bridgeStatusLabel(item.nearIntentsStatus)}
                             </p>
                           )}
@@ -810,7 +810,7 @@ export function BalanceModal({
                                 setDepositAddressForPolling(item.depositAddress!);
                                 setTab("withdraw");
                               }}
-                              className={`mt-2 text-sm font-medium underline underline-offset-2 ${dark ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"}`}
+                              className={`mt-2 text-base md:text-sm font-medium underline underline-offset-2 ${dark ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"}`}
                             >
                               Track progress →
                             </button>
@@ -851,7 +851,7 @@ export function BalanceModal({
             <div className="space-y-4 py-4">
               {/* Balance */}
               <div>
-                <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                <Label className={`text-base md:text-sm font-medium mb-2 block ${dark ? "text-slate-400" : "text-gray-500"}`}>
                   {isNearIntentsWithdraw ? "Paying from (USDC on Solana)" : "Available balance"}
                 </Label>
                 <div className={`p-4 rounded-xl border-2 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
@@ -866,7 +866,7 @@ export function BalanceModal({
                       )}
                     </div>
                     <div>
-                      <p className={`text-sm font-medium ${dark ? "text-slate-300" : "text-gray-600"}`}>
+                      <p className={`text-base md:text-sm font-medium ${dark ? "text-slate-300" : "text-gray-600"}`}>
                         {isNearIntentsWithdraw ? "USDC / Solana" : `${effectiveToken?.symbol || "USDC"} / ${effectiveToken?.chain || "Solana"}`}
                       </p>
                       <p className={`text-xl font-semibold mt-0.5 ${dark ? "text-white" : "text-gray-900"}`}>
@@ -876,13 +876,13 @@ export function BalanceModal({
                   </div>
                 </div>
                 {!loadingBalance && payFromBalanceNum <= 0 && isUSDCOnSolana && (
-                  <p className={`text-sm mt-2 ${dark ? "text-amber-400" : "text-amber-600"}`}>No balance to withdraw.</p>
+                  <p className={`text-base md:text-sm mt-2 ${dark ? "text-amber-400" : "text-amber-600"}`}>No balance to withdraw.</p>
                 )}
               </div>
 
               {/* Token selector */}
               <div>
-                <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-300" : "text-gray-700"}`}>
+                <Label className={`text-base md:text-sm font-medium mb-2 block ${dark ? "text-slate-300" : "text-gray-700"}`}>
                   Withdraw to
                 </Label>
                 <TokenCombobox
@@ -894,11 +894,11 @@ export function BalanceModal({
                   defaultShowAllChains
                 />
                 {BETA_SOLANA_ONLY && !isUSDCOnSolana ? (
-                  <p className={`text-sm mt-1.5 font-medium ${dark ? "text-amber-400" : "text-amber-600"}`}>
+                  <p className={`text-base md:text-sm mt-1.5 font-medium ${dark ? "text-amber-400" : "text-amber-600"}`}>
                     Cross-chain withdrawals coming soon — only USDC on Solana is available in beta.
                   </p>
                 ) : (
-                  <p className={`text-sm mt-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                  <p className={`text-base md:text-sm mt-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
                     Free withdrawal to any Solana wallet.
                   </p>
                 )}
@@ -919,23 +919,23 @@ export function BalanceModal({
                     placeholder="0.00"
                     value={withdrawAmount}
                     onChange={(e) => setWithdrawAmount(e.target.value)}
-                    className={`flex-1 font-mono text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                    className={`flex-1 font-mono text-base md:text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
                   />
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
                     onClick={() => setWithdrawAmount(spendableBalance.toFixed(6).replace(/\.?0+$/, ""))}
-                    className={`shrink-0 px-3 text-sm ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}
+                    className={`shrink-0 px-3 text-base md:text-sm ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}
                   >
                     Max
                   </Button>
                 </div>
                 {withdrawAmountNum > 0 && withdrawAmountNum < 1 && (
-                  <p className="text-sm text-red-400 mt-1">Minimum withdrawal is $1.00 USDC.</p>
+                  <p className="text-base md:text-sm text-red-400 mt-1">Minimum withdrawal is $1.00 USDC.</p>
                 )}
                 {withdrawAmountNum > spendableBalance && spendableBalance > 0 && (
-                  <p className="text-sm text-red-400 mt-1">Exceeds available balance of {spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC.</p>
+                  <p className="text-base md:text-sm text-red-400 mt-1">Exceeds available balance of {spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC.</p>
                 )}
               </div>
 
@@ -949,22 +949,22 @@ export function BalanceModal({
                   placeholder={isUSDCOnSolana ? "Enter Solana address" : `Enter ${effectiveToken?.chain || "destination"} address`}
                   value={withdrawAddress}
                   onChange={(e) => setWithdrawAddress(e.target.value)}
-                  className={`mt-1 font-mono text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                  className={`mt-1 font-mono text-base md:text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
                 />
                 {isUSDCOnSolana && addressRiskStatus === "checking" && (
-                  <p className={`text-sm mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
+                  <p className={`text-base md:text-sm mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
                     <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
                     Checking address with Range…
                   </p>
                 )}
                 {isUSDCOnSolana && addressRiskStatus === "safe" && (
-                  <p className="text-sm text-emerald-400 mt-1.5 flex items-center gap-1.5 font-medium">
+                  <p className="text-base md:text-sm text-emerald-400 mt-1.5 flex items-center gap-1.5 font-medium">
                     <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
                     Address compliant — safe to withdraw
                   </p>
                 )}
                 {isUSDCOnSolana && addressRiskStatus === "unsafe" && (
-                  <p className="text-sm text-red-400 mt-1.5 flex items-center gap-1.5 font-medium">
+                  <p className="text-base md:text-sm text-red-400 mt-1.5 flex items-center gap-1.5 font-medium">
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                     Address flagged — withdrawal blocked
                   </p>
@@ -972,7 +972,7 @@ export function BalanceModal({
               </div>
 
               {devnetMode && (
-                <p className={`text-sm text-center ${dark ? "text-amber-400" : "text-amber-600"}`}>
+                <p className={`text-base md:text-sm text-center ${dark ? "text-amber-400" : "text-amber-600"}`}>
                   Withdrawals are not available on devnet.
                 </p>
               )}
@@ -1006,7 +1006,7 @@ export function BalanceModal({
                 </Button>
               </div>
               {!loadingBalance && payFromBalanceNum <= 0 && (
-                <p className={`text-sm text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>Add funds to withdraw.</p>
+                <p className={`text-base md:text-sm text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>Add funds to withdraw.</p>
               )}
             </div>
           )}
@@ -1018,7 +1018,7 @@ export function BalanceModal({
           <button
             type="button"
             onClick={onClose}
-            className={`w-full py-4 rounded-2xl text-sm font-semibold transition-colors ${dark ? "bg-white/10 text-white hover:bg-white/15" : "bg-gray-100 text-gray-900 hover:bg-gray-200"}`}
+            className={`w-full py-4 rounded-2xl text-base md:text-sm font-semibold transition-colors ${dark ? "bg-white/10 text-white hover:bg-white/15" : "bg-gray-100 text-gray-900 hover:bg-gray-200"}`}
           >
             Close
           </button>

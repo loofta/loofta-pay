@@ -48,7 +48,7 @@ export class AppErrorBoundary extends React.Component<{ children: React.ReactNod
             <p className="text-white font-semibold">Something went wrong</p>
             <button
               onClick={() => this.setState({ error: null })}
-              className="text-sm text-slate-400 underline underline-offset-2 hover:text-white"
+              className="text-base md:text-sm text-slate-400 underline underline-offset-2 hover:text-white"
             >
               Try again
             </button>

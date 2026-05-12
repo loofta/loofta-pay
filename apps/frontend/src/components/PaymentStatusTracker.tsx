@@ -562,7 +562,7 @@ export function PaymentStatusTracker({
             style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
           />
         </div>
-        <div className="mt-2 text-center text-sm text-gray-500">
+        <div className="mt-2 text-center text-base md:text-sm text-gray-500">
           Step {completedSteps} of {nonSuccessSteps.length}
         </div>
       </div>
@@ -632,7 +632,7 @@ export function PaymentStatusTracker({
                       {step.label}
                     </h4>
                     {isActive && step.estimatedTime && (
-                      <span className="text-sm text-orange-600 font-medium">
+                      <span className="text-base md:text-sm text-orange-600 font-medium">
                         ~{step.estimatedTime}s
                       </span>
                     )}
