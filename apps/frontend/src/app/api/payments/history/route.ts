@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { isNonMainnetCluster } from "@/lib/solanaCluster";
 
-// Only safe fields — recipient_address excluded to protect privacy
+// recipient_address included only to detect PENDING_* prefixes — real wallet addresses are stripped in normalisePayment
 const PAYMENT_SELECT =
-  "id, short_id, amount, direction, status, created_at, paid_at, recipient_username, sender_user_id, recipient_user_id, recipient_email, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet";
+  "id, short_id, amount, direction, status, created_at, paid_at, recipient_username, sender_user_id, recipient_user_id, recipient_email, recipient_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet";
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -31,6 +31,7 @@ export type PaymentHistoryClaim = {
   paid_at: string | null;
   recipient_username?: string | null;
   recipient_email?: string | null;
+  recipient_address?: string;
   creator_email: string | null;
   creator_username?: string | null;
   created_by: string | null;
@@ -68,6 +69,11 @@ function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & {
     paid_at: (row.paid_at as string | null) ?? null,
     recipient_username: (row.recipient_username as string | null) ?? null,
     recipient_email: (row.recipient_email as string | null) ?? null,
+    // Only expose recipient_address for PENDING_* values — real wallet addresses stay hidden
+    recipient_address: (() => {
+      const addr = String(row.recipient_address ?? "").trim();
+      return addr.startsWith("PENDING_EMAIL:") || addr.startsWith("PENDING_USERNAME:") ? addr : undefined;
+    })(),
     creator_email: null,
     created_by: (row.created_by as string | null) ?? null,
     is_private: null,
