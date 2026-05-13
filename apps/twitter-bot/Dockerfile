@@ -2,10 +2,11 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package.json ./
+COPY apps/twitter-bot/package.json ./
 RUN npm install
 
-COPY . .
+COPY apps/twitter-bot .
+
 RUN npm run build
 
 FROM node:20-alpine AS runner
