@@ -194,7 +194,7 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
           {/* ── PAID state — shown to everyone ── */}
           {isPaid && paymentPath && (
             <GradientActionButton onClick={() => router.push(paymentPath)}>
-              View payment <ArrowRight className="h-4 w-4" />
+              {request.payment_status?.toUpperCase() === 'PRIVATE_TRANSFER_PENDING' ? 'Claim payment' : 'View payment'} <ArrowRight className="h-4 w-4" />
             </GradientActionButton>
           )}
 
