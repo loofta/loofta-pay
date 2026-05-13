@@ -4,9 +4,9 @@ import React, { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
-import { usePrivy } from '@privy-io/react-auth'
+import { usePrivy, useLinkAccount } from '@privy-io/react-auth'
 import { motion } from 'framer-motion'
-import { Loader2, ArrowDown, Lock, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react'
+import { Loader2, ArrowDown, Lock, AlertCircle, CheckCircle2, ArrowRight, Mail } from 'lucide-react'
 import { GradientActionButton } from '@/components/ui/GradientActionButton'
 import confetti from 'canvas-confetti'
 
@@ -42,8 +42,11 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
   const { short_id } = React.use(params)
   const router = useRouter()
   const { ready, authenticated, login, user, getAccessToken } = usePrivy()
+  const { linkEmail } = useLinkAccount({})
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const hasEmail = user?.linkedAccounts?.some((a: any) => a.type === 'email' || a.type === 'google' || a.type === 'apple')
 
   const { data: request, isLoading } = useQuery<TwitterPaymentRequest>({
     queryKey: ['twitter-payment', short_id],
@@ -194,9 +197,27 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
 
               {/* Recipient — payment not initiated yet */}
               {isRecipient && !request.payment_id && (
-                <div className="text-center space-y-1.5 py-2">
-                  <p className="text-base font-medium text-white">You&apos;ll receive {amountDisplay}</p>
-                  <p className="text-sm text-white/40">Waiting for @{request.sender_twitter} to send it. You&apos;ll get a notification once it&apos;s on its way.</p>
+                <div className="space-y-3">
+                  <div className="text-center space-y-1.5 py-1">
+                    <p className="text-base font-medium text-white">You&apos;ll receive {amountDisplay}</p>
+                    <p className="text-sm text-white/40">
+                      Waiting for @{request.sender_twitter} to send it. Come back once it&apos;s done.
+                    </p>
+                  </div>
+                  {hasEmail ? (
+                    <div className="flex items-center gap-2 rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 py-2.5">
+                      <Mail className="h-4 w-4 text-white/30 shrink-0" />
+                      <p className="text-sm text-white/40">You&apos;ll get an email notification when it arrives.</p>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => linkEmail()}
+                      className="w-full flex items-center gap-2 rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 py-2.5 hover:bg-white/[0.07] transition-colors text-left"
+                    >
+                      <Mail className="h-4 w-4 text-white/40 shrink-0" />
+                      <p className="text-sm text-white/50">Add your email to be notified when it&apos;s on its way.</p>
+                    </button>
+                  )}
                 </div>
               )}
 
