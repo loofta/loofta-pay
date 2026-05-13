@@ -47,5 +47,16 @@ export function parseTweet(
   if (recipient === sender) return null
   if (recipient === botHandle) return null
 
+  // Reject tweets that contain significant extra content beyond the command —
+  // these are likely informational/explanatory, not actual payment requests.
+  // Strip the matched command and all @mentions, then count real words left over.
+  const extra = tweetText
+    .replace(match[0], '')   // remove the command itself
+    .replace(/@\w+/g, '')    // remove any other @mentions
+    .replace(/[^\p{L}\p{N}\s]/gu, '') // strip punctuation & emoji
+    .trim()
+  const extraWords = extra.split(/\s+/).filter(w => w.length >= 3)
+  if (extraWords.length > 4) return null
+
   return { senderHandle: sender, recipientHandle: recipient, amountUsd: amount }
 }
