@@ -154,7 +154,7 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
                 <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
                 <p className="text-sm text-emerald-300">Payment created — finish sending it</p>
               </div>
-              <GradientActionButton onClick={() => router.push(`/c/${request.payment_id}`)}>
+              <GradientActionButton onClick={handleSend} loading={sending} loadingText="Loading payment…">
                 Proceed to payment <ArrowRight className="h-4 w-4" />
               </GradientActionButton>
             </div>

@@ -3511,68 +3511,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                 )}
 
-                {/* Payment method */}
-                {usdcSolanaToken && (
-                  <div className="mt-5">
-                    <button
-                      type="button"
-                      onClick={() => setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain })}
-                      className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 transition-colors text-left ${selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain
-                        ? 'border-green-400 bg-green-100'
-                        : 'border-gray-300 bg-white hover:bg-gray-50'
-                        }`}
-                    >
-                      <TokenIcon token={usdcSolanaToken} chain="solana" size={32} />
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className={cn(
-                            "text-lg font-semibold",
-                            selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-900" : "text-gray-900"
-                          )}>Pay USDC on Solana</span>
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-200 text-green-800 text-sm md:text-xs font-medium">
-                            FREE
-                          </span>
-                        </div>
-                        <div className={cn(
-                          "text-base md:text-sm mt-0.5",
-                          selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain ? "text-green-800" : "text-slate-200"
-                        )}>
-                          Pay now with Phantom or your Loofta balance
-                        </div>
-                      </div>
-                      {selectedFrom?.symbol === usdcSolanaToken.symbol && selectedFrom?.chain === usdcSolanaToken.chain && (
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-600">
-                          <path d="M20 6L9 17l-5-5" />
-                        </svg>
-                      )}
-                    </button>
-                  </div>
-                )}
-
-                {/* Other token selector */}
-                <div className="mt-3">
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="flex-1 h-px bg-white/10" />
-                    <span className="text-base md:text-sm font-medium text-slate-500">or choose another token</span>
-                    <div className="flex-1 h-px bg-white/10" />
-                  </div>
-                  <TokenCombobox
-                    tokens={filteredTokens as any}
-                    value={fromSel && usdcSolanaToken && (fromSel.symbol !== usdcSolanaToken.symbol || fromSel.chain !== usdcSolanaToken.chain) ? fromSel : undefined}
-                    onChange={(sel) => {
-                      if (sel) setFromSel({ symbol: sel.symbol, chain: sel.chain });
-                      else if (usdcSolanaToken) setFromSel({ symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain });
-                    }}
-                    placeholder="Choose a token"
-                    onQuery={async (q) => filteredTokens.filter(t => t.symbol.toLowerCase().includes((q || '').toLowerCase()))}
-                    hideChains={['solana', 'sol']}
-                    className="w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white placeholder:text-slate-400 hover:!bg-white/20"
-                  />
-                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 text-base md:text-sm text-blue-300">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                    Cross-chain payments are not available yet and are coming soon to beta.
-                  </div>
-                </div>
 
                 {/* Payment breakdown */}
                 <div className="mt-4">
@@ -3615,10 +3553,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       >
                         Demo Mode - Payments Disabled
                       </Button>
-                    ) : (() => {
-                        const isCrossChainSelected = !!fromSel && !!usdcSolanaToken &&
-                          (fromSel.symbol !== usdcSolanaToken.symbol || fromSel.chain !== usdcSolanaToken.chain);
-                        return (
+                    ) : (
                           <GradientActionButton
                             onClick={() => {
                               if (!authenticated) { login(); return; }
@@ -3630,27 +3565,24 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               setShowPayNowModal(true);
                             }}
                             disabled={
-                              isCrossChainSelected
+                              mainnetViewOnly
                                 ? true
-                                : mainnetViewOnly
+                                : isWrongNetwork
                                   ? true
-                                  : isWrongNetwork
+                                  : claimAmountUSD < 5
                                     ? true
-                                    : claimAmountUSD < 5
+                                    : requiresPrivate && !isPrivateMode
                                       ? true
-                                      : requiresPrivate && !isPrivateMode
-                                        ? true
-                                        : !authenticated
-                                          ? false
-                                          : !isPayerWalletReady || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS"
+                                      : !authenticated
+                                        ? false
+                                        : !isPayerWalletReady || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS"
                             }
                             loading={preparing || (authenticated && !isPayerWalletReady)}
                             loadingText="Wallet loading…"
                           >
-                            {isCrossChainSelected ? "Coming soon in beta" : isWrongNetwork && claimExpectedNetwork ? `Switch to ${claimExpectedNetwork}` : !authenticated ? "Sign in to pay" : "Pay now"}
+                            {isWrongNetwork && claimExpectedNetwork ? `Switch to ${claimExpectedNetwork}` : !authenticated ? "Sign in to pay" : "Pay now"}
                           </GradientActionButton>
-                        );
-                      })()}
+                    )}
                   </div>
                 </div>
               </>
@@ -4294,82 +4226,71 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     : (privatePayProtocolFee + privatePayGasFee).toFixed(3)}{" "}
                   fee
                 </p>
-                <p className="pt-1 text-base md:text-sm text-center text-muted-foreground">Choose how to pay</p>
               </DialogHeader>
               <div className="space-y-3">
-                {/* Pay with Loofta */}
                 {(() => {
                   const needed = privatePayTotal;
                   const hasEnough = solanaPayment.hasEnoughBalance(needed);
-                  const looftaDisabled = !authenticated || !isPayerWalletReady || (!solanaPayment.isBalanceLoading && !hasEnough);
-                  return (
-                    <button
-                      type="button"
-                      onClick={() => payWithLooftaBalance()}
-                      disabled={looftaDisabled}
-                      className="w-full flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <LooftaIcon className="w-8 h-8 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-white">Loofta wallet</div>
-                        <div className="text-base md:text-sm text-slate-400 mt-0.5">
-                          {solanaPayment.isBalanceLoading
-                            ? "Loading balance…"
-                            : hasEnough
-                              ? `Balance: $${looftaBalanceUSD.toFixed(2)}`
-                              : `Insufficient balance ($${looftaBalanceUSD.toFixed(2)} of $${needed.toFixed(2)} needed)`}
+                  const isLoading = solanaPayment.isBalanceLoading;
+                  if (!isLoading && !hasEnough) {
+                    return (
+                      <>
+                        <div className="flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5">
+                          <LooftaIcon className="w-8 h-8 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-white">Loofta wallet</div>
+                            <div className="text-base md:text-sm text-amber-400 mt-0.5">
+                              ${looftaBalanceUSD.toFixed(2)} available — ${needed.toFixed(2)} needed
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                      <ArrowRight className="w-5 h-5 text-slate-400 shrink-0" />
-                    </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowPayNowModal(false);
+                            window.dispatchEvent(new CustomEvent("openBalanceModal"));
+                          }}
+                          className="w-full h-12 rounded-xl font-semibold text-base border border-white/20 bg-white/10 text-white hover:bg-white/15 transition-colors"
+                        >
+                          Add funds to your balance
+                        </button>
+                      </>
+                    );
+                  }
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => payWithLooftaBalance()}
+                        disabled={!authenticated || !isPayerWalletReady || isLoading}
+                        className="w-full flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <LooftaIcon className="w-8 h-8 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-white">Loofta wallet</div>
+                          <div className="text-base md:text-sm text-slate-400 mt-0.5">
+                            {isLoading ? "Loading balance…" : `$${looftaBalanceUSD.toFixed(2)} available`}
+                          </div>
+                        </div>
+                        <ArrowRight className="w-5 h-5 text-slate-400 shrink-0" />
+                      </button>
+                      {payWithLooftaError && (
+                        <div className="space-y-2">
+                          <div className="p-3 rounded-lg bg-red-500/15 border border-red-400/30 text-base md:text-sm text-red-200 [overflow-wrap:anywhere] whitespace-pre-wrap">
+                            <strong>Payment failed:</strong> {payWithLooftaError}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => { setPayWithLooftaError(null); payWithLooftaBalance(false); }}
+                            className="w-full py-2.5 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-base md:text-sm text-slate-300 transition-colors"
+                          >
+                            Try without gas sponsorship
+                          </button>
+                        </div>
+                      )}
+                    </>
                   );
                 })()}
-
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 h-px bg-white/10" />
-                  <span className="text-base md:text-sm font-medium text-slate-500">or</span>
-                  <div className="flex-1 h-px bg-white/10" />
-                </div>
-
-                {/* Pay with external wallet */}
-                <button
-                  type="button"
-                  onClick={() => payWithWallet()}
-                  className="w-full flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left"
-                >
-                  <Wallet className="w-8 h-8 shrink-0 text-slate-300" />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-white">External wallet</div>
-                    <div className="text-base md:text-sm text-slate-400 mt-0.5">Pay directly from Phantom or any Solana wallet</div>
-                    {networkMode === "devnet" && (
-                      <div className="text-base md:text-sm text-amber-400 mt-1">Phantom may show a simulation warning — tap "Confirm (unsafe)" to proceed</div>
-                    )}
-                  </div>
-                  <ArrowRight className="w-5 h-5 text-slate-400 shrink-0" />
-                </button>
-
-                {(payWithLooftaError || payWithWalletError) && (
-                  <div className="space-y-2">
-                    <div className="p-3 rounded-lg bg-red-500/15 border border-red-400/30 text-base md:text-sm text-red-200 [overflow-wrap:anywhere] whitespace-pre-wrap">
-                      <strong>Payment failed:</strong> {payWithLooftaError || payWithWalletError}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPayWithLooftaError(null);
-                        setPayWithWalletError(null);
-                        if (lastFailedPayMethod === "wallet") {
-                          payWithWallet(false);
-                        } else {
-                          payWithLooftaBalance(false);
-                        }
-                      }}
-                      className="w-full py-2.5 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-base md:text-sm text-slate-300 transition-colors"
-                    >
-                      Try without gas sponsorship
-                    </button>
-                  </div>
-                )}
               </div>
             </>
           )}
