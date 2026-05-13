@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
@@ -8,6 +8,7 @@ import { usePrivy } from '@privy-io/react-auth'
 import { motion } from 'framer-motion'
 import { Loader2, ArrowDown, Lock, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react'
 import { GradientActionButton } from '@/components/ui/GradientActionButton'
+import confetti from 'canvas-confetti'
 
 function XLogo({ className }: { className?: string }) {
   return (
@@ -17,7 +18,6 @@ function XLogo({ className }: { className?: string }) {
   )
 }
 
-
 interface TwitterPaymentRequest {
   short_id: string
   sender_twitter: string
@@ -25,6 +25,8 @@ interface TwitterPaymentRequest {
   amount_usd: number
   status: 'pending_funding' | 'funded' | 'expired' | 'cancelled'
   payment_id: string | null
+  payment_status: string | null
+  payment_short_id: string | null
   is_devnet: boolean
   expires_at: string
 }
@@ -55,6 +57,21 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
   const linkedHandle = getLinkedTwitterHandle(user)
   const isSender = !!linkedHandle && linkedHandle === request?.sender_twitter
   const isRecipient = !!linkedHandle && linkedHandle === request?.recipient_twitter
+  const isPaid = request?.payment_status?.toUpperCase() === 'SUCCESS' ||
+    request?.payment_status?.toUpperCase() === 'PRIVATE_TRANSFER_PENDING'
+
+  const confettiFired = useRef(false)
+  useEffect(() => {
+    if (!isPaid || confettiFired.current) return
+    confettiFired.current = true
+    const end = Date.now() + 2200
+    const colors = ['#FF1301', '#EAB308', '#22c55e', '#a855f7', '#3b82f6']
+    ;(function frame() {
+      confetti({ particleCount: 6, angle: 60, spread: 55, origin: { x: 0 }, colors })
+      confetti({ particleCount: 6, angle: 120, spread: 55, origin: { x: 1 }, colors })
+      if (Date.now() < end) requestAnimationFrame(frame)
+    })()
+  }, [isPaid])
 
   async function handleSend() {
     if (!request) return
@@ -69,7 +86,6 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.message ?? 'Failed to create payment')
-      // payment_link is the full URL; extract just the /c/:short_id path for in-app routing
       const path = data.payment_link ? new URL(data.payment_link).pathname : `/c/${data.payment_id}`
       router.push(path)
     } catch (e: any) {
@@ -80,6 +96,10 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
 
   const amountDisplay = !request ? '' :
     request.amount_usd % 1 === 0 ? `$${request.amount_usd}` : `$${request.amount_usd.toFixed(2)}`
+
+  const paymentPath = request?.payment_short_id
+    ? `/c/${request.payment_short_id}`
+    : request?.payment_id ? `/c/${request.payment_id}` : null
 
   // ── Loading ──────────────────────────────────────────────────────────────
   if (isLoading || !ready) {
@@ -100,12 +120,6 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
     )
   }
 
-  // Recipient with payment_id → redirect to claim page
-  if (isRecipient && request.payment_id) {
-    router.push(`/c/${request.payment_id}`)
-    return <div className="flex items-center justify-center min-h-[60vh]"><Loader2 className="h-7 w-7 animate-spin text-white/30" /></div>
-  }
-
   return (
     <div className="flex flex-col items-center px-4 pt-6 pb-16 min-h-[calc(100vh-64px)]">
       <motion.div
@@ -115,12 +129,18 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
         transition={{ duration: 0.35, ease: [0.25, 0.46, 0.45, 0.94] }}
       >
         {/* Card */}
-        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] overflow-hidden">
+        <div className={`rounded-2xl border overflow-hidden ${isPaid ? 'border-emerald-500/20 bg-emerald-500/[0.03]' : 'border-white/[0.08] bg-white/[0.03]'}`}>
 
           {/* Header strip */}
           <div className="flex items-center justify-center gap-2 border-b border-white/[0.06] px-5 py-4">
-            <XLogo className="h-4 w-4 text-white/60" />
-            <span className="text-base font-semibold text-white">Pay privately on X</span>
+            {isPaid ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+            ) : (
+              <XLogo className="h-4 w-4 text-white/60" />
+            )}
+            <span className="text-base font-semibold text-white">
+              {isPaid ? (isRecipient ? 'Payment received' : 'Payment sent') : 'Pay privately on X'}
+            </span>
           </div>
 
           {/* Transfer visual — vertical */}
@@ -128,10 +148,12 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
             <span className="text-xl font-bold text-white">@{request.sender_twitter}</span>
 
             <div className="flex flex-col items-center gap-1.5 py-2">
-              <ArrowDown className="h-4 w-4 text-white/20" />
-              <span className="text-5xl font-bold text-white tracking-tight">{amountDisplay}</span>
+              <ArrowDown className={`h-4 w-4 ${isPaid ? 'text-emerald-500/40' : 'text-white/20'}`} />
+              <span className={`text-5xl font-bold tracking-tight ${isPaid ? 'text-emerald-400' : 'text-white'}`}>
+                {amountDisplay}
+              </span>
               <span className="text-sm text-white/30 font-medium tracking-widest uppercase">USDC</span>
-              <ArrowDown className="h-4 w-4 text-white/20" />
+              <ArrowDown className={`h-4 w-4 ${isPaid ? 'text-emerald-500/40' : 'text-white/20'}`} />
             </div>
 
             <span className="text-xl font-bold text-white">@{request.recipient_twitter}</span>
@@ -147,64 +169,76 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
         {/* CTA card */}
         <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-5 py-5 space-y-4">
 
-          {/* Sender already initiated — come back to finish */}
-          {isSender && request.payment_id && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-3 py-2.5">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                <p className="text-sm text-emerald-300">Payment created — finish sending it</p>
-              </div>
-              <GradientActionButton onClick={handleSend} loading={sending} loadingText="Loading payment…">
-                Proceed to payment <ArrowRight className="h-4 w-4" />
-              </GradientActionButton>
-            </div>
+          {/* ── PAID state — shown to everyone ── */}
+          {isPaid && paymentPath && (
+            <GradientActionButton onClick={() => router.push(paymentPath)}>
+              View payment <ArrowRight className="h-4 w-4" />
+            </GradientActionButton>
           )}
 
-          {/* Recipient — payment not initiated yet */}
-          {isRecipient && !request.payment_id && (
-            <div className="text-center space-y-1.5 py-2">
-              <p className="text-base font-medium text-white">You&apos;ll receive {amountDisplay}</p>
-              <p className="text-sm text-white/40">Waiting for @{request.sender_twitter} to send it. You&apos;ll get a notification once it&apos;s on its way.</p>
-            </div>
-          )}
+          {/* ── UNPAID states (only shown when not paid) ── */}
+          {!isPaid && (
+            <>
+              {/* Sender already initiated — come back to finish */}
+              {isSender && request.payment_id && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-3 py-2.5">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                    <p className="text-sm text-emerald-300">Payment created — finish sending it</p>
+                  </div>
+                  <GradientActionButton onClick={handleSend} loading={sending} loadingText="Loading payment…">
+                    Proceed to payment <ArrowRight className="h-4 w-4" />
+                  </GradientActionButton>
+                </div>
+              )}
 
-          {/* Not logged in */}
-          {!authenticated && (
-            <div className="space-y-3">
-              <p className="text-center text-base text-white/50">
-                Are you <span className="text-white font-semibold">@{request.sender_twitter}</span> on X?
-              </p>
-              <GradientActionButton onClick={login}>
-                <XLogo className="h-4 w-4" />
-                Log in to send
-              </GradientActionButton>
-            </div>
-          )}
+              {/* Recipient — payment not initiated yet */}
+              {isRecipient && !request.payment_id && (
+                <div className="text-center space-y-1.5 py-2">
+                  <p className="text-base font-medium text-white">You&apos;ll receive {amountDisplay}</p>
+                  <p className="text-sm text-white/40">Waiting for @{request.sender_twitter} to send it. You&apos;ll get a notification once it&apos;s on its way.</p>
+                </div>
+              )}
 
-          {/* Correct sender — not yet initiated */}
-          {isSender && !request.payment_id && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-3 py-2.5">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                <p className="text-sm text-emerald-300">Logged in as @{linkedHandle}</p>
-              </div>
-              <GradientActionButton onClick={handleSend} loading={sending} loadingText="Setting up payment…">
-                Send {amountDisplay} to @{request.recipient_twitter}
-              </GradientActionButton>
-            </div>
-          )}
+              {/* Not logged in */}
+              {!authenticated && (
+                <div className="space-y-3">
+                  <p className="text-center text-base text-white/50">
+                    Are you <span className="text-white font-semibold">@{request.sender_twitter}</span> on X?
+                  </p>
+                  <GradientActionButton onClick={login}>
+                    <XLogo className="h-4 w-4" />
+                    Log in to send
+                  </GradientActionButton>
+                </div>
+              )}
 
-          {/* Wrong user */}
-          {authenticated && !isSender && !isRecipient && (
-            <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-3 space-y-1">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
-                <p className="text-base font-medium text-amber-300">Wrong account</p>
-              </div>
-              <p className="text-sm text-white/50">
-                You&apos;re @{linkedHandle}. This payment is for @{request.sender_twitter} to send to @{request.recipient_twitter}.
-              </p>
-            </div>
+              {/* Correct sender — not yet initiated */}
+              {isSender && !request.payment_id && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-3 py-2.5">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                    <p className="text-sm text-emerald-300">Logged in as @{linkedHandle}</p>
+                  </div>
+                  <GradientActionButton onClick={handleSend} loading={sending} loadingText="Setting up payment…">
+                    Send {amountDisplay} to @{request.recipient_twitter}
+                  </GradientActionButton>
+                </div>
+              )}
+
+              {/* Wrong user */}
+              {authenticated && !isSender && !isRecipient && (
+                <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-3 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
+                    <p className="text-base font-medium text-amber-300">Wrong account</p>
+                  </div>
+                  <p className="text-sm text-white/50">
+                    You&apos;re @{linkedHandle}. This payment is for @{request.sender_twitter} to send to @{request.recipient_twitter}.
+                  </p>
+                </div>
+              )}
+            </>
           )}
 
           {error && (

@@ -21,5 +21,18 @@ export async function GET(
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  return NextResponse.json(data)
+  // If a payment is linked, fetch its current status and short_id
+  let payment_status: string | null = null
+  let payment_short_id: string | null = null
+  if (data.payment_id) {
+    const { data: payment } = await supabase
+      .from('payments')
+      .select('status, short_id')
+      .eq('id', data.payment_id)
+      .maybeSingle()
+    payment_status = payment?.status ?? null
+    payment_short_id = payment?.short_id ?? null
+  }
+
+  return NextResponse.json({ ...data, payment_status, payment_short_id })
 }
