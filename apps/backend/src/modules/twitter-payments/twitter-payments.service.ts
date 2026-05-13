@@ -43,7 +43,7 @@ export class TwitterPaymentsService {
     private readonly claims: ClaimsService,
   ) {}
 
-  async create(dto: CreateTwitterPaymentDto): Promise<{ short_id: string; link: string }> {
+  async create(dto: CreateTwitterPaymentDto): Promise<{ short_id: string; link: string; already_exists?: boolean }> {
     const supabase = this.db.getClient();
 
     const senderTwitter = normaliseHandle(dto.sender_twitter);
@@ -53,28 +53,35 @@ export class TwitterPaymentsService {
       throw new BadRequestException('Sender and recipient cannot be the same account');
     }
 
-    // Per-sender cap: max 5 active (unfunded, unexpired) requests at a time
-    const { count } = await supabase
-      .from('twitter_payment_requests')
-      .select('id', { count: 'exact', head: true })
-      .eq('sender_twitter', senderTwitter)
-      .is('payment_id', null)
-      .gt('expires_at', new Date().toISOString());
-    if ((count ?? 0) >= 5) {
-      throw new BadRequestException(`@${senderTwitter} already has too many pending payment requests`);
-    }
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://pay.loofta.xyz';
 
-    // Dedup by tweet_id
+    // Dedup by tweet_id — same tweet reprocessed after bot restart, skip re-reply
     if (dto.tweet_id) {
-      const { data: existing } = await supabase
+      const { data: byTweet } = await supabase
         .from('twitter_payment_requests')
         .select('short_id')
         .eq('tweet_id', dto.tweet_id)
         .maybeSingle();
-      if (existing) {
-        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://pay.loofta.xyz';
-        return { short_id: existing.short_id, link: `${baseUrl}/tw/${existing.short_id}` };
+      if (byTweet) {
+        return { short_id: byTweet.short_id, link: `${baseUrl}/tw/${byTweet.short_id}`, already_exists: true };
       }
+    }
+
+    // Dedup by sender+recipient — if there's already an active unpaid request for this pair,
+    // return it so we don't spam-create duplicates. If the previous one is paid, fall through
+    // and create a fresh request.
+    const { data: activePair } = await supabase
+      .from('twitter_payment_requests')
+      .select('short_id, payment_id')
+      .eq('sender_twitter', senderTwitter)
+      .eq('recipient_twitter', recipientTwitter)
+      .is('payment_id', null)
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (activePair) {
+      return { short_id: activePair.short_id, link: `${baseUrl}/tw/${activePair.short_id}`, already_exists: true };
     }
 
     // Generate unique short_id
@@ -109,7 +116,6 @@ export class TwitterPaymentsService {
       throw new BadRequestException('Failed to create request');
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://pay.loofta.xyz';
     const link = `${baseUrl}/tw/${data.short_id}`;
     this.logger.log(`Created twitter payment request ${data.short_id} — $${dto.amount_usd} from @${senderTwitter} to @${recipientTwitter}`);
     return { short_id: data.short_id, link };
