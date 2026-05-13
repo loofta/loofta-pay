@@ -193,9 +193,8 @@ export class TwitterPaymentsService {
       );
     }
 
-    // Create the real payment using the same flow as the send feature:
-    // resolves registered users to their wallet, creates burner for unregistered ones.
-    const cluster = req.is_devnet ? 'devnet' : 'mainnet';
+    // Twitter payments are devnet-only for now; flip to req.is_devnet when mainnet is ready.
+    const cluster = 'devnet';
     const payment = await this.claims.createFromUsername({
       username: req.recipient_twitter,
       amount: req.amount_usd,

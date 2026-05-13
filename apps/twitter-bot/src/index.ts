@@ -50,7 +50,7 @@ async function createPaymentRequest(params: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${TWITTER_BOT_SECRET}`,
       },
-      body: JSON.stringify({ ...params, is_devnet: IS_DEVNET }),
+      body: JSON.stringify({ ...params, is_devnet: true }), // devnet-only for now; flip to IS_DEVNET when mainnet is ready
     })
     if (!res.ok) {
       const body = await res.text()

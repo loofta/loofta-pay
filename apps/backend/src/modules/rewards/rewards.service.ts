@@ -10,7 +10,8 @@ export type TaskKey =
   | 'first_payment'
   | 'payment_to_unregistered'
   | 'payment_link_paid'
-  | 'ten_payments';
+  | 'ten_payments'
+  | 'three_twitter_payments';
 
 export interface TaskStatus {
   key: TaskKey;
@@ -42,6 +43,7 @@ const TASK_SPARKS: Record<TaskKey, number> = {
   payment_to_unregistered: 2000,
   payment_link_paid: 2000,
   ten_payments: 5000,
+  three_twitter_payments: 5000,
 };
 
 const TWITTER_TYPES = ['twitter_oauth', 'twitter', 'x'];
@@ -96,17 +98,22 @@ export class RewardsService {
   }
 
   private async computeRewards(privyUserId: string, isDevnet: boolean): Promise<RewardsData> {
-    const [linkedAccounts, paymentStats] = await Promise.all([
-      this.getLinkedAccounts(privyUserId),
+    const linkedAccounts = await this.getLinkedAccounts(privyUserId);
+
+    const twitterAccount = linkedAccounts.find((a: any) =>
+      TWITTER_TYPES.includes((a.type || '').toLowerCase()),
+    ) as any;
+    const twitterHandle = twitterAccount?.username?.replace(/^@/, '').toLowerCase() ?? null;
+
+    const [paymentStats, twitterPaymentCount] = await Promise.all([
       this.getPaymentStats(privyUserId, isDevnet),
+      twitterHandle ? this.getTwitterPaymentCount(twitterHandle, isDevnet) : Promise.resolve(0),
     ]);
 
     const hasEmail = linkedAccounts.some(
       (a: any) => a.type === 'email' || a.type === 'google' || a.type === 'apple',
     );
-    const hasTwitter = linkedAccounts.some((a: any) =>
-      TWITTER_TYPES.includes((a.type || '').toLowerCase()),
-    );
+    const hasTwitter = !!twitterHandle;
 
     const { successfulSentCount, hasPaymentToUnregistered, hasLinkPaid } = paymentStats;
 
@@ -154,6 +161,15 @@ export class RewardsService {
         completed: successfulSentCount >= 10,
         progress: Math.min(successfulSentCount, 10),
         total: 10,
+      },
+      {
+        key: 'three_twitter_payments',
+        label: 'Send 3 payments via X',
+        description: 'Tag @looftapay on X to send 3 payments privately',
+        sparks: TASK_SPARKS.three_twitter_payments,
+        completed: twitterPaymentCount >= 3,
+        progress: Math.min(twitterPaymentCount, 3),
+        total: 3,
       },
     ];
 
@@ -237,6 +253,23 @@ export class RewardsService {
     } catch (e) {
       this.logger.warn(`getPaymentStats error: ${(e as Error)?.message}`);
       return { successfulSentCount: 0, hasPaymentToUnregistered: false, hasLinkPaid: false };
+    }
+  }
+
+  private async getTwitterPaymentCount(twitterHandle: string, isDevnet: boolean): Promise<number> {
+    try {
+      const db = this.supabase.getClient();
+      const { data, error } = await db
+        .from('twitter_payment_requests')
+        .select('id')
+        .eq('sender_twitter', twitterHandle)
+        .not('payment_id', 'is', null)
+        .eq('is_devnet', isDevnet);
+      if (error) throw error;
+      return (data ?? []).length;
+    } catch (e) {
+      this.logger.warn(`getTwitterPaymentCount error: ${(e as Error)?.message}`);
+      return 0;
     }
   }
 }
