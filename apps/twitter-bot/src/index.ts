@@ -101,8 +101,9 @@ async function processTweet(tweet: TweetV2, authorHandle: string): Promise<void>
       : `$${parsed.amountUsd.toFixed(2)}`
 
   const replies = [
-    `@${parsed.senderHandle} your payment link is ready 🔒\n${amountDisplay} → @${parsed.recipientHandle}, they can claim it once you confirm 👇\n${APP_URL}/tw/${payment.short_id}`,
+    `@${parsed.senderHandle} your payment link is ready 🔒\n${amountDisplay} → @${parsed.recipientHandle}\n${APP_URL}/tw/${payment.short_id}`,
     `@${parsed.senderHandle} ${amountDisplay} for @${parsed.recipientHandle} locked in 💸\ntap to send it privately 👇\n${APP_URL}/tw/${payment.short_id}`,
+    `@${parsed.senderHandle} here's your link to send ${amountDisplay} to @${parsed.recipientHandle} 🔒\n${APP_URL}/tw/${payment.short_id}`,
   ]
   const replyText = replies[Math.floor(Math.random() * replies.length)]
 
