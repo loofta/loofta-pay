@@ -96,8 +96,8 @@ async function processTweet(tweet: TweetV2, authorHandle: string): Promise<void>
       : `$${parsed.amountUsd.toFixed(2)}`
 
   const replyText =
-    `@${parsed.senderHandle} 👋 Here's your ${amountDisplay} payment link for @${parsed.recipientHandle} 🔒\n\n` +
-    `Tap to confirm & send privately 👇\n` +
+    `@${parsed.senderHandle} ur payment link is ready 🔒\n\n` +
+    `${amountDisplay} → @${parsed.recipientHandle}, they can claim it once you confirm 👇\n` +
     `${APP_URL}/tw/${payment.short_id}`
 
   try {

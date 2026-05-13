@@ -8,6 +8,7 @@ import {
 import { randomBytes } from 'crypto';
 import { SupabaseService } from '@/database/supabase.service';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
+import { ClaimsService } from '../claims/claims.service';
 import { CreateTwitterPaymentDto } from './dto/create-twitter-payment.dto';
 
 const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -39,6 +40,7 @@ export class TwitterPaymentsService {
   constructor(
     private readonly db: SupabaseService,
     private readonly privy: PrivyVerificationService,
+    private readonly claims: ClaimsService,
   ) {}
 
   async create(dto: CreateTwitterPaymentDto): Promise<{ short_id: string; link: string }> {
@@ -49,6 +51,17 @@ export class TwitterPaymentsService {
 
     if (senderTwitter === recipientTwitter) {
       throw new BadRequestException('Sender and recipient cannot be the same account');
+    }
+
+    // Per-sender cap: max 5 active (unfunded, unexpired) requests at a time
+    const { count } = await supabase
+      .from('twitter_payment_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('sender_twitter', senderTwitter)
+      .is('payment_id', null)
+      .gt('expires_at', new Date().toISOString());
+    if ((count ?? 0) >= 5) {
+      throw new BadRequestException(`@${senderTwitter} already has too many pending payment requests`);
     }
 
     // Dedup by tweet_id
@@ -124,25 +137,34 @@ export class TwitterPaymentsService {
       .maybeSingle();
 
     if (!req) throw new NotFoundException('Payment request not found');
-    if (req.payment_id) {
-      // Payment link already created — return it so the frontend can redirect
-      const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://pay.loofta.xyz';
-      const { data: existing } = await supabase
-        .from('payments')
-        .select('short_id')
-        .eq('id', req.payment_id)
-        .maybeSingle();
-      const existingShortId = existing?.short_id;
-      return {
-        payment_id: req.payment_id,
-        payment_link: existingShortId ? `${baseUrl}/c/${existingShortId}` : `${baseUrl}/c/${req.payment_id}`,
-      };
-    }
+
     if (req.status === 'expired' || req.status === 'cancelled') {
       throw new BadRequestException(`Payment request is ${req.status}`);
     }
     if (new Date(req.expires_at) < new Date()) {
       throw new BadRequestException('This payment request has expired');
+    }
+
+    // If a payment was previously linked, verify it still exists and isn't deleted
+    if (req.payment_id) {
+      const { data: existing } = await supabase
+        .from('payments')
+        .select('id, short_id, status')
+        .eq('id', req.payment_id)
+        .maybeSingle();
+
+      if (existing && existing.status?.toUpperCase() !== 'DELETED') {
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://pay.loofta.xyz';
+        const path = existing.short_id ?? existing.id;
+        return { payment_id: existing.id, payment_link: `${baseUrl}/c/${path}` };
+      }
+
+      // Payment was deleted — clear the link and create a fresh one
+      this.logger.warn(`Twitter payment ${shortId}: linked payment ${req.payment_id} no longer exists, creating new one`);
+      await supabase
+        .from('twitter_payment_requests')
+        .update({ payment_id: null })
+        .eq('short_id', shortId);
     }
 
     // Verify sender's linked Twitter handle via Privy
@@ -165,52 +187,26 @@ export class TwitterPaymentsService {
       );
     }
 
-    // Generate unique short_id for the real payment
-    let paymentShortId = generateShortId();
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const { data: existing } = await supabase
-        .from('payments')
-        .select('id')
-        .eq('short_id', paymentShortId)
-        .maybeSingle();
-      if (!existing) break;
-      paymentShortId = generateShortId();
-    }
+    // Create the real payment using the same flow as the send feature:
+    // resolves registered users to their wallet, creates burner for unregistered ones.
+    const cluster = req.is_devnet ? 'devnet' : 'mainnet';
+    const payment = await this.claims.createFromUsername({
+      username: req.recipient_twitter,
+      amount: req.amount_usd,
+      userId,
+      isPrivate: true,
+      description: `Sent via @looftapay on X`,
+      cluster,
+    });
 
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://pay.loofta.xyz';
-    const { data: payment, error: paymentError } = await supabase
-      .from('payments')
-      .insert({
-        amount: req.amount_usd,
-        direction: 'from_sender',
-        recipient_address: `PENDING_USERNAME:${req.recipient_twitter}`,
-        created_by: userId,
-        sender_user_id: userId,
-        status: 'OPEN',
-        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-        to_chain: 'solana',
-        to_token: 'USDC',
-        is_devnet: req.is_devnet ?? false,
-        short_id: paymentShortId,
-        description: `Sent via @looftapay on X`,
-      })
-      .select('id')
-      .single();
-
-    if (paymentError || !payment) {
-      this.logger.error('Failed to create payment for twitter request', paymentError);
-      throw new BadRequestException('Failed to create payment');
-    }
-
-    // Link temp record → real payment (status stays pending_funding; actual paid state = payments.status)
+    // Link temp record → real payment (status stays; actual paid state = payments.status)
     await supabase
       .from('twitter_payment_requests')
       .update({ payment_id: payment.id })
       .eq('short_id', shortId);
 
-    const paymentLink = `${baseUrl}/c/${paymentShortId}`;
-    this.logger.log(`Twitter payment ${shortId} funded → payment ${payment.id} (${paymentShortId})`);
-    return { payment_id: payment.id, payment_link: paymentLink };
+    this.logger.log(`Twitter payment ${shortId} linked → payment ${payment.id}`);
+    return { payment_id: payment.id, payment_link: payment.link };
   }
 
   async updateBotReplyTweetId(shortId: string, botReplyTweetId: string): Promise<void> {

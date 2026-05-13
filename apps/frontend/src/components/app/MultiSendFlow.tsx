@@ -6,7 +6,7 @@ import {
   useWallets as useSolanaWallets,
   useSignTransaction as usePrivySolanaSignTransaction,
 } from "@privy-io/react-auth/solana";
-import { Connection, VersionedTransaction, Transaction, PublicKey } from "@solana/web3.js";
+import { Connection } from "@solana/web3.js";
 import { useAuthStore } from "@/store/auth";
 import { useMultiSendStore, type MultiSendRow, type MultiSendLink } from "@/store/multiSend";
 import { getRpcForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
@@ -20,7 +20,6 @@ import {
   type MultiCreateResult,
 } from "@/services/api/sendPayment";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
-import type { MagicblockTxResponse } from "@/services/magicblockPaymentsApi";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
@@ -29,34 +28,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
-import { PlusIcon, XIcon, CheckCircle2, Copy, ExternalLink, Wallet, ArrowRight, Loader2, ArrowLeft } from "lucide-react";
+import { PlusIcon, XIcon, CheckCircle2, Copy, ExternalLink, Loader2, ArrowLeft } from "lucide-react";
 import { MessageInput } from "@/components/MessageInput";
 
-function LooftaIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 56 57" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} aria-hidden>
-      <path d="M27.9532 49C20.655 49 14.8226 46.8696 10.4561 42.6087C6.15205 38.2861 4 32.2035 4 24.3611C4 19.5444 4.99805 15.3144 6.99415 11.6711C8.99025 8.02773 11.7661 5.18714 15.3216 3.14934C18.9396 1.04978 23.1501 0 27.9532 0C33.3177 0 37.7778 1.04978 41.3333 3.14934C44.8889 5.18714 47.54 8.02773 49.2865 11.6711C51.0955 15.3144 52 19.5444 52 24.3611C52 32.2035 50.0039 38.2861 46.0117 42.6087C42.0819 46.8696 36.0624 49 27.9532 49ZM15.1345 22.7864C15.1345 24.7007 16.1014 26.0592 18.0351 26.862C19.9688 27.603 23.2749 27.9735 27.9532 27.9735C32.6316 27.9735 35.9376 27.603 37.8713 26.862C39.8051 26.0592 40.7719 24.7007 40.7719 22.7864C40.7719 20.9338 39.8051 19.637 37.8713 18.896C35.9376 18.155 32.6316 17.7845 27.9532 17.7845C23.2749 17.7845 19.9688 18.155 18.0351 18.896C16.1014 19.637 15.1345 20.9338 15.1345 22.7864Z" fill="#FF4A26" />
-    </svg>
-  );
-}
-
-type PhantomProvider = {
-  connect: () => Promise<{ publicKey: PublicKey }>;
-  publicKey: PublicKey | null;
-  signTransaction: (tx: VersionedTransaction) => Promise<VersionedTransaction>;
-  signAllTransactions?: (txs: VersionedTransaction[]) => Promise<VersionedTransaction[]>;
-};
-
-function getPhantomProvider(): PhantomProvider | null {
-  if (typeof window === "undefined") return null;
-  const w = window as unknown as { solana?: PhantomProvider };
-  const solana = w?.solana;
-  if (!solana?.signTransaction) return null;
-  return solana;
-}
-
 type ConfirmFeeData = {
-  walletType: "loofta" | "phantom";
   senderWallet: string;
   paymentIds: string[];
   links: MultiSendLinkItem[];
@@ -70,7 +45,6 @@ type ConfirmFeeData = {
 type SendPhase =
   | { kind: "idle" }
   | { kind: "review" }
-  | { kind: "wallet_pick" }
   | { kind: "creating" }
   | { kind: "building" }
   | { kind: "awaiting_signature" }
@@ -78,8 +52,7 @@ type SendPhase =
   | { kind: "done"; recipientCount: number; totalUsdc: number; links: MultiSendLinkItem[]; failedCount?: number }
   | { kind: "error"; message: string; retry?: ConfirmFeeData };
 
-const SETTLEMENT_PHASES = ["wallet_pick", "creating", "building", "awaiting_signature", "broadcasting", "error"] as const;
-type SettlementPhaseKind = typeof SETTLEMENT_PHASES[number];
+const SETTLEMENT_PHASES = ["creating", "building", "awaiting_signature", "broadcasting", "error"] as const;
 const BUSY_PHASES = ["creating", "building", "awaiting_signature", "broadcasting"];
 
 function looksLikeEmail(s: string): boolean {
@@ -176,8 +149,8 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       message: [r.message.trim(), r.gif].filter(Boolean).join(" ").trim() || undefined,
     }));
 
-  async function createPayments(walletType: "loofta" | "phantom", senderWallet: string) {
-    console.info(`[MultiSend] createPayments walletType=${walletType} senderWallet=${senderWallet.slice(0, 8)}… recipients=${recipients.length}`);
+  async function createPayments(senderWallet: string) {
+    console.info(`[MultiSend] createPayments senderWallet=${senderWallet.slice(0, 8)}… recipients=${recipients.length}`);
     setPhase({ kind: "creating" });
     try {
       const accessToken = await getAccessToken();
@@ -191,7 +164,6 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
       console.info(`[MultiSend] payment records created payment_ids=${result.payment_ids.join(",")}`);
       await executePayment({
-        walletType,
         senderWallet,
         paymentIds: result.payment_ids,
         links: result.links,
@@ -241,8 +213,8 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   }
 
   async function executePayment(confirmState: ConfirmFeeData) {
-    console.info(`[MultiSend] executePayment walletType=${confirmState.walletType} paymentIds=${confirmState.paymentIds.join(",")}`);
-    const { walletType, senderWallet, paymentIds, links } = confirmState;
+    console.info(`[MultiSend] executePayment paymentIds=${confirmState.paymentIds.join(",")}`);
+    const { senderWallet, paymentIds, links } = confirmState;
 
     try {
       const accessToken = await getAccessToken();
@@ -255,110 +227,35 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         | { status: "rejected"; reason: unknown };
       const broadcastResults: BroadcastResult[] = [];
 
-      if (walletType === "loofta") {
-        // Build → sign → broadcast one at a time so each tx uses a fresh blockhash
-        // and fresh MagicBlock encrypted-balance state. Batch-building all upfront causes
-        // txs 3+ to reference stale state after earlier txs modify the on-chain balance.
-        const chain = getPrivySolanaChainForMode(networkMode);
-        const wallet = solanaWallets.find((w) => w.address === senderWallet) ?? solanaWallets[0];
-        if (!wallet) throw new Error("Loofta wallet not found. Try logging out and back in.");
+      // Build → sign → broadcast one at a time so each tx uses a fresh blockhash
+      // and fresh MagicBlock encrypted-balance state.
+      const chain = getPrivySolanaChainForMode(networkMode);
+      const wallet = solanaWallets.find((w) => w.address === senderWallet) ?? solanaWallets[0];
+      if (!wallet) throw new Error("Loofta wallet not found. Try logging out and back in.");
 
-        console.info(`[MultiSend] building+signing+broadcasting ${paymentIds.length} txs one-by-one with Loofta wallet cluster=${cluster}`);
+      console.info(`[MultiSend] building+signing+broadcasting ${paymentIds.length} txs one-by-one cluster=${cluster}`);
 
-        for (const paymentId of paymentIds) {
-          try {
-            setPhase({ kind: "building" });
-            const txData = await buildClaimPrivateTransfer(paymentId, user.id!, senderWallet, accessToken, apiCluster);
-            const feeUsdc = txData.feeAmountUsdc ?? 0;
+      for (const paymentId of paymentIds) {
+        try {
+          setPhase({ kind: "building" });
+          const txData = await buildClaimPrivateTransfer(paymentId, user.id!, senderWallet, accessToken, apiCluster);
+          const feeUsdc = txData.feeAmountUsdc ?? 0;
 
-            setPhase({ kind: "broadcasting" });
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const signedOutput = await (privySolanaSignTransaction as any)({
-              transaction: Buffer.from(txData.transactionBase64, "base64") as Uint8Array,
-              wallet,
-              chain,
-              options: { uiOptions: { showWalletUIs: false } },
-            });
-            const signedBytes: Uint8Array = signedOutput.signedTransaction;
+          setPhase({ kind: "broadcasting" });
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const signedOutput = await (privySolanaSignTransaction as any)({
+            transaction: Buffer.from(txData.transactionBase64, "base64") as Uint8Array,
+            wallet,
+            chain,
+            options: { uiOptions: { showWalletUIs: false } },
+          });
+          const signedBytes: Uint8Array = signedOutput.signedTransaction;
 
-            const sig = await broadcastAndWaitForHash(signedBytes, paymentId, txData.sendTo, cluster);
-            broadcastResults.push({ status: "fulfilled", value: { paymentId, sig, feeUsdc } });
-            multiConfirm([paymentId], user.id!, accessToken, sig, feeUsdc).catch(() => { });
-          } catch (e) {
-            broadcastResults.push({ status: "rejected", reason: e });
-          }
-        }
-      } else {
-        // Phantom: build all → sign all (one modal) → broadcast sequentially
-        setPhase({ kind: "building" });
-        console.info(`[MultiSend] building ${paymentIds.length} private transfer txs`);
-        const txResults: MagicblockTxResponse[] = await Promise.all(
-          paymentIds.map((id) =>
-            buildClaimPrivateTransfer(id, user.id!, senderWallet, accessToken, apiCluster),
-          ),
-        );
-        console.info(`[MultiSend] all txs built`);
-
-        const feeByPaymentId = new Map<string, number>(
-          txResults.map((r, i) => [paymentIds[i], r.feeAmountUsdc ?? 0])
-        );
-
-        setPhase({ kind: "awaiting_signature" });
-
-        const phantom = getPhantomProvider();
-        if (!phantom) throw new Error("Phantom not found. Install the Phantom extension.");
-        let phantomPubkey = phantom.publicKey;
-        if (!phantomPubkey) {
-          const res = await phantom.connect();
-          phantomPubkey = res.publicKey;
-        }
-        if (!phantomPubkey) throw new Error("Could not connect Phantom.");
-
-        console.info(`[MultiSend] deserializing ${txResults.length} txs for Phantom`);
-        const parsed = txResults.map((txData, i) => {
-          const bytes = Buffer.from(txData.transactionBase64, "base64");
-          try {
-            return { tx: VersionedTransaction.deserialize(bytes), isV0: true as const, paymentId: paymentIds[i], sendTo: txData.sendTo };
-          } catch {
-            return { tx: Transaction.from(bytes), isV0: false as const, paymentId: paymentIds[i], sendTo: txData.sendTo };
-          }
-        });
-
-        console.info(`[MultiSend] signing ${parsed.length} txs with Phantom (signAllTransactions=${!!phantom.signAllTransactions})`);
-        let signedTxs: (VersionedTransaction | Transaction)[];
-        if (phantom.signAllTransactions) {
-          signedTxs = await phantom.signAllTransactions(parsed.map((p) => p.tx) as VersionedTransaction[]);
-        } else {
-          signedTxs = await Promise.all(
-            parsed.map((p) =>
-              p.isV0
-                ? phantom.signTransaction(p.tx as VersionedTransaction)
-                : phantom.signTransaction(p.tx as unknown as VersionedTransaction),
-            ),
-          );
-        }
-
-        const signedPairs = parsed.map(({ paymentId, sendTo }, i) => {
-          const signed = signedTxs[i];
-          const bytes = signed instanceof VersionedTransaction ? signed.serialize() : (signed as Transaction).serialize();
-          return { bytes, paymentId, sendTo };
-        });
-
-        setPhase({ kind: "broadcasting" });
-        console.info(`[MultiSend] broadcasting ${signedPairs.length} txs sequentially cluster=${cluster}`);
-
-        for (const { bytes, paymentId, sendTo } of signedPairs) {
-          try {
-            const sig = await broadcastAndWaitForHash(bytes, paymentId, sendTo, cluster);
-            broadcastResults.push({ status: "fulfilled", value: { paymentId, sig, feeUsdc: feeByPaymentId.get(paymentId) } });
-          } catch (e) {
-            broadcastResults.push({ status: "rejected", reason: e });
-          }
-        }
-
-        const phantomSucceeded = broadcastResults.filter((r): r is { status: "fulfilled"; value: { paymentId: string; sig: string; feeUsdc: number | undefined } } => r.status === "fulfilled");
-        for (const { value: { paymentId, sig, feeUsdc } } of phantomSucceeded) {
+          const sig = await broadcastAndWaitForHash(signedBytes, paymentId, txData.sendTo, cluster);
+          broadcastResults.push({ status: "fulfilled", value: { paymentId, sig, feeUsdc } });
           multiConfirm([paymentId], user.id!, accessToken, sig, feeUsdc).catch(() => { });
+        } catch (e) {
+          broadcastResults.push({ status: "rejected", reason: e });
         }
       }
 
@@ -409,42 +306,14 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     setPhase({ kind: "review" });
   }
 
-  async function handleLooftaWalletPick() {
+  async function handlePayNow() {
     const senderAddress = deriveSolanaEmbeddedAddress(user);
     const wallet = solanaWallets.find((w) => w.address === senderAddress) ?? solanaWallets[0];
     if (!wallet) {
       toast({ variant: "destructive", title: "No Loofta wallet", description: "Your embedded wallet was not found. Try logging out and back in." });
-      setPhase({ kind: "wallet_pick" });
       return;
     }
-    await createPayments("loofta", wallet.address);
-  }
-
-  async function handlePhantomWalletPick() {
-    const phantom = getPhantomProvider();
-    if (!phantom) {
-      toast({ variant: "destructive", title: "Phantom not found", description: "Install the Phantom extension to pay with your wallet." });
-      setPhase({ kind: "wallet_pick" });
-      return;
-    }
-    let phantomPubkey = phantom.publicKey;
-    if (!phantomPubkey) {
-      try {
-        const res = await phantom.connect();
-        phantomPubkey = res.publicKey;
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "Unknown error";
-        toast({ variant: "destructive", title: "Phantom connection failed", description: msg });
-        setPhase({ kind: "wallet_pick" });
-        return;
-      }
-    }
-    if (!phantomPubkey) {
-      toast({ variant: "destructive", title: "Could not connect Phantom", description: "Please try again." });
-      setPhase({ kind: "wallet_pick" });
-      return;
-    }
-    await createPayments("phantom", phantomPubkey.toBase58());
+    await createPayments(wallet.address);
   }
 
   // ── Done screen ────────────────────────────────────────────────────────────
@@ -608,14 +477,52 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           Fees are estimated. Exact breakdown confirmed before payment.
         </p>
 
-        <Button
-          onClick={() => setPhase({ kind: "wallet_pick" })}
-          className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-        >
-          Pay now
-        </Button>
+        {(() => {
+          const totalFees = validRows.reduce((s, r) => {
+            const amt = parseFloat(r.amount);
+            const net = Math.round(amt * 1_000_000);
+            const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
+            return s + Math.ceil(((mbGross - net) / 1_000_000 + 0.20) * 100) / 100;
+          }, 0);
+          const reviewTotalWithFees = reviewTotal + totalFees;
+          const hasEnough = solanaPayment.hasEnoughBalance(reviewTotalWithFees);
+          const isBalanceBusy = solanaPayment.isBalanceLoading;
+          if (!isBalanceBusy && !hasEnough) {
+            return (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5">
+                  <svg viewBox="0 0 56 57" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8 shrink-0" aria-hidden>
+                    <path d="M27.9532 49C20.655 49 14.8226 46.8696 10.4561 42.6087C6.15205 38.2861 4 32.2035 4 24.3611C4 19.5444 4.99805 15.3144 6.99415 11.6711C8.99025 8.02773 11.7661 5.18714 15.3216 3.14934C18.9396 1.04978 23.1501 0 27.9532 0C33.3177 0 37.7778 1.04978 41.3333 3.14934C44.8889 5.18714 47.54 8.02773 49.2865 11.6711C51.0955 15.3144 52 19.5444 52 24.3611C52 32.2035 50.0039 38.2861 46.0117 42.6087C42.0819 46.8696 36.0624 49 27.9532 49ZM15.1345 22.7864C15.1345 24.7007 16.1014 26.0592 18.0351 26.862C19.9688 27.603 23.2749 27.9735 27.9532 27.9735C32.6316 27.9735 35.9376 27.603 37.8713 26.862C39.8051 26.0592 40.7719 24.7007 40.7719 22.7864C40.7719 20.9338 39.8051 19.637 37.8713 18.896C35.9376 18.155 32.6316 17.7845 27.9532 17.7845C23.2749 17.7845 19.9688 18.155 18.0351 18.896C16.1014 19.637 15.1345 20.9338 15.1345 22.7864Z" fill="#FF4A26" />
+                  </svg>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-white text-base">Loofta wallet</div>
+                    <div className="text-base md:text-sm text-amber-400 mt-0.5">
+                      ${solanaPayment.balanceUSD.toFixed(2)} available — ${reviewTotalWithFees.toFixed(2)} needed (incl. fees)
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => window.dispatchEvent(new CustomEvent("openBalanceModal"))}
+                  className="w-full h-12 rounded-xl font-semibold text-base border border-white/20 bg-white/10 text-white hover:bg-white/15 transition-colors"
+                >
+                  Add funds to your balance
+                </button>
+              </div>
+            );
+          }
+          return (
+            <Button
+              onClick={handlePayNow}
+              disabled={isBalanceBusy}
+              className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+            >
+              {isBalanceBusy ? "Loading balance…" : "Pay now"}
+            </Button>
+          );
+        })()}
 
-        {/* Settlement modal: wallet picker → creating → fees → building → signing → broadcasting → error */}
+        {/* Settlement modal: creating → building → signing → broadcasting → error */}
         <Dialog
           open={settlementModalOpen}
           onOpenChange={(open) => { if (!open) closeSettlementModal(); }}
@@ -626,62 +533,6 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
             onEscapeKeyDown={(e) => { if (isBusy) e.preventDefault(); }}
             aria-describedby={undefined}
           >
-            {/* wallet_pick */}
-            {phase.kind === "wallet_pick" && (() => {
-              const needed = reviewTotal;
-              const hasEnough = solanaPayment.hasEnoughBalance(needed);
-              const looftaDisabled = !authenticated || (!solanaPayment.isBalanceLoading && !hasEnough);
-              return (
-                <>
-                  <DialogTitle className="text-white text-lg font-semibold mb-1">Choose wallet</DialogTitle>
-                  <div className="space-y-3 pt-2">
-                    <p className="text-slate-400 text-base md:text-sm mb-3">
-                      ${reviewTotal.toFixed(2)} USDC to {validRows.length} recipient{validRows.length !== 1 ? "s" : ""}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={handleLooftaWalletPick}
-                      disabled={looftaDisabled}
-                      className="w-full flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <LooftaIcon className="w-8 h-8 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-white">Loofta wallet</div>
-                        <div className="text-base md:text-sm text-slate-400 mt-0.5">
-                          {solanaPayment.isBalanceLoading
-                            ? "Loading balance…"
-                            : hasEnough
-                              ? `Balance: $${solanaPayment.balanceUSD.toFixed(2)}`
-                              : `Insufficient balance ($${solanaPayment.balanceUSD.toFixed(2)} of $${needed.toFixed(2)} needed)`}
-                        </div>
-                      </div>
-                      <ArrowRight className="w-5 h-5 text-slate-400 shrink-0" />
-                    </button>
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 h-px bg-white/10" />
-                      <span className="text-sm md:text-xs font-medium text-slate-500">or</span>
-                      <div className="flex-1 h-px bg-white/10" />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handlePhantomWalletPick}
-                      className="w-full flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left"
-                    >
-                      <Wallet className="w-8 h-8 shrink-0 text-slate-300" />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-white">External wallet</div>
-                        <div className="text-base md:text-sm text-slate-400 mt-0.5">Pay from Phantom or any Solana wallet</div>
-                        {networkMode === "devnet" && (
-                          <div className="text-base md:text-sm text-amber-400 mt-1">Phantom may show a simulation warning — tap "Confirm (unsafe)" to proceed</div>
-                        )}
-                      </div>
-                      <ArrowRight className="w-5 h-5 text-slate-400 shrink-0" />
-                    </button>
-                  </div>
-                </>
-              );
-            })()}
-
             {/* creating / building / awaiting_signature / broadcasting */}
             {(phase.kind === "creating" || phase.kind === "building" || phase.kind === "awaiting_signature" || phase.kind === "broadcasting") && (
               <>
