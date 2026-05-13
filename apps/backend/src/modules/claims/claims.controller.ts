@@ -22,6 +22,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { AuthGuard, OptionalAuthGuard } from '@/common/guards';
+import { Throttle } from '@nestjs/throttler';
 
 // All payment-mutating endpoints require authentication (create, pay, status, tx-hash).
 // Read-only claim endpoints (GET /:id, /:id/latest-intent) remain public via OptionalAuthGuard.
@@ -397,6 +398,7 @@ export class ClaimsController {
   /** Internal: trigger email notification after payment confirmed. No auth — fire-and-forget. */
   @Post(':id/notify')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ short: { ttl: 60000, limit: 120 } })
   async notifyPayment(@Param('id') id: string): Promise<{ ok: boolean }> {
     this.claimsService.notifyRecipientAfterPayment(id);
     return { ok: true };

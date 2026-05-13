@@ -17,6 +17,9 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 
+// Only these two paths are forwarded — nothing else reaches MagicBlock.
+const ALLOWED_PATHS = new Set(["auth/challenge", "auth/login"]);
+
 function resolveUpstreamBase(): string {
   const explicit = process.env.NEXT_PUBLIC_MAGICBLOCK_URL?.replace(/\?.*$/, "").replace(/\/$/, "").trim();
   if (explicit) return explicit;
@@ -26,8 +29,12 @@ function resolveUpstreamBase(): string {
 }
 
 async function proxyRequest(req: NextRequest, path: string[]): Promise<NextResponse> {
-  const upstreamBase = resolveUpstreamBase();
   const subpath = path.join("/");
+  if (!ALLOWED_PATHS.has(subpath)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const upstreamBase = resolveUpstreamBase();
   const originalUrl = new URL(req.url);
   const upstreamUrl = new URL(`${upstreamBase}/${subpath}`);
   // Forward query parameters (e.g. ?pubkey=…).

@@ -20,13 +20,9 @@ export async function isAdmin(privyUserId: string | null | undefined): Promise<b
 
   // First check environment variable (fastest, no DB query)
   const adminIdsFromEnv = getAdminUserIdsFromEnv();
-  console.log(`[Admin] Checking admin status for user: ${privyUserId}`);
-  console.log(`[Admin] Admin IDs from env: ${adminIdsFromEnv.join(', ')}`);
   if (adminIdsFromEnv.includes(privyUserId)) {
-    console.log(`[Admin] ✓ User ${privyUserId} is admin (from env variable)`);
     return true;
   }
-  console.log(`[Admin] User ${privyUserId} not found in env, checking database...`);
 
   // Fallback to database check (users table, not app_users)
   try {
@@ -44,13 +40,7 @@ export async function isAdmin(privyUserId: string | null | undefined): Promise<b
       return false;
     }
 
-    if (data) {
-      console.log(`[Admin] User ${privyUserId} is admin (from database)`);
-      return true;
-    }
-
-    console.log(`[Admin] User ${privyUserId} is NOT admin`);
-    return false;
+    return !!data;
   } catch (error) {
     console.error("[Admin] Error checking admin status:", error);
     // If database is unavailable, fall back to env check (already done above)

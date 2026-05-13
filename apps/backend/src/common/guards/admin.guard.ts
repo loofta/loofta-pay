@@ -54,29 +54,19 @@ export class AdminGuard implements CanActivate {
       // First check environment variable (fastest, no DB query)
       const adminIds = this.configService.get<string>('ADMIN_PRIVY_USER_IDS', '');
       const adminList = adminIds.split(',').map((id) => id.trim()).filter(Boolean);
-      this.logger.debug(`[AdminGuard] Checking admin status for user: ${userId}`);
-      this.logger.debug(`[AdminGuard] Admin IDs from env: ${adminList.join(', ')}`);
-      
+
       if (adminList.includes(userId)) {
-        this.logger.log(`[AdminGuard] ✓ User ${userId} is admin (from env variable)`);
         return true;
       }
 
       // Fallback to database check
-      this.logger.debug(`[AdminGuard] User ${userId} not found in env, checking database...`);
       const { data, error } = await this.supabaseService.users
         .select('role')
         .eq('privy_user_id', userId)
         .eq('role', 'admin')
         .maybeSingle();
 
-      if (!error && data) {
-        this.logger.log(`[AdminGuard] ✓ User ${userId} is admin (from database)`);
-        return true;
-      }
-
-      this.logger.warn(`[AdminGuard] User ${userId} is NOT admin`);
-      return false;
+      return !error && !!data;
     } catch (error) {
       this.logger.error('Error checking admin status:', error);
       return false;

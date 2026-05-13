@@ -19,14 +19,14 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/railwayapp/cli:latest
+      image: ghcr.io/railwayapp/cli:4 # pin to major; update manually when Railway releases breaking changes
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       # Use secret if set; otherwise "backend" (set RAILWAY_SERVICE_ID in repo secrets if your service has another name/ID)
       RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID || 'backend' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Deploy to Railway
         run: railway up --service "$RAILWAY_SERVICE_ID" --detach
