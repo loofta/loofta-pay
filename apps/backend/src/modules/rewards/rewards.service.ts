@@ -46,7 +46,7 @@ const TASK_SPARKS: Record<TaskKey, number> = {
   three_twitter_payments: 5000,
 };
 
-const TWITTER_TYPES = ['twitter_oauth', 'twitter', 'x'];
+const TWITTER_TYPES = ['twitter_oauth', 'twitter_oauth2', 'twitter', 'x'];
 const PENDING_PREFIXES = ['PENDING_EMAIL:', 'PENDING_USERNAME:'];
 
 @Injectable()

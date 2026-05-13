@@ -167,6 +167,16 @@ export async function GET(request: Request) {
     const networkParam = searchParams.get("network");
     const devnetOnly = networkParam ? networkParam !== "mainnet" : isNonMainnetCluster();
 
+    // Look up current user's username/email so we can find payments sent to them as pending recipients
+    const { data: currentUser } = await supabase
+      .from("app_users")
+      .select("username, email")
+      .eq("privy_user_id", userId)
+      .maybeSingle();
+    const pendingAddresses: string[] = [];
+    if (currentUser?.username) pendingAddresses.push(`PENDING_USERNAME:${currentUser.username}`);
+    if (currentUser?.email) pendingAddresses.push(`PENDING_EMAIL:${currentUser.email}`);
+
     // ── payments table (new records) ──────────────────────────────────────
     // Sent: payments where this user is the sender (new schema)
     let sentPaymentsQuery = supabase
@@ -231,6 +241,24 @@ export async function GET(request: Request) {
       const { data: recByWallet } = await recByWalletQuery;
       const seen = new Set(receivedPaymentRows.map((r) => r.id as string));
       for (const r of (recByWallet || []) as Record<string, unknown>[]) {
+        if (!seen.has(r.id as string)) receivedPaymentRows.push(r);
+      }
+    }
+
+    // Payments sent to this user by pending username/email (unclaimed — recipient_user_id not yet set)
+    if (pendingAddresses.length > 0) {
+      let recByPendingQuery = supabase
+        .from("payments")
+        .select(PAYMENT_SELECT)
+        .in("recipient_address", pendingAddresses)
+        .in("status", RECEIVED_VISIBLE_STATUSES)
+        .eq("is_devnet", devnetOnly)
+        .order("created_at", { ascending: false })
+        .range(offset, offset + limit - 1);
+      if (dateFilter) recByPendingQuery = recByPendingQuery.gte("created_at", dateFilter);
+      const { data: recByPending } = await recByPendingQuery;
+      const seen = new Set(receivedPaymentRows.map((r) => r.id as string));
+      for (const r of (recByPending || []) as Record<string, unknown>[]) {
         if (!seen.has(r.id as string)) receivedPaymentRows.push(r);
       }
     }

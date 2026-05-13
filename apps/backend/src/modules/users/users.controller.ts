@@ -43,22 +43,21 @@ export class UsersController {
   }
 
   /**
-   * Get user by username (NO wallet address returned - privacy)
+   * Check if a username exists and return only public fields.
+   * email and privyUserId are intentionally omitted — this endpoint is unauthenticated.
    */
   @Get('by-username')
-  @ApiOperation({ summary: 'Get user by username (no wallet address)' })
+  @Throttle({ short: { ttl: 60000, limit: 10 } })
+  @ApiOperation({ summary: 'Check if username exists (public fields only)' })
   @ApiQuery({ name: 'username', description: 'Username (with or without @ prefix)' })
   @ApiResponse({
     status: 200,
-    description: 'User info (no wallet address)',
+    description: 'Public user info (no wallet, no email, no Privy ID)',
     schema: {
       properties: {
         user: {
           type: 'object',
           properties: {
-            id: { type: 'string', format: 'uuid' },
-            privyUserId: { type: 'string' },
-            email: { type: 'string', nullable: true },
             username: { type: 'string', nullable: true },
             requirePrivatePayments: { type: 'boolean' },
           },
@@ -72,13 +71,9 @@ export class UsersController {
       throw new NotFoundException('username is required');
     }
 
-    try {
-      const user = await this.usersService.findByUsername(username);
-      return { user };
-    } catch (error: any) {
-      // Re-throw with more context if needed
-      throw error;
-    }
+    const { username: resolvedUsername, requirePrivatePayments } =
+      await this.usersService.findByUsername(username);
+    return { user: { username: resolvedUsername, requirePrivatePayments } };
   }
 
   /**
@@ -202,6 +197,7 @@ export class UsersController {
 
   @Get('search')
   @UseGuards(PrivyAuthGuard)
+  @Throttle({ short: { ttl: 60000, limit: 20 } })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Search usernames by prefix' })
   @ApiQuery({ name: 'q', description: 'Search query (min 2 chars)' })
