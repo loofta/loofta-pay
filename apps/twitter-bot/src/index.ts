@@ -42,7 +42,7 @@ async function createPaymentRequest(params: {
   amount_usd: number
   tweet_id: string
   tweet_url: string
-}): Promise<{ short_id: string; link: string; already_exists?: boolean } | null> {
+}): Promise<{ short_id: string; link: string; already_exists?: boolean, status?: string } | null> {
   try {
     const res = await fetch(`${LOOFTA_API_URL}/twitter-payments`, {
       method: 'POST',
@@ -90,7 +90,7 @@ async function processTweet(tweet: TweetV2, authorHandle: string): Promise<void>
     return
   }
 
-  if (payment.already_exists) {
+  if (payment.already_exists && payment.status !== "SUCCESS" ) {
     console.log(`[bot] tweet ${tweet.id} already processed — skipping reply`)
     return
   }
