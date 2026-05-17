@@ -100,11 +100,31 @@ async function processTweet(tweet: TweetV2, authorHandle: string): Promise<void>
       ? `$${parsed.amountUsd}`
       : `$${parsed.amountUsd.toFixed(2)}`
 
-  const replies = [
-    `@${parsed.senderHandle} your payment link is ready 🔒\n${amountDisplay} → @${parsed.recipientHandle}\n${APP_URL}/tw/${payment.short_id}`,
-    `@${parsed.senderHandle} ${amountDisplay} for @${parsed.recipientHandle} locked in 💸\ntap to send it privately 👇\n${APP_URL}/tw/${payment.short_id}`,
-    `@${parsed.senderHandle} here's your link to send ${amountDisplay} to @${parsed.recipientHandle} 🔒\n${APP_URL}/tw/${payment.short_id}`,
-  ]
+const replies = [
+  `@${parsed.senderHandle} ready to finalize this ${amountDisplay} devnet USDC payment to @${parsed.recipientHandle}?\n${APP_URL}/tw/${payment.short_id}`,
+
+  `@${parsed.senderHandle} does everything look good for this devnet payment to @${parsed.recipientHandle}?\n${APP_URL}/tw/${payment.short_id}`,
+
+  `@${parsed.senderHandle} want to complete this ${amountDisplay} transfer to @${parsed.recipientHandle} on devnet?\n${APP_URL}/tw/${payment.short_id}`,
+
+  `@${parsed.senderHandle} your devnet USDC payment for @${parsed.recipientHandle} is ready — finalize it here?\n${APP_URL}/tw/${payment.short_id}`,
+
+  `@${parsed.senderHandle} is this the correct payment for @${parsed.recipientHandle}?\nYou can finalize it here:\n${APP_URL}/tw/${payment.short_id}`,
+
+  `@${parsed.senderHandle} everything set for this devnet transfer to @${parsed.recipientHandle}?\n${APP_URL}/tw/${payment.short_id}`,
+
+  `@${parsed.senderHandle} ready to continue with this payment to @${parsed.recipientHandle}?\n${APP_URL}/tw/${payment.short_id}`,
+
+  `@${parsed.senderHandle} can you confirm this ${amountDisplay} devnet USDC payment to @${parsed.recipientHandle}?\n${APP_URL}/tw/${payment.short_id}`,
+
+  `@${parsed.senderHandle} your payment request for @${parsed.recipientHandle} is ready.\nWould you like to finalize it?\n${APP_URL}/tw/${payment.short_id}`,
+
+  `@${parsed.senderHandle} want to review and complete this devnet payment for @${parsed.recipientHandle}?\n${APP_URL}/tw/${payment.short_id}`,
+
+  `@${parsed.senderHandle} this ${amountDisplay} devnet transaction to @${parsed.recipientHandle} is ready.\nFinalize it here?\n${APP_URL}/tw/${payment.short_id}`,
+
+  `@${parsed.senderHandle} does this devnet USDC transfer to @${parsed.recipientHandle} look correct?\n${APP_URL}/tw/${payment.short_id}`,
+]
   const replyText = replies[Math.floor(Math.random() * replies.length)]
 
   try {
