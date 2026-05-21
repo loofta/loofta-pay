@@ -321,7 +321,7 @@ export function BalanceModal({
         blinkDepositRef.current = new Deposit({ signer: getBlinkSigner, debug: true });
       }
       await blinkDepositRef.current.requestDeposit({
-        amount: amt,
+        amount: null,
         chainId: 792703809,
         address: solanaAddress,
         token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
