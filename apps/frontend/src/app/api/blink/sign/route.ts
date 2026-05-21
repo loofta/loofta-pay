@@ -44,9 +44,7 @@ export async function POST(req: NextRequest) {
   };
 
   // Validate fields
-  if (!Number.isFinite(amount) || (amount as number) <= 0) {
-    return NextResponse.json({ error: "amount must be a positive number" }, { status: 400 });
-  }
+
   if (chainId !== SOLANA_CHAIN_ID) {
     return NextResponse.json({ error: "Unsupported chainId — only Solana (792703809) is accepted" }, { status: 400 });
   }
