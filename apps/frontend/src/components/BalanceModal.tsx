@@ -777,8 +777,8 @@ export function BalanceModal({
                       </svg>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with crypto</p>
-                      <p className={`text-sm mt-1 leading-relaxed ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      <p className={`text-lg md:text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with crypto</p>
+                      <p className={`text-base md:text-sm mt-1 leading-relaxed ${dark ? "text-slate-400" : "text-gray-500"}`}>
                         Any token, any chain — powered by Blink
                       </p>
                     </div>
@@ -797,10 +797,10 @@ export function BalanceModal({
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with fiat</p>
+                        <p className={`text-lg md:text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with fiat</p>
                         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-400" : "bg-gray-200 text-gray-500"}`}>Coming soon</span>
                       </div>
-                      <p className={`text-sm mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      <p className={`text-base md:text-sm mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
                         Revolut · Venmo · CashApp · Wise · PayPal
                       </p>
                     </div>
