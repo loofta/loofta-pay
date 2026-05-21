@@ -17,9 +17,10 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
-import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, ArrowRight, Copy } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight } from "lucide-react";
+import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
 import { usePrivy } from "@privy-io/react-auth";
-import { useWallets, useSignAndSendTransaction, useFundWallet } from "@privy-io/react-auth/solana";
+import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
 import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSend";
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
@@ -248,12 +249,96 @@ export function BalanceModal({
   const [depositAddressForPolling, setDepositAddressForPolling] = useState<string | null>(null);
   const [bridgeStatus, setBridgeStatus] = useState<string | null>(null);
 
+  // Blink crypto deposit state
+  const [blinkStep, setBlinkStep] = useState<"select" | "amount">("select");
+  const [blinkAmount, setBlinkAmount] = useState("10");
+  const [blinkDepositing, setBlinkDepositing] = useState(false);
+  const blinkMirrorRef = useRef<HTMLSpanElement | null>(null);
+  const [blinkInputWidthPx, setBlinkInputWidthPx] = useState(48);
+
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { user, getAccessToken } = usePrivy();
   const { wallets: solanaWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
-  const { fundWallet } = useFundWallet();
+
+  // Dynamic font sizing for blink amount (matches send flow)
+  const blinkDisplayAmt = blinkAmount.length > 0 ? blinkAmount : "0";
+  const blinkDigitCount = Math.max(1, blinkAmount.replace(/[^0-9]/g, "").length || 1);
+  function computeBlinkFontPx(digits: number) {
+    const maxPx = 72;
+    const minPx = 28;
+    const delta = Math.max(0, digits - 5) * 7;
+    return Math.max(minPx, maxPx - delta);
+  }
+  const blinkFontPx = computeBlinkFontPx(blinkDigitCount);
+  const blinkSuffixPx = Math.max(18, Math.round(blinkFontPx * 0.52));
+
+  useEffect(() => {
+    const el = blinkMirrorRef.current;
+    if (!el) return;
+    setBlinkInputWidthPx(Math.ceil(el.getBoundingClientRect().width));
+  }, [blinkDisplayAmt, blinkFontPx]);
+
+  function sanitizeBlinkAmount(v: string) {
+    let s = v.replace(/,/g, ".").replace(/[^0-9.]/g, "");
+    const parts = s.split(".");
+    if (parts.length > 2) s = parts[0] + "." + parts.slice(1).join("");
+    const p = s.split(".");
+    if (p.length === 2) return (p[1] || "").length > 0 ? `${p[0]}.${(p[1] || "").slice(0, 2)}` : p[0];
+    return p[0] ?? "";
+  }
+
+  // Lazy Deposit instance — created on first click, client-side only, avoids SSR null crash
+  const blinkDepositRef = useRef<BlinkDeposit | null>(null);
+  const [blinkError, setBlinkError] = useState<string | null>(null);
+
+  const getBlinkSigner = useCallback(async (data: unknown) => {
+    const token = await getAccessToken();
+    const res = await fetch("/api/blink/sign", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({})) as { error?: string };
+      throw new Error(err.error ?? "Signer request failed");
+    }
+    return res.json();
+  }, [getAccessToken]);
+
+  const handleBlinkDeposit = async () => {
+    const amt = parseFloat(blinkAmount || "10");
+    if (!solanaAddress) return;
+    setBlinkDepositing(true);
+    setBlinkError(null);
+    try {
+      if (!blinkDepositRef.current) {
+        const { Deposit } = await import("@swype-org/deposit");
+        blinkDepositRef.current = new Deposit({ signer: getBlinkSigner, debug: true });
+      }
+      await blinkDepositRef.current.requestDeposit({
+        amount: amt,
+        chainId: 792703809,
+        address: solanaAddress,
+        token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      });
+
+
+      toast({ title: "Deposit complete!", description: `$${amt.toFixed(2)} USDC will appear in your balance shortly.` });
+      onRefresh();
+      setBlinkAmount("");
+    } catch (err: unknown) {
+      const { DepositError, getDisplayMessage } = await import("@swype-org/deposit");
+      const msg = err instanceof DepositError ? getDisplayMessage(err) : "Deposit failed. Please try again.";
+      setBlinkError(msg);
+    } finally {
+      setBlinkDepositing(false);
+    }
+  };
 
   const wallet = useMemo(
     () => (solanaAddress ? solanaWallets?.find((w) => w.address === solanaAddress) : undefined),
@@ -292,6 +377,14 @@ export function BalanceModal({
   const destChain = effectiveToken?.chain || "";
   const isNearIntentsWithdraw = !BETA_SOLANA_ONLY && !isUSDCOnSolana && effectiveToken && usdcSolanaToken;
   const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
+
+  // Reset blink step on modal close
+  useEffect(() => {
+    if (!open) {
+      setBlinkStep("select");
+      setBlinkAmount("");
+    }
+  }, [open]);
 
   // On open: load history and resume any in-progress Near Intents withdrawal
   useEffect(() => {
@@ -582,7 +675,7 @@ export function BalanceModal({
     : "sm:max-w-md";
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog modal={false} open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent
         className={cn(
           contentCls,
@@ -640,7 +733,7 @@ export function BalanceModal({
 
           {/* Top Up tab */}
           {tab === "topup" && (
-            <div className="py-2 space-y-3">
+            <div className="py-2">
               {devnetMode ? (
                 <div className={`rounded-xl border-2 p-4 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
                   <p className={`text-base font-semibold mb-1 ${dark ? "text-white" : "text-gray-900"}`}>Deposit USDC (devnet)</p>
@@ -661,15 +754,15 @@ export function BalanceModal({
                     </div>
                   )}
                 </div>
-              ) : (
-                <>
-                  {/* Option 1 — Deposit to wallet (active) */}
+              ) : blinkStep === "select" ? (
+                /* Step 1: method selection */
+                <div className="py-2 space-y-3">
+                  {/* Deposit with crypto — active */}
                   <button
                     type="button"
                     disabled={!solanaAddress}
                     onClick={() => {
-                      if (!solanaAddress) return;
-                      fundWallet({ address: solanaAddress, options: { asset: "USDC" } });
+                      handleBlinkDeposit();
                     }}
                     className={cn(
                       "w-full flex items-start gap-4 p-4 rounded-xl border-2 text-left transition-colors",
@@ -680,39 +773,19 @@ export function BalanceModal({
                   >
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
-                        <rect width="20" height="14" x="2" y="5" rx="2" /><path d="M2 10h20" />
+                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                       </svg>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit USDC on Solana</p>
-                      <p className={`text-base md:text-sm mt-1 leading-relaxed ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                        Buy with credit card or send from a Solana wallet
+                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with crypto</p>
+                      <p className={`text-sm mt-1 leading-relaxed ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        Any token, any chain — powered by Blink
                       </p>
                     </div>
                     <ArrowRight className={`h-4 w-4 shrink-0 mt-1.5 ${dark ? "text-slate-500" : "text-gray-400"}`} />
                   </button>
 
-                  {/* Option 2 — Other networks (coming soon) */}
-                  <div className={cn(
-                    "w-full flex items-start gap-4 p-4 rounded-xl border-2 opacity-40 cursor-not-allowed select-none",
-                    dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"
-                  )}>
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
-                        <circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                      </svg>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cross-chain deposit</p>
-                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-400" : "bg-gray-200 text-gray-500"}`}>Coming soon</span>
-                      </div>
-                      <p className={`text-base md:text-sm mt-1 mb-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>25+ networks & 250+ tokens  supported</p>
-
-                    </div>
-                  </div>
-
-                  {/* Option 3 — Transfer (coming soon) */}
+                  {/* Deposit with fiat — coming soon */}
                   <div className={cn(
                     "w-full flex items-start gap-4 p-4 rounded-xl border-2 opacity-40 cursor-not-allowed select-none",
                     dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"
@@ -724,15 +797,116 @@ export function BalanceModal({
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with transfer</p>
+                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with fiat</p>
                         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-400" : "bg-gray-200 text-gray-500"}`}>Coming soon</span>
                       </div>
-                      <p className={`text-base md:text-sm mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                        CashApp · Venmo · Revolut · Wise · PayPal
+                      <p className={`text-sm mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        Revolut · Venmo · CashApp · Wise · PayPal
                       </p>
                     </div>
                   </div>
-                </>
+                </div>
+              ) : (
+                /* Step 2: amount entry */
+                <div className="flex flex-col items-center pt-4 pb-2 gap-6">
+                  {/* Back button */}
+                  <div className="w-full flex items-center">
+                    <button
+                      type="button"
+                      onClick={() => { setBlinkStep("select"); setBlinkAmount(""); }}
+                      className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"}`}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M19 12H5M12 5l-7 7 7 7" />
+                      </svg>
+                      Back
+                    </button>
+                  </div>
+
+                  {/* Big number amount display — matches send flow */}
+                  <div className="relative flex flex-col items-center w-full">
+                    <span
+                      ref={blinkMirrorRef}
+                      aria-hidden="true"
+                      className="invisible absolute -z-50 font-semibold font-sans tracking-tight tabular-nums"
+                      style={{ fontSize: `${blinkFontPx}px`, lineHeight: 1.05 }}
+                    >
+                      {blinkDisplayAmt}
+                    </span>
+                    <div className="flex items-baseline tabular-nums">
+                      <span
+                        className={`font-semibold font-sans ${dark ? "text-slate-500" : "text-gray-400"}`}
+                        style={{ fontSize: `${blinkSuffixPx}px`, lineHeight: 1.05 }}
+                      >
+                        $
+                      </span>
+                      <input
+                        inputMode="decimal"
+                        value={blinkAmount}
+                        onChange={(e) => setBlinkAmount(sanitizeBlinkAmount(e.target.value))}
+                        placeholder="0"
+                        autoFocus
+                        className={cn(
+                          "font-semibold font-sans tracking-tight tabular-nums",
+                          "border-0 bg-transparent outline-none p-0 m-0 text-center",
+                          dark ? "text-white placeholder:text-slate-600" : "text-gray-900 placeholder:text-gray-300"
+                        )}
+                        style={{
+                          fontSize: `${blinkFontPx}px`,
+                          lineHeight: 1.05,
+                          width: `${blinkInputWidthPx + 8}px`,
+                          minWidth: "2ch",
+                        }}
+                        aria-label="Deposit amount in USD"
+                      />
+                      <span
+                        className={`font-semibold font-sans ml-2 ${dark ? "text-slate-500" : "text-gray-400"}`}
+                        style={{ fontSize: `${blinkSuffixPx}px`, lineHeight: 1.05 }}
+                      >
+                        USD
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Quick-select amounts */}
+                  <div className="flex gap-2 flex-wrap justify-center">
+                    {[10, 25, 50, 100, 250].map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => setBlinkAmount(String(amt))}
+                        className={cn(
+                          "px-4 py-1.5 rounded-full text-sm font-medium transition-colors",
+                          blinkAmount === String(amt)
+                            ? "bg-orange-500 text-white"
+                            : dark
+                              ? "bg-white/10 text-slate-300 hover:bg-white/15"
+                              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        )}
+                      >
+                        ${amt}
+                      </button>
+                    ))}
+                  </div>
+
+                  {blinkError && (
+                    <p className="text-sm text-red-500 text-center">{blinkError}</p>
+                  )}
+
+                  <Button
+                    className="w-full h-12 text-base font-semibold rounded-xl"
+                    onClick={handleBlinkDeposit}
+                    disabled={!solanaAddress || !blinkAmount || parseFloat(blinkAmount) <= 0 || blinkDepositing}
+                  >
+                    {blinkDepositing ? (
+                      <><Loader2 className="h-4 w-4 animate-spin mr-2" />Preparing…</>
+                    ) : "Deposit"}
+                  </Button>
+
+                  <p className={`text-sm text-center ${dark ? "text-slate-600" : "text-gray-400"}`}>
+                    Any token, any chain · powered by Blink
+                  </p>
+                </div>
               )}
             </div>
           )}
