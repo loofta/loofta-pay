@@ -421,7 +421,7 @@ export default function Home() {
                               style={{
                                 fontSize: `${amountFontPx}px`,
                                 lineHeight: 1.05,
-                                width: `${amountInputWidthPx + amountGapPx}px`,
+                                width: `${(amountInputWidthPx || Math.round(amountFontPx * 0.62)) + amountGapPx}px`,
                               }}
                               aria-label="Amount in USD"
                             />
