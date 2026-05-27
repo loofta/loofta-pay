@@ -10,8 +10,7 @@ export type TaskKey =
   | 'first_payment'
   | 'payment_to_unregistered'
   | 'payment_link_paid'
-  | 'ten_payments'
-  | 'three_twitter_payments';
+  | 'ten_payments';
 
 export interface TaskStatus {
   key: TaskKey;
@@ -43,7 +42,6 @@ const TASK_SPARKS: Record<TaskKey, number> = {
   payment_to_unregistered: 2000,
   payment_link_paid: 2000,
   ten_payments: 5000,
-  three_twitter_payments: 5000,
 };
 
 const TWITTER_TYPES = ['twitter_oauth', 'twitter_oauth2', 'twitter', 'x'];
