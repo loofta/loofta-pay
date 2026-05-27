@@ -13,8 +13,7 @@ type TaskKey =
   | "first_payment"
   | "payment_to_unregistered"
   | "payment_link_paid"
-  | "ten_payments"
-  | "three_twitter_payments";
+  | "ten_payments";
 
 interface TaskStatus {
   key: TaskKey;
@@ -38,7 +37,6 @@ const TASK_ICONS: Record<TaskKey, string> = {
   payment_to_unregistered: "🌐",
   payment_link_paid: "🔗",
   ten_payments: "🔥",
-  three_twitter_payments: "🐦",
 };
 
 async function fetchRewards(token: string | null, network: "mainnet" | "devnet"): Promise<RewardsData> {
@@ -213,7 +211,7 @@ export default function RewardsPage() {
     refetchOnWindowFocus: false,
   });
 
-  const maxSparks = 250 + 250 + 500 + 2000 + 2000 + 5000 + 5000; // 15000
+  const maxSparks = 250 + 250 + 500 + 2000 + 2000 + 5000; // 10000
 
   if (!authenticated) {
     return (
