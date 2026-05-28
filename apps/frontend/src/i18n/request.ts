@@ -1,7 +1,7 @@
 import { getRequestConfig } from 'next-intl/server';
 import { cookies, headers } from 'next/headers';
 
-export const locales = ['en', 'pt-BR', 'fr', 'de', 'it', 'tr', 'zh-CN', 'ko', 'ja', 'id', 'fil', 'vi', 'ar'] as const;
+export const locales = ['en', 'pt-BR', 'fr', 'de', 'it', 'tr', 'zh-CN', 'ko', 'ja', 'id', 'fil', 'vi', 'ar', 'hi'] as const;
 export type Locale = (typeof locales)[number];
 export const defaultLocale: Locale = 'en';
 
@@ -19,6 +19,7 @@ function detectFromAcceptLanguage(acceptLanguage: string): Locale {
   if (normalized.includes('fil') || normalized.includes('tl')) return 'fil';
   if (normalized.includes('vi')) return 'vi';
   if (normalized.includes('ar')) return 'ar';
+  if (normalized.includes('hi')) return 'hi';
   return defaultLocale;
 }
 

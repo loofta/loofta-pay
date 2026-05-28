@@ -19,6 +19,7 @@ const LOCALE_OPTIONS = [
   { value: 'fil', label: 'Filipino', flag: '🇵🇭' },
   { value: 'vi', label: 'Tiếng Việt', flag: '🇻🇳' },
   { value: 'ar', label: 'العربية', flag: '🇸🇦' },
+  { value: 'hi', label: 'हिन्दी', flag: '🇮🇳' },
 ] as const;
 
 function LocalePicker() {
