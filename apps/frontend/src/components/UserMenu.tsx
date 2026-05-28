@@ -21,6 +21,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Settings } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 /** Privy uses type "twitter_oauth" for Twitter (not "twitter" or "x"). */
@@ -46,6 +47,7 @@ interface UserMenuProps {
 }
 
 export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage, onLogout }: UserMenuProps) {
+  const t = useTranslations('UserMenu');
   // Get email and username from store as fallback (always persistent)
   const storeEmail = useAuthStore((s) => s.email);
   const storeUsername = useAuthStore((s) => s.username ?? null);
@@ -452,7 +454,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 <div className="mb-2">
                   <p className={`text-base md:text-sm font-medium mb-1 ${isDarkPage ? "text-gray-400" : "text-gray-500"
                     }`}>
-                    Username
+                    {t('username')}
                   </p>
                   <div className="flex items-center justify-between">
                     <p className={`text-base md:text-sm font-semibold ${isDarkPage ? "text-white" : "text-gray-900"
@@ -463,7 +465,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       onClick={() => copyToClipboard(`@${username}`)}
                       className={`p-1 rounded hover:bg-opacity-20 ${isDarkPage ? "hover:bg-white" : "hover:bg-gray-200"
                         }`}
-                      title="Copy username"
+                      title={t('copyUsername')}
                     >
                       <svg
                         width="14"
@@ -487,7 +489,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 <div className="mb-2">
                   <p className={`text-base md:text-sm font-medium mb-1 ${isDarkPage ? "text-gray-400" : "text-gray-500"
                     }`}>
-                    Email
+                    {t('email')}
                   </p>
                   <div className="flex items-center justify-between">
                     <p className={`text-base md:text-sm ${isDarkPage ? "text-white/90" : "text-gray-700"
@@ -531,7 +533,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     <polyline points="16 6 12 2 8 6"></polyline>
                     <line x1="12" y1="2" x2="12" y2="15"></line>
                   </svg>
-                  Share your link
+                  {t('shareYourLink')}
                 </button>
               </div>
             )}
@@ -549,7 +551,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   }`}
               >
                 <span>⚡</span>
-                Sparks
+                {t('sparks')}
               </Link>
             </div>
 
@@ -566,7 +568,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   }`}
               >
                 <Settings className="w-4 h-4 shrink-0" />
-                Settings
+                {t('settings')}
               </button>
             </div>
 
@@ -576,11 +578,11 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 <div className="flex flex-col min-w-0">
                   <span className={`text-base md:text-sm ${isDarkPage ? "text-gray-300" : "text-gray-700"}`}>
                     {networkMode === "mainnet"
-                      ? (mainnetAccess ? "Mainnet Beta" : "Mainnet (view only)")
-                      : "Devnet"}
+                      ? (mainnetAccess ? t('mainnetBeta') : t('mainnetViewOnly'))
+                      : t('devnet')}
                   </span>
                   {networkMode === "mainnet" && !mainnetAccess && (
-                    <span className="text-base md:text-sm text-amber-400/80 leading-tight">Payments disabled — balance &amp; withdraw only</span>
+                    <span className="text-base md:text-sm text-amber-400/80 leading-tight">{t('paymentsDisabled')}</span>
                   )}
                 </div>
                 <Switch
@@ -607,7 +609,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 : "text-red-600 hover:bg-red-50"
                 }`}
             >
-              Log out
+              {t('logOut')}
             </button>
           </div>
         </div>
@@ -632,16 +634,16 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="mb-6 text-5xl">💳</div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">Share your payment link</h2>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">{t('noUsernameTitle')}</h2>
                 <p className="text-base text-gray-600 mb-6">
-                  Set up your username in the account menu to get your payment link and start receiving payments.
+                  {t('noUsernameBody')}
                 </p>
                 <button
                   type="button"
                   onClick={() => setShowShareModal(false)}
                   className="rounded-2xl bg-gray-900 px-6 py-3 font-semibold text-white hover:bg-gray-800 transition-colors"
                 >
-                  Got it
+                  {t('gotIt')}
                 </button>
               </motion.div>
             </motion.div>
@@ -695,10 +697,10 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     className="text-center mb-6"
                   >
                     <h2 className="text-2xl font-bold text-white mb-2">
-                      Start receiving money now
+                      {t('shareModalTitle')}
                     </h2>
                     <p className="text-base text-slate-400">
-                      Share your payment link to receive payments
+                      {t('shareModalSubtitle')}
                     </p>
                   </motion.div>
 
@@ -710,7 +712,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     className="mb-6 p-4 rounded-xl bg-white/5 border border-white/10"
                   >
                     <p className="text-base md:text-sm font-medium mb-2 text-slate-400">
-                      Your payment link
+                      {t('yourPaymentLink')}
                     </p>
                     <div className="flex items-center gap-2">
                       <a
@@ -728,7 +730,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           copyPaymentLink();
                         }}
                         className={`p-2 rounded-lg hover:bg-white/10 transition-colors flex-shrink-0 ${linkCopied ? "text-green-400" : "text-slate-400"}`}
-                        title={linkCopied ? "Copied!" : "Copy link"}
+                        title={linkCopied ? t('copied') : t('copyLink')}
                       >
                         {linkCopied ? (
                           <svg
@@ -768,15 +770,15 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-base font-semibold text-white">
-                          🔒 Private Payments
+                          {t('privatePayments')}
                         </span>
                         {PRIVATE_PAYMENT_ENABLED ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm md:text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                            Enabled
+                            {t('enabled')}
                           </span>
                         ) : (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm md:text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            Coming soon
+                            {t('comingSoon')}
                           </span>
                         )}
                       </div>
@@ -784,8 +786,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     </div>
                     <p className="text-base md:text-sm text-slate-400 mt-3 w-full block">
                       {PRIVATE_PAYMENT_ENABLED
-                        ? "All payments to your link use the MagicBlock Private Ephemeral Rollup for privacy."
-                        : "When available, all payments to your link will use the MagicBlock Private Ephemeral Rollup for privacy."}
+                        ? t('privatePaymentsDescEnabled')
+                        : t('privatePaymentsDescDisabled')}
                     </p>
                   </motion.div>
 
@@ -871,7 +873,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <polyline points="20 6 9 17 4 12"></polyline>
                           </svg>
-                          Copied!
+                          {t('copied')}
                         </span>
                       ) : (
                         <span className="flex items-center justify-center gap-2">
@@ -879,7 +881,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                           </svg>
-                          Copy Link
+                          {t('copyLinkButton')}
                         </span>
                       )}
                     </button>
@@ -896,7 +898,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     }}
                     className="w-full py-3.5 rounded-xl font-semibold text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors"
                   >
-                    Close
+                    {t('close')}
                   </button>
                 </div>
               </motion.div>
@@ -937,23 +939,23 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       <Settings className="w-6 h-6 text-white" />
                     </div>
                   </div>
-                  <h2 className="text-2xl font-bold text-white mb-1">Settings</h2>
-                  <p className="text-base md:text-sm text-gray-400">Wallet, sign-in methods, and security.</p>
+                  <h2 className="text-2xl font-bold text-white mb-1">{t('settingsTitle')}</h2>
+                  <p className="text-base md:text-sm text-gray-400">{t('settingsSubtitle')}</p>
                 </div>
 
                 <div className="space-y-4">
             {/* Network toggle — visible to all */}
             <div>
-              <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">Network</Label>
+              <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">{t('network')}</Label>
               <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
                 <div className="flex flex-col min-w-0">
                   <span className="text-base md:text-sm text-white/90">
                     {networkMode === "mainnet"
-                      ? (mainnetAccess ? "Mainnet Beta" : "Mainnet (view only)")
-                      : "Devnet"}
+                      ? (mainnetAccess ? t('mainnetBeta') : t('mainnetViewOnly'))
+                      : t('devnet')}
                   </span>
                   {networkMode === "mainnet" && !mainnetAccess && (
-                    <span className="text-base md:text-sm text-amber-400/80 mt-0.5">Balance &amp; withdraw only — payments require beta access</span>
+                    <span className="text-base md:text-sm text-amber-400/80 mt-0.5">{t('balanceWithdrawOnly')}</span>
                   )}
                 </div>
                 <Switch
@@ -965,11 +967,11 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
 
             {/* Sign-in methods - show connected first, then Add buttons */}
             <div>
-              <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">Sign-in methods</Label>
+              <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">{t('signInMethods')}</Label>
               {/* Always show what's already connected */}
               {(hasEmail || hasTwitterLinked) && (
                 <div className="mb-3 p-3 rounded-xl bg-white/5 border border-white/10 space-y-2">
-                  <p className="text-base md:text-sm font-medium text-gray-400 mb-1.5">Connected</p>
+                  <p className="text-base md:text-sm font-medium text-gray-400 mb-1.5">{t('connected')}</p>
                   {hasEmail && linkedEmailAddress && (
                     <div className="flex items-center gap-2 text-base md:text-sm text-white/90">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-gray-400">
@@ -990,7 +992,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 </div>
               )}
               <p className="text-base md:text-sm text-gray-400 mb-3">
-                Add a second method so you can recover your account.
+                {t('addSecondMethod')}
               </p>
               <div className="space-y-1">
                 {!hasTwitterLinked && (
@@ -1011,7 +1013,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
                       <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
                     </svg>
-                    Add Twitter
+                    {t('addTwitter')}
                   </button>
                 )}
                 {!hasEmail && (
@@ -1031,15 +1033,15 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
                       <polyline points="22,6 12,13 2,6"></polyline>
                     </svg>
-                    Add email
+                    {t('addEmail')}
                   </button>
                 )}
               </div>
               {canUpdateToTwitter && twitterHandle && (
                 <div className="mt-3 p-3 rounded-xl bg-white/5 border border-white/10">
-                  <p className="text-base md:text-sm font-medium text-gray-300 mb-1">Payment link</p>
+                  <p className="text-base md:text-sm font-medium text-gray-300 mb-1">{t('paymentLink')}</p>
                   <p className="text-base md:text-sm text-gray-400 mb-2">
-                    Use your Twitter as your payment link: @{twitterHandle}
+                    {t('useTwitterAsLink', { handle: twitterHandle })}
                   </p>
                   <Button
                     type="button"
@@ -1071,7 +1073,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       }
                     }}
                   >
-                    {updatingToTwitter ? "Updating…" : `Use @${twitterHandle}`}
+                    {updatingToTwitter ? t('updating') : t('useHandle', { handle: twitterHandle })}
                   </Button>
                 </div>
               )}
@@ -1079,7 +1081,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             {walletAddress ? (
               <>
                 <div>
-                  <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">Wallet Address</Label>
+                  <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">{t('walletAddress')}</Label>
                   <div className="flex items-center gap-2 p-3 rounded-xl bg-white/5 border border-white/10">
                     <p
                       className="flex-1 text-base md:text-sm font-mono break-all cursor-pointer text-white/90 hover:opacity-80"
@@ -1094,7 +1096,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     <button
                       onClick={() => copyToClipboard(walletAddress, false)}
                       className="p-2 rounded-lg hover:bg-white/10 shrink-0 text-gray-400 hover:text-white"
-                      title={copied ? "Copied!" : "Copy"}
+                      title={copied ? t('copied') : t('copyLink')}
                     >
                       {copied ? (
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-400">
@@ -1108,7 +1110,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       )}
                     </button>
                   </div>
-                  <p className="text-base md:text-sm text-gray-500 mt-1">{showFullAddress ? "Click to show shortened" : "Click address to copy full"}</p>
+                  <p className="text-base md:text-sm text-gray-500 mt-1">{showFullAddress ? t('clickToHide') : t('clickToCopy')}</p>
                 </div>
 
                 <div className="space-y-1">
@@ -1124,7 +1126,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       <polyline points="15 3 21 3 21 9"></polyline>
                       <line x1="10" y1="14" x2="21" y2="3"></line>
                     </svg>
-                    View on Solscan
+                    {t('viewOnSolscan')}
                   </button>
                   {/* Export Private Key button — temporarily hidden
                   <button
@@ -1172,9 +1174,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             ) : (
               <div className="py-4 text-center">
                 {!privyReady ? (
-                  <p className="text-base md:text-sm text-gray-400">Loading wallet...</p>
+                  <p className="text-base md:text-sm text-gray-400">{t('loadingWallet')}</p>
                 ) : (
-                  <p className="text-base md:text-sm text-gray-400">Wallet will be created automatically when needed.</p>
+                  <p className="text-base md:text-sm text-gray-400">{t('walletAutoCreated')}</p>
                 )}
               </div>
             )}
@@ -1188,7 +1190,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   onClick={() => setShowSettingsModal(false)}
                   className="w-full py-3.5 rounded-xl font-semibold text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors"
                 >
-                  Close
+                  {t('close')}
                 </button>
               </div>
             </motion.div>

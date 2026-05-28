@@ -10,6 +10,8 @@ import { AuthProvider } from "@/providers/AuthProvider";
 import "@/lib/suppressPrivyWarnings";
 import { Analytics } from "@vercel/analytics/next"
 import { AppErrorBoundary } from "@/components/AppErrorBoundary"
+import { NextIntlClientProvider } from "next-intl";
+import { getLocale, getMessages } from "next-intl/server";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -92,13 +94,15 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const locale = await getLocale();
+  const messages = await getMessages();
   return (
-    <html lang="en" className={`${inter.variable} font-grotesk`} suppressHydrationWarning>
+    <html lang={locale} className={`${inter.variable} font-grotesk`} suppressHydrationWarning>
       <head>
         {/* Preload critical fonts for better LCP */}
         <link
@@ -169,13 +173,15 @@ export default function RootLayout({
             }),
           }}
         />
-        <AppErrorBoundary>
-          <AuthProvider>
-            <QueryProvider>
-              {children}
-            </QueryProvider>
-          </AuthProvider>
-        </AppErrorBoundary>
+        <NextIntlClientProvider messages={messages}>
+          <AppErrorBoundary>
+            <AuthProvider>
+              <QueryProvider>
+                {children}
+              </QueryProvider>
+            </AuthProvider>
+          </AppErrorBoundary>
+        </NextIntlClientProvider>
         <Toaster />
         <Analytics />
       </body>

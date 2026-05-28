@@ -1,0 +1,369 @@
+{
+  "BottomNav": {
+    "send": "Kirim",
+    "receive": "Terima",
+    "history": "Riwayat",
+    "profile": "Profil"
+  },
+
+  "AppShell": {
+    "bannerMainnet": "Beta mainnet — kirim dan terima pembayaran privat dengan USDC asli. Bayar siapa saja melalui email, username X, atau username Loofta.",
+    "bannerDevnet": "Kirim dan terima pembayaran privat dengan MagicBlock PER — devnet. Bayar siapa saja melalui email, username X, atau username Loofta.",
+    "bannerContact": "Ada pertanyaan? Hubungi kami di Telegram",
+    "dismissBanner": "Tutup banner"
+  },
+
+  "MinimalHeader": {
+    "balance": "Saldo",
+    "sparks": "Sparks",
+    "waitlist": "Daftar tunggu",
+    "profile": "Profil",
+    "signIn": "Masuk",
+    "logOut": "Keluar",
+    "mainnetBeta": "Mainnet Beta",
+    "mainnetViewOnly": "Mainnet (hanya lihat)",
+    "devnet": "Devnet",
+    "paymentsDisabled": "Pembayaran dinonaktifkan — hanya saldo & penarikan",
+    "openMenu": "Buka menu",
+    "closeMenu": "Tutup menu",
+    "earnSparks": "Dapatkan Sparks dari aktivitas Anda",
+    "requestAccess": "Minta akses awal mainnet"
+  },
+
+  "SettingsPage": {
+    "title": "Profil",
+    "username": "Username",
+    "email": "Email",
+    "shareYourLink": "Bagikan tautan Anda",
+    "settings": "Pengaturan",
+    "logOut": "Keluar",
+    "copyUsername": "Salin username",
+    "signInPrompt": "Masuk untuk melihat profil Anda.",
+    "goToHome": "Ke beranda"
+  },
+
+  "HistoryPage": {
+    "title": "Riwayat pembayaran",
+    "amountSent": "Jumlah terkirim",
+    "amountReceived": "Jumlah diterima",
+    "recentPayments": "Pembayaran terbaru",
+    "sent": "Terkirim",
+    "received": "Diterima",
+    "to": "Ke",
+    "from": "Dari",
+    "anonymous": "Anonim",
+    "noPayments": "Belum ada pembayaran.",
+    "noPaymentsMatch": "Tidak ada pembayaran yang cocok dengan pencarian Anda.",
+    "searchPlaceholder": "Cari berdasarkan pengirim, penerima, atau pesan...",
+    "signInTitle": "Riwayat pembayaran",
+    "signInPrompt": "Masuk untuk melihat pembayaran yang Anda kirim dan terima.",
+    "signIn": "Masuk",
+    "refresh": "Segarkan",
+    "refreshList": "Segarkan daftar",
+    "search": "Cari",
+    "status": {
+      "SUCCESS": "Dibayar",
+      "PRIVATE_TRANSFER_PENDING": "Belum diklaim",
+      "CANCELLED": "Dibatalkan",
+      "OPEN": "Terbuka",
+      "PENDING_DEPOSIT": "Tertunda",
+      "IN_FLIGHT": "Sedang diproses",
+      "REFUNDED": "Dikembalikan",
+      "EXPIRED": "Kedaluwarsa"
+    }
+  },
+
+  "HomePage": {
+    "send": "Kirim",
+    "to": "Ke",
+    "amountLabel": "Jumlah dalam USD",
+    "recipientPlaceholder": "Loofta, username Twitter, email tepat",
+    "recipientHint": "Username Loofta atau Twitter, atau email tepat — mereka mengklaim dengan masuk menggunakan akun tersebut.",
+    "continue": "Lanjutkan",
+    "signInToContinue": "Masuk untuk melanjutkan",
+    "multiSend": "Coba kirim massal",
+    "newPayment": "← Pembayaran baru",
+    "paymentCreated": "Tautan pembayaran dibuat. Bagikan atau buka untuk melihat status.",
+    "viewPayment": "Lihat pembayaran",
+    "receive": "Terima",
+    "backToReceive": "← Kembali ke terima",
+    "sharePersonalLink": "Bagikan tautan pribadi Anda",
+    "personalLinkDescription": "Siapa saja dapat membayar Anda dengan membuka tautan ini. Anda menerima dalam token dan rantai yang Anda inginkan.",
+    "copy": "Salin",
+    "copied": "Disalin",
+    "shareAndSettings": "Bagikan & pengaturan",
+    "signInForLink": "Masuk untuk mendapatkan tautan pembayaran Anda sendiri. Tambahkan Twitter nanti untuk mendapatkan @username unik.",
+    "signInToGetLink": "Masuk untuk mendapatkan tautan pembayaran Anda",
+    "createPaymentLink": "Buat tautan pembayaran baru",
+    "createLinkDescription": "Buat permintaan pembayaran satu kali. Anda memilih jumlah, token, dan rantai. Tidak perlu akun untuk membuat.",
+    "createNewLink": "Buat tautan pembayaran baru",
+    "faqTitle": "Pertanyaan yang sering diajukan",
+    "searching": "Mencari…",
+    "noUsersFound": "Tidak ada pengguna yang ditemukan",
+    "fromEmail": "(dari email)",
+    "faq": {
+      "fees": {
+        "question": "Berapa biayanya?",
+        "answer1": "Pembayaran privat di Loofta Pay memiliki biaya tetap yang dibebankan kepada pengirim — <bold>10 BPS</bold> dari jumlah transfer ditambah biaya gas <bold>0,002 SOL</bold>, keduanya dibayar dalam USDC. Semua biaya langsung ke infrastruktur privasi MagicBlock. Loofta tidak mengambil bagian apapun. Penerima selalu menerima jumlah yang diminta secara tepat.",
+        "answer2": "Dibandingkan dengan alat privasi lain di Solana (Umbra, Privacy Cash, Houdini Swap) yang mengenakan 0,4%–4,4%+ untuk jumlah kecil, biaya tetap Loofta secara konsisten paling rendah di semua ukuran transfer."
+      },
+      "privatePayments": {
+        "question": "Bagaimana pembayaran privat bekerja?",
+        "answer": "Pembayaran privat menggunakan Private Ephemeral Rollup (PER) MagicBlock — infrastruktur yang dibangun untuk visibilitas privat bukan transfer publik penuh yang khas. Artinya pengamat tidak dapat melihat detail pembayaran yang biasanya dapat mereka lihat di on-chain, sehingga aktivitas Anda jauh lebih sulit untuk dilacak atau dihubungkan. Ini adalah pilihan ketika Anda peduli tentang privasi pembayaran yang lebih kuat."
+      },
+      "sendBeforeAccount": {
+        "question": "Bisakah saya mengirim ke seseorang sebelum mereka punya akun?",
+        "answer": "Ya. Anda dapat mengirim ke username Twitter/X atau email. Mereka akan mendapat tautan untuk mendaftar dan mengklaim pembayaran. Setelah masuk dengan identitas tersebut, mereka dapat mengklaim dana."
+      },
+      "retrieveWallet": {
+        "question": "Bagaimana cara mendapatkan kembali dompet Loofta Pay tertanam saya?",
+        "answer1": "Buka menu akun Anda, pergi ke <bold>Pengaturan</bold>, dan gunakan <bold>Ekspor Kunci Privat</bold> untuk mencadangkan dompet Loofta Pay tertanam Anda. Anda juga dapat melihat alamat Solana Anda di sana.",
+        "answer2": "Jika Anda mengimpor atau menggunakan dompet tersebut <bold>di luar</bold> Loofta Pay, asumsi privasi dan keamanan yang kami rancang untuk penggunaan dalam aplikasi mungkin tidak berlaku lagi, dan <bold>privasi Anda dapat terganggu</bold>. Kami sangat menyarankan untuk menjaga aktivitas di dalam Loofta Pay.",
+        "answer3": "<bold>Jangan</bold> bagikan alamat dompet tertanam Anda kepada orang-orang agar mereka dapat membayar Anda. Bagikan <bold>username Loofta</bold> atau <bold>email</bold> Anda — itulah cara orang lain mengirimkan dana kepada Anda.",
+        "answer4": "Untuk memindahkan uang, gunakan <bold>Tarik</bold> untuk mengirim USDC ke dompet Solana <bold>baru</bold> yang Anda kontrol (gratis di Solana USDC dengan gas yang disponsori) — daripada mengekspos alamat tertanam Anda."
+      },
+      "burnerWallet": {
+        "question": "Apa itu burner wallet?",
+        "answer": "Burner wallet adalah alamat deposit sementara yang kami buat untuk pembayaran Anda. Anda mengirim dana ke alamat ini dan Loofta Pay meneruskannya ke penerima. Anda tidak perlu menghubungkan dompet untuk membayar — cukup kirim ke alamat deposit."
+      },
+      "morphoVault": {
+        "question": "Bagaimana Morpho Vault menjaga penghasilan saya tetap aman?",
+        "answer1": "Morpho Vault adalah protokol yang mendukung imbal hasil pada saldo Loofta Anda — salah satu cara paling aman dan paling banyak diaudit untuk mendapatkan pendapatan pasif di DeFi.",
+        "answer2": "Tidak seperti produk imbal hasil yang menumpuk risiko di atas risiko, Morpho beroperasi dengan pasar peminjaman yang transparan dan terlalu dijaminkan. Setiap posisi terlihat di on-chain. Tidak ada strategi tersembunyi, tidak ada dana yang terkunci, tidak ada manajer dana yang tidak transparan. USDC Anda menghasilkan melalui aktivitas pinjaman yang terverifikasi — dan Anda dapat menarik kapan saja.",
+        "answer3": "Morpho telah memproses miliaran dolar dalam volume pinjaman dengan rekam jejak keamanan yang tak ternoda. Ketika saldo Anda menghasilkan, itu menghasilkan dengan aman."
+      },
+      "looftaPoints": {
+        "question": "Bagaimana Loofta Points bekerja?",
+        "answer1": "Setiap pembayaran yang Anda terima secara otomatis menghasilkan Loofta Points — tidak perlu opt-in. Poin terakumulasi di akun Anda dan membuka hadiah di jaringan mitra Loofta: diskon untuk alat dan layanan yang sudah digunakan kreator dan freelancer.",
+        "answer2": "Poin semakin bertambah seiring penggunaan — semakin Loofta Pay menjadi lapisan pembayaran utama Anda, semakin banyak yang Anda peroleh kembali. Seiring jaringan mitra tumbuh, nilai poin Anda juga meningkat."
+      },
+      "apy": {
+        "question": "APY pada jumlah yang diterima & kompounding otomatis?",
+        "answer": "Kami sedang membangun APY dalam USD pada saldo yang Anda terima, dengan setiap pembayaran yang diklaim dikompounding secara otomatis. Segera hadir."
+      },
+      "devnet": {
+        "question": "Saya di devnet — bagaimana cara mendapatkan SOL dan USDC uji coba?",
+        "answer": "Dapatkan SOL devnet gratis dari <solanaLink>faucet Solana</solanaLink>. Untuk USDC devnet, gunakan <circleLink>faucet Circle</circleLink>."
+      }
+    }
+  },
+
+  "MarketingPage": {
+    "nav": {
+      "payReceive": "Bayar & Terima",
+      "features": "Fitur",
+      "privacy": "Privasi",
+      "earn": "Hasilkan",
+      "business": "Bisnis",
+      "zcash": "Zcash",
+      "launchApp": "Buka aplikasi"
+    },
+    "hero": {
+      "iWantToGetPaid": "Saya ingin dibayar",
+      "iWantToSend": "Saya ingin mengirim",
+      "receiveHeadline1": "Satu tautan.",
+      "receiveHeadline2": "Terima dalam",
+      "receiveHeadlineGradient": "apa saja",
+      "sendHeadline1": "Kirim ke",
+      "sendHeadlineGradient": "siapa saja",
+      "sendHeadline2": "ke mana saja.",
+      "receiveSubtitle": "Bagikan tautan pembayaran Anda. Siapa saja mengirim dari mana saja, dalam mata uang apa pun — Anda menerima USDC di Solana dan menarik ke apa yang benar-benar Anda inginkan.",
+      "sendSubtitle": "Tidak perlu alamat dompet. Tidak perlu daftar bagi mereka. Kirim ke email, @handle, atau username — mereka mengklaimnya saat masuk.",
+      "createYourLink": "Buat tautan Anda",
+      "sendAPayment": "Kirim pembayaran",
+      "seeHowItWorks": "Lihat cara kerjanya",
+      "payByEmail": "Bayar via email",
+      "dragToFlick": "seret untuk geser →"
+    },
+    "chains": {
+      "tagline": "Bayar dari rantai mana pun · Terima apa yang Anda inginkan"
+    },
+    "features": {
+      "pill": "Tiga pilar",
+      "headline1": "Dibangun agar pembayaran",
+      "headline2": "bekerja untuk Anda.",
+      "item0Eyebrow": "01 · Terima",
+      "item0Title": "Satu tautan. Token apa pun.",
+      "item0Body": "Username Anda menjadi tautan pembayaran Anda. Pengirim membayar dari salah satu dari 20+ rantai — Anda menerima tepat token yang Anda inginkan.",
+      "item1Eyebrow": "02 · Lindungi",
+      "item1Title": "Aktivitas di luar catatan publik.",
+      "item1Body": "Private Ephemeral Rollup MagicBlock merutekan pembayaran Anda sehingga jumlah dan pihak lawan tetap milik Anda. Tanpa pengaturan.",
+      "item2Eyebrow": "03 · Hasilkan",
+      "item2Title": "Saldo idle tidak tetap idle.",
+      "item2Body": "Setiap dolar di antara pembayaran menghasilkan imbal hasil melalui vault Morpho. Tarik kapan saja, di mana saja, sebagai token apa pun."
+    },
+    "privacy": {
+      "pill": "MagicBlock PER",
+      "headline1": "Satu-satunya buku besar",
+      "headline2": "yang",
+      "headlineGradient": "penting",
+      "headline3": "adalah milik Anda.",
+      "body": "Private Ephemeral Rollup melindungi jumlah, pihak lawan, dan pola dari pengamat publik. Tanpa pengaturan, tanpa dompet baru — hanya satu tombol.",
+      "bullet1": "Detail pembayaran dilindungi di on-chain",
+      "bullet2": "Pihak lawan tidak dapat dihubungkan",
+      "bullet3": "Satu tombol. Bekerja dengan alur Anda yang ada.",
+      "receiptLabel": "Kuitansi",
+      "receiptBadge": "Privat",
+      "rollupVerified": "Rollup efemeral · Terverifikasi"
+    },
+    "earn": {
+      "pill": "Vault Morpho",
+      "headline1": "Saldo Anda",
+      "headline2": "selalu aktif.",
+      "body": "Setiap menit di antara pembayaran, USDC idle Anda menghasilkan imbal hasil melalui vault Morpho yang diaudit. Tarik seketika — kami urai di latar belakang.",
+      "apyLabel": "APY Saat Ini*",
+      "pointsLabel": "Loofta Points",
+      "available": "Saldo tersedia",
+      "earning": "Menghasilkan"
+    },
+    "business": {
+      "pill": "Untuk bisnis",
+      "headline1": "Gaji, pembayaran,",
+      "headline2": "semua di satu tempat.",
+      "body": "Dari membayar kontraktor di lima negara hingga merilis hadiah hackathon dengan KYC — Loofta menangani bagian yang rumit.",
+      "bookDemo": "Pesan demo bisnis",
+      "bulkEyebrow": "Pembayaran massal",
+      "bulkTitle": "Bayar 200 orang dalam satu tanda tangan.",
+      "bulkBody": "Unggah CSV atau tempel daftar. Bayar freelancer, kreator, pemenang hackathon, atau seluruh penggajian — dalam kombinasi mata uang apa pun yang ingin mereka terima.",
+      "bulkBadge": "200+ penerima · satu tx",
+      "ctaEyebrow": "Hubungi kami",
+      "ctaTitle": "Mengelola penggajian atau program hibah?",
+      "ctaBody": "Harga volume kustom, dukungan khusus, dan bantuan onboarding untuk tim yang membayar 50+ penerima.",
+      "contactSales": "Hubungi penjualan",
+      "feature0Title": "Jadwalkan pembayaran",
+      "feature0Body": "Antrikan pembayaran untuk Selasa depan. Atau tanggal 1 setiap bulan. Terkirim tepat waktu apakah Anda online atau tidak.",
+      "feature1Title": "Pembayaran berulang",
+      "feature1Body": "Atur sekali. Gaji setiap tanggal 1, honorarium setiap tanggal 15, langganan mingguan. Jeda atau edit kapan saja.",
+      "feature2Title": "Klaim berpagar KYC",
+      "feature2Body": "Wajibkan verifikasi identitas sebelum penerima dapat mengklaim. Sempurna untuk hadiah hackathon, hibah, atau transfer yang terikat kepatuhan.",
+      "feature3Title": "Invoice",
+      "feature3Body": "Kirim tautan invoice yang rapi. Klien membayar dengan cara apa pun yang mereka mau. Anda dibayar dalam apa pun yang Anda mau. Rekonsiliasi ditangani."
+    },
+    "zcash": {
+      "pill": "Zcash · ZEC",
+      "headline1": "Uang privat,",
+      "headlineGradient": "benar-benar privat.",
+      "body": "Terima, minta, tukar, dan tarik Zcash tanpa pernah mengekspos jumlah atau pihak lawan. Seluruh sisi Loofta, dibangun di atas ZEC yang terlindungi.",
+      "shieldedByDefault": "Terlindungi secara default",
+      "shieldedTitle": "Terima ZEC sesuai cara Zcash dimaksudkan untuk digunakan.",
+      "shieldedBody": "Setiap pembayaran ke @username Anda diselesaikan ke alamat yang terlindungi. Tidak ada bagian transparan, tidak ada kebocoran metadata. Kami tidak pernah melihat jumlahnya.",
+      "bullet1": "Pengirim membayar dari rantai mana pun — mereka tidak perlu ZEC",
+      "bullet2": "Kami menukar saat masuk, deposit terlindungi",
+      "bullet3": "Saldo terlindungi terpadu di semua pool",
+      "getLink": "Dapatkan tautan ZEC Anda",
+      "moreInfo": "Info lebih lanjut",
+      "tile0Eyebrow": "P2P",
+      "tile0Title": "Kirim ZEC peer-to-peer",
+      "tile0Body": "Berikan @username Anda, mereka membayar dalam ZEC yang terlindungi. Tidak perlu akun bursa, tidak ada jembatan KYC, tidak ada kebocoran.",
+      "tile1Eyebrow": "Tarik",
+      "tile1Title": "Cairkan, secara privat",
+      "tile1Body": "Konversi ZEC ke USD, EUR, atau bank lokal Anda — tanpa jejak on-chain. Dana masuk ke Revolut, Wise, atau akun mana pun.",
+      "tile2Eyebrow": "Permintaan",
+      "tile2Title": "Minta pembayaran dalam ZEC",
+      "tile2Body": "Satu tautan. Tetapkan jumlah, bagikan ke mana saja. Pengirim membayar dari rantai mana pun — Anda menerima ZEC yang terlindungi.",
+      "tile3Eyebrow": "Tukar",
+      "tile3Title": "Tukar ZEC ke arah mana pun",
+      "tile3Body": "ZEC ↔ USDC, SOL, ETH, USDT. Rute terbaik melalui NEAR Intents dan DEX on-chain. Selesai dalam detik."
+    },
+    "builtOn": {
+      "pill": "Tumpukan teknologi",
+      "body": "Setiap pembayaran diselesaikan di Solana dalam kurang dari setengah detik. Private Ephemeral Rollup MagicBlock menjaga jumlah dan pihak lawan di luar buku besar publik — secara default, untuk setiap pengguna, setiap saat.",
+      "readArchitecture": "Baca arsitektur",
+      "howPerWorks": "Cara kerja PER",
+      "settlementLayer": "Lapisan penyelesaian",
+      "finality": "finalitas",
+      "privacyLayer": "Lapisan privasi",
+      "byDefault": "secara default",
+      "poweredWith": "didukung oleh",
+      "spec0Label": "Penyelesaian",
+      "spec0Value": "Solana L1",
+      "spec0Sub": "~400ms finalitas",
+      "spec1Label": "Lapisan privasi",
+      "spec1Value": "MagicBlock PER",
+      "spec1Sub": "Private Ephemeral Rollup",
+      "spec2Label": "Aset stabil",
+      "spec2Value": "USDC",
+      "spec2Sub": "Circle-native di Solana",
+      "spec3Label": "Kustodi",
+      "spec3Value": "Non-kustodial",
+      "spec3Sub": "Kunci tidak pernah meninggalkan perangkat Anda"
+    },
+    "cta": {
+      "headline1": "Siap untuk",
+      "headlineGradient": "dibayar?",
+      "body": "Akun gratis. Tanpa seed phrase. Tanpa instalasi dompet. Siap dalam 30 detik.",
+      "createLink": "Buat tautan pembayaran Anda",
+      "sendPayment": "Kirim pembayaran"
+    },
+    "footer": {
+      "tagline": "Non-kustodial · Privat · Devnet",
+      "privacy": "Privasi",
+      "brand": "Merek"
+    }
+  },
+
+  "UserMenu": {
+    "username": "Username",
+    "email": "Email",
+    "copyUsername": "Salin username",
+    "shareYourLink": "Bagikan tautan Anda",
+    "sparks": "Sparks",
+    "settings": "Pengaturan",
+    "mainnetBeta": "Mainnet Beta",
+    "mainnetViewOnly": "Mainnet (hanya lihat)",
+    "devnet": "Devnet",
+    "paymentsDisabled": "Pembayaran dinonaktifkan — hanya saldo & penarikan",
+    "balanceWithdrawOnly": "Hanya saldo & penarikan — pembayaran memerlukan akses beta",
+    "logOut": "Keluar",
+    "noUsernameTitle": "Bagikan tautan pembayaran Anda",
+    "noUsernameBody": "Atur username Anda di menu akun untuk mendapatkan tautan pembayaran dan mulai menerima pembayaran.",
+    "gotIt": "Mengerti",
+    "shareModalTitle": "Mulai terima uang sekarang",
+    "shareModalSubtitle": "Bagikan tautan pembayaran Anda untuk menerima pembayaran",
+    "yourPaymentLink": "Tautan pembayaran Anda",
+    "copied": "Disalin!",
+    "copyLink": "Salin tautan",
+    "copyLinkButton": "Salin Tautan",
+    "privatePayments": "🔒 Pembayaran Privat",
+    "enabled": "Diaktifkan",
+    "comingSoon": "Segera hadir",
+    "privatePaymentsDescEnabled": "Semua pembayaran ke tautan Anda menggunakan MagicBlock Private Ephemeral Rollup untuk privasi.",
+    "privatePaymentsDescDisabled": "Saat tersedia, semua pembayaran ke tautan Anda akan menggunakan MagicBlock Private Ephemeral Rollup untuk privasi.",
+    "close": "Tutup",
+    "settingsTitle": "Pengaturan",
+    "settingsSubtitle": "Dompet, metode masuk, dan keamanan.",
+    "network": "Jaringan",
+    "signInMethods": "Metode masuk",
+    "connected": "Terhubung",
+    "addSecondMethod": "Tambahkan metode kedua agar Anda dapat memulihkan akun Anda.",
+    "addTwitter": "Tambahkan Twitter",
+    "addEmail": "Tambahkan email",
+    "paymentLink": "Tautan pembayaran",
+    "useTwitterAsLink": "Gunakan Twitter Anda sebagai tautan pembayaran: @{handle}",
+    "updating": "Memperbarui…",
+    "useHandle": "Gunakan @{handle}",
+    "walletAddress": "Alamat Dompet",
+    "clickToHide": "Klik untuk tampilkan versi singkat",
+    "clickToCopy": "Klik alamat untuk salin selengkapnya",
+    "viewOnSolscan": "Lihat di Solscan",
+    "loadingWallet": "Memuat dompet...",
+    "walletAutoCreated": "Dompet akan dibuat secara otomatis saat diperlukan."
+  },
+
+  "Footer": {
+    "forYou": "Untuk Anda",
+    "forBusiness": "Untuk bisnis",
+    "company": "Perusahaan",
+    "socialsAndDocs": "Sosial & Dokumen",
+    "send": "Kirim",
+    "receive": "Terima",
+    "history": "Riwayat",
+    "settings": "Pengaturan",
+    "checkout": "Checkout",
+    "partners": "Mitra",
+    "about": "Tentang",
+    "copyright": "© {year} Loofta. Hak cipta dilindungi.",
+    "language": "Bahasa",
+    "currency": "Mata uang"
+  }
+}

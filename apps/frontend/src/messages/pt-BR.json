@@ -1,0 +1,369 @@
+{
+  "BottomNav": {
+    "send": "Enviar",
+    "receive": "Receber",
+    "history": "Histórico",
+    "profile": "Perfil"
+  },
+
+  "AppShell": {
+    "bannerMainnet": "Beta na mainnet — envie e receba pagamentos privados com USDC real. Pague qualquer pessoa por e-mail, usuário do X ou usuário do Loofta.",
+    "bannerDevnet": "Envie e receba pagamentos privados com MagicBlock PER — devnet. Pague qualquer pessoa por e-mail, usuário do X ou usuário do Loofta.",
+    "bannerContact": "Dúvidas? Fale conosco no Telegram",
+    "dismissBanner": "Fechar aviso"
+  },
+
+  "MinimalHeader": {
+    "balance": "Saldo",
+    "sparks": "Sparks",
+    "waitlist": "Lista de espera",
+    "profile": "Perfil",
+    "signIn": "Entrar",
+    "logOut": "Sair",
+    "mainnetBeta": "Beta na Mainnet",
+    "mainnetViewOnly": "Mainnet (somente leitura)",
+    "devnet": "Devnet",
+    "paymentsDisabled": "Pagamentos desativados — apenas saldo e saque",
+    "openMenu": "Abrir menu",
+    "closeMenu": "Fechar menu",
+    "earnSparks": "Ganhe Sparks com sua atividade",
+    "requestAccess": "Solicitar acesso antecipado à mainnet"
+  },
+
+  "SettingsPage": {
+    "title": "Perfil",
+    "username": "Nome de usuário",
+    "email": "E-mail",
+    "shareYourLink": "Compartilhar seu link",
+    "settings": "Configurações",
+    "logOut": "Sair",
+    "copyUsername": "Copiar nome de usuário",
+    "signInPrompt": "Entre para ver seu perfil.",
+    "goToHome": "Ir para a página inicial"
+  },
+
+  "HistoryPage": {
+    "title": "Histórico de pagamentos",
+    "amountSent": "Valor enviado",
+    "amountReceived": "Valor recebido",
+    "recentPayments": "Pagamentos recentes",
+    "sent": "Enviado",
+    "received": "Recebido",
+    "to": "Para",
+    "from": "De",
+    "anonymous": "Anônimo",
+    "noPayments": "Nenhum pagamento ainda.",
+    "noPaymentsMatch": "Nenhum pagamento corresponde à sua busca.",
+    "searchPlaceholder": "Buscar por remetente, destinatário ou mensagem...",
+    "signInTitle": "Histórico de pagamentos",
+    "signInPrompt": "Entre para ver os pagamentos enviados e recebidos.",
+    "signIn": "Entrar",
+    "refresh": "Atualizar",
+    "refreshList": "Atualizar lista",
+    "search": "Buscar",
+    "status": {
+      "SUCCESS": "Pago",
+      "PRIVATE_TRANSFER_PENDING": "Não resgatado",
+      "CANCELLED": "Cancelado",
+      "OPEN": "Aberto",
+      "PENDING_DEPOSIT": "Pendente",
+      "IN_FLIGHT": "Em andamento",
+      "REFUNDED": "Reembolsado",
+      "EXPIRED": "Expirado"
+    }
+  },
+
+  "HomePage": {
+    "send": "Enviar",
+    "to": "Para",
+    "amountLabel": "Valor em USD",
+    "recipientPlaceholder": "Usuário do Loofta, Twitter ou e-mail exato",
+    "recipientHint": "Usuário do Loofta ou Twitter, ou e-mail exato — eles resgatam entrando com essa conta.",
+    "continue": "Continuar",
+    "signInToContinue": "Entre para continuar",
+    "multiSend": "Tentar envio múltiplo",
+    "newPayment": "← Novo pagamento",
+    "paymentCreated": "Link de pagamento criado. Compartilhe-o ou abra-o para ver o status.",
+    "viewPayment": "Ver pagamento",
+    "receive": "Receber",
+    "backToReceive": "← Voltar para receber",
+    "sharePersonalLink": "Compartilhe seu link pessoal",
+    "personalLinkDescription": "Qualquer pessoa pode pagar você abrindo este link. Você recebe no token e rede de sua preferência.",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "shareAndSettings": "Compartilhar e configurações",
+    "signInForLink": "Entre para obter seu link de pagamento. Adicione o Twitter depois para ter um @usuário único.",
+    "signInToGetLink": "Entre para obter seu link de pagamento",
+    "createPaymentLink": "Criar novo link de pagamento",
+    "createLinkDescription": "Crie uma solicitação de pagamento única. Você escolhe o valor, token e rede. Não é necessário ter conta para criar.",
+    "createNewLink": "Criar novo link de pagamento",
+    "faqTitle": "Perguntas frequentes",
+    "searching": "Buscando…",
+    "noUsersFound": "Nenhum usuário encontrado",
+    "fromEmail": "(por e-mail)",
+    "faq": {
+      "fees": {
+        "question": "Quais são as taxas?",
+        "answer1": "Os pagamentos privados no Loofta Pay cobram uma taxa fixa do remetente — <bold>10 BPS</bold> do valor da transferência mais uma taxa de gás de <bold>0,002 SOL</bold>, ambas pagas em USDC. Todas as taxas vão diretamente para a infraestrutura de privacidade da MagicBlock. O Loofta não recebe nada. O destinatário sempre recebe o valor exato solicitado.",
+        "answer2": "Comparado a outras ferramentas de privacidade no Solana (Umbra, Privacy Cash, Houdini Swap) que cobram de 0,4% a 4,4%+ em valores pequenos, a taxa fixa do Loofta é consistentemente a mais baixa em todos os tamanhos de transferência."
+      },
+      "privatePayments": {
+        "question": "Como funcionam os pagamentos privados?",
+        "answer": "Os pagamentos privados usam o Private Ephemeral Rollup (PER) da MagicBlock — infraestrutura construída para visibilidade privada, ao contrário de uma transferência pública comum. Isso significa que observadores não conseguem ver os mesmos detalhes de pagamento que normalmente veriam on-chain, então sua atividade é muito mais difícil de rastrear ou associar. É a opção certa quando você se preocupa com maior privacidade nos pagamentos."
+      },
+      "sendBeforeAccount": {
+        "question": "Posso enviar para alguém antes de ter uma conta?",
+        "answer": "Sim. Você pode enviar para um nome de usuário do Twitter/X ou e-mail. Eles receberão um link para se cadastrar e resgatar o pagamento. Uma vez que entrarem com essa identidade, poderão resgatar os fundos."
+      },
+      "retrieveWallet": {
+        "question": "Como acesso minha carteira Loofta Pay integrada?",
+        "answer1": "Abra o menu da sua conta, vá em <bold>Configurações</bold> e use <bold>Exportar Chave Privada</bold> para fazer backup da sua carteira Loofta Pay integrada. Você também pode ver seu endereço Solana lá.",
+        "answer2": "Se você importar ou usar essa carteira <bold>fora</bold> do Loofta Pay, os pressupostos de privacidade e segurança que projetamos para uso no app podem não se aplicar mais, e <bold>sua privacidade pode ser comprometida</bold>. Recomendamos fortemente manter a atividade dentro do Loofta Pay.",
+        "answer3": "<bold>Não compartilhe</bold> seu endereço de carteira integrada com pessoas para que possam pagar você. Compartilhe seu <bold>nome de usuário do Loofta</bold> ou <bold>e-mail</bold> — é assim que outros devem enviar fundos para você.",
+        "answer4": "Para transferir dinheiro para fora, use <bold>Sacar</bold> para enviar USDC para uma <bold>nova</bold> carteira Solana que você controla (gratuito no USDC Solana com gás patrocinado) — em vez de expor seu endereço integrado."
+      },
+      "burnerWallet": {
+        "question": "O que é uma carteira temporária?",
+        "answer": "Uma carteira temporária é um endereço de depósito temporário que geramos para seu pagamento. Você envia fundos para esse endereço e o Loofta Pay os encaminha ao destinatário. Você não precisa conectar uma carteira para pagar — apenas envie para o endereço de depósito."
+      },
+      "morphoVault": {
+        "question": "Como o Morpho Vault mantém meus ganhos seguros?",
+        "answer1": "O Morpho Vault é o protocolo que potencializa o rendimento do seu saldo no Loofta — uma das formas mais seguras e auditadas de ganhar renda passiva em DeFi.",
+        "answer2": "Ao contrário de produtos de rendimento que acumulam risco sobre risco, o Morpho opera com mercados de empréstimo transparentes e sobre-colateralizados. Cada posição é visível on-chain. Sem estratégias ocultas, sem fundos bloqueados, sem gestores de fundos opacos. Seu USDC ganha através de atividade de empréstimo verificada — e você pode sacar a qualquer momento.",
+        "answer3": "O Morpho processou bilhões de dólares em volume de empréstimos com um histórico de segurança impecável. Quando seu saldo rende, ele rende com segurança."
+      },
+      "looftaPoints": {
+        "question": "Como funcionam os Pontos Loofta?",
+        "answer1": "Cada pagamento que você recebe gera Pontos Loofta automaticamente — sem necessidade de ativação. Os pontos se acumulam na sua conta e desbloqueiam recompensas na rede de parceiros do Loofta: descontos em ferramentas e serviços que criadores e freelancers já usam.",
+        "answer2": "Os pontos escalam com o uso — quanto mais o Loofta Pay for sua camada principal de pagamento, mais você ganha de volta. À medida que a rede de parceiros cresce, o valor dos seus pontos também aumenta."
+      },
+      "apy": {
+        "question": "APY sobre o valor recebido e auto-composição?",
+        "answer": "Estamos construindo APY em USD sobre seu saldo recebido, com cada pagamento resgatado sendo automaticamente composto. Em breve."
+      },
+      "devnet": {
+        "question": "Estou no devnet — como obtenho SOL e USDC de teste?",
+        "answer": "Obtenha SOL de devnet gratuito no <solanaLink>faucet do Solana</solanaLink>. Para USDC de devnet, use o <circleLink>faucet da Circle</circleLink>."
+      }
+    }
+  },
+
+  "MarketingPage": {
+    "nav": {
+      "payReceive": "Pagar & Receber",
+      "features": "Funcionalidades",
+      "privacy": "Privacidade",
+      "earn": "Ganhar",
+      "business": "Empresas",
+      "zcash": "Zcash",
+      "launchApp": "Abrir app"
+    },
+    "hero": {
+      "iWantToGetPaid": "Quero receber pagamentos",
+      "iWantToSend": "Quero enviar",
+      "receiveHeadline1": "Um link.",
+      "receiveHeadline2": "Receba em",
+      "receiveHeadlineGradient": "qualquer coisa",
+      "sendHeadline1": "Envie para",
+      "sendHeadlineGradient": "qualquer um",
+      "sendHeadline2": "em qualquer lugar.",
+      "receiveSubtitle": "Compartilhe seu link de pagamento. Qualquer pessoa envia de qualquer lugar, em qualquer moeda — você recebe USDC na Solana e saca no formato que quiser.",
+      "sendSubtitle": "Sem endereço de carteira. Sem cadastro necessário para quem recebe. Envie para um e-mail, @handle ou usuário — eles resgatam ao fazer login.",
+      "createYourLink": "Criar seu link",
+      "sendAPayment": "Enviar um pagamento",
+      "seeHowItWorks": "Ver como funciona",
+      "payByEmail": "Pagar por e-mail",
+      "dragToFlick": "arraste para virar →"
+    },
+    "chains": {
+      "tagline": "Pague de qualquer rede · Receba como quiser"
+    },
+    "features": {
+      "pill": "Três pilares",
+      "headline1": "Feito para pagamentos",
+      "headline2": "funcionarem pra você.",
+      "item0Eyebrow": "01 · Aceitar",
+      "item0Title": "Um link. Qualquer token.",
+      "item0Body": "Seu usuário vira seu link de pagamento. Quem paga usa qualquer uma de 20+ redes — você recebe exatamente o token que quiser.",
+      "item1Eyebrow": "02 · Proteger",
+      "item1Title": "Atividade fora do registro público.",
+      "item1Body": "O Private Ephemeral Rollup da MagicBlock roteia seus pagamentos para que valores e contrapartes fiquem só com você. Sem configuração.",
+      "item2Eyebrow": "03 · Ganhar",
+      "item2Title": "Saldos inativos não ficam parados.",
+      "item2Body": "Cada dólar entre pagamentos rende através dos vaults do Morpho. Saque em qualquer lugar, a qualquer hora, em qualquer token."
+    },
+    "privacy": {
+      "pill": "MagicBlock PER",
+      "headline1": "O único registro",
+      "headline2": "que",
+      "headlineGradient": "importa",
+      "headline3": "é o seu.",
+      "body": "Os Private Ephemeral Rollups protegem valores, contrapartes e padrões de observadores públicos. Sem configuração, sem nova carteira — só um toggle.",
+      "bullet1": "Detalhes do pagamento protegidos on-chain",
+      "bullet2": "Contrapartes não podem ser vinculadas",
+      "bullet3": "Um toggle. Funciona com seu fluxo atual.",
+      "receiptLabel": "Comprovante",
+      "receiptBadge": "Privado",
+      "rollupVerified": "Rollup efêmero · Verificado"
+    },
+    "earn": {
+      "pill": "Morpho Vaults",
+      "headline1": "Seu saldo",
+      "headline2": "sempre rendendo.",
+      "body": "A cada minuto entre pagamentos, seu USDC ocioso rende através dos vaults auditados do Morpho. Saque instantaneamente — a gente cuida do resto.",
+      "apyLabel": "APY atual*",
+      "pointsLabel": "Pontos Loofta",
+      "available": "Saldo disponível",
+      "earning": "Rendendo"
+    },
+    "business": {
+      "pill": "Para empresas",
+      "headline1": "Folha de pagamento, repasses,",
+      "headline2": "tudo em um lugar.",
+      "body": "Desde pagar contratados em cinco países até liberar prêmios de hackathon com KYC — o Loofta cuida do trabalho pesado.",
+      "bookDemo": "Agendar demonstração",
+      "bulkEyebrow": "Pagamentos em massa",
+      "bulkTitle": "Pague 200 pessoas com uma assinatura.",
+      "bulkBody": "Carregue um CSV ou cole uma lista. Pague seus freelancers, criadores, vencedores de hackathon ou uma folha inteira — em qualquer mix de moedas que cada um queira receber.",
+      "bulkBadge": "200+ destinatários · 1 transação",
+      "ctaEyebrow": "Fale com a gente",
+      "ctaTitle": "Gerenciando folha de pagamento, uma DAO ou programa de bolsas?",
+      "ctaBody": "Preços personalizados por volume, suporte dedicado e ajuda na integração para equipes com 50+ destinatários.",
+      "contactSales": "Falar com vendas",
+      "feature0Title": "Agendar pagamentos",
+      "feature0Body": "Programe um pagamento para a próxima terça. Ou no 1° de cada mês. Sai na hora certa, esteja você online ou não.",
+      "feature1Title": "Pagamentos recorrentes",
+      "feature1Body": "Configure uma vez. Folha todo dia 1°, contratos todo dia 15, assinaturas semanais. Pause ou edite quando quiser.",
+      "feature2Title": "Claims com KYC",
+      "feature2Body": "Exija verificação de identidade antes de o destinatário resgatar. Ideal para prêmios de hackathon, bolsas ou transferências com conformidade.",
+      "feature3Title": "Faturas",
+      "feature3Body": "Envie um link de fatura limpo. O cliente paga como quiser. Você recebe como quiser. Reconciliação resolvida."
+    },
+    "zcash": {
+      "pill": "Zcash · ZEC",
+      "headline1": "Dinheiro privado,",
+      "headlineGradient": "de verdade privado.",
+      "body": "Receba, solicite, troque e saque Zcash sem nunca expor valores ou contrapartes. Um lado inteiro do oofta, construído sobre ZEC blindado.",
+      "shieldedByDefault": "Blindado por padrão",
+      "shieldedTitle": "Receba ZEC do jeito que o Zcash foi feito para ser usado.",
+      "shieldedBody": "Cada pagamento para o seu @usuário é liquidado em um endereço blindado. Sem etapa transparente, sem vazamento de metadados. Nunca vemos o valor.",
+      "bullet1": "Quem paga usa qualquer rede — não precisa de ZEC",
+      "bullet2": "Fazemos a troca na entrada, depositamos blindado",
+      "bullet3": "Saldo blindado unificado entre pools",
+      "getLink": "Obter seu link ZEC",
+      "moreInfo": "Mais informações",
+      "tile0Eyebrow": "P2P",
+      "tile0Title": "Envie ZEC ponto a ponto",
+      "tile0Body": "Dê seu @usuário para alguém, eles pagam em ZEC blindado. Sem conta em exchange, sem ponte KYC, sem vazamento.",
+      "tile1Eyebrow": "Off-ramp",
+      "tile1Title": "Saque, com privacidade",
+      "tile1Body": "Converta ZEC para USD, EUR ou sua conta bancária — sem rastro on-chain. Os fundos chegam no Revolut, Wise ou qualquer conta.",
+      "tile2Eyebrow": "Solicitar",
+      "tile2Title": "Solicitar pagamento em ZEC",
+      "tile2Body": "Um link. Defina o valor, compartilhe onde quiser. Quem paga usa qualquer rede — você recebe ZEC blindado.",
+      "tile3Eyebrow": "Trocar",
+      "tile3Title": "Trocar ZEC, qualquer direção",
+      "tile3Body": "ZEC ↔ USDC, SOL, ETH, USDT. Melhor rota entre NEAR Intents e DEXs on-chain. Liquidado em segundos."
+    },
+    "builtOn": {
+      "pill": "A stack",
+      "body": "Cada pagamento é liquidado na Solana em menos de meio segundo. O Private Ephemeral Rollup da MagicBlock mantém valores e contrapartes fora do registro público — por padrão, para todo usuário, sempre.",
+      "readArchitecture": "Leia a arquitetura",
+      "howPerWorks": "Como o PER funciona",
+      "settlementLayer": "Camada de liquidação",
+      "finality": "finalidade",
+      "privacyLayer": "Camada de privacidade",
+      "byDefault": "por padrão",
+      "poweredWith": "com tecnologia de",
+      "spec0Label": "Liquidação",
+      "spec0Value": "Solana L1",
+      "spec0Sub": "~400ms de finalidade",
+      "spec1Label": "Privacidade",
+      "spec1Value": "MagicBlock PER",
+      "spec1Sub": "Private Ephemeral Rollup",
+      "spec2Label": "Ativo estável",
+      "spec2Value": "USDC",
+      "spec2Sub": "Circle nativo na Solana",
+      "spec3Label": "Custódia",
+      "spec3Value": "Não custodial",
+      "spec3Sub": "Chaves nunca saem do seu dispositivo"
+    },
+    "cta": {
+      "headline1": "Pronto para",
+      "headlineGradient": "receber?",
+      "body": "Conta gratuita. Sem seed phrase. Sem instalar carteira. Pronto em 30 segundos.",
+      "createLink": "Criar seu link de pagamento",
+      "sendPayment": "Enviar um pagamento"
+    },
+    "footer": {
+      "tagline": "Não custodial · Privado · Devnet",
+      "privacy": "Privacidade",
+      "brand": "Marca"
+    }
+  },
+
+  "UserMenu": {
+    "username": "Nome de usuário",
+    "email": "E-mail",
+    "copyUsername": "Copiar nome de usuário",
+    "shareYourLink": "Compartilhar seu link",
+    "sparks": "Sparks",
+    "settings": "Configurações",
+    "mainnetBeta": "Beta na Mainnet",
+    "mainnetViewOnly": "Mainnet (somente leitura)",
+    "devnet": "Devnet",
+    "paymentsDisabled": "Pagamentos desativados — apenas saldo e saque",
+    "balanceWithdrawOnly": "Apenas saldo e saque — pagamentos requerem acesso beta",
+    "logOut": "Sair",
+    "noUsernameTitle": "Compartilhar seu link de pagamento",
+    "noUsernameBody": "Configure seu nome de usuário no menu da conta para obter seu link de pagamento e começar a receber pagamentos.",
+    "gotIt": "Entendi",
+    "shareModalTitle": "Comece a receber dinheiro agora",
+    "shareModalSubtitle": "Compartilhe seu link de pagamento para receber pagamentos",
+    "yourPaymentLink": "Seu link de pagamento",
+    "copied": "Copiado!",
+    "copyLink": "Copiar link",
+    "copyLinkButton": "Copiar Link",
+    "privatePayments": "🔒 Pagamentos Privados",
+    "enabled": "Ativado",
+    "comingSoon": "Em breve",
+    "privatePaymentsDescEnabled": "Todos os pagamentos para o seu link usam o Private Ephemeral Rollup da MagicBlock para privacidade.",
+    "privatePaymentsDescDisabled": "Quando disponível, todos os pagamentos para o seu link usarão o Private Ephemeral Rollup da MagicBlock para privacidade.",
+    "close": "Fechar",
+    "settingsTitle": "Configurações",
+    "settingsSubtitle": "Carteira, métodos de login e segurança.",
+    "network": "Rede",
+    "signInMethods": "Métodos de login",
+    "connected": "Conectado",
+    "addSecondMethod": "Adicione um segundo método para poder recuperar sua conta.",
+    "addTwitter": "Adicionar Twitter",
+    "addEmail": "Adicionar e-mail",
+    "paymentLink": "Link de pagamento",
+    "useTwitterAsLink": "Use seu Twitter como link de pagamento: @{handle}",
+    "updating": "Atualizando…",
+    "useHandle": "Usar @{handle}",
+    "walletAddress": "Endereço da Carteira",
+    "clickToHide": "Clique para mostrar resumido",
+    "clickToCopy": "Clique no endereço para copiar completo",
+    "viewOnSolscan": "Ver no Solscan",
+    "loadingWallet": "Carregando carteira...",
+    "walletAutoCreated": "A carteira será criada automaticamente quando necessário."
+  },
+
+  "Footer": {
+    "forYou": "Para você",
+    "forBusiness": "Para empresas",
+    "company": "Empresa",
+    "socialsAndDocs": "Redes e Docs",
+    "send": "Enviar",
+    "receive": "Receber",
+    "history": "Histórico",
+    "settings": "Configurações",
+    "checkout": "Checkout",
+    "partners": "Parceiros",
+    "about": "Sobre",
+    "copyright": "© {year} Loofta. Todos os direitos reservados.",
+    "language": "Idioma",
+    "currency": "Moeda"
+  }
+}

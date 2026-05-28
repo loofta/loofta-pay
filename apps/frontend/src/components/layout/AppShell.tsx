@@ -8,8 +8,10 @@ import { MinimalHeader } from "./MinimalHeader";
 import { UserSync } from "./UserSync";
 import { usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
+import { useTranslations } from "next-intl";
 
 function ShellContent({ children }: { children: ReactNode }) {
+  const t = useTranslations('AppShell');
   const pathname = usePathname();
   const networkMode = useAuthStore((s) => s.networkMode);
   const [bannerDismissed, setBannerDismissed] = useState(false);
@@ -37,8 +39,8 @@ function ShellContent({ children }: { children: ReactNode }) {
           <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 min-w-0 text-center">
             <span className="text-base sm:text-sm font-medium">
               {networkMode === "mainnet"
-                ? "Mainnet beta — send and receive private payments with real USDC. Pay anyone by email, X username, or Loofta username."
-                : "Send and receive private payments with MagicBlock PER — devnet. Pay anyone by email, X username, or Loofta username."}
+                ? t('bannerMainnet')
+                : t('bannerDevnet')}
             </span>
             <a
               href="https://t.me/looftapay"
@@ -46,7 +48,7 @@ function ShellContent({ children }: { children: ReactNode }) {
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 shrink-0 text-base sm:text-sm font-semibold text-white hover:underline underline-offset-2"
             >
-              Questions? Contact us on Telegram
+              {t('bannerContact')}
               <ChevronRight className="h-4 w-4" />
             </a>
           </div>
@@ -54,7 +56,7 @@ function ShellContent({ children }: { children: ReactNode }) {
             type="button"
             onClick={() => setBannerDismissed(true)}
             className="absolute right-4 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-white/20 transition-colors text-white"
-            aria-label="Dismiss banner"
+            aria-label={t('dismissBanner')}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M18 6L6 18M6 6l12 12" />
@@ -75,5 +77,3 @@ function ShellContent({ children }: { children: ReactNode }) {
 export function AppShell({ children }: { children: ReactNode }) {
   return <ShellContent>{children}</ShellContent>;
 }
-
-

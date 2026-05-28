@@ -1,0 +1,369 @@
+{
+  "BottomNav": {
+    "send": "Gửi",
+    "receive": "Nhận",
+    "history": "Lịch sử",
+    "profile": "Hồ sơ"
+  },
+
+  "AppShell": {
+    "bannerMainnet": "Mainnet beta — gửi và nhận thanh toán riêng tư với USDC thực. Thanh toán cho bất kỳ ai qua email, tên người dùng X, hoặc tên người dùng Loofta.",
+    "bannerDevnet": "Gửi và nhận thanh toán riêng tư với MagicBlock PER — devnet. Thanh toán cho bất kỳ ai qua email, tên người dùng X, hoặc tên người dùng Loofta.",
+    "bannerContact": "Có câu hỏi? Liên hệ chúng tôi trên Telegram",
+    "dismissBanner": "Đóng banner"
+  },
+
+  "MinimalHeader": {
+    "balance": "Số dư",
+    "sparks": "Sparks",
+    "waitlist": "Danh sách chờ",
+    "profile": "Hồ sơ",
+    "signIn": "Đăng nhập",
+    "logOut": "Đăng xuất",
+    "mainnetBeta": "Mainnet Beta",
+    "mainnetViewOnly": "Mainnet (chỉ xem)",
+    "devnet": "Devnet",
+    "paymentsDisabled": "Thanh toán bị tắt — chỉ số dư và rút tiền",
+    "openMenu": "Mở menu",
+    "closeMenu": "Đóng menu",
+    "earnSparks": "Kiếm Sparks từ hoạt động của bạn",
+    "requestAccess": "Yêu cầu truy cập sớm mainnet"
+  },
+
+  "SettingsPage": {
+    "title": "Hồ sơ",
+    "username": "Tên người dùng",
+    "email": "Email",
+    "shareYourLink": "Chia sẻ liên kết của bạn",
+    "settings": "Cài đặt",
+    "logOut": "Đăng xuất",
+    "copyUsername": "Sao chép tên người dùng",
+    "signInPrompt": "Đăng nhập để xem hồ sơ của bạn.",
+    "goToHome": "Về trang chủ"
+  },
+
+  "HistoryPage": {
+    "title": "Lịch sử thanh toán",
+    "amountSent": "Số tiền đã gửi",
+    "amountReceived": "Số tiền đã nhận",
+    "recentPayments": "Thanh toán gần đây",
+    "sent": "Đã gửi",
+    "received": "Đã nhận",
+    "to": "Đến",
+    "from": "Từ",
+    "anonymous": "Ẩn danh",
+    "noPayments": "Chưa có thanh toán nào.",
+    "noPaymentsMatch": "Không có thanh toán nào khớp với tìm kiếm của bạn.",
+    "searchPlaceholder": "Tìm kiếm theo người gửi, người nhận hoặc tin nhắn...",
+    "signInTitle": "Lịch sử thanh toán",
+    "signInPrompt": "Đăng nhập để xem các khoản thanh toán bạn đã gửi và nhận.",
+    "signIn": "Đăng nhập",
+    "refresh": "Làm mới",
+    "refreshList": "Làm mới danh sách",
+    "search": "Tìm kiếm",
+    "status": {
+      "SUCCESS": "Đã thanh toán",
+      "PRIVATE_TRANSFER_PENDING": "Chưa nhận",
+      "CANCELLED": "Đã hủy",
+      "OPEN": "Mở",
+      "PENDING_DEPOSIT": "Đang chờ",
+      "IN_FLIGHT": "Đang xử lý",
+      "REFUNDED": "Đã hoàn tiền",
+      "EXPIRED": "Đã hết hạn"
+    }
+  },
+
+  "HomePage": {
+    "send": "Gửi",
+    "to": "Đến",
+    "amountLabel": "Số tiền USD",
+    "recipientPlaceholder": "Loofta, tên người dùng Twitter, email chính xác",
+    "recipientHint": "Tên người dùng Loofta hoặc Twitter, hoặc email chính xác — họ nhận bằng cách đăng nhập vào tài khoản đó.",
+    "continue": "Tiếp tục",
+    "signInToContinue": "Đăng nhập để tiếp tục",
+    "multiSend": "Thử gửi nhiều",
+    "newPayment": "← Thanh toán mới",
+    "paymentCreated": "Liên kết thanh toán đã được tạo. Chia sẻ hoặc mở để xem trạng thái.",
+    "viewPayment": "Xem thanh toán",
+    "receive": "Nhận",
+    "backToReceive": "← Quay lại nhận",
+    "sharePersonalLink": "Chia sẻ liên kết cá nhân của bạn",
+    "personalLinkDescription": "Bất kỳ ai cũng có thể thanh toán cho bạn bằng cách mở liên kết này. Bạn nhận bằng token và chuỗi ưa thích của mình.",
+    "copy": "Sao chép",
+    "copied": "Đã sao chép",
+    "shareAndSettings": "Chia sẻ và cài đặt",
+    "signInForLink": "Đăng nhập để nhận liên kết thanh toán của riêng bạn. Thêm Twitter sau để nhận @username duy nhất.",
+    "signInToGetLink": "Đăng nhập để nhận liên kết thanh toán",
+    "createPaymentLink": "Tạo liên kết thanh toán mới",
+    "createLinkDescription": "Tạo yêu cầu thanh toán một lần. Bạn chọn số tiền, token và chuỗi. Không cần tài khoản để tạo.",
+    "createNewLink": "Tạo liên kết thanh toán mới",
+    "faqTitle": "Câu hỏi thường gặp",
+    "searching": "Đang tìm kiếm…",
+    "noUsersFound": "Không tìm thấy người dùng",
+    "fromEmail": "(từ email)",
+    "faq": {
+      "fees": {
+        "question": "Phí là bao nhiêu?",
+        "answer1": "Các khoản thanh toán riêng tư trên Loofta Pay có phí cố định tính cho người gửi — <bold>10 BPS</bold> của số tiền chuyển cộng với phí gas <bold>0,002 SOL</bold>, cả hai đều được thanh toán bằng USDC. Tất cả phí đi thẳng đến cơ sở hạ tầng quyền riêng tư của MagicBlock. Loofta không lấy phần nào. Người nhận luôn nhận được số tiền chính xác được yêu cầu.",
+        "answer2": "So với các công cụ quyền riêng tư khác trên Solana (Umbra, Privacy Cash, Houdini Swap) tính 0,4%–4,4%+ cho số tiền nhỏ, phí cố định của Loofta nhất quán là thấp nhất ở tất cả các kích cỡ chuyển tiền."
+      },
+      "privatePayments": {
+        "question": "Thanh toán riêng tư hoạt động như thế nào?",
+        "answer": "Thanh toán riêng tư sử dụng Private Ephemeral Rollup (PER) của MagicBlock — cơ sở hạ tầng được xây dựng cho khả năng hiển thị riêng tư thay vì chuyển tiền hoàn toàn công khai thông thường. Điều đó có nghĩa là các quan sát viên không thể nhìn thấy cùng một chi tiết thanh toán mà họ thường có thể thấy on-chain, vì vậy hoạt động của bạn khó theo dõi hoặc liên kết hơn nhiều. Đây là lựa chọn khi bạn quan tâm đến quyền riêng tư thanh toán mạnh hơn."
+      },
+      "sendBeforeAccount": {
+        "question": "Tôi có thể gửi cho ai đó trước khi họ có tài khoản không?",
+        "answer": "Có. Bạn có thể gửi đến tên người dùng Twitter/X hoặc email. Họ sẽ nhận được liên kết để đăng ký và nhận thanh toán. Sau khi đăng nhập bằng danh tính đó, họ có thể nhận tiền."
+      },
+      "retrieveWallet": {
+        "question": "Làm thế nào để lấy lại ví Loofta Pay được nhúng của tôi?",
+        "answer1": "Mở menu tài khoản của bạn, vào <bold>Cài đặt</bold>, và sử dụng <bold>Xuất Khóa Riêng Tư</bold> để sao lưu ví Loofta Pay được nhúng của bạn. Bạn cũng có thể xem địa chỉ Solana của mình ở đó.",
+        "answer2": "Nếu bạn nhập hoặc sử dụng ví đó <bold>bên ngoài</bold> Loofta Pay, các giả định về quyền riêng tư và bảo mật mà chúng tôi thiết kế cho việc sử dụng trong ứng dụng có thể không còn áp dụng nữa, và <bold>quyền riêng tư của bạn có thể bị xâm phạm</bold>. Chúng tôi đặc biệt khuyến nghị giữ hoạt động bên trong Loofta Pay.",
+        "answer3": "<bold>Không</bold> chia sẻ địa chỉ ví được nhúng của bạn với mọi người để họ có thể trả tiền cho bạn. Thay vào đó, hãy chia sẻ <bold>tên người dùng Loofta</bold> hoặc <bold>email</bold> của bạn — đó là cách người khác nên gửi tiền cho bạn.",
+        "answer4": "Để chuyển tiền ra, hãy sử dụng <bold>Rút tiền</bold> để gửi USDC đến ví Solana <bold>mới</bold> mà bạn kiểm soát (miễn phí trên Solana USDC với gas được tài trợ) — thay vì để lộ địa chỉ được nhúng của bạn."
+      },
+      "burnerWallet": {
+        "question": "Burner wallet là gì?",
+        "answer": "Burner wallet là địa chỉ gửi tiền tạm thời mà chúng tôi tạo ra cho khoản thanh toán của bạn. Bạn gửi tiền đến địa chỉ này và Loofta Pay sẽ chuyển chúng đến người nhận. Bạn không cần kết nối ví để thanh toán — chỉ cần gửi đến địa chỉ gửi tiền."
+      },
+      "morphoVault": {
+        "question": "Morpho Vault giữ thu nhập của tôi an toàn như thế nào?",
+        "answer1": "Morpho Vault là giao thức hỗ trợ lợi suất trên số dư Loofta của bạn — một trong những cách an toàn nhất và được kiểm toán nhiều nhất để kiếm thu nhập thụ động trong DeFi.",
+        "answer2": "Không giống như các sản phẩm lợi suất chồng chất rủi ro lên rủi ro, Morpho hoạt động với các thị trường cho vay minh bạch, được thế chấp quá mức. Mỗi vị trí đều hiển thị on-chain. Không có chiến lược ẩn, không có quỹ bị khóa, không có nhà quản lý quỹ không minh bạch. USDC của bạn kiếm tiền thông qua hoạt động cho vay được xác minh — và bạn có thể rút bất kỳ lúc nào.",
+        "answer3": "Morpho đã xử lý hàng tỷ đô la khối lượng cho vay với hồ sơ bảo mật không tì vết. Khi số dư của bạn kiếm tiền, nó kiếm tiền một cách an toàn."
+      },
+      "looftaPoints": {
+        "question": "Loofta Points hoạt động như thế nào?",
+        "answer1": "Mỗi khoản thanh toán bạn nhận được sẽ tự động kiếm cho bạn Loofta Points — không cần đăng ký. Điểm tích lũy trong tài khoản của bạn và mở khóa phần thưởng trên mạng lưới đối tác của Loofta: giảm giá cho các công cụ và dịch vụ mà người sáng tạo và freelancer đã sử dụng.",
+        "answer2": "Điểm tăng theo mức sử dụng — Loofta Pay càng là lớp thanh toán chính của bạn, bạn càng kiếm được nhiều. Khi mạng lưới đối tác phát triển, giá trị điểm của bạn cũng tăng theo."
+      },
+      "apy": {
+        "question": "APY trên số tiền nhận được và tự động gộp lãi?",
+        "answer": "Chúng tôi đang xây dựng APY bằng USD trên số dư đã nhận của bạn, với mỗi khoản thanh toán được nhận tự động gộp lãi. Sắp ra mắt."
+      },
+      "devnet": {
+        "question": "Tôi đang ở devnet — làm thế nào để nhận SOL và USDC thử nghiệm?",
+        "answer": "Lấy SOL devnet miễn phí từ <solanaLink>vòi Solana</solanaLink>. Đối với USDC devnet, hãy sử dụng <circleLink>vòi Circle</circleLink>."
+      }
+    }
+  },
+
+  "MarketingPage": {
+    "nav": {
+      "payReceive": "Thanh toán & Nhận",
+      "features": "Tính năng",
+      "privacy": "Quyền riêng tư",
+      "earn": "Kiếm tiền",
+      "business": "Doanh nghiệp",
+      "zcash": "Zcash",
+      "launchApp": "Khởi động ứng dụng"
+    },
+    "hero": {
+      "iWantToGetPaid": "Tôi muốn được thanh toán",
+      "iWantToSend": "Tôi muốn gửi",
+      "receiveHeadline1": "Một liên kết.",
+      "receiveHeadline2": "Nhận bằng",
+      "receiveHeadlineGradient": "bất cứ thứ gì",
+      "sendHeadline1": "Gửi cho",
+      "sendHeadlineGradient": "bất kỳ ai",
+      "sendHeadline2": "bất cứ đâu.",
+      "receiveSubtitle": "Chia sẻ liên kết thanh toán của bạn. Bất kỳ ai gửi từ bất cứ đâu, bằng bất kỳ loại tiền tệ nào — bạn nhận USDC trên Solana và rút ra thứ bạn thực sự muốn.",
+      "sendSubtitle": "Không cần địa chỉ ví. Họ không cần đăng ký. Gửi đến email, @handle, hoặc tên người dùng — họ nhận khi đăng nhập.",
+      "createYourLink": "Tạo liên kết của bạn",
+      "sendAPayment": "Gửi thanh toán",
+      "seeHowItWorks": "Xem cách hoạt động",
+      "payByEmail": "Thanh toán qua email",
+      "dragToFlick": "kéo để lướt →"
+    },
+    "chains": {
+      "tagline": "Thanh toán từ bất kỳ chuỗi nào · Nhận những gì bạn muốn"
+    },
+    "features": {
+      "pill": "Ba trụ cột",
+      "headline1": "Được xây dựng để thanh toán",
+      "headline2": "thực sự hoạt động cho bạn.",
+      "item0Eyebrow": "01 · Chấp nhận",
+      "item0Title": "Một liên kết. Bất kỳ token nào.",
+      "item0Body": "Tên người dùng của bạn trở thành liên kết thanh toán. Người gửi thanh toán từ bất kỳ chuỗi nào trong 20+ chuỗi — bạn nhận chính xác token bạn muốn.",
+      "item1Eyebrow": "02 · Bảo vệ",
+      "item1Title": "Hoạt động ngoài hồ sơ công khai.",
+      "item1Body": "Private Ephemeral Rollup của MagicBlock định tuyến các khoản thanh toán của bạn để số tiền và đối tác chỉ thuộc về bạn. Không cần cài đặt.",
+      "item2Eyebrow": "03 · Kiếm tiền",
+      "item2Title": "Số dư nhàn rỗi không ngồi yên.",
+      "item2Body": "Mỗi đô la giữa các khoản thanh toán gộp lãi thông qua các vault Morpho. Rút bất cứ đâu, bất cứ lúc nào, dưới dạng bất kỳ token nào."
+    },
+    "privacy": {
+      "pill": "MagicBlock PER",
+      "headline1": "Sổ cái duy nhất",
+      "headline2": "quan trọng",
+      "headlineGradient": "là của bạn",
+      "headline3": ".",
+      "body": "Private Ephemeral Rollup bảo vệ số tiền, đối tác và các mẫu khỏi những người quan sát công khai. Không cần cài đặt, không cần ví mới — chỉ cần một nút bật/tắt.",
+      "bullet1": "Chi tiết thanh toán được bảo vệ on-chain",
+      "bullet2": "Các đối tác không thể được liên kết",
+      "bullet3": "Một nút bật/tắt. Hoạt động với quy trình hiện tại của bạn.",
+      "receiptLabel": "Biên lai",
+      "receiptBadge": "Riêng tư",
+      "rollupVerified": "Rollup tạm thời · Đã xác minh"
+    },
+    "earn": {
+      "pill": "Morpho Vaults",
+      "headline1": "Số dư của bạn",
+      "headline2": "luôn hoạt động.",
+      "body": "Mỗi phút giữa các khoản thanh toán, USDC nhàn rỗi của bạn kiếm lợi suất thông qua các vault Morpho đã được kiểm toán. Rút tiền ngay lập tức — chúng tôi giải quyết trong nền.",
+      "apyLabel": "APY hiện tại*",
+      "pointsLabel": "Loofta Points",
+      "available": "Số dư khả dụng",
+      "earning": "Đang kiếm"
+    },
+    "business": {
+      "pill": "Cho doanh nghiệp",
+      "headline1": "Lương, thanh toán,",
+      "headline2": "tất cả ở một nơi.",
+      "body": "Từ việc trả lương cho nhà thầu ở năm quốc gia đến phát thưởng hackathon với KYC — Loofta xử lý phần phức tạp.",
+      "bookDemo": "Đặt lịch demo doanh nghiệp",
+      "bulkEyebrow": "Thanh toán hàng loạt",
+      "bulkTitle": "Trả cho 200 người với một chữ ký.",
+      "bulkBody": "Tải lên CSV hoặc dán danh sách. Trả cho freelancer, người sáng tạo, người chiến thắng hackathon, hoặc toàn bộ bảng lương — trong bất kỳ kết hợp tiền tệ nào mà họ muốn nhận.",
+      "bulkBadge": "200+ người nhận · một tx",
+      "ctaEyebrow": "Liên hệ chúng tôi",
+      "ctaTitle": "Đang quản lý lương hoặc chương trình tài trợ?",
+      "ctaBody": "Giá theo khối lượng tùy chỉnh, hỗ trợ chuyên dụng và trợ giúp onboarding cho các nhóm thanh toán 50+ người nhận.",
+      "contactSales": "Liên hệ bộ phận bán hàng",
+      "feature0Title": "Lên lịch thanh toán",
+      "feature0Body": "Xếp hàng thanh toán cho thứ Ba tới. Hoặc ngày 1 hàng tháng. Nó sẽ được gửi đúng giờ dù bạn có trực tuyến hay không.",
+      "feature1Title": "Thanh toán định kỳ",
+      "feature1Body": "Cài đặt một lần. Lương mỗi ngày 1, thù lao mỗi ngày 15, đăng ký hàng tuần. Tạm dừng hoặc chỉnh sửa bất cứ lúc nào.",
+      "feature2Title": "Nhận tiền có cổng KYC",
+      "feature2Body": "Yêu cầu xác minh danh tính trước khi người nhận có thể nhận. Hoàn hảo cho giải thưởng hackathon, tài trợ, hoặc chuyển tiền tuân thủ.",
+      "feature3Title": "Hóa đơn",
+      "feature3Body": "Gửi liên kết hóa đơn gọn gàng. Khách hàng trả theo cách họ muốn. Bạn được thanh toán bằng thứ bạn muốn. Đối soát đã được xử lý."
+    },
+    "zcash": {
+      "pill": "Zcash · ZEC",
+      "headline1": "Tiền riêng tư,",
+      "headlineGradient": "thực sự riêng tư.",
+      "body": "Nhận, yêu cầu, hoán đổi và rút Zcash mà không bao giờ để lộ số tiền hoặc đối tác. Toàn bộ một mặt của Loofta, được xây dựng trên ZEC được che chắn.",
+      "shieldedByDefault": "Được che chắn theo mặc định",
+      "shieldedTitle": "Nhận ZEC theo cách Zcash được thiết kế để sử dụng.",
+      "shieldedBody": "Mỗi khoản thanh toán vào @username của bạn được thanh toán vào địa chỉ được che chắn. Không có phần minh bạch, không có rò rỉ metadata. Chúng tôi không bao giờ thấy số tiền.",
+      "bullet1": "Người gửi thanh toán từ bất kỳ chuỗi nào — họ không cần ZEC",
+      "bullet2": "Chúng tôi hoán đổi khi vào, gửi tiền được che chắn",
+      "bullet3": "Số dư được che chắn thống nhất trên tất cả các pool",
+      "getLink": "Nhận liên kết ZEC của bạn",
+      "moreInfo": "Thêm thông tin",
+      "tile0Eyebrow": "P2P",
+      "tile0Title": "Gửi ZEC ngang hàng",
+      "tile0Body": "Cho ai đó @username của bạn, họ thanh toán bằng ZEC được che chắn. Không cần tài khoản sàn giao dịch, không cần cầu KYC, không rò rỉ.",
+      "tile1Eyebrow": "Rút tiền",
+      "tile1Title": "Rút tiền mặt, một cách riêng tư",
+      "tile1Body": "Chuyển ZEC sang USD, EUR, hoặc ngân hàng địa phương của bạn — không có dấu vết on-chain. Tiền đến Revolut, Wise, hoặc bất kỳ tài khoản nào.",
+      "tile2Eyebrow": "Yêu cầu",
+      "tile2Title": "Yêu cầu thanh toán bằng ZEC",
+      "tile2Body": "Một liên kết. Đặt số tiền, chia sẻ ở bất cứ đâu. Người gửi thanh toán từ bất kỳ chuỗi nào — bạn nhận ZEC được che chắn.",
+      "tile3Eyebrow": "Hoán đổi",
+      "tile3Title": "Hoán đổi ZEC theo bất kỳ hướng nào",
+      "tile3Body": "ZEC ↔ USDC, SOL, ETH, USDT. Tuyến đường tốt nhất qua NEAR Intents và DEX on-chain. Thanh toán trong vài giây."
+    },
+    "builtOn": {
+      "pill": "Công nghệ nền",
+      "body": "Mỗi khoản thanh toán được thanh toán trên Solana trong dưới nửa giây. Private Ephemeral Rollup của MagicBlock giữ số tiền và đối tác ngoài sổ cái công khai — theo mặc định, cho mỗi người dùng, mỗi lần.",
+      "readArchitecture": "Đọc kiến trúc",
+      "howPerWorks": "Cách PER hoạt động",
+      "settlementLayer": "Lớp thanh toán",
+      "finality": "tính cuối cùng",
+      "privacyLayer": "Lớp riêng tư",
+      "byDefault": "theo mặc định",
+      "poweredWith": "được hỗ trợ bởi",
+      "spec0Label": "Thanh toán",
+      "spec0Value": "Solana L1",
+      "spec0Sub": "~400ms tính cuối cùng",
+      "spec1Label": "Lớp riêng tư",
+      "spec1Value": "MagicBlock PER",
+      "spec1Sub": "Private Ephemeral Rollup",
+      "spec2Label": "Tài sản ổn định",
+      "spec2Value": "USDC",
+      "spec2Sub": "Circle-native trên Solana",
+      "spec3Label": "Lưu ký",
+      "spec3Value": "Phi lưu ký",
+      "spec3Sub": "Khóa không bao giờ rời thiết bị của bạn"
+    },
+    "cta": {
+      "headline1": "Sẵn sàng",
+      "headlineGradient": "được thanh toán chưa?",
+      "body": "Tài khoản miễn phí. Không cần seed phrase. Không cần cài ví. Sẵn sàng trong 30 giây.",
+      "createLink": "Tạo liên kết thanh toán của bạn",
+      "sendPayment": "Gửi thanh toán"
+    },
+    "footer": {
+      "tagline": "Phi lưu ký · Riêng tư · Devnet",
+      "privacy": "Quyền riêng tư",
+      "brand": "Thương hiệu"
+    }
+  },
+
+  "UserMenu": {
+    "username": "Tên người dùng",
+    "email": "Email",
+    "copyUsername": "Sao chép tên người dùng",
+    "shareYourLink": "Chia sẻ liên kết của bạn",
+    "sparks": "Sparks",
+    "settings": "Cài đặt",
+    "mainnetBeta": "Mainnet Beta",
+    "mainnetViewOnly": "Mainnet (chỉ xem)",
+    "devnet": "Devnet",
+    "paymentsDisabled": "Thanh toán bị tắt — chỉ số dư và rút tiền",
+    "balanceWithdrawOnly": "Chỉ số dư và rút tiền — thanh toán cần quyền truy cập beta",
+    "logOut": "Đăng xuất",
+    "noUsernameTitle": "Chia sẻ liên kết thanh toán của bạn",
+    "noUsernameBody": "Thiết lập tên người dùng của bạn trong menu tài khoản để nhận liên kết thanh toán và bắt đầu nhận thanh toán.",
+    "gotIt": "Đã hiểu",
+    "shareModalTitle": "Bắt đầu nhận tiền ngay bây giờ",
+    "shareModalSubtitle": "Chia sẻ liên kết thanh toán của bạn để nhận thanh toán",
+    "yourPaymentLink": "Liên kết thanh toán của bạn",
+    "copied": "Đã sao chép!",
+    "copyLink": "Sao chép liên kết",
+    "copyLinkButton": "Sao chép liên kết",
+    "privatePayments": "🔒 Thanh toán riêng tư",
+    "enabled": "Đã bật",
+    "comingSoon": "Sắp có",
+    "privatePaymentsDescEnabled": "Tất cả các khoản thanh toán vào liên kết của bạn sử dụng MagicBlock Private Ephemeral Rollup để bảo vệ quyền riêng tư.",
+    "privatePaymentsDescDisabled": "Khi có sẵn, tất cả các khoản thanh toán vào liên kết của bạn sẽ sử dụng MagicBlock Private Ephemeral Rollup để bảo vệ quyền riêng tư.",
+    "close": "Đóng",
+    "settingsTitle": "Cài đặt",
+    "settingsSubtitle": "Ví, phương thức đăng nhập và bảo mật.",
+    "network": "Mạng",
+    "signInMethods": "Phương thức đăng nhập",
+    "connected": "Đã kết nối",
+    "addSecondMethod": "Thêm phương thức thứ hai để bạn có thể khôi phục tài khoản.",
+    "addTwitter": "Thêm Twitter",
+    "addEmail": "Thêm email",
+    "paymentLink": "Liên kết thanh toán",
+    "useTwitterAsLink": "Sử dụng Twitter của bạn làm liên kết thanh toán: @{handle}",
+    "updating": "Đang cập nhật…",
+    "useHandle": "Sử dụng @{handle}",
+    "walletAddress": "Địa chỉ ví",
+    "clickToHide": "Nhấp để hiển thị rút gọn",
+    "clickToCopy": "Nhấp vào địa chỉ để sao chép đầy đủ",
+    "viewOnSolscan": "Xem trên Solscan",
+    "loadingWallet": "Đang tải ví...",
+    "walletAutoCreated": "Ví sẽ được tạo tự động khi cần."
+  },
+
+  "Footer": {
+    "forYou": "Cho bạn",
+    "forBusiness": "Cho doanh nghiệp",
+    "company": "Công ty",
+    "socialsAndDocs": "Mạng xã hội & Tài liệu",
+    "send": "Gửi",
+    "receive": "Nhận",
+    "history": "Lịch sử",
+    "settings": "Cài đặt",
+    "checkout": "Thanh toán",
+    "partners": "Đối tác",
+    "about": "Giới thiệu",
+    "copyright": "© {year} Loofta. Tất cả quyền được bảo lưu.",
+    "language": "Ngôn ngữ",
+    "currency": "Tiền tệ"
+  }
+}

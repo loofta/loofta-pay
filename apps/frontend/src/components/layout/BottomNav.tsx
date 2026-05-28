@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ArrowDown, ArrowUp, Clock, Settings } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 type NavKey = 'send' | 'receive' | 'history' | 'settings';
 
@@ -52,7 +53,7 @@ function NavItem({
             href={href}
             className={[
                 "flex flex-col items-center justify-center flex-1 py-2",
-                "text-sm md:text-xs font-semibold",
+                "text-xs font-semibold",
                 active ? "text-amber-300" : "text-slate-400 hover:text-slate-200",
             ].join(" ")}
         >
@@ -63,6 +64,7 @@ function NavItem({
 }
 
 export function BottomNav() {
+    const t = useTranslations('BottomNav');
     const pathname = usePathname();
     const searchParams = useSearchParams();
 
@@ -93,25 +95,25 @@ export function BottomNav() {
             <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-1 mt-1">
                 <NavItem
                     href={sendHref}
-                    label="Send"
+                    label={t('send')}
                     active={activeKey === 'send'}
                     icon={<ArrowUp />}
                 />
                 <NavItem
                     href={receiveHref}
-                    label="Receive"
+                    label={t('receive')}
                     active={activeKey === 'receive'}
                     icon={<ArrowDown />}
                 />
                 <NavItem
                     href={historyHref}
-                    label="History"
+                    label={t('history')}
                     active={activeKey === 'history'}
                     icon={<Clock />}
                 />
                 <NavItem
                     href={settingsHref}
-                    label="Profile"
+                    label={t('profile')}
                     active={activeKey === 'settings'}
                     icon={<Settings />}
                 />

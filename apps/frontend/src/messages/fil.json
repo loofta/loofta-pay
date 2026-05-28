@@ -1,0 +1,369 @@
+{
+  "BottomNav": {
+    "send": "Magpadala",
+    "receive": "Tumanggap",
+    "history": "Kasaysayan",
+    "profile": "Profile"
+  },
+
+  "AppShell": {
+    "bannerMainnet": "Mainnet beta — magpadala at tumanggap ng pribadong bayad gamit ang tunay na USDC. Bayaran ang sinuman sa pamamagitan ng email, X username, o Loofta username.",
+    "bannerDevnet": "Magpadala at tumanggap ng pribadong bayad gamit ang MagicBlock PER — devnet. Bayaran ang sinuman sa pamamagitan ng email, X username, o Loofta username.",
+    "bannerContact": "May tanong? Makipag-ugnayan sa amin sa Telegram",
+    "dismissBanner": "Isara ang banner"
+  },
+
+  "MinimalHeader": {
+    "balance": "Balanse",
+    "sparks": "Sparks",
+    "waitlist": "Listahan ng paghihintay",
+    "profile": "Profile",
+    "signIn": "Mag-sign in",
+    "logOut": "Mag-log out",
+    "mainnetBeta": "Mainnet Beta",
+    "mainnetViewOnly": "Mainnet (tingnan lamang)",
+    "devnet": "Devnet",
+    "paymentsDisabled": "Naka-disable ang mga bayad — balanse at withdrawal lamang",
+    "openMenu": "Buksan ang menu",
+    "closeMenu": "Isara ang menu",
+    "earnSparks": "Kumita ng Sparks para sa iyong aktibidad",
+    "requestAccess": "Humiling ng maagang access sa mainnet"
+  },
+
+  "SettingsPage": {
+    "title": "Profile",
+    "username": "Username",
+    "email": "Email",
+    "shareYourLink": "Ibahagi ang iyong link",
+    "settings": "Mga Setting",
+    "logOut": "Mag-log out",
+    "copyUsername": "Kopyahin ang username",
+    "signInPrompt": "Mag-sign in para makita ang iyong profile.",
+    "goToHome": "Pumunta sa home"
+  },
+
+  "HistoryPage": {
+    "title": "Kasaysayan ng bayad",
+    "amountSent": "Halagang ipinadala",
+    "amountReceived": "Halagang natanggap",
+    "recentPayments": "Mga kamakailang bayad",
+    "sent": "Ipinadala",
+    "received": "Natanggap",
+    "to": "Kay",
+    "from": "Mula sa",
+    "anonymous": "Hindi kilala",
+    "noPayments": "Wala pang bayad.",
+    "noPaymentsMatch": "Walang bayad na tumutugma sa iyong paghahanap.",
+    "searchPlaceholder": "Maghanap ayon sa nagpadala, tumatanggap, o mensahe...",
+    "signInTitle": "Kasaysayan ng bayad",
+    "signInPrompt": "Mag-log in para makita ang mga bayad na iyong ipinadala at natanggap.",
+    "signIn": "Mag-sign in",
+    "refresh": "I-refresh",
+    "refreshList": "I-refresh ang listahan",
+    "search": "Maghanap",
+    "status": {
+      "SUCCESS": "Nabayaran",
+      "PRIVATE_TRANSFER_PENDING": "Hindi pa nire-claim",
+      "CANCELLED": "Nakansela",
+      "OPEN": "Bukas",
+      "PENDING_DEPOSIT": "Nakabinbin",
+      "IN_FLIGHT": "Isinasagawa",
+      "REFUNDED": "Na-refund",
+      "EXPIRED": "Nag-expire"
+    }
+  },
+
+  "HomePage": {
+    "send": "Magpadala",
+    "to": "Kay",
+    "amountLabel": "Halaga sa USD",
+    "recipientPlaceholder": "Loofta, Twitter username, eksaktong email",
+    "recipientHint": "Loofta o Twitter username, o eksaktong email — inire-claim nila sa pamamagitan ng pag-sign in sa account na iyon.",
+    "continue": "Magpatuloy",
+    "signInToContinue": "Mag-sign in para magpatuloy",
+    "multiSend": "Subukan ang multi send",
+    "newPayment": "← Bagong bayad",
+    "paymentCreated": "Nagawa ang link ng bayad. Ibahagi ito o buksan para makita ang status.",
+    "viewPayment": "Tingnan ang bayad",
+    "receive": "Tumanggap",
+    "backToReceive": "← Bumalik sa tumanggap",
+    "sharePersonalLink": "Ibahagi ang iyong personal na link",
+    "personalLinkDescription": "Maaaring bayaran ka ng sinuman sa pamamagitan ng pagbubukas ng link na ito. Tatanggap ka sa iyong gustong token at chain.",
+    "copy": "Kopyahin",
+    "copied": "Nakopya",
+    "shareAndSettings": "Ibahagi at mga setting",
+    "signInForLink": "Mag-sign in para makuha ang iyong sariling link ng bayad. Magdagdag ng Twitter mamaya para makakuha ng natatanging @username.",
+    "signInToGetLink": "Mag-sign in para makuha ang iyong link ng bayad",
+    "createPaymentLink": "Lumikha ng bagong link ng bayad",
+    "createLinkDescription": "Lumikha ng isang beses na kahilingan sa bayad. Pipili ka ng halaga, token, at chain. Hindi kailangan ng account para lumikha.",
+    "createNewLink": "Lumikha ng bagong link ng bayad",
+    "faqTitle": "Mga madalas itanong",
+    "searching": "Naghahanap…",
+    "noUsersFound": "Walang nahanap na user",
+    "fromEmail": "(mula sa email)",
+    "faq": {
+      "fees": {
+        "question": "Magkano ang bayad?",
+        "answer1": "Ang mga pribadong bayad sa Loofta Pay ay may flat na bayad na sinisingil sa nagpadala — <bold>10 BPS</bold> ng halagang inilipat kasama ang <bold>0.002 SOL</bold> na gas fee, parehong binabayaran sa USDC. Lahat ng bayad ay direktang napupunta sa privacy infrastructure ng MagicBlock. Ang Loofta ay hindi kumukuha ng anumang bahagi. Ang tatanggap ay palaging tumatanggap ng eksaktong halagang hinihingi.",
+        "answer2": "Kumpara sa ibang privacy tools sa Solana (Umbra, Privacy Cash, Houdini Swap) na naniningil ng 0.4%–4.4%+ sa maliit na halaga, ang flat na bayad ng Loofta ay palaging pinakamababa sa lahat ng laki ng transfer."
+      },
+      "privatePayments": {
+        "question": "Paano gumagana ang mga pribadong bayad?",
+        "answer": "Ang mga pribadong bayad ay gumagamit ng Private Ephemeral Rollup (PER) ng MagicBlock — imprastraktura na itinayo para sa pribadong visibility sa halip na isang karaniwang ganap na pampublikong transfer. Ibig sabihin, ang mga nagmamasid ay hindi makakakita ng parehong mga detalye ng bayad na karaniwang makikita nila on-chain, kaya mas mahirap sundan o ikonekta ang iyong aktibidad. Ito ang opsyon kapag mahalaga sa iyo ang mas malakas na privacy ng bayad."
+      },
+      "sendBeforeAccount": {
+        "question": "Maaari ba akong magpadala sa isang tao bago siya magkaroon ng account?",
+        "answer": "Oo. Maaari kang magpadala sa isang Twitter/X username o email. Makakatanggap sila ng link para mag-sign up at i-claim ang bayad. Kapag nag-log in sila gamit ang pagkakakilalang iyon, maaari nilang i-claim ang mga pondo."
+      },
+      "retrieveWallet": {
+        "question": "Paano ko mabibigay ang aking naka-embed na Loofta Pay wallet?",
+        "answer1": "Buksan ang iyong menu ng account, pumunta sa <bold>Mga Setting</bold>, at gamitin ang <bold>I-export ang Private Key</bold> para mag-back up ng iyong naka-embed na Loofta Pay wallet. Maaari mo ring tingnan ang iyong Solana address doon.",
+        "answer2": "Kung i-import o gagamitin mo ang wallet na iyon <bold>labas ng</bold> Loofta Pay, ang mga pagpapalagay ng privacy at seguridad na aming dinisenyo para sa in-app na paggamit ay maaaring hindi na ilapat, at <bold>maaaring makompromiso ang iyong privacy</bold>. Lubos naming inirerekomenda na panatilihing nasa loob ng Loofta Pay ang aktibidad.",
+        "answer3": "<bold>Huwag</bold> ibahagi ang iyong naka-embed na wallet address sa mga tao para bayaran ka nila. Ibahagi ang iyong <bold>Loofta username</bold> o <bold>email</bold> sa halip — iyon ang paraan ng pagpapadala ng mga pondo ng iba sa iyo.",
+        "answer4": "Para ilipat ang pera, gamitin ang <bold>I-withdraw</bold> para magpadala ng USDC sa isang <bold>bago</bold> Solana wallet na kontrolado mo (libre sa Solana USDC na may sponsored gas) — sa halip na i-expose ang iyong naka-embed na address."
+      },
+      "burnerWallet": {
+        "question": "Ano ang isang burner wallet?",
+        "answer": "Ang isang burner wallet ay isang pansamantalang deposit address na ginagawa namin para sa iyong bayad. Nagpadala ka ng mga pondo sa address na ito at idinidirekta ng Loofta Pay ang mga ito sa tatanggap. Hindi mo kailangang ikonekta ang isang wallet para magbayad — magpadala lamang sa deposit address."
+      },
+      "morphoVault": {
+        "question": "Paano pinapanatiling ligtas ng Morpho Vault ang aking mga kita?",
+        "answer1": "Ang Morpho Vault ay ang protokol na nagpapatakbo ng yield sa iyong Loofta balance — isa sa mga pinakaligtas at pinaka-na-audit na paraan upang kumita ng passive income sa DeFi.",
+        "answer2": "Hindi katulad ng mga yield product na nagtatambak ng panganib sa ibabaw ng panganib, ang Morpho ay nag-ooperate na may transparent, over-collateralized na mga lending market. Ang bawat posisyon ay nakikita on-chain. Walang nakatagong estratehiya, walang nakalock na pondo, walang malabong fund manager. Ang iyong USDC ay kumikita sa pamamagitan ng verified na lending activity — at maaari kang mag-withdraw anumang oras.",
+        "answer3": "Ang Morpho ay nagproseso ng bilyon-bilyong dolyar sa lending volume na may walang mantsa na rekord ng seguridad. Kapag kumikita ang iyong balance, kumikita ito nang ligtas."
+      },
+      "looftaPoints": {
+        "question": "Paano gumagana ang Loofta Points?",
+        "answer1": "Ang bawat bayad na iyong natatanggap ay awtomatikong nagbibigay sa iyo ng Loofta Points — walang kailangang opt-in. Nag-iipon ang mga puntos sa iyong account at nagbubukas ng mga gantimpala sa network ng mga kasosyo ng Loofta: mga diskwento sa mga tool at serbisyo na ginagamit na ng mga creator at freelancer.",
+        "answer2": "Lumalaki ang mga puntos habang lumalaki ang paggamit — habang mas pangunahing payment layer ang Loofta Pay mo, mas marami kang nakukuha pabalik. Habang lumalaki ang network ng mga kasosyo, lumalaki rin ang halaga ng iyong mga puntos."
+      },
+      "apy": {
+        "question": "APY sa natanggap na halaga at auto-compound?",
+        "answer": "Nagtatayo kami ng APY sa USD sa iyong natanggap na balanse, na may bawat na-claim na bayad na awtomatikong nagko-compound. Malapit na."
+      },
+      "devnet": {
+        "question": "Nasa devnet ako — paano ako makakakuha ng test SOL at USDC?",
+        "answer": "Kumuha ng libreng devnet SOL mula sa <solanaLink>Solana faucet</solanaLink>. Para sa devnet USDC, gamitin ang <circleLink>Circle faucet</circleLink>."
+      }
+    }
+  },
+
+  "MarketingPage": {
+    "nav": {
+      "payReceive": "Magbayad at Tumanggap",
+      "features": "Mga Feature",
+      "privacy": "Privacy",
+      "earn": "Kumita",
+      "business": "Negosyo",
+      "zcash": "Zcash",
+      "launchApp": "Ilunsad ang app"
+    },
+    "hero": {
+      "iWantToGetPaid": "Gusto kong mabayaran",
+      "iWantToSend": "Gusto kong magpadala",
+      "receiveHeadline1": "Isang link.",
+      "receiveHeadline2": "Tumanggap ng",
+      "receiveHeadlineGradient": "kahit ano",
+      "sendHeadline1": "Magpadala sa",
+      "sendHeadlineGradient": "sinuman",
+      "sendHeadline2": "kahit saan.",
+      "receiveSubtitle": "Ibahagi ang iyong link ng bayad. Nagpadala ang sinuman mula sa kahit saan, sa anumang currency — tumatanggap ka ng USDC sa Solana at nag-wi-withdraw sa tunay na gusto mo.",
+      "sendSubtitle": "Walang wallet address. Walang kailangang mag-sign up para sa kanila. Magpadala sa email, @handle, o username — ino-claim nila ito kapag nag-sign in sila.",
+      "createYourLink": "Lumikha ng iyong link",
+      "sendAPayment": "Magpadala ng bayad",
+      "seeHowItWorks": "Tingnan kung paano gumagana",
+      "payByEmail": "Magbayad sa pamamagitan ng email",
+      "dragToFlick": "i-drag para lumipat →"
+    },
+    "chains": {
+      "tagline": "Magbayad mula sa anumang chain · Tumanggap ng gusto mo"
+    },
+    "features": {
+      "pill": "Tatlong haligi",
+      "headline1": "Itinayo para ang mga bayad ay",
+      "headline2": "gumana para sa iyo.",
+      "item0Eyebrow": "01 · Tanggapin",
+      "item0Title": "Isang link. Kahit anong token.",
+      "item0Body": "Ang iyong username ay nagiging iyong link ng bayad. Nagbabayad ang mga nagpadala mula sa alinman sa 20+ chain — natanggap mo ang eksaktong token na gusto mo.",
+      "item1Eyebrow": "02 · Protektahan",
+      "item1Title": "Aktibidad wala sa pampublikong rekord.",
+      "item1Body": "Ang Private Ephemeral Rollup ng MagicBlock ay nagrurutas ng iyong mga bayad para ang mga halaga at katapat ay manatiling sa iyo lamang. Walang setup.",
+      "item2Eyebrow": "03 · Kumita",
+      "item2Title": "Ang mga idle na balanse ay hindi nananatiling idle.",
+      "item2Body": "Ang bawat dolyar sa pagitan ng mga bayad ay nagko-compound ng yield sa pamamagitan ng mga Morpho vault. Mag-withdraw kahit saan, anumang oras, bilang anumang token."
+    },
+    "privacy": {
+      "pill": "MagicBlock PER",
+      "headline1": "Ang tanging ledger",
+      "headline2": "na",
+      "headlineGradient": "mahalaga",
+      "headline3": "ay ang sa iyo.",
+      "body": "Ang mga Private Ephemeral Rollup ay nagpoprotekta ng mga halaga, katapat, at mga pattern mula sa mga pampublikong tagamasid. Walang setup, walang bagong wallet — isang toggle lamang.",
+      "bullet1": "Mga detalye ng bayad ay protektado on-chain",
+      "bullet2": "Hindi maaaring maikonekta ang mga katapat",
+      "bullet3": "Isang toggle. Gumagana sa iyong kasalukuyang daloy.",
+      "receiptLabel": "Resibo",
+      "receiptBadge": "Pribado",
+      "rollupVerified": "Ephemeral rollup · Na-verify"
+    },
+    "earn": {
+      "pill": "Mga Morpho Vault",
+      "headline1": "Ang iyong balanse",
+      "headline2": "laging aktibo.",
+      "body": "Bawat minuto sa pagitan ng mga bayad, ang iyong idle na USDC ay kumikita ng yield sa pamamagitan ng mga na-audit na Morpho vault. Mag-withdraw kaagad — aayusin namin sa background.",
+      "apyLabel": "Kasalukuyang APY*",
+      "pointsLabel": "Loofta Points",
+      "available": "Available na balanse",
+      "earning": "Kumikita"
+    },
+    "business": {
+      "pill": "Para sa negosyo",
+      "headline1": "Payroll, mga payout,",
+      "headline2": "lahat sa isang lugar.",
+      "body": "Mula sa pagbabayad ng iyong mga kontratista sa limang bansa hanggang sa pagpapalabas ng mga premyo sa hackathon na may KYC — hinahawakan ng Loofta ang mga kumplikadong bahagi.",
+      "bookDemo": "Mag-book ng business demo",
+      "bulkEyebrow": "Bulk na bayad",
+      "bulkTitle": "Magbayad ng 200 tao sa isang pirma.",
+      "bulkBody": "Mag-upload ng CSV o mag-paste ng listahan. Bayaran ang iyong mga freelancer, creator, mga nagwagi sa hackathon, o buong payroll — sa anumang halo ng mga currency na gusto nilang matanggap.",
+      "bulkBadge": "200+ tatanggap · isang tx",
+      "ctaEyebrow": "Kausapin kami",
+      "ctaTitle": "Nagpapatakbo ng payroll o programa ng mga grant?",
+      "ctaBody": "Custom na volume pricing, nakatuong suporta, at tulong sa onboarding para sa mga team na nagbabayad ng 50+ na tatanggap.",
+      "contactSales": "Makipag-ugnayan sa sales",
+      "feature0Title": "Mag-iskedyul ng mga bayad",
+      "feature0Body": "I-queue ang isang bayad para sa susunod na Martes. O ang ika-1 ng bawat buwan. Lalabas ito sa oras kung online ka man o hindi.",
+      "feature1Title": "Paulit-ulit na bayad",
+      "feature1Body": "I-set nang isang beses. Payroll bawat ika-1, retainer bawat ika-15, lingguhang subscription. Mag-pause o mag-edit anumang oras.",
+      "feature2Title": "Mga claim na may KYC gate",
+      "feature2Body": "Nangangailangan ng pagpapatunay ng pagkakakilanlan bago mag-claim ang isang tatanggap. Perpekto para sa mga premyo sa hackathon, grant, o mga transfer na nakatali sa pagsunod.",
+      "feature3Title": "Mga invoice",
+      "feature3Body": "Magpadala ng malinis na link ng invoice. Nagbabayad ang kliyente sa anumang paraan na gusto nila. Mababayaran ka sa anumang gusto mo. Ang rekonsiliasyon ay hinahawakan."
+    },
+    "zcash": {
+      "pill": "Zcash · ZEC",
+      "headline1": "Pribadong pera,",
+      "headlineGradient": "talagang pribado.",
+      "body": "Tumanggap, humiling, mag-swap, at mag-off-ramp ng Zcash nang hindi kailanman inilalantad ang mga halaga o katapat. Isang buong bahagi ng Loofta, itinayo sa shielded ZEC.",
+      "shieldedByDefault": "Naka-shield bilang default",
+      "shieldedTitle": "Tumanggap ng ZEC sa paraang nilayong gamitin ang Zcash.",
+      "shieldedBody": "Ang bawat bayad sa iyong @username ay nagsasettle sa isang shielded address. Walang transparent na bahagi, walang metadata leak. Hindi namin kailanman nakikita ang halaga.",
+      "bullet1": "Nagbabayad ang nagpadala mula sa anumang chain — hindi nila kailangan ng ZEC",
+      "bullet2": "Nagsa-swap kami sa pag-pasok, shielded na deposit",
+      "bullet3": "Pinag-isang shielded na balanse sa lahat ng pool",
+      "getLink": "Kunin ang iyong ZEC link",
+      "moreInfo": "Karagdagang impormasyon",
+      "tile0Eyebrow": "P2P",
+      "tile0Title": "Magpadala ng ZEC peer-to-peer",
+      "tile0Body": "Ibigay ang iyong @username, nagbabayad sila sa shielded ZEC. Walang exchange account, walang KYC bridge, walang leak.",
+      "tile1Eyebrow": "Off-ramp",
+      "tile1Title": "Mag-cash out, nang pribado",
+      "tile1Body": "I-convert ang ZEC sa USD, EUR, o iyong lokal na bangko — nang walang on-chain trail. Ang mga pondo ay pupunta sa Revolut, Wise, o anumang account.",
+      "tile2Eyebrow": "Hiling",
+      "tile2Title": "Humiling ng bayad sa ZEC",
+      "tile2Body": "Isang link. Itakda ang halaga, ibahagi kahit saan. Nagbabayad ang nagpadala mula sa anumang chain — tumatanggap ka ng shielded ZEC.",
+      "tile3Eyebrow": "Swap",
+      "tile3Title": "Mag-swap ng ZEC sa anumang direksyon",
+      "tile3Body": "ZEC ↔ USDC, SOL, ETH, USDT. Pinakamainam na ruta sa NEAR Intents at on-chain DEX. Nagsasettle sa ilang segundo."
+    },
+    "builtOn": {
+      "pill": "Ang stack",
+      "body": "Ang bawat bayad ay nagsasettle sa Solana sa loob ng mas mababa sa kalahating segundo. Ang Private Ephemeral Rollup ng MagicBlock ay nagpapanatili ng mga halaga at katapat sa labas ng pampublikong ledger — bilang default, para sa bawat user, sa bawat oras.",
+      "readArchitecture": "Basahin ang arkitektura",
+      "howPerWorks": "Paano gumagana ang PER",
+      "settlementLayer": "Settlement layer",
+      "finality": "finality",
+      "privacyLayer": "Privacy layer",
+      "byDefault": "bilang default",
+      "poweredWith": "pinapagana ng",
+      "spec0Label": "Settlement",
+      "spec0Value": "Solana L1",
+      "spec0Sub": "~400ms finality",
+      "spec1Label": "Privacy layer",
+      "spec1Value": "MagicBlock PER",
+      "spec1Sub": "Private Ephemeral Rollup",
+      "spec2Label": "Stable asset",
+      "spec2Value": "USDC",
+      "spec2Sub": "Circle-native sa Solana",
+      "spec3Label": "Custody",
+      "spec3Value": "Non-custodial",
+      "spec3Sub": "Hindi kailanman iniiwan ng mga susi ang iyong device"
+    },
+    "cta": {
+      "headline1": "Handa ka na bang",
+      "headlineGradient": "mabayaran?",
+      "body": "Libreng account. Walang seed phrase. Walang pag-install ng wallet. Handa sa loob ng 30 segundo.",
+      "createLink": "Lumikha ng iyong link ng bayad",
+      "sendPayment": "Magpadala ng bayad"
+    },
+    "footer": {
+      "tagline": "Non-custodial · Pribado · Devnet",
+      "privacy": "Privacy",
+      "brand": "Brand"
+    }
+  },
+
+  "UserMenu": {
+    "username": "Username",
+    "email": "Email",
+    "copyUsername": "Kopyahin ang username",
+    "shareYourLink": "Ibahagi ang iyong link",
+    "sparks": "Sparks",
+    "settings": "Mga Setting",
+    "mainnetBeta": "Mainnet Beta",
+    "mainnetViewOnly": "Mainnet (tingnan lamang)",
+    "devnet": "Devnet",
+    "paymentsDisabled": "Naka-disable ang mga bayad — balanse at withdrawal lamang",
+    "balanceWithdrawOnly": "Balanse at withdrawal lamang — nangangailangan ng beta access ang mga bayad",
+    "logOut": "Mag-log out",
+    "noUsernameTitle": "Ibahagi ang iyong link ng bayad",
+    "noUsernameBody": "I-set up ang iyong username sa menu ng account para makuha ang iyong link ng bayad at magsimulang tumanggap ng mga bayad.",
+    "gotIt": "Naiintindihan",
+    "shareModalTitle": "Simulan na tumanggap ng pera ngayon",
+    "shareModalSubtitle": "Ibahagi ang iyong link ng bayad para tumanggap ng mga bayad",
+    "yourPaymentLink": "Ang iyong link ng bayad",
+    "copied": "Nakopya!",
+    "copyLink": "Kopyahin ang link",
+    "copyLinkButton": "Kopyahin ang Link",
+    "privatePayments": "🔒 Mga Pribadong Bayad",
+    "enabled": "Pinagana",
+    "comingSoon": "Malapit nang dumating",
+    "privatePaymentsDescEnabled": "Lahat ng bayad sa iyong link ay gumagamit ng MagicBlock Private Ephemeral Rollup para sa privacy.",
+    "privatePaymentsDescDisabled": "Kapag available na, lahat ng bayad sa iyong link ay gagamit ng MagicBlock Private Ephemeral Rollup para sa privacy.",
+    "close": "Isara",
+    "settingsTitle": "Mga Setting",
+    "settingsSubtitle": "Wallet, mga paraan ng pag-sign in, at seguridad.",
+    "network": "Network",
+    "signInMethods": "Mga paraan ng pag-sign in",
+    "connected": "Nakakonekta",
+    "addSecondMethod": "Magdagdag ng pangalawang paraan para mabawi mo ang iyong account.",
+    "addTwitter": "Idagdag ang Twitter",
+    "addEmail": "Idagdag ang email",
+    "paymentLink": "Link ng bayad",
+    "useTwitterAsLink": "Gamitin ang iyong Twitter bilang link ng bayad: @{handle}",
+    "updating": "Ina-update…",
+    "useHandle": "Gamitin ang @{handle}",
+    "walletAddress": "Wallet Address",
+    "clickToHide": "I-click para ipakita ang pinaiksi",
+    "clickToCopy": "I-click ang address para kopyahin ang buong address",
+    "viewOnSolscan": "Tingnan sa Solscan",
+    "loadingWallet": "Naglo-load ang wallet...",
+    "walletAutoCreated": "Awtomatikong malilikha ang wallet kapag kailangan."
+  },
+
+  "Footer": {
+    "forYou": "Para sa iyo",
+    "forBusiness": "Para sa negosyo",
+    "company": "Kumpanya",
+    "socialsAndDocs": "Mga Social at Docs",
+    "send": "Magpadala",
+    "receive": "Tumanggap",
+    "history": "Kasaysayan",
+    "settings": "Mga Setting",
+    "checkout": "Checkout",
+    "partners": "Mga Kasosyo",
+    "about": "Tungkol sa",
+    "copyright": "© {year} Loofta. Lahat ng karapatan ay nakalaan.",
+    "language": "Wika",
+    "currency": "Pera"
+  }
+}
