@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useAuthStore } from "@/store/auth";
 import { useRouter } from "next/navigation";
 import { Settings } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 function CopyIcon({ className }: { className?: string }) {
   return (
@@ -44,6 +45,7 @@ function ShareIcon({ className }: { className?: string }) {
 }
 
 export default function SettingsPage() {
+  const t = useTranslations('SettingsPage');
   const router = useRouter();
   const { authenticated, logout } = useAuth();
   const username = useAuthStore((s) => s.username ?? null);
@@ -59,12 +61,12 @@ export default function SettingsPage() {
     return (
       <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
         <div className="max-w-lg mx-auto px-4 py-8">
-          <p className="text-slate-400 text-center mb-6">Sign in to view your profile.</p>
+          <p className="text-slate-400 text-center mb-6">{t('signInPrompt')}</p>
           <Link
             href="/"
             className="block w-full text-center rounded-xl px-4 py-3 font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
           >
-            Go to home
+            {t('goToHome')}
           </Link>
         </div>
       </div>
@@ -74,21 +76,21 @@ export default function SettingsPage() {
   return (
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
       <div className="max-w-lg mx-auto px-4 py-6 pb-24">
-        <h1 className="text-xl font-bold text-white mb-6">Profile</h1>
+        <h1 className="text-xl font-bold text-white mb-6">{t('title')}</h1>
 
-        {/* User info box – same as desktop username submenu */}
+        {/* User info box */}
         <div className="rounded-xl bg-white/5 border border-white/10 p-4 mb-4">
           {username && (
             <div className="mb-3 last:mb-0">
-              <p className="text-base md:text-sm font-medium text-slate-400 mb-1">Username</p>
+              <p className="text-sm font-medium text-slate-400 mb-1">{t('username')}</p>
               <div className="flex items-center justify-between gap-2">
-                <p className="text-base md:text-sm font-semibold text-white truncate">@{username}</p>
+                <p className="text-sm font-semibold text-white truncate">@{username}</p>
                 <button
                   type="button"
                   onClick={() => copyToClipboard(`@${username}`)}
                   className="p-1.5 rounded hover:bg-white/10 text-slate-400 hover:text-white shrink-0 transition-colors"
-                  title="Copy username"
-                  aria-label="Copy username"
+                  title={t('copyUsername')}
+                  aria-label={t('copyUsername')}
                 >
                   <CopyIcon className="text-slate-400" />
                 </button>
@@ -96,51 +98,46 @@ export default function SettingsPage() {
             </div>
           )}
           {email && (
-            <div className={username ? "" : ""}>
-              <p className="text-base md:text-sm font-medium text-slate-400 mb-1">Email</p>
-              <p className="text-base md:text-sm text-white/90">{email}</p>
+            <div>
+              <p className="text-sm font-medium text-slate-400 mb-1">{t('email')}</p>
+              <p className="text-sm text-white/90">{email}</p>
             </div>
           )}
         </div>
 
-        {/* Divider */}
         <div className="h-px bg-white/10 my-2" />
 
-        {/* Share your link – orange */}
         {username && (
           <button
             type="button"
             onClick={() => setOpenShareModal(true)}
-            className="w-full text-left px-3 py-3 rounded-lg text-base md:text-sm font-medium transition-colors flex items-center gap-3 text-orange-400 hover:bg-orange-400/10"
+            className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 text-orange-400 hover:bg-orange-400/10"
           >
             <ShareIcon />
-            Share your link
+            {t('shareYourLink')}
           </button>
         )}
 
-        {/* Settings – white */}
         <button
           type="button"
           onClick={() => setOpenSettingsModal(true)}
-          className="w-full text-left px-3 py-3 rounded-lg text-base md:text-sm font-medium transition-colors flex items-center gap-3 text-white hover:bg-white/10"
+          className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 text-white hover:bg-white/10"
         >
           <Settings className="w-4 h-4 shrink-0" />
-          Settings
+          {t('settings')}
         </button>
 
-        {/* Divider */}
         <div className="h-px bg-white/10 my-2" />
 
-        {/* Log out – red */}
         <button
           type="button"
           onClick={() => {
             logout();
             router.push("/");
           }}
-          className="w-full text-left px-3 py-3 rounded-lg text-base md:text-sm font-medium transition-colors text-red-400 hover:bg-red-400/10"
+          className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium transition-colors text-red-400 hover:bg-red-400/10"
         >
-          Log out
+          {t('logOut')}
         </button>
       </div>
     </div>

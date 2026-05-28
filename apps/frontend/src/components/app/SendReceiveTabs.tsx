@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ArrowDown, ArrowUp } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 type Tab = 'send' | 'receive';
 
@@ -64,6 +65,7 @@ function IconBubble({
 export function SendReceiveTabs({ activeTab, onTabChange, visualOnly }: SendReceiveTabsProps) {
     const pathname = usePathname();
     const isHistoryPage = pathname === "/history";
+    const t = useTranslations('BottomNav');
 
     const tabTextClass = (tab: Tab) =>
         [
@@ -121,14 +123,14 @@ export function SendReceiveTabs({ activeTab, onTabChange, visualOnly }: SendRece
                             <IconBubble active={activeTab === 'send'}>
                                 <ArrowUp />
                             </IconBubble>
-                            <span className={tabTextClass('send')}>Send</span>
+                            <span className={tabTextClass('send')}>{t('send')}</span>
                         </Link>
 
                         <Link href="/?tab=receive" className={tabBase}>
                             <IconBubble active={activeTab === 'receive'}>
                                 <ArrowDown />
                             </IconBubble>
-                            <span className={tabTextClass('receive')}>Receive</span>
+                            <span className={tabTextClass('receive')}>{t('receive')}</span>
                         </Link>
                     </>
                 ) : (
@@ -137,14 +139,14 @@ export function SendReceiveTabs({ activeTab, onTabChange, visualOnly }: SendRece
                             <IconBubble active={activeTab === 'send'}>
                                 <ArrowUp />
                             </IconBubble>
-                            <span className={tabTextClass('send')}>Send</span>
+                            <span className={tabTextClass('send')}>{t('send')}</span>
                         </button>
 
                         <button type="button" onClick={() => onTabChange?.('receive')} className={tabBase}>
                             <IconBubble active={activeTab === 'receive'}>
                                 <ArrowDown />
                             </IconBubble>
-                            <span className={tabTextClass('receive')}>Receive</span>
+                            <span className={tabTextClass('receive')}>{t('receive')}</span>
                         </button>
                     </>
                 )}
@@ -160,9 +162,9 @@ export function SendReceiveTabs({ activeTab, onTabChange, visualOnly }: SendRece
                         ? "bg-white/10 text-amber-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
                         : "bg-white/[0.05] text-slate-400 hover:text-slate-200 hover:bg-white/[0.08]",
                 ].join(" ")}
-                title="History"
+                title={t('history')}
             >
-                <span className="sr-only">History</span>
+                <span className="sr-only">{t('history')}</span>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10" />
                     <polyline points="12 6 12 12 16 14" />

@@ -1,0 +1,369 @@
+{
+  "BottomNav": {
+    "send": "发送",
+    "receive": "接收",
+    "history": "记录",
+    "profile": "个人资料"
+  },
+
+  "AppShell": {
+    "bannerMainnet": "主网测试版 — 使用真实 USDC 发送和接收私密付款。通过电子邮件、X 用户名或 Loofta 用户名向任何人付款。",
+    "bannerDevnet": "使用 MagicBlock PER 发送和接收私密付款 — 测试网。通过电子邮件、X 用户名或 Loofta 用户名向任何人付款。",
+    "bannerContact": "有问题？在 Telegram 上联系我们",
+    "dismissBanner": "关闭横幅"
+  },
+
+  "MinimalHeader": {
+    "balance": "余额",
+    "sparks": "Sparks",
+    "waitlist": "等待列表",
+    "profile": "个人资料",
+    "signIn": "登录",
+    "logOut": "退出登录",
+    "mainnetBeta": "主网测试版",
+    "mainnetViewOnly": "主网（仅查看）",
+    "devnet": "测试网",
+    "paymentsDisabled": "付款已禁用 — 仅限余额和提款",
+    "openMenu": "打开菜单",
+    "closeMenu": "关闭菜单",
+    "earnSparks": "通过活动赚取 Sparks",
+    "requestAccess": "申请主网早期访问"
+  },
+
+  "SettingsPage": {
+    "title": "个人资料",
+    "username": "用户名",
+    "email": "电子邮件",
+    "shareYourLink": "分享您的链接",
+    "settings": "设置",
+    "logOut": "退出登录",
+    "copyUsername": "复制用户名",
+    "signInPrompt": "登录以查看您的个人资料。",
+    "goToHome": "前往首页"
+  },
+
+  "HistoryPage": {
+    "title": "付款记录",
+    "amountSent": "已发送金额",
+    "amountReceived": "已接收金额",
+    "recentPayments": "最近付款",
+    "sent": "已发送",
+    "received": "已接收",
+    "to": "至",
+    "from": "来自",
+    "anonymous": "匿名",
+    "noPayments": "暂无付款记录。",
+    "noPaymentsMatch": "没有符合搜索条件的付款。",
+    "searchPlaceholder": "按发送方、收款方或消息搜索...",
+    "signInTitle": "付款记录",
+    "signInPrompt": "登录以查看您发送和接收的付款。",
+    "signIn": "登录",
+    "refresh": "刷新",
+    "refreshList": "刷新列表",
+    "search": "搜索",
+    "status": {
+      "SUCCESS": "已付款",
+      "PRIVATE_TRANSFER_PENDING": "未认领",
+      "CANCELLED": "已取消",
+      "OPEN": "开放",
+      "PENDING_DEPOSIT": "待处理",
+      "IN_FLIGHT": "进行中",
+      "REFUNDED": "已退款",
+      "EXPIRED": "已过期"
+    }
+  },
+
+  "HomePage": {
+    "send": "发送",
+    "to": "至",
+    "amountLabel": "金额（美元）",
+    "recipientPlaceholder": "Loofta、Twitter 用户名、精确电子邮件",
+    "recipientHint": "Loofta 或 Twitter 用户名，或精确电子邮件 — 他们通过该账户登录来认领。",
+    "continue": "继续",
+    "signInToContinue": "登录以继续",
+    "multiSend": "尝试批量发送",
+    "newPayment": "← 新付款",
+    "paymentCreated": "付款链接已创建。分享它或打开它以查看状态。",
+    "viewPayment": "查看付款",
+    "receive": "接收",
+    "backToReceive": "← 返回接收",
+    "sharePersonalLink": "分享您的个人链接",
+    "personalLinkDescription": "任何人都可以通过打开此链接向您付款。您以首选代币和链接收款。",
+    "copy": "复制",
+    "copied": "已复制",
+    "shareAndSettings": "分享与设置",
+    "signInForLink": "登录以获取您自己的付款链接。稍后添加 Twitter 以获得唯一的 @username。",
+    "signInToGetLink": "登录以获取付款链接",
+    "createPaymentLink": "创建新付款链接",
+    "createLinkDescription": "创建一次性付款请求。您选择金额、代币和链。无需账户即可创建。",
+    "createNewLink": "创建新付款链接",
+    "faqTitle": "常见问题",
+    "searching": "搜索中…",
+    "noUsersFound": "未找到用户",
+    "fromEmail": "（来自电子邮件）",
+    "faq": {
+      "fees": {
+        "question": "费用是多少？",
+        "answer1": "Loofta Pay 上的私密付款包含向发送方收取的固定费用 — 转账金额的 <bold>10 BPS</bold> 加上 <bold>0.002 SOL</bold> gas 费，均以 USDC 支付。所有费用直接流向 MagicBlock 的隐私基础设施。Loofta 不抽取任何佣金。收款方始终收到所请求的确切金额。",
+        "answer2": "与 Solana 上的其他隐私工具（Umbra、Privacy Cash、Houdini Swap）相比 — 小额转账收取 0.4%–4.4%+ — Loofta 的固定费用在所有转账规模中始终是最低的。"
+      },
+      "privatePayments": {
+        "question": "私密付款如何运作？",
+        "answer": "私密付款使用 MagicBlock 的 Private Ephemeral Rollup (PER) — 为私密可见性而非典型完全公开转账而构建的基础设施。这意味着观察者无法看到他们通常在链上能看到的相同付款详情，因此您的活动更难以追踪或关联。当您需要更强的付款隐私时，这是正确的选择。"
+      },
+      "sendBeforeAccount": {
+        "question": "我可以在对方有账户之前发送吗？",
+        "answer": "可以。您可以发送到 Twitter/X 用户名或电子邮件。他们将收到一个注册并认领付款的链接。一旦他们使用该身份登录，就可以认领资金。"
+      },
+      "retrieveWallet": {
+        "question": "如何找回我的嵌入式 Loofta Pay 钱包？",
+        "answer1": "打开您的账户菜单，前往<bold>设置</bold>，使用<bold>导出私钥</bold>备份您的嵌入式 Loofta Pay 钱包。您也可以在那里查看您的 Solana 地址。",
+        "answer2": "如果您在 Loofta Pay <bold>外部</bold>导入或使用该钱包，我们为应用内使用设计的隐私和安全假设可能不再适用，<bold>您的隐私可能会受到损害</bold>。我们强烈建议将活动保留在 Loofta Pay 内。",
+        "answer3": "<bold>不要</bold>将您的嵌入式钱包地址分享给他人以便他们向您付款。请分享您的 <bold>Loofta 用户名</bold>或<bold>电子邮件</bold> — 这才是他人向您汇款的正确方式。",
+        "answer4": "要转出资金，请使用<bold>提款</bold>将 USDC 发送到您控制的<bold>新</bold> Solana 钱包（Solana USDC 免费，gas 由赞助商支付）— 而不是暴露您的嵌入式地址。"
+      },
+      "burnerWallet": {
+        "question": "什么是一次性钱包？",
+        "answer": "一次性钱包是我们为您的付款生成的临时存款地址。您将资金发送到此地址，Loofta Pay 将其路由到收款方。您无需连接钱包即可付款 — 只需发送到存款地址。"
+      },
+      "morphoVault": {
+        "question": "Morpho Vault 如何保证我的收益安全？",
+        "answer1": "Morpho Vault 是为您的 Loofta 余额提供收益的协议 — 是 DeFi 中赚取被动收入最安全、最经过审计的方式之一。",
+        "answer2": "与将风险叠加到风险之上的收益产品不同，Morpho 以透明、超额抵押的借贷市场运营。每个头寸都在链上可见。没有隐藏策略，没有锁定资金，没有不透明的基金经理。您的 USDC 通过经过验证的借贷活动获得收益 — 您可以随时提款。",
+        "answer3": "Morpho 以无瑕的安全记录处理了数十亿美元的借贷量。当您的余额赚取时，它安全地赚取。"
+      },
+      "looftaPoints": {
+        "question": "Loofta Points 如何运作？",
+        "answer1": "您收到的每笔付款都会自动为您赚取 Loofta Points — 无需选择加入。积分在您的账户中累积，并解锁 Loofta 合作伙伴网络中的奖励：创作者和自由职业者已经使用的工具和服务折扣。",
+        "answer2": "积分随使用量扩展 — Loofta Pay 越是您的主要支付层，您赚回的越多。随着合作伙伴网络的增长，您的积分价值也会增加。"
+      },
+      "apy": {
+        "question": "接收金额的年化收益率及自动复利？",
+        "answer": "我们正在为您的已接收余额构建美元年化收益率，每笔认领付款自动复利。即将推出。"
+      },
+      "devnet": {
+        "question": "我在测试网上 — 如何获得测试 SOL 和 USDC？",
+        "answer": "从<solanaLink>Solana 水龙头</solanaLink>获取免费的测试网 SOL。对于测试网 USDC，使用<circleLink>Circle 水龙头</circleLink>。"
+      }
+    }
+  },
+
+  "MarketingPage": {
+    "nav": {
+      "payReceive": "付款与收款",
+      "features": "功能",
+      "privacy": "隐私",
+      "earn": "赚取",
+      "business": "商业",
+      "zcash": "Zcash",
+      "launchApp": "启动应用"
+    },
+    "hero": {
+      "iWantToGetPaid": "我想收款",
+      "iWantToSend": "我想发送",
+      "receiveHeadline1": "一个链接。",
+      "receiveHeadline2": "收取",
+      "receiveHeadlineGradient": "任何代币",
+      "sendHeadline1": "发送给",
+      "sendHeadlineGradient": "任何人",
+      "sendHeadline2": "任何地方。",
+      "receiveSubtitle": "分享您的付款链接。任何人从任何地方、以任何货币发送 — 您在 Solana 上收取 USDC，并提款到您真正想要的。",
+      "sendSubtitle": "无需钱包地址。无需对方注册。发送到电子邮件、@handle 或用户名 — 他们登录时认领。",
+      "createYourLink": "创建您的链接",
+      "sendAPayment": "发送付款",
+      "seeHowItWorks": "了解运作方式",
+      "payByEmail": "通过电子邮件付款",
+      "dragToFlick": "拖动浏览 →"
+    },
+    "chains": {
+      "tagline": "从任何链付款 · 接收您想要的"
+    },
+    "features": {
+      "pill": "三大支柱",
+      "headline1": "为让付款",
+      "headline2": "真正为您服务而构建。",
+      "item0Eyebrow": "01 · 接受",
+      "item0Title": "一个链接。任何代币。",
+      "item0Body": "您的用户名成为您的付款链接。发送方从 20 多条链中的任何一条付款 — 您收到确切想要的代币。",
+      "item1Eyebrow": "02 · 保护",
+      "item1Title": "活动不在公开记录中。",
+      "item1Body": "MagicBlock 的 Private Ephemeral Rollup 路由您的付款，使金额和对手方只属于您。无需设置。",
+      "item2Eyebrow": "03 · 赚取",
+      "item2Title": "闲置余额不会闲置。",
+      "item2Body": "付款之间的每一美元通过 Morpho 金库复利收益。随时随地以任何代币提款。"
+    },
+    "privacy": {
+      "pill": "MagicBlock PER",
+      "headline1": "唯一重要的",
+      "headline2": "账本",
+      "headlineGradient": "是您的",
+      "headline3": "。",
+      "body": "Private Ephemeral Rollup 保护金额、对手方和交易模式不被公众观察。无需设置，无需新钱包 — 只需一个开关。",
+      "bullet1": "付款详情在链上受到保护",
+      "bullet2": "对手方无法被关联",
+      "bullet3": "一个开关。与您现有的流程兼容。",
+      "receiptLabel": "收据",
+      "receiptBadge": "私密",
+      "rollupVerified": "临时 Rollup · 已验证"
+    },
+    "earn": {
+      "pill": "Morpho 金库",
+      "headline1": "您的余额",
+      "headline2": "始终在运转。",
+      "body": "付款之间的每一分钟，您闲置的 USDC 通过经过审计的 Morpho 金库赚取收益。即时提款 — 我们在后台处理。",
+      "apyLabel": "当前年化收益*",
+      "pointsLabel": "Loofta Points",
+      "available": "可用余额",
+      "earning": "赚取中"
+    },
+    "business": {
+      "pill": "商业用途",
+      "headline1": "薪资、付款，",
+      "headline2": "一站搞定。",
+      "body": "从向五个国家的承包商付款，到发放带 KYC 的黑客马拉松奖金 — Loofta 处理复杂的部分。",
+      "bookDemo": "预约商业演示",
+      "bulkEyebrow": "批量付款",
+      "bulkTitle": "一次签名向 200 人付款。",
+      "bulkBody": "上传 CSV 或粘贴列表。向您的自由职业者、创作者、黑客马拉松获奖者或整个薪资单付款 — 以他们各自想要的任意货币组合。",
+      "bulkBadge": "200+ 收款人 · 一笔交易",
+      "ctaEyebrow": "联系我们",
+      "ctaTitle": "管理薪资或资助项目？",
+      "ctaBody": "为支付 50+ 收款人的团队提供自定义量价格、专属支持和入门帮助。",
+      "contactSales": "联系销售",
+      "feature0Title": "计划付款",
+      "feature0Body": "为下周二安排付款。或每月 1 日。无论您是否在线，它都会准时发出。",
+      "feature1Title": "定期付款",
+      "feature1Body": "设置一次。每月 1 日发薪，每月 15 日付款项，每周付订阅费。随时暂停或编辑。",
+      "feature2Title": "KYC 限制认领",
+      "feature2Body": "收款人认领前需要身份验证。非常适合黑客马拉松奖金、资助或合规转账。",
+      "feature3Title": "发票",
+      "feature3Body": "发送简洁的发票链接。客户以任何方式付款。您以想要的方式收款。对账已处理。"
+    },
+    "zcash": {
+      "pill": "Zcash · ZEC",
+      "headline1": "私密货币，",
+      "headlineGradient": "真正私密。",
+      "body": "接收、请求、兑换和提取 Zcash，无需暴露金额或对手方。Loofta 的完整一面，构建在屏蔽 ZEC 之上。",
+      "shieldedByDefault": "默认屏蔽",
+      "shieldedTitle": "以 Zcash 设计的方式接收 ZEC。",
+      "shieldedBody": "每笔发送到您 @username 的付款都在屏蔽地址中结算。没有透明部分，没有元数据泄露。我们永远看不到金额。",
+      "bullet1": "发送方从任何链付款 — 他们不需要 ZEC",
+      "bullet2": "我们在传入时兑换，存入屏蔽地址",
+      "bullet3": "跨所有池的统一屏蔽余额",
+      "getLink": "获取您的 ZEC 链接",
+      "moreInfo": "更多信息",
+      "tile0Eyebrow": "P2P",
+      "tile0Title": "点对点发送 ZEC",
+      "tile0Body": "给对方您的 @username，他们以屏蔽 ZEC 付款。无需交易所账户，无需 KYC 桥接，无泄露。",
+      "tile1Eyebrow": "提现",
+      "tile1Title": "私密提现",
+      "tile1Body": "将 ZEC 转换为美元、欧元或您的本地银行账户 — 没有链上踪迹。资金转入 Revolut、Wise 或任何账户。",
+      "tile2Eyebrow": "请求",
+      "tile2Title": "请求 ZEC 付款",
+      "tile2Body": "一个链接。设置金额，随处分享。发送方从任何链付款 — 您收到屏蔽 ZEC。",
+      "tile3Eyebrow": "兑换",
+      "tile3Title": "任意方向兑换 ZEC",
+      "tile3Body": "ZEC ↔ USDC、SOL、ETH、USDT。通过 NEAR Intents 和链上 DEX 找到最佳路由。秒级结算。"
+    },
+    "builtOn": {
+      "pill": "技术栈",
+      "body": "每笔付款在不到半秒内在 Solana 上结算。MagicBlock 的 Private Ephemeral Rollup 默认将金额和对手方保留在公共账本之外 — 对每个用户、每次都是如此。",
+      "readArchitecture": "阅读架构",
+      "howPerWorks": "PER 如何运作",
+      "settlementLayer": "结算层",
+      "finality": "最终性",
+      "privacyLayer": "隐私层",
+      "byDefault": "默认",
+      "poweredWith": "由...驱动",
+      "spec0Label": "结算",
+      "spec0Value": "Solana L1",
+      "spec0Sub": "~400ms 最终性",
+      "spec1Label": "隐私层",
+      "spec1Value": "MagicBlock PER",
+      "spec1Sub": "Private Ephemeral Rollup",
+      "spec2Label": "稳定资产",
+      "spec2Value": "USDC",
+      "spec2Sub": "Circle 在 Solana 上的原生资产",
+      "spec3Label": "托管",
+      "spec3Value": "非托管",
+      "spec3Sub": "私钥永不离开您的设备"
+    },
+    "cta": {
+      "headline1": "准备好",
+      "headlineGradient": "收款了吗？",
+      "body": "免费账户。无助记词。无钱包安装。30 秒内就绪。",
+      "createLink": "创建您的付款链接",
+      "sendPayment": "发送付款"
+    },
+    "footer": {
+      "tagline": "非托管 · 私密 · 测试网",
+      "privacy": "隐私",
+      "brand": "品牌"
+    }
+  },
+
+  "UserMenu": {
+    "username": "用户名",
+    "email": "电子邮件",
+    "copyUsername": "复制用户名",
+    "shareYourLink": "分享您的链接",
+    "sparks": "Sparks",
+    "settings": "设置",
+    "mainnetBeta": "主网测试版",
+    "mainnetViewOnly": "主网（仅查看）",
+    "devnet": "测试网",
+    "paymentsDisabled": "付款已禁用 — 仅限余额和提款",
+    "balanceWithdrawOnly": "仅限余额和提款 — 付款需要测试版访问",
+    "logOut": "退出登录",
+    "noUsernameTitle": "分享您的付款链接",
+    "noUsernameBody": "在账户菜单中设置您的用户名以获取付款链接并开始接收付款。",
+    "gotIt": "明白了",
+    "shareModalTitle": "立即开始收款",
+    "shareModalSubtitle": "分享您的付款链接以接收付款",
+    "yourPaymentLink": "您的付款链接",
+    "copied": "已复制！",
+    "copyLink": "复制链接",
+    "copyLinkButton": "复制链接",
+    "privatePayments": "🔒 私密付款",
+    "enabled": "已启用",
+    "comingSoon": "即将推出",
+    "privatePaymentsDescEnabled": "发送到您链接的所有付款均使用 MagicBlock Private Ephemeral Rollup 保护隐私。",
+    "privatePaymentsDescDisabled": "可用时，发送到您链接的所有付款将使用 MagicBlock Private Ephemeral Rollup 保护隐私。",
+    "close": "关闭",
+    "settingsTitle": "设置",
+    "settingsSubtitle": "钱包、登录方式和安全。",
+    "network": "网络",
+    "signInMethods": "登录方式",
+    "connected": "已连接",
+    "addSecondMethod": "添加第二种方式以便恢复您的账户。",
+    "addTwitter": "添加 Twitter",
+    "addEmail": "添加电子邮件",
+    "paymentLink": "付款链接",
+    "useTwitterAsLink": "将您的 Twitter 用作付款链接：@{handle}",
+    "updating": "更新中…",
+    "useHandle": "使用 @{handle}",
+    "walletAddress": "钱包地址",
+    "clickToHide": "点击显示缩短版本",
+    "clickToCopy": "点击地址复制完整版本",
+    "viewOnSolscan": "在 Solscan 上查看",
+    "loadingWallet": "正在加载钱包...",
+    "walletAutoCreated": "需要时将自动创建钱包。"
+  },
+
+  "Footer": {
+    "forYou": "为您",
+    "forBusiness": "为商业",
+    "company": "公司",
+    "socialsAndDocs": "社交与文档",
+    "send": "发送",
+    "receive": "接收",
+    "history": "记录",
+    "settings": "设置",
+    "checkout": "结账",
+    "partners": "合作伙伴",
+    "about": "关于",
+    "copyright": "© {year} Loofta。保留所有权利。",
+    "language": "语言",
+    "currency": "货币"
+  }
+}

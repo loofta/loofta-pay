@@ -11,6 +11,7 @@ import { BalanceModal } from "@/components/BalanceModal";
 import { LooftaPayLogoLink } from "@/components/layout/LooftaPayLogoLink";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { Switch } from "@/components/ui/switch";
+import { useTranslations } from "next-intl";
 
 const HEADER_HEIGHT = 64;
 
@@ -39,19 +40,20 @@ function MobileMenu({
   setNetworkMode: (mode: "mainnet" | "devnet") => void;
   mainnetAccess: boolean;
 }) {
+  const t = useTranslations('MinimalHeader');
   const pathname = usePathname();
   if (!open) return null;
 
   const navLinks = [
-    { href: "/rewards", label: "Sparks ⚡", description: "Earn Sparks for your activity" },
-    { href: "/app/waitlist", label: "Waitlist", description: "Request mainnet early access" },
-    { href: "/app/settings", label: "Profile", description: null },
+    { href: "/rewards", label: "Sparks ⚡", description: t('earnSparks') },
+    { href: "/app/waitlist", label: t('waitlist'), description: t('requestAccess') },
+    { href: "/app/settings", label: t('profile'), description: null },
   ];
 
   return (
     <>
       {/* Drawer */}
-      <div className="fixed inset-0 z-50 flex flex-col bg-[#0f0f12] shadow-2xl animate-in slide-in-from-right duration-200" style={{ height: '100dvh' }}>
+      <div className="fixed inset-0 z-50 flex flex-col bg-[#0f0f12] shadow-2xl animate-in slide-in-from-right duration-200">
         {/* Header */}
         <div className="flex items-center justify-between px-5 h-16 border-b border-white/10 shrink-0">
           <div className="min-w-0">
@@ -66,7 +68,7 @@ function MobileMenu({
             type="button"
             onClick={onClose}
             className="p-2 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-colors shrink-0"
-            aria-label="Close menu"
+            aria-label={t('closeMenu')}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M18 6L6 18M6 6l12 12" />
@@ -82,7 +84,7 @@ function MobileMenu({
             className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-white/8 border border-white/10 hover:bg-white/12 transition-colors text-left"
           >
             <div>
-              <p className="text-base md:text-sm text-slate-400 mb-0.5">Balance</p>
+              <p className="text-sm text-slate-400 mb-0.5">{t('balance')}</p>
               <p className="text-lg font-bold text-white tabular-nums">
                 {loadingBalance ? "…" : `$${balanceUSD}`}
               </p>
@@ -116,17 +118,17 @@ function MobileMenu({
         </nav>
 
         {/* Footer */}
-        <div className="px-3 pt-2 border-t border-white/10 shrink-0 space-y-1" style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}>
+        <div className="px-3 pb-6 pt-2 border-t border-white/10 shrink-0 space-y-1">
           {/* Network toggle */}
           <div className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/8 transition-colors">
             <div className="flex flex-col min-w-0">
               <span className="text-base text-slate-300">
                 {networkMode === "mainnet"
-                  ? (mainnetAccess ? "Mainnet Beta" : "Mainnet (view only)")
-                  : "Devnet"}
+                  ? (mainnetAccess ? t('mainnetBeta') : t('mainnetViewOnly'))
+                  : t('devnet')}
               </span>
               {networkMode === "mainnet" && !mainnetAccess && (
-                <span className="text-base md:text-sm text-amber-400/80 leading-tight">Payments disabled — balance &amp; withdraw only</span>
+                <span className="text-sm text-amber-400/80 leading-tight">{t('paymentsDisabled')}</span>
               )}
             </div>
             <Switch
@@ -134,13 +136,12 @@ function MobileMenu({
               onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
             />
           </div>
-          <div className="border-t border-white/10 my-1" />
           <button
             type="button"
             onClick={() => { onClose(); onLogout(); }}
             className="w-full text-left px-3 py-2.5 rounded-xl text-base font-medium text-red-400 hover:bg-red-400/10 transition-colors"
           >
-            Log out
+            {t('logOut')}
           </button>
         </div>
       </div>
@@ -149,6 +150,7 @@ function MobileMenu({
 }
 
 export function MinimalHeader() {
+  const t = useTranslations('MinimalHeader');
   const { authenticated, email, logout } = useAuth();
   const { login: privyLogin } = usePrivy();
   const username = useAuthStore((s) => s.username ?? null);
@@ -225,27 +227,27 @@ export function MinimalHeader() {
                 <Link
                   href="/rewards"
                   className={[
-                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-base md:text-sm font-medium transition-colors",
+                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                     isRewardsActive
                       ? "text-amber-300 bg-amber-500/10"
                       : "text-slate-300 hover:text-white hover:bg-white/10",
                   ].join(" ")}
                 >
                   <span>⚡</span>
-                  <span>Sparks</span>
+                  <span>{t('sparks')}</span>
                 </Link>
 
                 {/* Desktop: Waitlist link */}
                 <Link
                   href="/app/waitlist"
                   className={[
-                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-base md:text-sm font-medium transition-colors",
+                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                     pathname === "/app/waitlist"
                       ? "text-green-300 bg-green-500/10"
                       : "text-slate-300 hover:text-white hover:bg-white/10",
                   ].join(" ")}
                 >
-                  <span>Waitlist</span>
+                  <span>{t('waitlist')}</span>
                 </Link>
 
                 {/* Desktop: Balance button */}
@@ -255,9 +257,9 @@ export function MinimalHeader() {
                   className="hidden sm:flex items-center gap-3 px-3 py-2 rounded-lg bg-white/10 text-slate-200 hover:text-white hover:bg-white/15 transition-colors border border-white/10 text-left"
                 >
                   <div className="flex flex-col min-w-0">
-                    <span className="text-base md:text-sm font-medium leading-tight">Balance</span>
+                    <span className="text-sm font-medium leading-tight">{t('balance')}</span>
                   </div>
-                  <span className="text-base md:text-sm font-semibold tabular-nums shrink-0">
+                  <span className="text-sm font-semibold tabular-nums shrink-0">
                     {loadingBalance ? "…" : `$${balanceUSD}`}
                   </span>
                 </button>
@@ -275,7 +277,7 @@ export function MinimalHeader() {
                   type="button"
                   onClick={() => setMobileMenuOpen(true)}
                   className="sm:hidden flex items-center justify-center w-10 h-10 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white transition-colors"
-                  aria-label="Open menu"
+                  aria-label={t('openMenu')}
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="3" y1="6" x2="21" y2="6" />
@@ -288,9 +290,9 @@ export function MinimalHeader() {
               <button
                 type="button"
                 onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}
-                className="rounded-lg px-3 py-2 text-base md:text-sm font-medium text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+                className="rounded-lg px-3 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
               >
-                Sign in
+                {t('signIn')}
               </button>
             )}
           </div>

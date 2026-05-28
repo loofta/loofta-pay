@@ -1,7 +1,13 @@
+'use client'
+
 import Image from "next/image";
 import { looftaXyz } from "@/lib/looftaXyzUrls";
+import { useTranslations } from "next-intl";
+import { FooterControls } from "@/components/FooterControls";
 
 export function Footer() {
+  const t = useTranslations('Footer');
+
   return (
     <footer className="bg-[#18181F] pt-32 md:pt-40 pb-12">
       <div className="max-w-7xl mx-auto px-4 md:px-8">
@@ -17,37 +23,37 @@ export function Footer() {
             />
           </div>
 
-          {/* Products */}
+          {/* For you */}
           <div>
-            <h4 className="text-white font-semibold mb-4">For you</h4>
+            <h4 className="text-white font-semibold mb-4">{t('forYou')}</h4>
             <ul className="space-y-2">
-              <li><a href="/" className="text-slate-400 hover:text-white transition-colors">Send</a></li>
-              <li><a href="/?tab=receive" className="text-slate-400 hover:text-white transition-colors">Receive</a></li>
-              <li><a href="/history" className="text-slate-400 hover:text-white transition-colors">History</a></li>
-              <li><a href="/settings" className="text-slate-400 hover:text-white transition-colors">Settings</a></li>
+              <li><a href="/" className="text-slate-400 hover:text-white transition-colors">{t('send')}</a></li>
+              <li><a href="/?tab=receive" className="text-slate-400 hover:text-white transition-colors">{t('receive')}</a></li>
+              <li><a href="/history" className="text-slate-400 hover:text-white transition-colors">{t('history')}</a></li>
+              <li><a href="/settings" className="text-slate-400 hover:text-white transition-colors">{t('settings')}</a></li>
             </ul>
           </div>
 
           {/* For business */}
           <div>
-            <h4 className="text-white font-semibold mb-4">For business</h4>
+            <h4 className="text-white font-semibold mb-4">{t('forBusiness')}</h4>
             <ul className="space-y-2">
-              <li><a href={looftaXyz.checkout} className="text-slate-400 hover:text-white transition-colors">Checkout</a></li>
-              <li><a href={looftaXyz.partners} className="text-slate-400 hover:text-white transition-colors">Partners</a></li>
+              <li><a href={looftaXyz.checkout} className="text-slate-400 hover:text-white transition-colors">{t('checkout')}</a></li>
+              <li><a href={looftaXyz.partners} className="text-slate-400 hover:text-white transition-colors">{t('partners')}</a></li>
             </ul>
           </div>
 
           {/* Company */}
           <div>
-            <h4 className="text-white font-semibold mb-4">Company</h4>
+            <h4 className="text-white font-semibold mb-4">{t('company')}</h4>
             <ul className="space-y-2">
-              <li><a href={looftaXyz.about} className="text-slate-400 hover:text-white transition-colors">About</a></li>
+              <li><a href={looftaXyz.about} className="text-slate-400 hover:text-white transition-colors">{t('about')}</a></li>
             </ul>
           </div>
 
           {/* Socials & Docs */}
           <div>
-            <h4 className="text-white font-semibold mb-4">Socials & Docs</h4>
+            <h4 className="text-white font-semibold mb-4">{t('socialsAndDocs')}</h4>
             <ul className="space-y-2">
               <li><a href="https://medium.com/@looftaxyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Medium</a></li>
               <li><a href="https://twitter.com/looftapay" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Twitter</a></li>
@@ -57,10 +63,13 @@ export function Footer() {
           </div>
         </div>
 
+        {/* Language + currency switchers */}
+        <FooterControls />
+
         {/* Copyright */}
-        <div className="mt-12 pt-6 border-t border-gray-800">
+        <div className="mt-6">
           <p className="text-slate-500 text-base md:text-sm text-center">
-            © {new Date().getFullYear()} Loofta. All rights reserved.
+            {t('copyright', { year: new Date().getFullYear() })}
           </p>
         </div>
       </div>

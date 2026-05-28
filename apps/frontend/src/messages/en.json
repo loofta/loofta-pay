@@ -1,0 +1,369 @@
+{
+  "BottomNav": {
+    "send": "Send",
+    "receive": "Receive",
+    "history": "History",
+    "profile": "Profile"
+  },
+
+  "AppShell": {
+    "bannerMainnet": "Mainnet beta — send and receive private payments with real USDC. Pay anyone by email, X username, or Loofta username.",
+    "bannerDevnet": "Send and receive private payments with MagicBlock PER — devnet. Pay anyone by email, X username, or Loofta username.",
+    "bannerContact": "Questions? Contact us on Telegram",
+    "dismissBanner": "Dismiss banner"
+  },
+
+  "MinimalHeader": {
+    "balance": "Balance",
+    "sparks": "Sparks",
+    "waitlist": "Waitlist",
+    "profile": "Profile",
+    "signIn": "Sign in",
+    "logOut": "Log out",
+    "mainnetBeta": "Mainnet Beta",
+    "mainnetViewOnly": "Mainnet (view only)",
+    "devnet": "Devnet",
+    "paymentsDisabled": "Payments disabled — balance & withdraw only",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu",
+    "earnSparks": "Earn Sparks for your activity",
+    "requestAccess": "Request mainnet early access"
+  },
+
+  "SettingsPage": {
+    "title": "Profile",
+    "username": "Username",
+    "email": "Email",
+    "shareYourLink": "Share your link",
+    "settings": "Settings",
+    "logOut": "Log out",
+    "copyUsername": "Copy username",
+    "signInPrompt": "Sign in to view your profile.",
+    "goToHome": "Go to home"
+  },
+
+  "HistoryPage": {
+    "title": "Payment history",
+    "amountSent": "Amount sent",
+    "amountReceived": "Amount received",
+    "recentPayments": "Recent payments",
+    "sent": "Sent",
+    "received": "Received",
+    "to": "To",
+    "from": "From",
+    "anonymous": "Anonymous",
+    "noPayments": "No payments yet.",
+    "noPaymentsMatch": "No payments match your search.",
+    "searchPlaceholder": "Search by sender, payee or message...",
+    "signInTitle": "Payment history",
+    "signInPrompt": "Log in to see payments you sent and received.",
+    "signIn": "Sign in",
+    "refresh": "Refresh",
+    "refreshList": "Refresh list",
+    "search": "Search",
+    "status": {
+      "SUCCESS": "Paid",
+      "PRIVATE_TRANSFER_PENDING": "Unclaimed",
+      "CANCELLED": "Cancelled",
+      "OPEN": "Open",
+      "PENDING_DEPOSIT": "Pending",
+      "IN_FLIGHT": "In progress",
+      "REFUNDED": "Refunded",
+      "EXPIRED": "Expired"
+    }
+  },
+
+  "HomePage": {
+    "send": "Send",
+    "to": "To",
+    "amountLabel": "Amount in USD",
+    "recipientPlaceholder": "Loofta, Twitter username, exact email",
+    "recipientHint": "Loofta or Twitter username, or exact email – they claim by signing in with that account.",
+    "continue": "Continue",
+    "signInToContinue": "Sign in to continue",
+    "multiSend": "Try multi send",
+    "newPayment": "← New payment",
+    "paymentCreated": "Payment link created. Share it or open it to view status.",
+    "viewPayment": "View payment",
+    "receive": "Receive",
+    "backToReceive": "← Back to receive",
+    "sharePersonalLink": "Share your personal link",
+    "personalLinkDescription": "Anyone can pay you by opening this link. You receive in your preferred token and chain.",
+    "copy": "Copy",
+    "copied": "Copied",
+    "shareAndSettings": "Share & settings",
+    "signInForLink": "Sign in to get your own payment link. Add Twitter later to get a unique @username.",
+    "signInToGetLink": "Sign in to get your payment link",
+    "createPaymentLink": "Create new payment link",
+    "createLinkDescription": "Create a one-off payment request. You choose amount, token, and chain. No account required to create.",
+    "createNewLink": "Create new payment link",
+    "faqTitle": "Frequently asked questions",
+    "searching": "Searching…",
+    "noUsersFound": "No users found",
+    "fromEmail": "(from email)",
+    "faq": {
+      "fees": {
+        "question": "What are the fees?",
+        "answer1": "Private payments on Loofta Pay carry a flat fee charged to the sender — <bold>10 BPS</bold> of the transfer amount plus a <bold>0.002 SOL</bold> gas fee, both paid in USDC. All fees go directly to MagicBlock’s privacy infrastructure. Loofta takes no cut. The recipient always receives the exact amount requested.",
+        "answer2": "Compared to other privacy tools on Solana (Umbra, Privacy Cash, Houdini Swap) which charge 0.4%–4.4%+ at small amounts, Loofta’s flat fee is consistently the lowest across all transfer sizes."
+      },
+      "privatePayments": {
+        "question": "How do private payments work?",
+        "answer": "Private payments use MagicBlock’s Private Ephemeral Rollup (PER)—infrastructure built for private visibility instead of a typical fully public transfer. That means observers can’t see the same payment details they usually could on-chain, so your activity is much harder to follow or link together. It’s the option to choose when you care about stronger payment privacy."
+      },
+      "sendBeforeAccount": {
+        "question": "Can I send to someone before they have an account?",
+        "answer": "Yes. You can send to a Twitter/X username or email. They’ll get a link to sign up and claim the payment. Once they log in with that identity, they can claim the funds."
+      },
+      "retrieveWallet": {
+        "question": "How do I retrieve my embedded Loofta Pay wallet?",
+        "answer1": "Open your account menu, go to <bold>Settings</bold>, and use <bold>Export Private Key</bold> to back up your embedded Loofta Pay wallet. You can also view your Solana address there.",
+        "answer2": "If you import or use that wallet <bold>outside</bold> Loofta Pay, the privacy and safety assumptions we design for in-app use may no longer apply, and <bold>your privacy may be compromised</bold>. We strongly recommend keeping activity inside Loofta Pay.",
+        "answer3": "<bold>Do not</bold> share your embedded wallet address with people so they can pay you. Share your <bold>Loofta username</bold> or <bold>email</bold> instead—that is how others should send you funds.",
+        "answer4": "To move money out, use <bold>Withdraw</bold> to send USDC to a <bold>new</bold> Solana wallet you control (free on Solana USDC with sponsored gas)—instead of exposing your embedded address."
+      },
+      "burnerWallet": {
+        "question": "What is a burner wallet?",
+        "answer": "A burner wallet is a temporary deposit address we generate for your payment. You send funds to this address and Loofta Pay routes them to the recipient. You don’t need to connect a wallet to pay—just send to the deposit address."
+      },
+      "morphoVault": {
+        "question": "How does Morpho Vault keep my earnings safe?",
+        "answer1": "Morpho Vault is the protocol powering yield on your Loofta balance — one of the safest and most audited ways to earn passive income in DeFi.",
+        "answer2": "Unlike yield products that pile risk on top of risk, Morpho operates with transparent, overcollateralized lending markets. Every position is visible on-chain. No hidden strategies, no locked funds, no opaque fund managers. Your USDC earns through verified lending activity — and you can withdraw at any time.",
+        "answer3": "Morpho has processed billions of dollars in lending volume with an unblemished security record. When your balance earns, it earns safely."
+      },
+      "looftaPoints": {
+        "question": "How do Loofta Points work?",
+        "answer1": "Every payment you receive earns you Loofta Points automatically — no opt-in required. Points accumulate in your account and unlock rewards across Loofta’s partner network: discounts on tools and services that creators and freelancers already use.",
+        "answer2": "Points scale with usage — the more Loofta Pay is your primary payment layer, the more you earn back. As the partner network grows, so does the value of your points."
+      },
+      "apy": {
+        "question": "APY on received amount & auto-compound?",
+        "answer": "We’re building APY in USD on your received balance, with every claimed payment auto-compounding. Coming soon."
+      },
+      "devnet": {
+        "question": "I’m on devnet — how do I get test SOL and USDC?",
+        "answer": "Get free devnet SOL from the <solanaLink>Solana faucet</solanaLink>. For devnet USDC, use the <circleLink>Circle faucet</circleLink>."
+      }
+    }
+  },
+
+  "MarketingPage": {
+    "nav": {
+      "payReceive": "Pay & Receive",
+      "features": "Features",
+      "privacy": "Privacy",
+      "earn": "Earn",
+      "business": "Business",
+      "zcash": "Zcash",
+      "launchApp": "Launch app"
+    },
+    "hero": {
+      "iWantToGetPaid": "I want to get paid",
+      "iWantToSend": "I want to send",
+      "receiveHeadline1": "One link.",
+      "receiveHeadline2": "Get paid in",
+      "receiveHeadlineGradient": "anything",
+      "sendHeadline1": "Send to",
+      "sendHeadlineGradient": "anyone",
+      "sendHeadline2": "anywhere.",
+      "receiveSubtitle": "Share your payment link. Anyone sends from anywhere, in any currency — you receive USDC on Solana and withdraw to whatever you actually want.",
+      "sendSubtitle": "No wallet address. No sign-up required for them. Send to an email, @handle, or username — they claim it when they sign in.",
+      "createYourLink": "Create your link",
+      "sendAPayment": "Send a payment",
+      "seeHowItWorks": "See how it works",
+      "payByEmail": "Pay by email",
+      "dragToFlick": "drag to flick →"
+    },
+    "chains": {
+      "tagline": "Pay from any chain · Receive what you want"
+    },
+    "features": {
+      "pill": "Three pillars",
+      "headline1": "Built so payments",
+      "headline2": "just work for you.",
+      "item0Eyebrow": "01 · Accept",
+      "item0Title": "One link. Any token.",
+      "item0Body": "Your username becomes your payment link. Senders pay from any of 20+ chains — you receive exactly the token you want.",
+      "item1Eyebrow": "02 · Shield",
+      "item1Title": "Activity off the public record.",
+      "item1Body": "MagicBlock's Private Ephemeral Rollup routes your payments so amounts and counterparts stay yours alone. No setup.",
+      "item2Eyebrow": "03 · Earn",
+      "item2Title": "Idle balances don't sit idle.",
+      "item2Body": "Every dollar between payments compounds yield through Morpho vaults. Withdraw anywhere, anytime, as any token."
+    },
+    "privacy": {
+      "pill": "MagicBlock PER",
+      "headline1": "The only ledger",
+      "headline2": "that",
+      "headlineGradient": "matters",
+      "headline3": "is yours.",
+      "body": "Private Ephemeral Rollups shield amounts, counterparts, and patterns from public observers. No setup, no new wallet — just a toggle.",
+      "bullet1": "Payment details shielded on-chain",
+      "bullet2": "Counterparts can't be linked together",
+      "bullet3": "One toggle. Works with your existing flow.",
+      "receiptLabel": "Receipt",
+      "receiptBadge": "Private",
+      "rollupVerified": "Ephemeral rollup · Verified"
+    },
+    "earn": {
+      "pill": "Morpho Vaults",
+      "headline1": "Your balance",
+      "headline2": "always on.",
+      "body": "Every minute between payments, your idle USDC earns yield through audited Morpho vaults. Withdraw instantly — we unwind in the background.",
+      "apyLabel": "Current APY*",
+      "pointsLabel": "Loofta Points",
+      "available": "Available balance",
+      "earning": "Earning"
+    },
+    "business": {
+      "pill": "For business",
+      "headline1": "Payroll, payouts,",
+      "headline2": "all in one place.",
+      "body": "From paying your contractors in five countries to releasing hackathon prizes with KYC — Loofta handles the messy stuff.",
+      "bookDemo": "Book a business demo",
+      "bulkEyebrow": "Bulk payments",
+      "bulkTitle": "Pay 200 people in one signature.",
+      "bulkBody": "Upload a CSV or paste a list. Pay your freelancers, creators, hackathon winners, or an entire payroll — in any mix of currencies they each want to receive.",
+      "bulkBadge": "200+ recipients · one tx",
+      "ctaEyebrow": "Talk to us",
+      "ctaTitle": "Running payroll, a DAO, or a grants program?",
+      "ctaBody": "Custom volume pricing, dedicated support, and onboarding help for teams paying 50+ recipients.",
+      "contactSales": "Contact sales",
+      "feature0Title": "Schedule payments",
+      "feature0Body": "Queue a payment for next Tuesday. Or the 1st of every month. It leaves on time whether you're online or not.",
+      "feature1Title": "Recurring payments",
+      "feature1Body": "Set it once. Payroll every 1st, retainers every 15th, subscriptions weekly. Pause or edit any time.",
+      "feature2Title": "KYC-gated claims",
+      "feature2Body": "Require identity verification before a recipient can claim. Perfect for hackathon prizes, grants, or compliance-bound transfers.",
+      "feature3Title": "Invoices",
+      "feature3Body": "Send a clean invoice link. Client pays any way they want. You get paid in whatever you want. Reconciliation handled."
+    },
+    "zcash": {
+      "pill": "Zcash · ZEC",
+      "headline1": "Private money,",
+      "headlineGradient": "actually private.",
+      "body": "Receive, request, swap, and off-ramp Zcash without ever exposing amounts or counterparts. A whole side of oofta, built on shielded ZEC.",
+      "shieldedByDefault": "Shielded by default",
+      "shieldedTitle": "Receive ZEC the way Zcash was meant to be used.",
+      "shieldedBody": "Every payment to your @username settles into a shielded address. No transparent leg, no metadata leak. We never see the amount.",
+      "bullet1": "Sender pays from any chain — they don't need ZEC",
+      "bullet2": "We swap on the way in, deposit shielded",
+      "bullet3": "Unified shielded balance across pools",
+      "getLink": "Get your ZEC link",
+      "moreInfo": "More info",
+      "tile0Eyebrow": "P2P",
+      "tile0Title": "Send ZEC peer-to-peer",
+      "tile0Body": "Hand someone your @username, they pay in shielded ZEC. No exchange account, no KYC bridge, no leak.",
+      "tile1Eyebrow": "Off-ramp",
+      "tile1Title": "Cash out, privately",
+      "tile1Body": "Convert ZEC to USD, EUR, or your local bank — without the on-chain trail. Funds land in Revolut, Wise, or any account.",
+      "tile2Eyebrow": "Request",
+      "tile2Title": "Request payment in ZEC",
+      "tile2Body": "One link. Set the amount, share it anywhere. The sender pays from any chain — you receive shielded ZEC.",
+      "tile3Eyebrow": "Swap",
+      "tile3Title": "Swap ZEC, any direction",
+      "tile3Body": "ZEC ↔ USDC, SOL, ETH, USDT. Best route across NEAR Intents and on-chain DEXs. Settles in seconds."
+    },
+    "builtOn": {
+      "pill": "The stack",
+      "body": "Every payment settles on Solana in under half a second. MagicBlock's Private Ephemeral Rollup keeps amounts and counterparts off the public ledger — by default, for every user, every time.",
+      "readArchitecture": "Read the architecture",
+      "howPerWorks": "How PER works",
+      "settlementLayer": "Settlement layer",
+      "finality": "finality",
+      "privacyLayer": "Privacy layer",
+      "byDefault": "by default",
+      "poweredWith": "powered with",
+      "spec0Label": "Settlement",
+      "spec0Value": "Solana L1",
+      "spec0Sub": "~400ms finality",
+      "spec1Label": "Privacy layer",
+      "spec1Value": "MagicBlock PER",
+      "spec1Sub": "Private Ephemeral Rollup",
+      "spec2Label": "Stable asset",
+      "spec2Value": "USDC",
+      "spec2Sub": "Circle-native on Solana",
+      "spec3Label": "Custody",
+      "spec3Value": "Non-custodial",
+      "spec3Sub": "Keys never leave your device"
+    },
+    "cta": {
+      "headline1": "Ready to",
+      "headlineGradient": "get paid?",
+      "body": "Free account. No seed phrase. No wallet install. Ready in 30 seconds.",
+      "createLink": "Create your payment link",
+      "sendPayment": "Send a payment"
+    },
+    "footer": {
+      "tagline": "Non-custodial · Private · Devnet",
+      "privacy": "Privacy",
+      "brand": "Brand"
+    }
+  },
+
+  "UserMenu": {
+    "username": "Username",
+    "email": "Email",
+    "copyUsername": "Copy username",
+    "shareYourLink": "Share your link",
+    "sparks": "Sparks",
+    "settings": "Settings",
+    "mainnetBeta": "Mainnet Beta",
+    "mainnetViewOnly": "Mainnet (view only)",
+    "devnet": "Devnet",
+    "paymentsDisabled": "Payments disabled — balance & withdraw only",
+    "balanceWithdrawOnly": "Balance & withdraw only — payments require beta access",
+    "logOut": "Log out",
+    "noUsernameTitle": "Share your payment link",
+    "noUsernameBody": "Set up your username in the account menu to get your payment link and start receiving payments.",
+    "gotIt": "Got it",
+    "shareModalTitle": "Start receiving money now",
+    "shareModalSubtitle": "Share your payment link to receive payments",
+    "yourPaymentLink": "Your payment link",
+    "copied": "Copied!",
+    "copyLink": "Copy link",
+    "copyLinkButton": "Copy Link",
+    "privatePayments": "🔒 Private Payments",
+    "enabled": "Enabled",
+    "comingSoon": "Coming soon",
+    "privatePaymentsDescEnabled": "All payments to your link use the MagicBlock Private Ephemeral Rollup for privacy.",
+    "privatePaymentsDescDisabled": "When available, all payments to your link will use the MagicBlock Private Ephemeral Rollup for privacy.",
+    "close": "Close",
+    "settingsTitle": "Settings",
+    "settingsSubtitle": "Wallet, sign-in methods, and security.",
+    "network": "Network",
+    "signInMethods": "Sign-in methods",
+    "connected": "Connected",
+    "addSecondMethod": "Add a second method so you can recover your account.",
+    "addTwitter": "Add Twitter",
+    "addEmail": "Add email",
+    "paymentLink": "Payment link",
+    "useTwitterAsLink": "Use your Twitter as your payment link: @{handle}",
+    "updating": "Updating…",
+    "useHandle": "Use @{handle}",
+    "walletAddress": "Wallet Address",
+    "clickToHide": "Click to show shortened",
+    "clickToCopy": "Click address to copy full",
+    "viewOnSolscan": "View on Solscan",
+    "loadingWallet": "Loading wallet...",
+    "walletAutoCreated": "Wallet will be created automatically when needed."
+  },
+
+  "Footer": {
+    "forYou": "For you",
+    "forBusiness": "For business",
+    "company": "Company",
+    "socialsAndDocs": "Socials & Docs",
+    "send": "Send",
+    "receive": "Receive",
+    "history": "History",
+    "settings": "Settings",
+    "checkout": "Checkout",
+    "partners": "Partners",
+    "about": "About",
+    "copyright": "© {year} Loofta. All rights reserved.",
+    "language": "Language",
+    "currency": "Currency"
+  }
+}

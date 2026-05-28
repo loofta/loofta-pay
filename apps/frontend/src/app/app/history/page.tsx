@@ -8,6 +8,7 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { ArrowDown, ArrowUp } from "lucide-react";
+import { useTranslations, useLocale } from "next-intl";
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
@@ -17,7 +18,6 @@ export type PaymentHistoryClaim = {
   short_id?: string | null;
   amount: string;
   direction: "from_sender" | "from_recipient";
-  // Compat aliases — always present (new payments hard-code USDC/solana)
   to_symbol: string;
   to_chain: string;
   status: string;
@@ -37,41 +37,27 @@ export type PaymentHistoryClaim = {
   is_devnet?: boolean;
 };
 
-/** For received: sender label — for from_recipient payments use sender_username, otherwise creator */
-function getSenderDisplay(claim: PaymentHistoryClaim): string {
+function getSenderDisplay(claim: PaymentHistoryClaim, anonymous: string): string {
   if (claim.direction === "from_recipient") {
     if (claim.sender_username) return `@${claim.sender_username}`;
-    return "Anonymous";
+    return anonymous;
   }
   if (claim.creator_username) return `@${claim.creator_username}`;
   if (claim.creator_email) return claim.creator_email;
-  return "Anonymous";
+  return anonymous;
 }
 
-/** For sent: payee label = @recipient_username → PENDING_USERNAME → email → Anonymous */
-function getPayeeDisplay(claim: PaymentHistoryClaim): string {
+function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string {
   if (claim.recipient_username) return `@${claim.recipient_username}`;
   const ra = (claim.recipient_address || "").trim();
   if (ra.startsWith(PENDING_USERNAME_PREFIX)) return `@${ra.slice(PENDING_USERNAME_PREFIX.length).trim()}`;
   if (ra.startsWith(PENDING_EMAIL_PREFIX)) return ra.slice(PENDING_EMAIL_PREFIX.length).trim();
   if (claim.recipient_email) return claim.recipient_email;
-  return "Anonymous";
+  return anonymous;
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  SUCCESS: "Paid",
-  PRIVATE_TRANSFER_PENDING: "Unclaimed",
-  CANCELLED: "Cancelled",
-  OPEN: "Open",
-  PENDING_DEPOSIT: "Pending",
-  IN_FLIGHT: "In progress",
-  REFUNDED: "Refunded",
-  EXPIRED: "Expired",
-};
-
-function getStatusLabel(status: string): string {
-  return (STATUS_LABELS[String(status || "").toUpperCase()] ?? status) || "—";
-}
+const STATUS_KEYS = ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CANCELLED", "OPEN", "PENDING_DEPOSIT", "IN_FLIGHT", "REFUNDED", "EXPIRED"] as const;
+type StatusKey = typeof STATUS_KEYS[number];
 
 function getStatusBadgeClass(status: string): string {
   const s = String(status || "").toUpperCase();
@@ -110,7 +96,6 @@ function stripGifUrlsFromMessage(desc: string): string | null {
   return textOnly || null;
 }
 
-/** Extract first GIF URL from description (for showing in list). */
 function extractGifUrl(desc: string): string | null {
   const trimmed = (desc || "").trim();
   if (!trimmed) return null;
@@ -135,7 +120,7 @@ async function fetchPaymentHistory(
   return r.json();
 }
 
-const PAYMENT_HISTORY_GC_MS = 5 * 60 * 1000; // 5 min keep in cache
+const PAYMENT_HISTORY_GC_MS = 5 * 60 * 1000;
 
 function IconBubble({
   active,
@@ -161,19 +146,21 @@ function IconBubble({
   );
 }
 
-function paymentCardClass(type: "sent" | "received") {
-  // subtle but clear differentiation (premium, not loud)
-  return [
-    "block rounded-2xl border p-3.5 transition-colors",
-    "bg-white/5 border-white/10",
-    type === "received" ? "bg-emerald-500/5 border-emerald-500/20" : "bg-amber-500/5 border-amber-500/20",
-  ].join(" ");
-}
-
 export default function HistoryPage() {
+  const t = useTranslations('HistoryPage');
+  const locale = useLocale();
   const { authenticated, userId } = useAuth();
   const { login: privyLogin, getAccessToken } = usePrivy();
   const networkMode = useAuthStore((s) => s.networkMode);
+
+  const getStatusLabel = (status: string): string => {
+    const key = String(status || "").toUpperCase() as StatusKey;
+    if ((STATUS_KEYS as readonly string[]).includes(key)) {
+      return t(`status.${key}` as Parameters<typeof t>[0]);
+    }
+    return status || "—";
+  };
+
   const {
     data,
     isLoading: loading,
@@ -192,9 +179,12 @@ export default function HistoryPage() {
     refetchOnMount: true,
     refetchOnWindowFocus: true,
   });
+
   const sent = data?.sent ?? [];
   const received = data?.received ?? [];
   const error = queryError ? (queryError as Error).message ?? "Failed to load" : null;
+
+  const anonymous = t('anonymous');
 
   const totalSent = sent
     .filter((c) => String(c.status).toUpperCase() === "SUCCESS")
@@ -235,11 +225,11 @@ export default function HistoryPage() {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return list;
     return list.filter(({ claim, type }) => {
-      const senderOrPayee = type === "sent" ? getPayeeDisplay(claim) : getSenderDisplay(claim);
+      const senderOrPayee = type === "sent" ? getPayeeDisplay(claim, anonymous) : getSenderDisplay(claim, anonymous);
       const message = (claim.description || "").toLowerCase();
       return senderOrPayee.toLowerCase().includes(q) || message.includes(q);
     });
-  }, [allPayments, searchQuery, typeFilter]);
+  }, [allPayments, searchQuery, typeFilter, anonymous]);
 
   if (!authenticated) {
     return (
@@ -250,16 +240,14 @@ export default function HistoryPage() {
               <SendReceiveTabs activeTab={null} visualOnly />
             </div>
             <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
-              <h1 className="text-xl font-medium font-sans text-white mb-2">Payment history</h1>
-              <p className="text-slate-400 mb-4">
-                Log in to see payments you sent and received.
-              </p>
+              <h1 className="text-xl font-medium font-sans text-white mb-2">{t('signInTitle')}</h1>
+              <p className="text-slate-400 mb-4">{t('signInPrompt')}</p>
               <button
                 type="button"
                 onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}
                 className="rounded-xl px-4 py-2 font-medium bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
               >
-                Sign in
+                {t('signIn')}
               </button>
             </div>
           </div>
@@ -276,10 +264,9 @@ export default function HistoryPage() {
             <SendReceiveTabs activeTab={null} visualOnly />
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/5 p-6 mb-6">
-            <h1 className="text-lg font-medium font-sans text-white mb-4">Payment history</h1>
+            <h1 className="text-lg font-medium font-sans text-white mb-4">{t('title')}</h1>
             {loading ? (
               <div className="animate-pulse">
-                {/* Stat cards */}
                 <div className="grid grid-cols-2 gap-3 mb-6">
                   {[0, 1].map((i) => (
                     <div key={i} className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -291,7 +278,6 @@ export default function HistoryPage() {
                     </div>
                   ))}
                 </div>
-                {/* List header */}
                 <div className="flex items-center justify-between mb-3">
                   <div className="h-3 w-28 rounded-full bg-white/10" />
                   <div className="flex gap-1">
@@ -299,7 +285,6 @@ export default function HistoryPage() {
                     <div className="w-7 h-7 rounded-lg bg-white/10" />
                   </div>
                 </div>
-                {/* Payment rows */}
                 <ul className="space-y-2">
                   {[0, 1, 2, 3].map((i) => (
                     <li key={i} className="rounded-xl border border-white/10 bg-white/5 p-3">
@@ -337,7 +322,7 @@ export default function HistoryPage() {
                         <ArrowUp />
                       </IconBubble>
                       <p className="text-slate-300 text-base font-medium uppercase tracking-wide">
-                        Sent
+                        {t('amountSent')}
                       </p>
                     </div>
                     <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">
@@ -360,7 +345,7 @@ export default function HistoryPage() {
                         <ArrowDown />
                       </IconBubble>
                       <p className="text-slate-300 text-base font-medium uppercase tracking-wide">
-                        Received
+                        {t('amountReceived')}
                       </p>
                     </div>
                     <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">
@@ -369,17 +354,16 @@ export default function HistoryPage() {
                   </button>
                 </div>
 
-
                 <div className="flex items-center justify-between gap-2 mb-2">
-                  <p className="text-slate-400 text-base font-medium">Recent payments</p>
+                  <p className="text-slate-400 text-base font-medium">{t('recentPayments')}</p>
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
                       onClick={() => refetch()}
                       disabled={isFetching}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-50"
-                      aria-label="Refresh"
-                      title="Refresh list"
+                      aria-label={t('refresh')}
+                      title={t('refreshList')}
                     >
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={isFetching ? "animate-spin" : ""}>
                         <path d="M21 2v6h-6" />
@@ -392,7 +376,7 @@ export default function HistoryPage() {
                       type="button"
                       onClick={() => setSearchOpen((o) => !o)}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-                      aria-label="Search"
+                      aria-label={t('search')}
                     >
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <circle cx="11" cy="11" r="8" />
@@ -404,21 +388,23 @@ export default function HistoryPage() {
                 {searchOpen && (
                   <input
                     type="search"
-                    placeholder="Search by sender, payee or message..."
+                    placeholder={t('searchPlaceholder')}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full mb-3 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-slate-500 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-white/20"
                   />
                 )}
                 {allPayments.length === 0 ? (
-                  <p className="text-slate-500 text-base">No payments yet.</p>
+                  <p className="text-slate-500 text-base">{t('noPayments')}</p>
                 ) : filteredPayments.length === 0 ? (
-                  <p className="text-slate-500 text-base">No payments match your search.</p>
+                  <p className="text-slate-500 text-base">{t('noPaymentsMatch')}</p>
                 ) : (
                   <ul className="space-y-2">
                     {filteredPayments.map(({ claim, type }) => {
                       const amount = parseFloat(claim.amount || "0");
-                      const senderOrPayee = type === "sent" ? getPayeeDisplay(claim) : getSenderDisplay(claim);
+                      const senderOrPayee = type === "sent"
+                        ? getPayeeDisplay(claim, anonymous)
+                        : getSenderDisplay(claim, anonymous);
                       const message = stripGifUrlsFromMessage(claim.description || "");
                       const gifUrl = type === "received" ? extractGifUrl(claim.description || "") : null;
                       const showMessageOrGif = (type === "received" && (message || gifUrl)) || (type === "sent" && message);
@@ -430,14 +416,14 @@ export default function HistoryPage() {
                           >
                             <div className="flex items-center justify-between gap-2">
                               <span className={`text-base font-semibold ${type === "sent" ? "text-amber-400" : "text-emerald-400"}`}>
-                                {type === "sent" ? "Sent" : "Received"}
+                                {type === "sent" ? t('sent') : t('received')}
                               </span>
                               <span className="text-white font-semibold font-sans">
                                 {type === "sent" ? "-" : "+"}${amount.toFixed(2)} {claim.to_symbol}
                               </span>
                             </div>
                             <div className="mt-1.5 text-base font-medium text-slate-300">
-                              {type === "sent" ? "To " : "From "}{senderOrPayee}
+                              {type === "sent" ? t('to') : t('from')} {senderOrPayee}
                             </div>
                             {showMessageOrGif && (
                               <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 space-y-2">
@@ -455,14 +441,14 @@ export default function HistoryPage() {
                             )}
                             <div className="flex items-center justify-between gap-2 mt-2">
                               <span className="text-base sm:text-sm text-slate-500">
-                                {new Date(claim.created_at).toLocaleDateString(undefined, {
+                                {new Date(claim.created_at).toLocaleDateString(locale, {
                                   month: "short",
                                   day: "numeric",
                                   year: "numeric",
                                 })}
                               </span>
                               <span
-                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm md:text-xs font-medium border ${getStatusBadgeClass(claim.status || "")}`}
+                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${getStatusBadgeClass(claim.status || "")}`}
                               >
                                 {getStatusLabel(claim.status || "")}
                               </span>

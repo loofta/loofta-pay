@@ -1,0 +1,369 @@
+{
+  "BottomNav": {
+    "send": "Gönder",
+    "receive": "Al",
+    "history": "Geçmiş",
+    "profile": "Profil"
+  },
+
+  "AppShell": {
+    "bannerMainnet": "Mainnet beta — gerçek USDC ile özel ödemeler gönderin ve alın. Herkese e-posta, X kullanıcı adı veya Loofta kullanıcı adıyla ödeme yapın.",
+    "bannerDevnet": "MagicBlock PER ile özel ödemeler gönderin ve alın — devnet. Herkese e-posta, X kullanıcı adı veya Loofta kullanıcı adıyla ödeme yapın.",
+    "bannerContact": "Sorularınız mı var? Telegram'da bize ulaşın",
+    "dismissBanner": "Başlığı kapat"
+  },
+
+  "MinimalHeader": {
+    "balance": "Bakiye",
+    "sparks": "Sparks",
+    "waitlist": "Bekleme listesi",
+    "profile": "Profil",
+    "signIn": "Giriş yap",
+    "logOut": "Çıkış yap",
+    "mainnetBeta": "Mainnet Beta",
+    "mainnetViewOnly": "Mainnet (yalnızca görüntüleme)",
+    "devnet": "Devnet",
+    "paymentsDisabled": "Ödemeler devre dışı — yalnızca bakiye ve çekim",
+    "openMenu": "Menüyü aç",
+    "closeMenu": "Menüyü kapat",
+    "earnSparks": "Aktiviteniz için Sparks kazanın",
+    "requestAccess": "Mainnet erken erişim talep et"
+  },
+
+  "SettingsPage": {
+    "title": "Profil",
+    "username": "Kullanıcı adı",
+    "email": "E-posta",
+    "shareYourLink": "Linkinizi paylaşın",
+    "settings": "Ayarlar",
+    "logOut": "Çıkış yap",
+    "copyUsername": "Kullanıcı adını kopyala",
+    "signInPrompt": "Profilinizi görmek için giriş yapın.",
+    "goToHome": "Ana sayfaya git"
+  },
+
+  "HistoryPage": {
+    "title": "Ödeme geçmişi",
+    "amountSent": "Gönderilen tutar",
+    "amountReceived": "Alınan tutar",
+    "recentPayments": "Son ödemeler",
+    "sent": "Gönderildi",
+    "received": "Alındı",
+    "to": "Kime",
+    "from": "Kimden",
+    "anonymous": "Anonim",
+    "noPayments": "Henüz ödeme yok.",
+    "noPaymentsMatch": "Aramanızla eşleşen ödeme yok.",
+    "searchPlaceholder": "Gönderen, alıcı veya mesaja göre ara...",
+    "signInTitle": "Ödeme geçmişi",
+    "signInPrompt": "Gönderdiğiniz ve aldığınız ödemeleri görmek için giriş yapın.",
+    "signIn": "Giriş yap",
+    "refresh": "Yenile",
+    "refreshList": "Listeyi yenile",
+    "search": "Ara",
+    "status": {
+      "SUCCESS": "Ödendi",
+      "PRIVATE_TRANSFER_PENDING": "Talep edilmedi",
+      "CANCELLED": "İptal edildi",
+      "OPEN": "Açık",
+      "PENDING_DEPOSIT": "Beklemede",
+      "IN_FLIGHT": "İşlemde",
+      "REFUNDED": "İade edildi",
+      "EXPIRED": "Süresi doldu"
+    }
+  },
+
+  "HomePage": {
+    "send": "Gönder",
+    "to": "Kime",
+    "amountLabel": "USD cinsinden tutar",
+    "recipientPlaceholder": "Loofta, Twitter kullanıcı adı, tam e-posta",
+    "recipientHint": "Loofta veya Twitter kullanıcı adı ya da tam e-posta — o hesapla giriş yaparak talep ederler.",
+    "continue": "Devam et",
+    "signInToContinue": "Devam etmek için giriş yapın",
+    "multiSend": "Çoklu göndermeyi deneyin",
+    "newPayment": "← Yeni ödeme",
+    "paymentCreated": "Ödeme linki oluşturuldu. Durumu görmek için paylaşın veya açın.",
+    "viewPayment": "Ödemeyi görüntüle",
+    "receive": "Al",
+    "backToReceive": "← Almaya geri dön",
+    "sharePersonalLink": "Kişisel linkinizi paylaşın",
+    "personalLinkDescription": "Herkes bu linki açarak size ödeme yapabilir. Tercih ettiğiniz token ve zincirde alırsınız.",
+    "copy": "Kopyala",
+    "copied": "Kopyalandı",
+    "shareAndSettings": "Paylaş ve ayarlar",
+    "signInForLink": "Kendi ödeme linkinizi almak için giriş yapın. Benzersiz bir @username için daha sonra Twitter ekleyin.",
+    "signInToGetLink": "Ödeme linkinizi almak için giriş yapın",
+    "createPaymentLink": "Yeni ödeme linki oluştur",
+    "createLinkDescription": "Tek seferlik bir ödeme talebi oluşturun. Tutar, token ve zinciri siz seçin. Oluşturmak için hesap gerekmez.",
+    "createNewLink": "Yeni ödeme linki oluştur",
+    "faqTitle": "Sık sorulan sorular",
+    "searching": "Aranıyor…",
+    "noUsersFound": "Kullanıcı bulunamadı",
+    "fromEmail": "(e-postadan)",
+    "faq": {
+      "fees": {
+        "question": "Ücretler nelerdir?",
+        "answer1": "Loofta Pay'deki özel ödemeler, gönderene tahsil edilen sabit bir ücret içerir — transfer tutarının <bold>10 BPS'i</bold> artı USDC cinsinden ödenen <bold>0,002 SOL</bold> gas ücreti. Tüm ücretler doğrudan MagicBlock'un gizlilik altyapısına gider. Loofta hiçbir pay almaz. Alıcı her zaman talep edilen tam tutarı alır.",
+        "answer2": "Solana'daki diğer gizlilik araçlarına (Umbra, Privacy Cash, Houdini Swap) kıyasla — küçük tutarlarda %0,4–%4,4+ tahsil ederler — Loofta'nın sabit ücreti tüm transfer boyutlarında tutarlı biçimde en düşüktür."
+      },
+      "privatePayments": {
+        "question": "Özel ödemeler nasıl çalışır?",
+        "answer": "Özel ödemeler, MagicBlock'un Private Ephemeral Rollup (PER) sistemini kullanır — tipik tam kamuya açık bir transfer yerine özel görünürlük için inşa edilmiş altyapı. Bu, gözlemcilerin zincir üzerinde normalde görebilecekleri aynı ödeme ayrıntılarını göremedikleri anlamına gelir, bu nedenle aktivitenizi takip etmek veya birbirine bağlamak çok daha zordur. Daha güçlü ödeme gizliliği istediğinizde seçilecek seçenektir."
+      },
+      "sendBeforeAccount": {
+        "question": "Birinin hesabı olmadan önce gönderebilir miyim?",
+        "answer": "Evet. Bir Twitter/X kullanıcı adı veya e-postaya gönderebilirsiniz. Kaydolmak ve ödemeyi talep etmek için bir link alacaklar. O kimlikle giriş yaptıklarında fonları talep edebilirler."
+      },
+      "retrieveWallet": {
+        "question": "Gömülü Loofta Pay cüzdanımı nasıl alırım?",
+        "answer1": "Hesap menünüzü açın, <bold>Ayarlar</bold>'a gidin ve gömülü Loofta Pay cüzdanınızı yedeklemek için <bold>Özel Anahtarı Dışa Aktar</bold>'ı kullanın. Solana adresinizi de orada görebilirsiniz.",
+        "answer2": "Bu cüzdanı Loofta Pay <bold>dışında</bold> içe aktarır veya kullanırsanız, uygulama içi kullanım için tasarladığımız gizlilik ve güvenlik varsayımları artık geçerli olmayabilir ve <bold>gizliliğiniz tehlikeye girebilir</bold>. Aktiviteyi Loofta Pay içinde tutmanızı şiddetle tavsiye ederiz.",
+        "answer3": "<bold>Gömülü cüzdan adresinizi</bold> insanlarla size ödeme yapabilmeleri için paylaşmayın. Bunun yerine <bold>Loofta kullanıcı adınızı</bold> veya <bold>e-postanızı</bold> paylaşın — başkalarının size fon göndermesi bu şekilde olmalıdır.",
+        "answer4": "Para çıkarmak için, gömülü adresinizi açıklamak yerine kontrol ettiğiniz <bold>yeni</bold> bir Solana cüzdanına USDC göndermek için <bold>Çek</bold>'i kullanın (Solana USDC'de sponsorlu gas ile ücretsiz)."
+      },
+      "burnerWallet": {
+        "question": "Burner cüzdan nedir?",
+        "answer": "Burner cüzdan, ödemeniz için oluşturduğumuz geçici bir yatırım adresidir. Bu adrese fon gönderirsiniz ve Loofta Pay bunları alıcıya yönlendirir. Ödeme yapmak için bir cüzdan bağlamanıza gerek yok — sadece yatırım adresine gönderin."
+      },
+      "morphoVault": {
+        "question": "Morpho Vault kazançlarımı nasıl güvende tutar?",
+        "answer1": "Morpho Vault, Loofta bakiyenizdeki getiriyi destekleyen protokoldür — DeFi'de pasif gelir kazanmanın en güvenli ve en çok denetlenmiş yollarından biridir.",
+        "answer2": "Risk üstüne risk yığan getiri ürünlerinin aksine, Morpho şeffaf, aşırı teminatlı borç verme piyasalarıyla faaliyet gösterir. Her pozisyon zincir üzerinde görünürdür. Gizli strateji yok, kilitli fon yok, opak fon yöneticisi yok. USDC'niz doğrulanmış borç verme faaliyetiyle kazanır — ve istediğiniz zaman çekebilirsiniz.",
+        "answer3": "Morpho, milyarlarca dolarlık borç verme hacmini kusursuz bir güvenlik siciliyle işledi. Bakiyeniz kazandığında, güvenle kazanır."
+      },
+      "looftaPoints": {
+        "question": "Loofta Puanları nasıl çalışır?",
+        "answer1": "Aldığınız her ödeme otomatik olarak size Loofta Puanları kazandırır — katılım gerekmez. Puanlar hesabınızda birikir ve Loofta'nın iş ortağı ağı genelinde ödüller açar: yaratıcıların ve serbest çalışanların zaten kullandığı araç ve hizmetlerde indirimler.",
+        "answer2": "Puanlar kullanımla ölçeklenir — Loofta Pay birincil ödeme katmanınız oldukça daha fazla kazanırsınız. İş ortağı ağı büyüdükçe puanlarınızın değeri de artar."
+      },
+      "apy": {
+        "question": "Alınan tutarda APY ve otomatik bileşik?",
+        "answer": "Alınan bakiyenizde USD cinsinden APY oluşturuyoruz; her talep edilen ödeme otomatik olarak bileşik yapıyor. Yakında geliyor."
+      },
+      "devnet": {
+        "question": "Devnet'teyim — test SOL ve USDC nasıl alabilirim?",
+        "answer": "Ücretsiz devnet SOL'u <solanaLink>Solana faucet</solanaLink>'ten alın. Devnet USDC için <circleLink>Circle faucet</circleLink>'i kullanın."
+      }
+    }
+  },
+
+  "MarketingPage": {
+    "nav": {
+      "payReceive": "Öde & Al",
+      "features": "Özellikler",
+      "privacy": "Gizlilik",
+      "earn": "Kazan",
+      "business": "İş",
+      "zcash": "Zcash",
+      "launchApp": "Uygulamayı başlat"
+    },
+    "hero": {
+      "iWantToGetPaid": "Ödeme almak istiyorum",
+      "iWantToSend": "Göndermek istiyorum",
+      "receiveHeadline1": "Bir link.",
+      "receiveHeadline2": "Her şeyle",
+      "receiveHeadlineGradient": "ödeme alın",
+      "sendHeadline1": "Herkese",
+      "sendHeadlineGradient": "gönderin",
+      "sendHeadline2": "her yere.",
+      "receiveSubtitle": "Ödeme linkinizi paylaşın. Herkes her yerden, herhangi bir para birimiyle gönderir — Solana'da USDC alır ve gerçekten istediğinize çekersiniz.",
+      "sendSubtitle": "Cüzdan adresi yok. Kayıt gerekmiyor. E-posta, @handle veya kullanıcı adına gönderin — giriş yaptıklarında talep ederler.",
+      "createYourLink": "Linkinizi oluşturun",
+      "sendAPayment": "Ödeme gönderin",
+      "seeHowItWorks": "Nasıl çalıştığını görün",
+      "payByEmail": "E-posta ile öde",
+      "dragToFlick": "kaydırın →"
+    },
+    "chains": {
+      "tagline": "Herhangi bir zincirden ödeyin · İstediğinizi alın"
+    },
+    "features": {
+      "pill": "Üç temel",
+      "headline1": "Ödemelerin",
+      "headline2": "sizin için çalışması için yapıldı.",
+      "item0Eyebrow": "01 · Kabul Et",
+      "item0Title": "Bir link. Herhangi bir token.",
+      "item0Body": "Kullanıcı adınız ödeme linkiniz olur. Gönderenler 20'den fazla zincirden öder — tam olarak istediğiniz tokeni alırsınız.",
+      "item1Eyebrow": "02 · Koru",
+      "item1Title": "Aktivite kamuya açık kayıt dışında.",
+      "item1Body": "MagicBlock'un Private Ephemeral Rollup'ı ödemelerinizi yönlendirerek tutarlar ve karşı taraflar yalnızca size ait kalır. Kurulum yok.",
+      "item2Eyebrow": "03 · Kazan",
+      "item2Title": "Boştaki bakiyeler boşta kalmaz.",
+      "item2Body": "Ödemeler arasındaki her dolar Morpho vault'lar aracılığıyla getiri biriktirir. İstediğiniz zaman, istediğiniz yere, istediğiniz token olarak çekin."
+    },
+    "privacy": {
+      "pill": "MagicBlock PER",
+      "headline1": "Önemli olan",
+      "headline2": "tek",
+      "headlineGradient": "kayıt",
+      "headline3": "sizinki.",
+      "body": "Private Ephemeral Rollup'lar tutarları, karşı tarafları ve kalıpları kamuya açık gözlemcilerden korur. Kurulum yok, yeni cüzdan yok — sadece bir anahtar.",
+      "bullet1": "Ödeme ayrıntıları zincir üzerinde korunuyor",
+      "bullet2": "Karşı taraflar birbirine bağlanamaz",
+      "bullet3": "Bir anahtar. Mevcut akışınızla çalışır.",
+      "receiptLabel": "Makbuz",
+      "receiptBadge": "Özel",
+      "rollupVerified": "Geçici rollup · Doğrulandı"
+    },
+    "earn": {
+      "pill": "Morpho Vault'ları",
+      "headline1": "Bakiyeniz",
+      "headline2": "her zaman aktif.",
+      "body": "Ödemeler arasındaki her dakika, boştaki USDC'niz denetlenmiş Morpho vault'ları aracılığıyla getiri kazanır. Anında çekin — arka planda çözüyoruz.",
+      "apyLabel": "Mevcut APY*",
+      "pointsLabel": "Loofta Puanları",
+      "available": "Mevcut bakiye",
+      "earning": "Kazanıyor"
+    },
+    "business": {
+      "pill": "İşletmeler için",
+      "headline1": "Bordro, ödemeler,",
+      "headline2": "hepsi tek yerde.",
+      "body": "Beş ülkedeki müteahhitlerinizi ödemekten KYC ile hackathon ödülleri dağıtmaya — Loofta karmaşık kısımları halleder.",
+      "bookDemo": "İş demosu rezerve edin",
+      "bulkEyebrow": "Toplu ödemeler",
+      "bulkTitle": "200 kişiyi tek imzayla ödeyin.",
+      "bulkBody": "CSV yükleyin veya liste yapıştırın. Serbest çalışanlarınızı, yaratıcılarınızı, hackathon kazananlarınızı veya tüm bordronuzu ödeyin — her birinin almak istediği herhangi bir döviz kombinasyonunda.",
+      "bulkBadge": "200+ alıcı · tek tx",
+      "ctaEyebrow": "Bizimle konuşun",
+      "ctaTitle": "Bordro veya hibe programı mı yönetiyorsunuz?",
+      "ctaBody": "Özel hacim fiyatlandırması, özel destek ve 50'den fazla alıcıya ödeme yapan ekipler için katılım yardımı.",
+      "contactSales": "Satışla iletişime geçin",
+      "feature0Title": "Ödemeleri planla",
+      "feature0Body": "Önümüzdeki Salı için bir ödeme kuyruğa alın. Ya da her ayın 1'inde. Çevrimiçi olsanız da olmasanız da zamanında gönderilir.",
+      "feature1Title": "Tekrarlayan ödemeler",
+      "feature1Body": "Bir kez ayarlayın. Her 1'inde bordro, her 15'inde honoraryumlar, haftalık abonelikler. Dilediğinizde duraklatın veya düzenleyin.",
+      "feature2Title": "KYC korumalı talepler",
+      "feature2Body": "Alıcı talep edebilmeden önce kimlik doğrulama gerektirir. Hackathon ödülleri, hibeler veya uyum gerektiren transferler için mükemmel.",
+      "feature3Title": "Faturalar",
+      "feature3Body": "Temiz bir fatura linki gönderin. Müşteri istediği şekilde öder. İstediğiniz şekilde ödeme alırsınız. Mutabakat halledildi."
+    },
+    "zcash": {
+      "pill": "Zcash · ZEC",
+      "headline1": "Özel para,",
+      "headlineGradient": "gerçekten özel.",
+      "body": "Tutarları veya karşı tarafları hiç açıklamadan Zcash'ı alın, talep edin, takas edin ve çıkarın. Korumalı ZEC üzerine kurulu Loofta'nın tamamı bir tarafı.",
+      "shieldedByDefault": "Varsayılan olarak korumalı",
+      "shieldedTitle": "ZEC'i Zcash'ın kullanılmak üzere tasarlandığı şekilde alın.",
+      "shieldedBody": "@username'inize her ödeme korumalı bir adrese iner. Şeffaf bacak yok, meta veri sızıntısı yok. Tutarı hiç görmüyoruz.",
+      "bullet1": "Gönderen herhangi bir zincirden öder — ZEC gerekmez",
+      "bullet2": "Girişte takas ederiz, korumalı yatırım",
+      "bullet3": "Tüm havuzlarda birleşik korumalı bakiye",
+      "getLink": "ZEC linkinizi alın",
+      "moreInfo": "Daha fazla bilgi",
+      "tile0Eyebrow": "P2P",
+      "tile0Title": "ZEC peer-to-peer gönderin",
+      "tile0Body": "@username'inizi verin, korumalı ZEC ile ödesinler. Borsa hesabı yok, KYC köprüsü yok, sızıntı yok.",
+      "tile1Eyebrow": "Çıkış",
+      "tile1Title": "Özel olarak çıkış yapın",
+      "tile1Body": "ZEC'i USD, EUR veya yerel bankanıza zincir izi bırakmadan dönüştürün. Fonlar Revolut, Wise veya herhangi bir hesaba gelir.",
+      "tile2Eyebrow": "Talep",
+      "tile2Title": "ZEC ile ödeme talep edin",
+      "tile2Body": "Bir link. Tutarı belirleyin, her yerde paylaşın. Gönderen herhangi bir zincirden öder — korumalı ZEC alırsınız.",
+      "tile3Eyebrow": "Takas",
+      "tile3Title": "ZEC'i her yönde takas edin",
+      "tile3Body": "ZEC ↔ USDC, SOL, ETH, USDT. NEAR Intents ve zincir üstü DEX'ler aracılığıyla en iyi rota. Saniyeler içinde kapanır."
+    },
+    "builtOn": {
+      "pill": "Yığın",
+      "body": "Her ödeme yarım saniyenin altında Solana'da kapanır. MagicBlock'un Private Ephemeral Rollup'ı tutarları ve karşı tarafları kamuya açık kayıt dışında tutar — varsayılan olarak, her kullanıcı için, her seferinde.",
+      "readArchitecture": "Mimariyi okuyun",
+      "howPerWorks": "PER nasıl çalışır",
+      "settlementLayer": "Uzlaşı katmanı",
+      "finality": "kesinleşme",
+      "privacyLayer": "Gizlilik katmanı",
+      "byDefault": "varsayılan olarak",
+      "poweredWith": "ile güçlendirilmiş",
+      "spec0Label": "Uzlaşı",
+      "spec0Value": "Solana L1",
+      "spec0Sub": "~400ms kesinleşme",
+      "spec1Label": "Gizlilik katmanı",
+      "spec1Value": "MagicBlock PER",
+      "spec1Sub": "Private Ephemeral Rollup",
+      "spec2Label": "Sabit varlık",
+      "spec2Value": "USDC",
+      "spec2Sub": "Solana'da Circle yerel",
+      "spec3Label": "Velayet",
+      "spec3Value": "Kendi velayeti",
+      "spec3Sub": "Anahtarlar cihazınızı asla terk etmez"
+    },
+    "cta": {
+      "headline1": "Hazır mısınız",
+      "headlineGradient": "ödeme almaya?",
+      "body": "Ücretsiz hesap. Seed ifadesi yok. Cüzdan kurulumu yok. 30 saniyede hazır.",
+      "createLink": "Ödeme linkinizi oluşturun",
+      "sendPayment": "Ödeme gönderin"
+    },
+    "footer": {
+      "tagline": "Kendi velayeti · Özel · Devnet",
+      "privacy": "Gizlilik",
+      "brand": "Marka"
+    }
+  },
+
+  "UserMenu": {
+    "username": "Kullanıcı adı",
+    "email": "E-posta",
+    "copyUsername": "Kullanıcı adını kopyala",
+    "shareYourLink": "Linkinizi paylaşın",
+    "sparks": "Sparks",
+    "settings": "Ayarlar",
+    "mainnetBeta": "Mainnet Beta",
+    "mainnetViewOnly": "Mainnet (yalnızca görüntüleme)",
+    "devnet": "Devnet",
+    "paymentsDisabled": "Ödemeler devre dışı — yalnızca bakiye ve çekim",
+    "balanceWithdrawOnly": "Yalnızca bakiye ve çekim — ödemeler beta erişimi gerektirir",
+    "logOut": "Çıkış yap",
+    "noUsernameTitle": "Ödeme linkinizi paylaşın",
+    "noUsernameBody": "Ödeme linkinizi almak ve ödeme almaya başlamak için hesap menüsünde kullanıcı adınızı ayarlayın.",
+    "gotIt": "Anladım",
+    "shareModalTitle": "Şimdi para almaya başlayın",
+    "shareModalSubtitle": "Ödeme almak için ödeme linkinizi paylaşın",
+    "yourPaymentLink": "Ödeme linkiniz",
+    "copied": "Kopyalandı!",
+    "copyLink": "Linki kopyala",
+    "copyLinkButton": "Linki kopyala",
+    "privatePayments": "🔒 Özel Ödemeler",
+    "enabled": "Etkin",
+    "comingSoon": "Yakında",
+    "privatePaymentsDescEnabled": "Linkinize yapılan tüm ödemeler gizlilik için MagicBlock Private Ephemeral Rollup'ı kullanır.",
+    "privatePaymentsDescDisabled": "Mevcut olduğunda, linkinize yapılan tüm ödemeler gizlilik için MagicBlock Private Ephemeral Rollup'ı kullanacak.",
+    "close": "Kapat",
+    "settingsTitle": "Ayarlar",
+    "settingsSubtitle": "Cüzdan, oturum açma yöntemleri ve güvenlik.",
+    "network": "Ağ",
+    "signInMethods": "Oturum açma yöntemleri",
+    "connected": "Bağlı",
+    "addSecondMethod": "Hesabınızı kurtarabilmek için ikinci bir yöntem ekleyin.",
+    "addTwitter": "Twitter ekle",
+    "addEmail": "E-posta ekle",
+    "paymentLink": "Ödeme linki",
+    "useTwitterAsLink": "Twitter'ınızı ödeme linki olarak kullanın: @{handle}",
+    "updating": "Güncelleniyor…",
+    "useHandle": "@{handle} kullan",
+    "walletAddress": "Cüzdan Adresi",
+    "clickToHide": "Kısaltılmışı görmek için tıklayın",
+    "clickToCopy": "Tam kopyalamak için adrese tıklayın",
+    "viewOnSolscan": "Solscan'de görüntüle",
+    "loadingWallet": "Cüzdan yükleniyor...",
+    "walletAutoCreated": "Gerektiğinde cüzdan otomatik olarak oluşturulacak."
+  },
+
+  "Footer": {
+    "forYou": "Sizin için",
+    "forBusiness": "İşletmeler için",
+    "company": "Şirket",
+    "socialsAndDocs": "Sosyal & Belgeler",
+    "send": "Gönder",
+    "receive": "Al",
+    "history": "Geçmiş",
+    "settings": "Ayarlar",
+    "checkout": "Ödeme",
+    "partners": "İş ortakları",
+    "about": "Hakkında",
+    "copyright": "© {year} Loofta. Tüm hakları saklıdır.",
+    "language": "Dil",
+    "currency": "Para birimi"
+  }
+}

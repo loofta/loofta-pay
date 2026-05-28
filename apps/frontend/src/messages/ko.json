@@ -1,0 +1,369 @@
+{
+  "BottomNav": {
+    "send": "보내기",
+    "receive": "받기",
+    "history": "내역",
+    "profile": "프로필"
+  },
+
+  "AppShell": {
+    "bannerMainnet": "메인넷 베타 — 실제 USDC로 비공개 결제를 보내고 받으세요. 이메일, X 사용자명, 또는 Loofta 사용자명으로 누구에게나 결제하세요.",
+    "bannerDevnet": "MagicBlock PER로 비공개 결제를 보내고 받으세요 — 데브넷. 이메일, X 사용자명, 또는 Loofta 사용자명으로 누구에게나 결제하세요.",
+    "bannerContact": "문의사항이 있으신가요? Telegram에서 연락하세요",
+    "dismissBanner": "배너 닫기"
+  },
+
+  "MinimalHeader": {
+    "balance": "잔액",
+    "sparks": "Sparks",
+    "waitlist": "대기자 명단",
+    "profile": "프로필",
+    "signIn": "로그인",
+    "logOut": "로그아웃",
+    "mainnetBeta": "메인넷 베타",
+    "mainnetViewOnly": "메인넷 (보기 전용)",
+    "devnet": "데브넷",
+    "paymentsDisabled": "결제 비활성화 — 잔액 및 출금만 가능",
+    "openMenu": "메뉴 열기",
+    "closeMenu": "메뉴 닫기",
+    "earnSparks": "활동으로 Sparks 획득",
+    "requestAccess": "메인넷 조기 액세스 요청"
+  },
+
+  "SettingsPage": {
+    "title": "프로필",
+    "username": "사용자명",
+    "email": "이메일",
+    "shareYourLink": "링크 공유하기",
+    "settings": "설정",
+    "logOut": "로그아웃",
+    "copyUsername": "사용자명 복사",
+    "signInPrompt": "프로필을 보려면 로그인하세요.",
+    "goToHome": "홈으로 이동"
+  },
+
+  "HistoryPage": {
+    "title": "결제 내역",
+    "amountSent": "보낸 금액",
+    "amountReceived": "받은 금액",
+    "recentPayments": "최근 결제",
+    "sent": "보냄",
+    "received": "받음",
+    "to": "받는 이",
+    "from": "보낸 이",
+    "anonymous": "익명",
+    "noPayments": "아직 결제 내역이 없습니다.",
+    "noPaymentsMatch": "검색 조건에 맞는 결제가 없습니다.",
+    "searchPlaceholder": "발신자, 수신자 또는 메시지로 검색...",
+    "signInTitle": "결제 내역",
+    "signInPrompt": "보내고 받은 결제를 보려면 로그인하세요.",
+    "signIn": "로그인",
+    "refresh": "새로고침",
+    "refreshList": "목록 새로고침",
+    "search": "검색",
+    "status": {
+      "SUCCESS": "결제됨",
+      "PRIVATE_TRANSFER_PENDING": "미청구",
+      "CANCELLED": "취소됨",
+      "OPEN": "오픈",
+      "PENDING_DEPOSIT": "대기 중",
+      "IN_FLIGHT": "처리 중",
+      "REFUNDED": "환불됨",
+      "EXPIRED": "만료됨"
+    }
+  },
+
+  "HomePage": {
+    "send": "보내기",
+    "to": "받는 이",
+    "amountLabel": "USD 금액",
+    "recipientPlaceholder": "Loofta, Twitter 사용자명, 정확한 이메일",
+    "recipientHint": "Loofta 또는 Twitter 사용자명, 또는 정확한 이메일 — 해당 계정으로 로그인하여 청구합니다.",
+    "continue": "계속",
+    "signInToContinue": "계속하려면 로그인하세요",
+    "multiSend": "멀티 전송 시도",
+    "newPayment": "← 새 결제",
+    "paymentCreated": "결제 링크가 생성되었습니다. 공유하거나 열어서 상태를 확인하세요.",
+    "viewPayment": "결제 보기",
+    "receive": "받기",
+    "backToReceive": "← 받기로 돌아가기",
+    "sharePersonalLink": "개인 링크 공유하기",
+    "personalLinkDescription": "누구든지 이 링크를 열어 결제할 수 있습니다. 선호하는 토큰과 체인으로 받습니다.",
+    "copy": "복사",
+    "copied": "복사됨",
+    "shareAndSettings": "공유 및 설정",
+    "signInForLink": "자신의 결제 링크를 받으려면 로그인하세요. 나중에 Twitter를 추가하여 고유한 @username을 받으세요.",
+    "signInToGetLink": "결제 링크를 받으려면 로그인하세요",
+    "createPaymentLink": "새 결제 링크 만들기",
+    "createLinkDescription": "일회성 결제 요청을 만드세요. 금액, 토큰, 체인을 선택합니다. 생성에 계정이 필요 없습니다.",
+    "createNewLink": "새 결제 링크 만들기",
+    "faqTitle": "자주 묻는 질문",
+    "searching": "검색 중…",
+    "noUsersFound": "사용자를 찾을 수 없습니다",
+    "fromEmail": "(이메일에서)",
+    "faq": {
+      "fees": {
+        "question": "수수료는 얼마인가요?",
+        "answer1": "Loofta Pay의 비공개 결제는 발신자에게 부과되는 고정 수수료가 있습니다 — 이체 금액의 <bold>10 BPS</bold> 및 USDC로 지불되는 <bold>0.002 SOL</bold> 가스 수수료. 모든 수수료는 MagicBlock의 프라이버시 인프라에 직접 지급됩니다. Loofta는 아무것도 가져가지 않습니다. 수신자는 항상 요청한 정확한 금액을 받습니다.",
+        "answer2": "소액 이체 시 0.4%–4.4%+를 청구하는 Solana의 다른 프라이버시 도구(Umbra, Privacy Cash, Houdini Swap)와 비교했을 때, Loofta의 고정 수수료는 모든 이체 크기에서 일관되게 가장 낮습니다."
+      },
+      "privatePayments": {
+        "question": "비공개 결제는 어떻게 작동하나요?",
+        "answer": "비공개 결제는 MagicBlock의 Private Ephemeral Rollup (PER)을 사용합니다 — 일반적인 완전 공개 이체 대신 비공개 가시성을 위해 구축된 인프라입니다. 이는 관찰자들이 일반적으로 온체인에서 볼 수 있는 동일한 결제 세부 정보를 볼 수 없음을 의미하므로, 당신의 활동을 추적하거나 연결하기가 훨씬 더 어렵습니다. 더 강력한 결제 프라이버시가 필요할 때 선택하는 옵션입니다."
+      },
+      "sendBeforeAccount": {
+        "question": "계정이 없는 사람에게도 보낼 수 있나요?",
+        "answer": "네. Twitter/X 사용자명이나 이메일로 보낼 수 있습니다. 그들은 가입하고 결제를 청구할 수 있는 링크를 받게 됩니다. 해당 신원으로 로그인하면 자금을 청구할 수 있습니다."
+      },
+      "retrieveWallet": {
+        "question": "내장된 Loofta Pay 지갑을 어떻게 가져오나요?",
+        "answer1": "계정 메뉴를 열고 <bold>설정</bold>으로 이동한 다음 <bold>개인 키 내보내기</bold>를 사용하여 내장 Loofta Pay 지갑을 백업하세요. 거기서 Solana 주소도 확인할 수 있습니다.",
+        "answer2": "이 지갑을 Loofta Pay <bold>외부에서</bold> 가져오거나 사용하면, 앱 내 사용을 위해 설계한 프라이버시 및 보안 가정이 더 이상 적용되지 않을 수 있으며 <bold>프라이버시가 침해될 수 있습니다</bold>. Loofta Pay 내에서 활동을 유지하는 것을 강력히 권장합니다.",
+        "answer3": "<bold>내장 지갑 주소를</bold> 사람들이 결제할 수 있도록 공유하지 마세요. 대신 <bold>Loofta 사용자명</bold>이나 <bold>이메일</bold>을 공유하세요 — 다른 사람들이 자금을 보내는 방법입니다.",
+        "answer4": "돈을 이체하려면 <bold>출금</bold>을 사용하여 내장 주소를 노출하는 대신 제어하는 <bold>새</bold> Solana 지갑으로 USDC를 보내세요 (Solana USDC에서 가스 스폰서로 무료)."
+      },
+      "burnerWallet": {
+        "question": "버너 지갑이란 무엇인가요?",
+        "answer": "버너 지갑은 결제를 위해 생성하는 임시 입금 주소입니다. 이 주소로 자금을 보내면 Loofta Pay가 수신자에게 라우팅합니다. 결제하기 위해 지갑을 연결할 필요가 없습니다 — 입금 주소로 보내기만 하면 됩니다."
+      },
+      "morphoVault": {
+        "question": "Morpho Vault는 내 수익을 어떻게 안전하게 유지하나요?",
+        "answer1": "Morpho Vault는 Loofta 잔액의 수익을 지원하는 프로토콜입니다 — DeFi에서 수동 소득을 얻는 가장 안전하고 가장 많이 감사받은 방법 중 하나입니다.",
+        "answer2": "위험 위에 위험을 쌓는 수익 상품과 달리, Morpho는 투명하고 초과 담보된 대출 시장으로 운영됩니다. 모든 포지션은 온체인에서 볼 수 있습니다. 숨겨진 전략, 잠긴 자금, 불투명한 펀드 매니저가 없습니다. USDC는 검증된 대출 활동을 통해 수익을 얻으며 언제든지 출금할 수 있습니다.",
+        "answer3": "Morpho는 흠잡을 데 없는 보안 기록으로 수십억 달러의 대출량을 처리했습니다. 잔액이 수익을 낼 때, 안전하게 수익을 냅니다."
+      },
+      "looftaPoints": {
+        "question": "Loofta Points는 어떻게 작동하나요?",
+        "answer1": "받은 모든 결제는 자동으로 Loofta Points를 획득합니다 — 등록이 필요 없습니다. 포인트는 계정에 누적되고 Loofta 파트너 네트워크 전체에서 보상을 잠금 해제합니다: 크리에이터와 프리랜서가 이미 사용하는 도구 및 서비스 할인.",
+        "answer2": "포인트는 사용량에 따라 확장됩니다 — Loofta Pay가 기본 결제 레이어일수록 더 많이 돌려받습니다. 파트너 네트워크가 성장할수록 포인트의 가치도 높아집니다."
+      },
+      "apy": {
+        "question": "받은 금액의 APY와 자동 복리?",
+        "answer": "받은 잔액에 USD APY를 구축하고 있으며 청구된 모든 결제는 자동 복리됩니다. 곧 출시됩니다."
+      },
+      "devnet": {
+        "question": "데브넷에 있습니다 — 테스트 SOL과 USDC는 어떻게 받나요?",
+        "answer": "<solanaLink>Solana 수도꼭지</solanaLink>에서 무료 데브넷 SOL을 받으세요. 데브넷 USDC의 경우 <circleLink>Circle 수도꼭지</circleLink>를 사용하세요."
+      }
+    }
+  },
+
+  "MarketingPage": {
+    "nav": {
+      "payReceive": "결제 & 수령",
+      "features": "기능",
+      "privacy": "프라이버시",
+      "earn": "적립",
+      "business": "비즈니스",
+      "zcash": "Zcash",
+      "launchApp": "앱 시작"
+    },
+    "hero": {
+      "iWantToGetPaid": "결제 받고 싶어요",
+      "iWantToSend": "보내고 싶어요",
+      "receiveHeadline1": "링크 하나로.",
+      "receiveHeadline2": "무엇이든",
+      "receiveHeadlineGradient": "받기",
+      "sendHeadline1": "누구에게나",
+      "sendHeadlineGradient": "보내기",
+      "sendHeadline2": "어디서든.",
+      "receiveSubtitle": "결제 링크를 공유하세요. 누구든 어디서든 어떤 통화로든 보냅니다 — Solana에서 USDC를 받고 실제로 원하는 것으로 출금하세요.",
+      "sendSubtitle": "지갑 주소 없음. 상대방 회원가입 불필요. 이메일, @handle, 또는 사용자명으로 보내면 로그인할 때 청구합니다.",
+      "createYourLink": "링크 만들기",
+      "sendAPayment": "결제 보내기",
+      "seeHowItWorks": "작동 방식 보기",
+      "payByEmail": "이메일로 결제",
+      "dragToFlick": "드래그하여 넘기기 →"
+    },
+    "chains": {
+      "tagline": "모든 체인에서 결제 · 원하는 것 받기"
+    },
+    "features": {
+      "pill": "세 가지 기둥",
+      "headline1": "결제가",
+      "headline2": "당신을 위해 작동하도록 구축.",
+      "item0Eyebrow": "01 · 수락",
+      "item0Title": "링크 하나. 모든 토큰.",
+      "item0Body": "사용자명이 결제 링크가 됩니다. 발신자는 20개 이상의 체인에서 결제합니다 — 원하는 정확한 토큰을 받습니다.",
+      "item1Eyebrow": "02 · 보호",
+      "item1Title": "공개 기록 외 활동.",
+      "item1Body": "MagicBlock의 Private Ephemeral Rollup이 결제를 라우팅하여 금액과 상대방이 당신만의 것이 됩니다. 설정 없음.",
+      "item2Eyebrow": "03 · 적립",
+      "item2Title": "유휴 잔액이 유휴 상태로 있지 않습니다.",
+      "item2Body": "결제 사이의 모든 달러는 Morpho 볼트를 통해 수익을 복리합니다. 언제 어디서나 어떤 토큰으로든 출금하세요."
+    },
+    "privacy": {
+      "pill": "MagicBlock PER",
+      "headline1": "중요한 유일한",
+      "headline2": "원장은",
+      "headlineGradient": "당신의 것",
+      "headline3": "입니다.",
+      "body": "Private Ephemeral Rollup은 금액, 상대방 및 패턴을 공개 관찰자로부터 보호합니다. 설정 없음, 새 지갑 없음 — 토글만 있습니다.",
+      "bullet1": "결제 세부 정보가 온체인에서 보호됨",
+      "bullet2": "상대방을 연결할 수 없음",
+      "bullet3": "토글 하나. 기존 흐름과 함께 작동.",
+      "receiptLabel": "영수증",
+      "receiptBadge": "비공개",
+      "rollupVerified": "임시 롤업 · 검증됨"
+    },
+    "earn": {
+      "pill": "Morpho 볼트",
+      "headline1": "잔액이",
+      "headline2": "항상 활성화.",
+      "body": "결제 사이의 모든 순간, 유휴 USDC는 감사받은 Morpho 볼트를 통해 수익을 얻습니다. 즉시 출금 — 백그라운드에서 정리합니다.",
+      "apyLabel": "현재 APY*",
+      "pointsLabel": "Loofta Points",
+      "available": "사용 가능한 잔액",
+      "earning": "적립 중"
+    },
+    "business": {
+      "pill": "비즈니스용",
+      "headline1": "급여, 지급금,",
+      "headline2": "한 곳에서.",
+      "body": "5개국 계약자 결제부터 KYC가 포함된 해커톤 상금 지급까지 — Loofta가 복잡한 부분을 처리합니다.",
+      "bookDemo": "비즈니스 데모 예약",
+      "bulkEyebrow": "대량 결제",
+      "bulkTitle": "서명 하나로 200명에게 결제.",
+      "bulkBody": "CSV를 업로드하거나 목록을 붙여넣으세요. 프리랜서, 크리에이터, 해커톤 수상자 또는 전체 급여를 — 각자가 받고 싶은 통화 조합으로 결제하세요.",
+      "bulkBadge": "200+ 수신자 · 한 번의 tx",
+      "ctaEyebrow": "문의하기",
+      "ctaTitle": "급여 또는 지원금 프로그램을 운영하고 계신가요?",
+      "ctaBody": "50명 이상의 수신자에게 결제하는 팀을 위한 맞춤 볼륨 가격, 전담 지원 및 온보딩 도움.",
+      "contactSales": "영업팀 문의",
+      "feature0Title": "결제 예약",
+      "feature0Body": "다음 화요일 결제를 예약하세요. 또는 매월 1일. 온라인 여부에 관계없이 제때 발송됩니다.",
+      "feature1Title": "정기 결제",
+      "feature1Body": "한 번만 설정하세요. 매월 1일 급여, 매월 15일 보수, 주간 구독. 언제든지 일시 중지하거나 수정할 수 있습니다.",
+      "feature2Title": "KYC 게이팅 청구",
+      "feature2Body": "수신자가 청구하기 전에 신원 확인을 요구합니다. 해커톤 상금, 보조금 또는 규정 준수 이체에 적합합니다.",
+      "feature3Title": "인보이스",
+      "feature3Body": "깔끔한 인보이스 링크를 보내세요. 클라이언트는 원하는 방식으로 결제합니다. 원하는 것으로 결제받습니다. 정산 처리됨."
+    },
+    "zcash": {
+      "pill": "Zcash · ZEC",
+      "headline1": "프라이빗 머니,",
+      "headlineGradient": "실제로 프라이빗.",
+      "body": "금액이나 상대방을 노출하지 않고 Zcash를 받고, 요청하고, 교환하고, 현금화하세요. Loofta의 완전한 한 면으로, 쉴딩된 ZEC 위에 구축되었습니다.",
+      "shieldedByDefault": "기본으로 쉴딩됨",
+      "shieldedTitle": "Zcash가 사용되도록 설계된 방식으로 ZEC를 받으세요.",
+      "shieldedBody": "@username으로의 모든 결제는 쉴딩된 주소에 정산됩니다. 투명한 구간 없음, 메타데이터 누출 없음. 금액을 절대 볼 수 없습니다.",
+      "bullet1": "발신자는 어떤 체인에서도 결제합니다 — ZEC가 필요 없음",
+      "bullet2": "입금 시 교환하고 쉴딩 입금",
+      "bullet3": "모든 풀에서 통합된 쉴딩 잔액",
+      "getLink": "ZEC 링크 받기",
+      "moreInfo": "자세한 정보",
+      "tile0Eyebrow": "P2P",
+      "tile0Title": "ZEC P2P 전송",
+      "tile0Body": "@username을 공유하면 쉴딩된 ZEC로 결제합니다. 거래소 계정 없음, KYC 브릿지 없음, 누출 없음.",
+      "tile1Eyebrow": "출금",
+      "tile1Title": "비공개로 현금화",
+      "tile1Body": "온체인 추적 없이 ZEC를 USD, EUR 또는 현지 은행으로 변환합니다. 자금은 Revolut, Wise 또는 모든 계좌에 도착합니다.",
+      "tile2Eyebrow": "요청",
+      "tile2Title": "ZEC로 결제 요청",
+      "tile2Body": "링크 하나. 금액을 설정하고 어디서나 공유하세요. 발신자는 어떤 체인에서도 결제합니다 — 쉴딩된 ZEC를 받습니다.",
+      "tile3Eyebrow": "교환",
+      "tile3Title": "모든 방향으로 ZEC 교환",
+      "tile3Body": "ZEC ↔ USDC, SOL, ETH, USDT. NEAR Intents와 온체인 DEX를 통한 최적 경로. 수초 내 정산."
+    },
+    "builtOn": {
+      "pill": "스택",
+      "body": "모든 결제는 0.5초 미만으로 Solana에서 정산됩니다. MagicBlock의 Private Ephemeral Rollup은 금액과 상대방을 공개 장부 외부에 유지합니다 — 기본적으로, 모든 사용자, 매번.",
+      "readArchitecture": "아키텍처 읽기",
+      "howPerWorks": "PER 작동 방식",
+      "settlementLayer": "정산 레이어",
+      "finality": "최종성",
+      "privacyLayer": "프라이버시 레이어",
+      "byDefault": "기본으로",
+      "poweredWith": "으로 구동",
+      "spec0Label": "정산",
+      "spec0Value": "Solana L1",
+      "spec0Sub": "~400ms 최종성",
+      "spec1Label": "프라이버시 레이어",
+      "spec1Value": "MagicBlock PER",
+      "spec1Sub": "Private Ephemeral Rollup",
+      "spec2Label": "안정 자산",
+      "spec2Value": "USDC",
+      "spec2Sub": "Solana의 Circle 네이티브",
+      "spec3Label": "커스터디",
+      "spec3Value": "논커스터디얼",
+      "spec3Sub": "키가 절대 기기를 떠나지 않음"
+    },
+    "cta": {
+      "headline1": "결제 받을",
+      "headlineGradient": "준비가 됐나요?",
+      "body": "무료 계정. 시드 문구 없음. 지갑 설치 없음. 30초 안에 준비 완료.",
+      "createLink": "결제 링크 만들기",
+      "sendPayment": "결제 보내기"
+    },
+    "footer": {
+      "tagline": "논커스터디얼 · 프라이빗 · 데브넷",
+      "privacy": "프라이버시",
+      "brand": "브랜드"
+    }
+  },
+
+  "UserMenu": {
+    "username": "사용자명",
+    "email": "이메일",
+    "copyUsername": "사용자명 복사",
+    "shareYourLink": "링크 공유하기",
+    "sparks": "Sparks",
+    "settings": "설정",
+    "mainnetBeta": "메인넷 베타",
+    "mainnetViewOnly": "메인넷 (보기 전용)",
+    "devnet": "데브넷",
+    "paymentsDisabled": "결제 비활성화 — 잔액 및 출금만 가능",
+    "balanceWithdrawOnly": "잔액 및 출금만 — 결제는 베타 액세스 필요",
+    "logOut": "로그아웃",
+    "noUsernameTitle": "결제 링크 공유하기",
+    "noUsernameBody": "결제 링크를 받고 결제를 받기 시작하려면 계정 메뉴에서 사용자명을 설정하세요.",
+    "gotIt": "알겠습니다",
+    "shareModalTitle": "지금 바로 돈 받기 시작",
+    "shareModalSubtitle": "결제를 받으려면 결제 링크를 공유하세요",
+    "yourPaymentLink": "결제 링크",
+    "copied": "복사됨!",
+    "copyLink": "링크 복사",
+    "copyLinkButton": "링크 복사",
+    "privatePayments": "🔒 비공개 결제",
+    "enabled": "활성화됨",
+    "comingSoon": "출시 예정",
+    "privatePaymentsDescEnabled": "링크로의 모든 결제는 프라이버시를 위해 MagicBlock Private Ephemeral Rollup을 사용합니다.",
+    "privatePaymentsDescDisabled": "사용 가능할 때, 링크로의 모든 결제는 프라이버시를 위해 MagicBlock Private Ephemeral Rollup을 사용합니다.",
+    "close": "닫기",
+    "settingsTitle": "설정",
+    "settingsSubtitle": "지갑, 로그인 방법 및 보안.",
+    "network": "네트워크",
+    "signInMethods": "로그인 방법",
+    "connected": "연결됨",
+    "addSecondMethod": "계정 복구를 위해 두 번째 방법을 추가하세요.",
+    "addTwitter": "Twitter 추가",
+    "addEmail": "이메일 추가",
+    "paymentLink": "결제 링크",
+    "useTwitterAsLink": "Twitter를 결제 링크로 사용: @{handle}",
+    "updating": "업데이트 중…",
+    "useHandle": "@{handle} 사용",
+    "walletAddress": "지갑 주소",
+    "clickToHide": "클릭하여 줄인 버전 보기",
+    "clickToCopy": "전체 복사하려면 주소를 클릭",
+    "viewOnSolscan": "Solscan에서 보기",
+    "loadingWallet": "지갑 로딩 중...",
+    "walletAutoCreated": "필요할 때 지갑이 자동으로 생성됩니다."
+  },
+
+  "Footer": {
+    "forYou": "당신을 위해",
+    "forBusiness": "비즈니스용",
+    "company": "회사",
+    "socialsAndDocs": "소셜 & 문서",
+    "send": "보내기",
+    "receive": "받기",
+    "history": "내역",
+    "settings": "설정",
+    "checkout": "결제",
+    "partners": "파트너",
+    "about": "소개",
+    "copyright": "© {year} Loofta. 모든 권리 보유.",
+    "language": "언어",
+    "currency": "통화"
+  }
+}

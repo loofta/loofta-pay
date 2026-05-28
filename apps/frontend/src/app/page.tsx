@@ -5,6 +5,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, Check, Sparkles, X, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
+import { FooterControls } from "@/components/FooterControls";
 
 const BRAND_GRADIENT = "bg-gradient-to-r from-[#FF1301] to-[#EAB308]";
 const AT = String.fromCharCode(64);
@@ -91,6 +93,7 @@ function VideoModal({ open, onClose }: { open: boolean; onClose: () => void }) {
    ===================================================== */
 
 function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
+  const t = useTranslations('MarketingPage');
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
     const on = () => setScrolled(window.scrollY > 20);
@@ -98,6 +101,15 @@ function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
     on();
     return () => window.removeEventListener("scroll", on);
   }, []);
+
+  const navItems = [
+    { label: t('nav.payReceive'), href: "#pay-receive" },
+    { label: t('nav.features'), href: "#features" },
+    { label: t('nav.privacy'), href: "#privacy" },
+    { label: t('nav.earn'), href: "#earn" },
+    { label: t('nav.business'), href: "#business" },
+    { label: t('nav.zcash'), href: "#zcash" },
+  ];
 
   return (
     <header
@@ -111,16 +123,9 @@ function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
           <Image src="/loofta_white.svg" alt="Loofta" width={110} height={24} priority />
         </Link>
         <nav className="hidden gap-1 md:flex">
-          {([
-            { label: "Pay & Receive", href: "#pay-receive" },
-            { label: "Features", href: "#features" },
-            { label: "Privacy", href: "#privacy" },
-            { label: "Earn", href: "#earn" },
-            { label: "Business", href: "#business" },
-            { label: "Zcash", href: "#zcash" },
-          ] as const).map((item) => (
+          {navItems.map((item) => (
             <a
-              key={item.label}
+              key={item.href}
               href={item.href}
               className="cursor-pointer px-3 py-2 font-grotesk text-base md:text-sm text-slate-400 transition-colors hover:text-white"
             >
@@ -134,7 +139,7 @@ function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
           href={APP_URL}
           className={`group inline-flex items-center gap-2.5 rounded-full px-5 py-3 font-display text-base md:text-sm font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] ${BRAND_GRADIENT}`}
         >
-          Launch app
+          {t('nav.launchApp')}
           <ArrowRight className="h-[15px] w-[15px]" strokeWidth={2} />
         </Link>
       </div>
@@ -241,6 +246,7 @@ function HeroReceiptCard({
 }
 
 function HeroStack({ mode }: { mode: Mode }) {
+  const t = useTranslations('MarketingPage');
   const receiveCards: HeroCard[] = [
     { amount: "$2,500", person: "XYZ Foundation", sub: "Hackathon prize", meta: "Congrats on winning Radar 🏆", status: "RECEIVED", statusColor: "#34D399", time: "just now", avatarLetter: "◎", avatarBg: "linear-gradient(135deg, #14F195, #9945FF)" },
     { amount: "$890", person: "Straipe", sub: "Payout · bank 🏦", meta: "October subscription", status: "RECEIVED", statusColor: "#34D399", time: "18s ago", avatarLetter: "S", avatarBg: "linear-gradient(135deg, #635BFF, #00D4FF)" },
@@ -373,7 +379,7 @@ function HeroStack({ mode }: { mode: Mode }) {
 
       {!drag && !throwing && (
         <div className="pointer-events-none absolute left-1/2 top-4 inline-flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 font-grotesk text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
-          drag to flick →
+          {t('hero.dragToFlick')}
         </div>
       )}
 
@@ -394,6 +400,7 @@ function HeroStack({ mode }: { mode: Mode }) {
 }
 
 function Hero({ onHowItWorks }: { onHowItWorks: () => void }) {
+  const t = useTranslations('MarketingPage');
   const [mode, setMode] = useState<Mode>("receive");
 
   return (
@@ -426,9 +433,9 @@ function Hero({ onHowItWorks }: { onHowItWorks: () => void }) {
           <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.06 }} className="mb-7">
             <div className="inline-flex rounded-full border border-white/10 bg-white/[0.04] p-1 font-display text-base md:text-sm font-medium">
               {([
-                { k: "receive", label: "I want to get paid" },
-                { k: "send", label: "I want to send" },
-              ] as const).map((o) => (
+                { k: "receive" as const, label: t('hero.iWantToGetPaid') },
+                { k: "send" as const, label: t('hero.iWantToSend') },
+              ]).map((o) => (
                 <button
                   key={o.k}
                   onClick={() => setMode(o.k)}
@@ -452,27 +459,27 @@ function Hero({ onHowItWorks }: { onHowItWorks: () => void }) {
           >
             {mode === "receive" ? (
               <h1 className="m-0 font-display text-[clamp(3.2rem,7vw,6.2rem)] font-medium leading-[1.05] tracking-[-0.035em] text-white">
-                One link.
+                {t('hero.receiveHeadline1')}
                 <br />
-                Get paid in{" "}
+                {t('hero.receiveHeadline2')}{" "}
                 <span
                   className={`inline-block italic align-baseline leading-[1.2] pb-[0.22em] -mb-[0.22em] isolate ${BRAND_GRADIENT} bg-clip-text text-transparent`}
                 >
-                  anything
+                  {t('hero.receiveHeadlineGradient')}
                 </span>
                 .
               </h1>
             ) : (
               <h1 className="m-0 font-display text-[clamp(3.2rem,7vw,6.2rem)] font-medium leading-[1.05] tracking-[-0.035em] text-white">
-                Send to{" "}
+                {t('hero.sendHeadline1')}{" "}
                 <span
                   className={`inline-block italic align-baseline leading-[1.2] pb-[0.22em] -mb-[0.22em] pr-[0.12em] -mr-[0.12em] isolate ${BRAND_GRADIENT} bg-clip-text text-transparent`}
                 >
-                  anyone
+                  {t('hero.sendHeadlineGradient')}
                 </span>
                 ,
                 <br />
-                anywhere.
+                {t('hero.sendHeadline2')}
               </h1>
             )}
           </motion.div>
@@ -482,9 +489,7 @@ function Hero({ onHowItWorks }: { onHowItWorks: () => void }) {
             transition={{ ...fadeUp.transition, delay: 0.18 }}
             className="mb-10 max-w-[540px] font-grotesk text-[clamp(1.1rem,1.35vw,1.2rem)] leading-[1.6] text-slate-400"
           >
-            {mode === "receive"
-              ? "Share your payment link. Anyone sends from anywhere, in any currency — you receive USDC on Solana and withdraw to whatever you actually want."
-              : "No wallet address. No sign-up required for them. Send to an email, @handle, or username — they claim it when they sign in."}
+            {mode === "receive" ? t('hero.receiveSubtitle') : t('hero.sendSubtitle')}
           </motion.p>
 
           <motion.div
@@ -496,7 +501,7 @@ function Hero({ onHowItWorks }: { onHowItWorks: () => void }) {
               href={APP_URL}
               className={`inline-flex items-center gap-2.5 rounded-full font-display font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] px-8 py-[18px] text-[17px] ${BRAND_GRADIENT}`}
             >
-              {mode === "receive" ? "Create your link" : "Send a payment"}{" "}
+              {mode === "receive" ? t('hero.createYourLink') : t('hero.sendAPayment')}{" "}
               <ArrowRight className="h-[18px] w-[18px]" strokeWidth={2} />
             </Link>
             {mode === "receive" ? (
@@ -505,14 +510,14 @@ function Hero({ onHowItWorks }: { onHowItWorks: () => void }) {
                 className="inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-[30px] py-[17px] text-[17px]"
               >
                 <Play className="h-4 w-4" />
-                See how it works
+                {t('hero.seeHowItWorks')}
               </button>
             ) : (
               <Link
                 href={APP_URL}
                 className="inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-[30px] py-[17px] text-[17px]"
               >
-                Pay by email
+                {t('hero.payByEmail')}
               </Link>
             )}
           </motion.div>
@@ -547,6 +552,7 @@ function Pill({ children, icon }: { children: React.ReactNode; icon?: React.Reac
    ===================================================== */
 
 function Chains() {
+  const t = useTranslations('MarketingPage');
   const payRow = [
     { name: "Ethereum", src: "/static/icons/network/ethereum.svg" },
     { name: "Solana", src: "/static/icons/network/solana.svg" },
@@ -590,7 +596,7 @@ function Chains() {
         {...fadeUp}
         className="mb-10 text-center font-grotesk text-[13px] font-medium uppercase tracking-[0.14em] text-slate-500"
       >
-        Pay from any chain · Receive what you want
+        {t('chains.tagline')}
       </motion.p>
 
       {/* Row 1 — scrolls left */}
@@ -648,21 +654,22 @@ function Chains() {
    ===================================================== */
 
 function FeatureSplit() {
+  const t = useTranslations('MarketingPage');
   const items = [
     {
-      eyebrow: "01 · Accept",
-      title: "One link. Any token.",
-      body: "Your username becomes your payment link. Senders pay from any of 20+ chains — you receive exactly the token you want.",
+      eyebrow: t('features.item0Eyebrow'),
+      title: t('features.item0Title'),
+      body: t('features.item0Body'),
     },
     {
-      eyebrow: "02 · Shield",
-      title: "Activity off the public record.",
-      body: "MagicBlock's Private Ephemeral Rollup routes your payments so amounts and counterparts stay yours alone. No setup.",
+      eyebrow: t('features.item1Eyebrow'),
+      title: t('features.item1Title'),
+      body: t('features.item1Body'),
     },
     {
-      eyebrow: "03 · Earn",
-      title: "Idle balances don't sit idle.",
-      body: "Every dollar between payments compounds yield through Morpho vaults. Withdraw anywhere, anytime, as any token.",
+      eyebrow: t('features.item2Eyebrow'),
+      title: t('features.item2Title'),
+      body: t('features.item2Body'),
     },
   ];
 
@@ -670,11 +677,11 @@ function FeatureSplit() {
     <section id="features" className="relative px-10 py-36">
       <div className="mx-auto max-w-[1320px]">
         <motion.div {...fadeUp} className="mb-24 max-w-[760px]">
-          <Pill>Three pillars</Pill>
+          <Pill>{t('features.pill')}</Pill>
           <h2 className="mt-6 font-display text-[clamp(3rem,6vw,5.2rem)] font-medium leading-[0.95] tracking-[-0.03em] text-white">
-            Built so payments
+            {t('features.headline1')}
             <br />
-            <span className="italic text-slate-400">just work for you.</span>
+            <span className="italic text-slate-400">{t('features.headline2')}</span>
           </h2>
         </motion.div>
 
@@ -706,6 +713,7 @@ function FeatureSplit() {
    ===================================================== */
 
 function Privacy() {
+  const t = useTranslations('MarketingPage');
   const rows: Array<[string, string, boolean?, string?]> = [
     ["Amount", "••• USDC", true],
     ["To", "@you", false],
@@ -738,26 +746,26 @@ function Privacy() {
 
           <div className="relative grid grid-cols-1 items-center gap-16 lg:grid-cols-[1.2fr_1fr] lg:gap-20">
             <div>
-              <Pill icon={<Sparkles className="h-3 w-3" />}>MagicBlock PER</Pill>
+              <Pill icon={<Sparkles className="h-3 w-3" />}>{t('privacy.pill')}</Pill>
               <h2 className="mb-7 mt-6 font-display text-[clamp(2.6rem,5vw,4.4rem)] font-medium leading-[0.95] tracking-[-0.03em] text-white">
-                The only ledger
+                {t('privacy.headline1')}
                 <br />
-                that <span className="italic text-[#FF6A00]">matters</span> is yours.
+                {t('privacy.headline2')} <span className="italic text-[#FF6A00]">{t('privacy.headlineGradient')}</span> {t('privacy.headline3')}
               </h2>
               <p className="mb-10 max-w-[500px] font-grotesk text-[18px] leading-[1.6] text-slate-400">
-                Private Ephemeral Rollups shield amounts, counterparts, and patterns from public observers. No setup, no new wallet — just a toggle.
+                {t('privacy.body')}
               </p>
               <ul className="m-0 flex list-none flex-col gap-4 p-0">
                 {[
-                  "Payment details shielded on-chain",
-                  "Counterparts can't be linked together",
-                  "One toggle. Works with your existing flow.",
-                ].map((t) => (
-                  <li key={t} className="flex items-center gap-3.5 font-grotesk text-base text-slate-200">
+                  t('privacy.bullet1'),
+                  t('privacy.bullet2'),
+                  t('privacy.bullet3'),
+                ].map((bullet) => (
+                  <li key={bullet} className="flex items-center gap-3.5 font-grotesk text-base text-slate-200">
                     <span className={`inline-flex h-[26px] w-[26px] items-center justify-center rounded-full text-white ${BRAND_GRADIENT}`}>
                       <Check className="h-[13px] w-[13px]" strokeWidth={2.5} />
                     </span>
-                    {t}
+                    {bullet}
                   </li>
                 ))}
               </ul>
@@ -766,9 +774,9 @@ function Privacy() {
             <div className="relative flex justify-end">
               <div className="w-[360px] overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-b from-[#282830]/70 to-[#141418]/90 shadow-[0_40px_80px_-20px_rgba(0,0,0,0.5)]">
                 <div className="flex items-center justify-between border-b border-white/[0.06] px-6 py-5">
-                  <span className="font-display text-base font-medium text-slate-200">Receipt</span>
+                  <span className="font-display text-base font-medium text-slate-200">{t('privacy.receiptLabel')}</span>
                   <span className={`rounded-full px-3 py-1 font-grotesk text-[11px] font-medium uppercase tracking-[0.06em] text-white ${BRAND_GRADIENT}`}>
-                    Private
+                    {t('privacy.receiptBadge')}
                   </span>
                 </div>
                 <div className="flex flex-col gap-3.5 p-6">
@@ -787,7 +795,7 @@ function Privacy() {
                 </div>
                 <div className="flex items-center gap-2 border-t border-white/[0.06] bg-white/[0.02] px-6 py-3.5 font-grotesk text-sm md:text-xs text-slate-500">
                   <Image src="/images/icons/shield-icon.png" alt="" width={18} height={18} />
-                  Ephemeral rollup · Verified
+                  {t('privacy.rollupVerified')}
                 </div>
               </div>
             </div>
@@ -803,31 +811,32 @@ function Privacy() {
    ===================================================== */
 
 function Earn() {
+  const t = useTranslations('MarketingPage');
   return (
     <section id="earn" className="px-10 py-36">
       <div className="mx-auto grid max-w-[1320px] grid-cols-1 items-center gap-20 lg:grid-cols-2">
         <motion.div {...fadeUp}>
-          <Pill icon={<Sparkles className="h-3 w-3" />}>Morpho Vaults</Pill>
+          <Pill icon={<Sparkles className="h-3 w-3" />}>{t('earn.pill')}</Pill>
           <h2 className="mb-7 mt-6 font-display text-[clamp(2.6rem,5vw,4.4rem)] font-medium leading-[0.95] tracking-[-0.03em] text-white">
-            Your balance
+            {t('earn.headline1')}
             <br />
-            <span className="italic text-slate-400">always on.</span>
+            <span className="italic text-slate-400">{t('earn.headline2')}</span>
           </h2>
           <p className="mb-9 max-w-[440px] font-grotesk text-[18px] leading-[1.6] text-slate-400">
-            Every minute between payments, your idle USDC earns yield through audited Morpho vaults. Withdraw instantly — we unwind in the background.
+            {t('earn.body')}
           </p>
           <div className="flex gap-10">
             <div>
               <div className="font-display text-[56px] font-medium leading-none tracking-[-0.02em] text-white">
                 5.4<span className="text-[28px] text-slate-500">%</span>
               </div>
-              <div className="mt-2 font-grotesk text-[13px] text-slate-500">Current APY*</div>
+              <div className="mt-2 font-grotesk text-[13px] text-slate-500">{t('earn.apyLabel')}</div>
             </div>
             <div>
               <div className={`font-display text-[56px] font-medium leading-none tracking-[-0.02em] ${BRAND_GRADIENT} bg-clip-text text-transparent`}>
                 ∞
               </div>
-              <div className="mt-2 font-grotesk text-[13px] text-slate-500">Loofta Points</div>
+              <div className="mt-2 font-grotesk text-[13px] text-slate-500">{t('earn.pointsLabel')}</div>
             </div>
           </div>
         </motion.div>
@@ -839,13 +848,13 @@ function Earn() {
         >
           <div className="mb-7 flex items-center justify-between">
             <div>
-              <div className="mb-1.5 font-grotesk text-[13px] text-slate-500">Available balance</div>
+              <div className="mb-1.5 font-grotesk text-[13px] text-slate-500">{t('earn.available')}</div>
               <div className="font-display text-[40px] font-medium leading-none tracking-[-0.02em] text-white">
                 $2,847.15
               </div>
             </div>
             <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3.5 py-2 font-grotesk text-[13px] font-medium text-emerald-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Earning
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> {t('earn.earning')}
             </div>
           </div>
 
@@ -900,6 +909,7 @@ function Earn() {
    ===================================================== */
 
 function Business() {
+  const t = useTranslations('MarketingPage');
   const schedule = [
     { day: "TUE", date: "14", label: "Payroll · November", amt: "$42,800", status: "in 3 days", active: true },
     { day: "FRI", date: "17", label: "Contractor batch", amt: "$8,900", status: "queued" },
@@ -962,8 +972,8 @@ function Business() {
   const features = [
     {
       icon: "📅",
-      title: "Schedule payments",
-      body: "Queue a payment for next Tuesday. Or the 1st of every month. It leaves on time whether you're online or not.",
+      title: t('business.feature0Title'),
+      body: t('business.feature0Body'),
       preview: (
         <div className="flex flex-col gap-2">
           {schedule.map((r, i) => (
@@ -998,8 +1008,8 @@ function Business() {
     },
     {
       icon: "🔁",
-      title: "Recurring payments",
-      body: "Set it once. Payroll every 1st, retainers every 15th, subscriptions weekly. Pause or edit any time.",
+      title: t('business.feature1Title'),
+      body: t('business.feature1Body'),
       preview: (
         <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-[18px]">
           <div className="mb-3.5 flex items-baseline justify-between">
@@ -1038,8 +1048,8 @@ function Business() {
     },
     {
       icon: "🪪",
-      title: "KYC-gated claims",
-      body: "Require identity verification before a recipient can claim. Perfect for hackathon prizes, grants, or compliance-bound transfers.",
+      title: t('business.feature2Title'),
+      body: t('business.feature2Body'),
       preview: (
         <div className="flex flex-col gap-2.5">
           {kycRows.map((r, i) => (
@@ -1060,8 +1070,8 @@ function Business() {
     },
     {
       icon: "🧾",
-      title: "Invoices",
-      body: "Send a clean invoice link. Client pays any way they want. You get paid in whatever you want. Reconciliation handled.",
+      title: t('business.feature3Title'),
+      body: t('business.feature3Body'),
       preview: (
         <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-[18px]">
           <div className="mb-3.5 flex items-center justify-between border-b border-white/[0.05] pb-3">
@@ -1103,14 +1113,14 @@ function Business() {
           className="mb-20 flex flex-wrap items-end justify-between gap-10"
         >
           <div className="max-w-[680px]">
-            <Pill>For business</Pill>
+            <Pill>{t('business.pill')}</Pill>
             <h2 className="mb-5 mt-6 font-display text-[clamp(2.8rem,5.5vw,4.8rem)] font-medium leading-[1.02] tracking-[-0.03em] text-white">
-              Payroll, payouts,
+              {t('business.headline1')}
               <br />
-              <span className="italic text-slate-400">all in one place.</span>
+              <span className="italic text-slate-400">{t('business.headline2')}</span>
             </h2>
             <p className="max-w-[520px] font-grotesk text-[1.15rem] leading-[1.6] text-slate-400">
-              From paying your contractors in five countries to releasing hackathon prizes with KYC — Loofta handles the messy stuff.
+              {t('business.body')}
             </p>
           </div>
           <a
@@ -1119,7 +1129,7 @@ function Business() {
             rel="noopener noreferrer"
             className="inline-flex shrink-0 items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-base md:text-sm whitespace-nowrap"
           >
-            Book a business demo <ArrowRight className="h-[15px] w-[15px]" strokeWidth={2} />
+            {t('business.bookDemo')} <ArrowRight className="h-[15px] w-[15px]" strokeWidth={2} />
           </a>
         </motion.div>
 
@@ -1137,17 +1147,17 @@ function Business() {
 
           <div className="relative">
             <span className="font-grotesk text-[13px] font-medium uppercase tracking-[0.12em] text-slate-500">
-              Bulk payments
+              {t('business.bulkEyebrow')}
             </span>
             <h3 className="mb-5 mt-4 font-display text-[clamp(2rem,3.4vw,3rem)] font-medium leading-[1.05] tracking-[-0.025em] text-white">
-              Pay 200 people in one signature.
+              {t('business.bulkTitle')}
             </h3>
             <p className="mb-6 max-w-[440px] font-grotesk text-[1.05rem] leading-[1.6] text-slate-400">
-              Upload a CSV or paste a list. Pay your freelancers, creators, hackathon winners, or an entire payroll — in any mix of currencies they each want to receive.
+              {t('business.bulkBody')}
             </p>
             <div className="inline-flex items-center gap-2.5 rounded-full border border-[rgba(255,19,1,0.3)] bg-[rgba(255,19,1,0.1)] px-3.5 py-2">
               <span className="h-1.5 w-1.5 rounded-full bg-[#FF1301] shadow-[0_0_8px_#FF1301]" />
-              <span className="font-grotesk text-sm md:text-xs font-medium text-white">200+ recipients · one tx</span>
+              <span className="font-grotesk text-sm md:text-xs font-medium text-white">{t('business.bulkBadge')}</span>
             </div>
           </div>
 
@@ -1217,13 +1227,13 @@ function Business() {
           />
           <div className="relative min-w-[280px] flex-1 basis-[420px]">
             <div className="mb-2.5 font-grotesk text-sm md:text-xs font-medium uppercase tracking-[0.14em] text-[#FF6A00]">
-              Talk to us
+              {t('business.ctaEyebrow')}
             </div>
             <h3 className="mb-2.5 font-display text-[clamp(1.8rem,2.8vw,2.6rem)] font-medium leading-[1.05] tracking-[-0.025em] text-white">
-              Running payroll, a DAO, or a grants program?
+              {t('business.ctaTitle')}
             </h3>
             <p className="max-w-[560px] font-grotesk text-[15px] leading-[1.55] text-slate-400">
-              Custom volume pricing, dedicated support, and onboarding help for teams paying 50+ recipients.
+              {t('business.ctaBody')}
             </p>
           </div>
           <div className="relative flex flex-wrap gap-3">
@@ -1231,7 +1241,7 @@ function Business() {
               href={APP_URL}
               className={`inline-flex items-center gap-2.5 rounded-full font-display font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] px-8 py-[18px] text-[17px] ${BRAND_GRADIENT}`}
             >
-              Contact sales <ArrowRight className="h-[18px] w-[18px]" strokeWidth={2} />
+              {t('business.contactSales')} <ArrowRight className="h-[18px] w-[18px]" strokeWidth={2} />
             </Link>
             <a
               href={`mailto:${CONTACT_EMAIL}`}
@@ -1272,6 +1282,7 @@ function V2Check({ size = 11 }: { size?: number }) {
 }
 
 function V2Zcash() {
+  const t = useTranslations('MarketingPage');
   const ZEC_GOLD = "#F4B728";
   const ZEC_GOLD_SOFT = "rgba(244,183,40,.14)";
 
@@ -1284,27 +1295,27 @@ function V2Zcash() {
 
   const tiles = [
     {
-      eyebrow: "P2P",
-      title: "Send ZEC peer-to-peer",
-      body: "Hand someone your @username, they pay in shielded ZEC. No exchange account, no KYC bridge, no leak.",
+      eyebrow: t('zcash.tile0Eyebrow'),
+      title: t('zcash.tile0Title'),
+      body: t('zcash.tile0Body'),
       icon: "🤝",
     },
     {
-      eyebrow: "Off-ramp",
-      title: "Cash out, privately",
-      body: "Convert ZEC to USD, EUR, or your local bank — without the on-chain trail. Funds land in Revolut, Wise, or any account.",
+      eyebrow: t('zcash.tile1Eyebrow'),
+      title: t('zcash.tile1Title'),
+      body: t('zcash.tile1Body'),
       icon: "🏦",
     },
     {
-      eyebrow: "Request",
-      title: "Request payment in ZEC",
-      body: "One link. Set the amount, share it anywhere. The sender pays from any chain — you receive shielded ZEC.",
+      eyebrow: t('zcash.tile2Eyebrow'),
+      title: t('zcash.tile2Title'),
+      body: t('zcash.tile2Body'),
       icon: "🔗",
     },
     {
-      eyebrow: "Swap",
-      title: "Swap ZEC, any direction",
-      body: "ZEC ↔ USDC, SOL, ETH, USDT. Best route across NEAR Intents and on-chain DEXs. Settles in seconds.",
+      eyebrow: t('zcash.tile3Eyebrow'),
+      title: t('zcash.tile3Title'),
+      body: t('zcash.tile3Body'),
       icon: "🔁",
     },
   ];
@@ -1329,7 +1340,7 @@ function V2Zcash() {
                 <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 999 }}>
                   <ZecLogo size={22} />
                 </span>
-                Zcash · ZEC
+                {t('zcash.pill')}
               </span>
               <h2 style={{
                 fontFamily: "'Clash Display'", fontWeight: 500,
@@ -1337,11 +1348,11 @@ function V2Zcash() {
                 lineHeight: 1.02, letterSpacing: "-.03em",
                 color: "#fff", margin: "24px 0 20px", paddingBottom: "0.1em",
               }}>
-                Private money,<br />
-                <span style={{ fontStyle: "italic", color: ZEC_GOLD }}>actually private.</span>
+                {t('zcash.headline1')}<br />
+                <span style={{ fontStyle: "italic", color: ZEC_GOLD }}>{t('zcash.headlineGradient')}</span>
               </h2>
               <p style={{ fontFamily: "'Clash Grotesk'", fontSize: "1.15rem", color: "#94a3b8", lineHeight: 1.6, maxWidth: 560, margin: 0 }}>
-                Receive, request, swap, and off-ramp Zcash without ever exposing amounts or counterparts. A whole side of oofta, built on shielded ZEC.
+                {t('zcash.body')}
               </p>
             </div>
             <a href="https://zec.loofta.xyz" target="_blank" rel="noopener noreferrer" style={{
@@ -1378,7 +1389,7 @@ function V2Zcash() {
 
             <div style={{ position: "relative" }}>
               <span style={{ fontFamily: "'Clash Grotesk'", fontSize: 13, fontWeight: 500, color: ZEC_GOLD, textTransform: "uppercase", letterSpacing: ".14em" }}>
-                Shielded by default
+                {t('zcash.shieldedByDefault')}
               </span>
               <h3 style={{
                 fontFamily: "'Clash Display'", fontWeight: 500,
@@ -1386,22 +1397,22 @@ function V2Zcash() {
                 lineHeight: 1.05, letterSpacing: "-.025em",
                 color: "#fff", margin: "16px 0 20px", paddingBottom: "0.08em",
               }}>
-                Receive ZEC the way Zcash<br />was meant to be used.
+                {t('zcash.shieldedTitle')}
               </h3>
               <p style={{ fontFamily: "'Clash Grotesk'", fontSize: "1.05rem", color: "#94a3b8", lineHeight: 1.6, margin: "0 0 28px", maxWidth: 460 }}>
-                Every payment to your @username settles into a shielded address. No transparent leg, no metadata leak. We never see the amount.
+                {t('zcash.shieldedBody')}
               </p>
               <ul style={{ listStyle: "none", padding: 0, margin: "0 0 32px", display: "flex", flexDirection: "column", gap: 12 }}>
                 {[
-                  "Sender pays from any chain — they don't need ZEC",
-                  "We swap on the way in, deposit shielded",
-                  "Unified shielded balance across pools",
-                ].map((t) => (
-                  <li key={t} style={{ display: "flex", alignItems: "center", gap: 12, fontFamily: "'Clash Grotesk'", fontSize: 15, color: "#e2e8f0" }}>
+                  t('zcash.bullet1'),
+                  t('zcash.bullet2'),
+                  t('zcash.bullet3'),
+                ].map((bullet) => (
+                  <li key={bullet} style={{ display: "flex", alignItems: "center", gap: 12, fontFamily: "'Clash Grotesk'", fontSize: 15, color: "#e2e8f0" }}>
                     <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 999, background: ZEC_GOLD, color: "#0a0a0c" }}>
                       <V2Check size={11} />
                     </span>
-                    {t}
+                    {bullet}
                   </li>
                 ))}
               </ul>
@@ -1418,7 +1429,7 @@ function V2Zcash() {
                   onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 26px 50px -12px rgba(244,183,40,.65), inset 0 1px 0 rgba(255,255,255,.4)"; }}
                   onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 18px 40px -12px rgba(244,183,40,.5), inset 0 1px 0 rgba(255,255,255,.4)"; }}
                 >
-                  Get your ZEC link <V2Arrow size={15} />
+                  {t('zcash.getLink')} <V2Arrow size={15} />
                 </a>
                 <a href="https://zec.loofta.xyz" target="_blank" rel="noopener noreferrer" style={{
                     display: "inline-flex", alignItems: "center", gap: 8,
@@ -1431,7 +1442,7 @@ function V2Zcash() {
                   onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,.35)"; e.currentTarget.style.background = "rgba(255,255,255,.06)"; }}
                   onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,.15)"; e.currentTarget.style.background = "transparent"; }}
                 >
-                  More info
+                  {t('zcash.moreInfo')}
                 </a>
               </div>
             </div>
@@ -1551,11 +1562,12 @@ function V2Zcash() {
    ===================================================== */
 
 function BuiltOn() {
+  const t = useTranslations('MarketingPage');
   const specs = [
-    { label: "Settlement", value: "Solana L1", sub: "~400ms finality" },
-    { label: "Privacy layer", value: "MagicBlock PER", sub: "Private Ephemeral Rollup" },
-    { label: "Stable asset", value: "USDC", sub: "Circle-native on Solana" },
-    { label: "Custody", value: "Non-custodial", sub: "Keys never leave your device" },
+    { label: t('builtOn.spec0Label'), value: t('builtOn.spec0Value'), sub: t('builtOn.spec0Sub') },
+    { label: t('builtOn.spec1Label'), value: t('builtOn.spec1Value'), sub: t('builtOn.spec1Sub') },
+    { label: t('builtOn.spec2Label'), value: t('builtOn.spec2Value'), sub: t('builtOn.spec2Sub') },
+    { label: t('builtOn.spec3Label'), value: t('builtOn.spec3Value'), sub: t('builtOn.spec3Sub') },
   ];
 
   return (
@@ -1575,7 +1587,7 @@ function BuiltOn() {
         <div className="grid grid-cols-1 items-center gap-20 lg:grid-cols-[1.1fr_1fr]">
           <div>
             <motion.div {...fadeUp}>
-              <Pill>The stack</Pill>
+              <Pill>{t('builtOn.pill')}</Pill>
             </motion.div>
             <motion.h2
               {...fadeUp}
@@ -1603,7 +1615,7 @@ function BuiltOn() {
               transition={{ ...fadeUp.transition, delay: 0.14 }}
               className="mb-9 max-w-[520px] font-grotesk text-[1.15rem] leading-[1.65] text-slate-400"
             >
-              Every payment settles on Solana in under half a second. MagicBlock's Private Ephemeral Rollup keeps amounts and counterparts off the public ledger — by default, for every user, every time.
+              {t('builtOn.body')}
             </motion.p>
             <motion.div
               {...fadeUp}
@@ -1611,10 +1623,10 @@ function BuiltOn() {
               className="flex flex-wrap gap-3"
             >
               <a href="#" className="inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-base md:text-sm">
-                Read the architecture
+                {t('builtOn.readArchitecture')}
               </a>
               <a href="#" className="inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-5 py-3 text-base md:text-sm">
-                How PER works
+                {t('builtOn.howPerWorks')}
               </a>
             </motion.div>
           </div>
@@ -1646,7 +1658,7 @@ function BuiltOn() {
                 </div>
                 <div className="flex-1">
                   <div className="mb-1 font-grotesk text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">
-                    Settlement layer
+                    {t('builtOn.settlementLayer')}
                   </div>
                   <div className="font-display text-[28px] font-medium leading-none tracking-[-0.02em] text-white">
                     Solana
@@ -1657,7 +1669,7 @@ function BuiltOn() {
                     400
                     <span className="ml-0.5 text-base md:text-sm text-slate-500">ms</span>
                   </div>
-                  <div className="font-grotesk text-[11px] text-slate-500">finality</div>
+                  <div className="font-grotesk text-[11px] text-slate-500">{t('builtOn.finality')}</div>
                 </div>
               </div>
             </div>
@@ -1668,7 +1680,7 @@ function BuiltOn() {
                 className="h-px flex-1"
                 style={{ background: "linear-gradient(90deg, transparent, rgba(255,255,255,.12), transparent)" }}
               />
-              <span className="font-display text-base italic text-slate-500">powered with</span>
+              <span className="font-display text-base italic text-slate-500">{t('builtOn.poweredWith')}</span>
               <div
                 className="h-px flex-1"
                 style={{ background: "linear-gradient(90deg, transparent, rgba(255,255,255,.12), transparent)" }}
@@ -1696,7 +1708,7 @@ function BuiltOn() {
                 </div>
                 <div className="flex-1">
                   <div className="mb-1 font-grotesk text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">
-                    Privacy layer
+                    {t('builtOn.privacyLayer')}
                   </div>
                   <div className="font-display text-[28px] font-medium leading-none tracking-[-0.02em] text-white">
                     MagicBlock PER
@@ -1704,7 +1716,7 @@ function BuiltOn() {
                 </div>
                 <div className="text-right">
                   <div className="font-display text-[22px] font-medium text-[#EAB308]">private</div>
-                  <div className="font-grotesk text-[11px] text-slate-500">by default</div>
+                  <div className="font-grotesk text-[11px] text-slate-500">{t('builtOn.byDefault')}</div>
                 </div>
               </div>
             </div>
@@ -1739,6 +1751,7 @@ function BuiltOn() {
    ===================================================== */
 
 function CTA() {
+  const t = useTranslations('MarketingPage');
   return (
     <section className="relative overflow-hidden px-10 py-40">
       <div
@@ -1748,24 +1761,24 @@ function CTA() {
       />
       <motion.div {...fadeUp} className="relative mx-auto max-w-[900px] text-center">
         <h2 className="mb-6 font-display text-[clamp(3.5rem,9vw,7.5rem)] font-medium leading-[1.02] tracking-[-0.035em] text-white pb-[0.14em]">
-          Ready to{" "}
-          <span className={`inline-block italic ${BRAND_GRADIENT} bg-clip-text text-transparent pb-[0.05em] pr-[0.12em] -mr-[0.12em]`}>get paid?</span>
+          {t('cta.headline1')}{" "}
+          <span className={`inline-block italic ${BRAND_GRADIENT} bg-clip-text text-transparent pb-[0.05em] pr-[0.12em] -mr-[0.12em]`}>{t('cta.headlineGradient')}</span>
         </h2>
         <p className="mb-12 font-grotesk text-[clamp(1.15rem,1.6vw,1.4rem)] text-slate-400">
-          Free account. No seed phrase. No wallet install. Ready in 30 seconds.
+          {t('cta.body')}
         </p>
         <div className="flex flex-wrap justify-center gap-3.5">
           <Link
             href={APP_URL}
             className={`inline-flex items-center gap-2.5 rounded-full font-display font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] px-8 py-[18px] text-[17px] ${BRAND_GRADIENT}`}
           >
-            Create your payment link <ArrowRight className="h-[18px] w-[18px]" strokeWidth={2} />
+            {t('cta.createLink')} <ArrowRight className="h-[18px] w-[18px]" strokeWidth={2} />
           </Link>
           <Link
             href={APP_URL}
             className="inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] font-display font-medium text-white transition-colors duration-200 hover:border-white/25 hover:bg-white/10 px-[30px] py-[17px] text-[17px]"
           >
-            Send a payment
+            {t('cta.sendPayment')}
           </Link>
         </div>
       </motion.div>
@@ -1774,27 +1787,31 @@ function CTA() {
 }
 
 function Footer() {
+  const t = useTranslations('MarketingPage');
   return (
-    <footer className="flex flex-wrap items-center justify-between gap-5 border-t border-white/[0.06] px-10 py-10">
-      <div className="flex items-center gap-6">
-        <Image src="/loofta_white.svg" alt="Loofta" width={95} height={22} />
-        <span className="font-grotesk text-[13px] text-slate-600">Non-custodial · Private · Devnet</span>
+    <footer className="border-t border-white/[0.06] px-10 py-10">
+      <div className="flex flex-wrap items-center justify-between gap-5">
+        <div className="flex items-center gap-6">
+          <Image src="/loofta_white.svg" alt="Loofta" width={95} height={22} />
+          <span className="font-grotesk text-[13px] text-slate-600">{t('footer.tagline')}</span>
+        </div>
+        <div className="flex gap-6">
+          {[
+            { label: "Twitter", href: "https://x.com/looftaxyz" },
+            { label: "Telegram", href: "https://t.me/looftapay" },
+            { label: "Medium", href: "https://medium.com/@looftaxyz" },
+            { label: t('footer.privacy'), href: "#" },
+          ].map((l) => (
+            <a key={l.label} href={l.href} target="_blank" rel="noopener noreferrer" className="font-grotesk text-[13px] text-slate-400 hover:text-white">
+              {l.label}
+            </a>
+          ))}
+          <Link href="/brand" className="font-grotesk text-[13px] text-slate-400 hover:text-white">
+            {t('footer.brand')}
+          </Link>
+        </div>
       </div>
-      <div className="flex gap-6">
-        {[
-          { label: "Twitter", href: "https://x.com/looftaxyz" },
-          { label: "Telegram", href: "https://t.me/looftapay" },
-          { label: "Medium", href: "https://medium.com/@looftaxyz" },
-          { label: "Privacy", href: "#" },
-        ].map((l) => (
-          <a key={l.label} href={l.href} target="_blank" rel="noopener noreferrer" className="font-grotesk text-[13px] text-slate-400 hover:text-white">
-            {l.label}
-          </a>
-        ))}
-        <Link href="/brand" className="font-grotesk text-[13px] text-slate-400 hover:text-white">
-          Brand
-        </Link>
-      </div>
+      <FooterControls />
     </footer>
   );
 }

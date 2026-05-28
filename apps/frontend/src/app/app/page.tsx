@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactNode, useMemo } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -16,6 +16,7 @@ import { MultiSendFlow } from "@/components/app/MultiSendFlow";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { motion, AnimatePresence } from "framer-motion";
 import { AtSign, LinkIcon, Mail, PlusIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
   () => import("@/app/app/claim/ClaimPageContent").then((mod) => ({ default: mod.ClaimPageContent })),
@@ -24,7 +25,12 @@ const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
 
 const HOME_TAB_KEY = "loofta.home.tab";
 
+const bold = (chunks: ReactNode) => (
+  <span className="font-medium text-slate-300">{chunks}</span>
+);
+
 export default function Home() {
+  const t = useTranslations('HomePage');
   const searchParams = useSearchParams();
   const router = useRouter();
   const { authenticated } = useAuth();
@@ -49,7 +55,6 @@ export default function Home() {
     else setActiveTabState("send");
   }, [searchParams]);
 
-  // When ?to=username (e.g. redirect from /link/@username), show Send tab and pay-to-user form
   const toParam = searchParams.get("to");
   useEffect(() => {
     if (!toParam) return;
@@ -63,7 +68,6 @@ export default function Home() {
     if (amt != null && amt !== "" && !isNaN(Number(amt)) && Number(amt) >= 0) setAmount(amt);
   }, [toParam, searchParams]);
 
-  // Open create-payment-link card when ?create=1 (e.g. redirect from /claim)
   useEffect(() => {
     if (searchParams.get("create") === "1") {
       setActiveTabState("receive");
@@ -93,11 +97,11 @@ export default function Home() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const searchCacheRef = useRef<Map<string, { usernames: string[]; ts: number }>>(new Map());
-  const SEARCH_CACHE_TTL_MS = 2 * 60 * 1000; // 2 min
+  const SEARCH_CACHE_TTL_MS = 2 * 60 * 1000;
 
   const searchQuery = recipient.replace(/^@/, "").trim().toLowerCase();
-  const showDropdown = false; // Autocomplete/suggestions disabled for now
-  // --- Amount hero sizing (copied from ClaimPageContent style) ---
+  const showDropdown = false;
+
   const mirrorRef = useRef<HTMLSpanElement | null>(null);
   const [amountInputWidthPx, setAmountInputWidthPx] = useState<number>(0);
 
@@ -114,7 +118,6 @@ export default function Home() {
       const int = p[0] || "";
       const dec = (p[1] || "").slice(0, Math.max(0, maxDecimals));
       const result = dec.length > 0 ? `${int}.${dec}` : int;
-      // Keep trailing dot so user can type decimals (e.g. "10." → "10.5")
       return hadTrailingDot && dec === "" ? `${int}.` : result;
     }
     return p[0] || "";
@@ -126,14 +129,13 @@ export default function Home() {
 
   const displayAmount = (amount && amount.length > 0) ? amount : "0";
 
-  // count only digits for sizing (ignore dot)
   const totalDigitsCount = (() => {
     const onlyDigits = String(amount || "").replace(/[^0-9]/g, "");
     return onlyDigits.length || 1;
   })();
 
   function computeFontPx(digits: number) {
-    const maxPx = 72; // tweak: slightly smaller than claim page for your card
+    const maxPx = 72;
     const minPx = 28;
     const startDigits = 5;
     const stepPerDigit = 7;
@@ -153,98 +155,92 @@ export default function Home() {
     setAmountInputWidthPx(Math.ceil(rect.width));
   }, [displayAmount, amountFontPx]);
 
-  const faqItems: { question: string; answer: ReactNode }[] = [
+  const faqItems: { question: string; answer: ReactNode }[] = useMemo(() => [
     {
-      question: "What are the fees?",
+      question: t('faq.fees.question'),
       answer: (
         <>
           <p className="mb-3 last:mb-0">
-            Private payments on Loofta Pay carry a flat fee charged to the sender — <span className="font-medium text-slate-300">10 BPS</span> of the transfer amount plus a <span className="font-medium text-slate-300">0.002 SOL</span> gas fee, both paid in USDC. All fees go directly to MagicBlock&apos;s privacy infrastructure. Loofta takes no cut. The recipient always receives the exact amount requested.
+            {t.rich('faq.fees.answer1', { bold })}
           </p>
           <p className="mb-0">
-            Compared to other privacy tools on Solana (Umbra, Privacy Cash, Houdini Swap) which charge 0.4%–4.4%+ at small amounts, Loofta&apos;s flat fee is consistently the lowest across all transfer sizes.
+            {t('faq.fees.answer2')}
           </p>
         </>
       ),
     },
     {
-      question: "How do private payments work?",
-      answer:
-        "Private payments use MagicBlock's Private Ephemeral Rollup (PER)—infrastructure built for private visibility instead of a typical fully public transfer. That means observers can't see the same payment details they usually could on-chain, so your activity is much harder to follow or link together. It's the option to choose when you care about stronger payment privacy.",
+      question: t('faq.privatePayments.question'),
+      answer: t('faq.privatePayments.answer'),
     },
-    { question: "Can I send to someone before they have an account?", answer: "Yes. You can send to a Twitter/X username or email. They'll get a link to sign up and claim the payment. Once they log in with that identity, they can claim the funds." },
     {
-      question: "How do I retrieve my embedded Loofta Pay wallet?",
+      question: t('faq.sendBeforeAccount.question'),
+      answer: t('faq.sendBeforeAccount.answer'),
+    },
+    {
+      question: t('faq.retrieveWallet.question'),
       answer: (
         <>
           <p className="mb-3 last:mb-0">
-            Open your account menu, go to <span className="font-medium text-slate-300">Settings</span>, and use{" "}
-            <span className="font-medium text-slate-300">Export Private Key</span> to back up your embedded Loofta Pay wallet. You can also view your Solana address there.
+            {t.rich('faq.retrieveWallet.answer1', { bold })}
           </p>
           <p className="mb-3 last:mb-0">
-            If you import or use that wallet <span className="font-medium text-slate-300">outside</span> Loofta Pay, the privacy and safety assumptions we design for in-app use may no longer apply, and{" "}
-            <span className="font-medium text-slate-300">your privacy may be compromised</span>. We strongly recommend keeping activity inside Loofta Pay.
+            {t.rich('faq.retrieveWallet.answer2', { bold })}
           </p>
           <p className="mb-3 last:mb-0">
-            <span className="font-medium text-slate-300">Do not</span> share your embedded wallet address with people so they can pay you. Share your{" "}
-            <span className="font-medium text-slate-300">Loofta username</span> or <span className="font-medium text-slate-300">email</span> instead—that is how others should send you funds.
+            {t.rich('faq.retrieveWallet.answer3', { bold })}
           </p>
           <p className="mb-0">
-            To move money out, use <span className="font-medium text-slate-300">Withdraw</span> to send USDC to a <span className="font-medium text-slate-300">new</span> Solana wallet you control (free on Solana USDC with sponsored gas)—instead of exposing your embedded address.
-          </p>
-        </>
-      ),
-    },
-    { question: "What is a burner wallet?", answer: "A burner wallet is a temporary deposit address we generate for your payment. You send funds to this address and Loofta Pay routes them to the recipient. You don't need to connect a wallet to pay—just send to the deposit address." },
-    {
-      question: "How does Morpho Vault keep my earnings safe?",
-      answer: (
-        <>
-          <p className="mb-3 last:mb-0">
-            Morpho Vault is the protocol powering yield on your Loofta balance — one of the safest and most audited ways to earn passive income in DeFi.
-          </p>
-          <p className="mb-3 last:mb-0">
-            Unlike yield products that pile risk on top of risk, Morpho operates with transparent, overcollateralized lending markets. Every position is visible on-chain. No hidden strategies, no locked funds, no opaque fund managers. Your USDC earns through verified lending activity — and you can withdraw at any time.
-          </p>
-          <p className="mb-0">
-            Morpho has processed billions of dollars in lending volume with an unblemished security record. When your balance earns, it earns safely.
+            {t.rich('faq.retrieveWallet.answer4', { bold })}
           </p>
         </>
       ),
     },
     {
-      question: "How do Loofta Points work?",
+      question: t('faq.burnerWallet.question'),
+      answer: t('faq.burnerWallet.answer'),
+    },
+    {
+      question: t('faq.morphoVault.question'),
       answer: (
         <>
-          <p className="mb-3 last:mb-0">
-            Every payment you receive earns you Loofta Points automatically — no opt-in required. Points accumulate in your account and unlock rewards across Loofta's partner network: discounts on tools and services that creators and freelancers already use.
-          </p>
-          <p className="mb-0">
-            Points scale with usage — the more Loofta Pay is your primary payment layer, the more you earn back. As the partner network grows, so does the value of your points.
-          </p>
+          <p className="mb-3 last:mb-0">{t('faq.morphoVault.answer1')}</p>
+          <p className="mb-3 last:mb-0">{t('faq.morphoVault.answer2')}</p>
+          <p className="mb-0">{t('faq.morphoVault.answer3')}</p>
         </>
       ),
     },
-    { question: "APY on received amount & auto-compound?", answer: "We're building APY in USD on your received balance, with every claimed payment auto-compounding. Coming soon." },
     {
-      question: "I'm on devnet — how do I get test SOL and USDC?",
+      question: t('faq.looftaPoints.question'),
       answer: (
         <>
-          Get free devnet SOL from the{" "}
+          <p className="mb-3 last:mb-0">{t('faq.looftaPoints.answer1')}</p>
+          <p className="mb-0">{t('faq.looftaPoints.answer2')}</p>
+        </>
+      ),
+    },
+    {
+      question: t('faq.apy.question'),
+      answer: t('faq.apy.answer'),
+    },
+    {
+      question: t('faq.devnet.question'),
+      answer: t.rich('faq.devnet.answer', {
+        solanaLink: (chunks) => (
           <a href="https://faucet.solana.com/" target="_blank" rel="noopener noreferrer" className="underline text-amber-400 hover:text-amber-300">
-            Solana faucet
+            {chunks}
           </a>
-          . For devnet USDC, use the{" "}
+        ),
+        circleLink: (chunks) => (
           <a href="https://faucet.circle.com/" target="_blank" rel="noopener noreferrer" className="underline text-amber-400 hover:text-amber-300">
-            Circle faucet
+            {chunks}
           </a>
-          .
-        </>
-      ),
+        ),
+      }),
     },
-  ];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [t]);
 
-  // Exact email only: no partial match to avoid linking/leaking users
   const isExactEmail = (q: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q);
 
   useEffect(() => {
@@ -267,7 +263,6 @@ export default function Home() {
       setLoadingSuggestions(true);
       try {
         if (isExactEmail(searchQuery)) {
-          // Only resolve by exact email – no partial email search (privacy)
           const token = await getAccessToken().catch(() => null);
           const r = await fetch(`/api/users/resolve-recipient?q=${encodeURIComponent(searchQuery)}`, {
             headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -332,7 +327,6 @@ export default function Home() {
   return (
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
       <div className="max-w-lg mx-auto px-4 py-6">
-        {/* Header + tab content: min one screen so FAQ is below the fold */}
         <div className="min-h-[calc(100vh-var(--header-h,0px))]">
 
           <div className="hidden md:block">
@@ -354,15 +348,15 @@ export default function Home() {
                     }}
                     className="text-slate-400 hover:text-white text-base font-medium"
                   >
-                    ← New payment
+                    {t('newPayment')}
                   </button>
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white space-y-4">
-                    <p className="text-slate-200">Payment link created. Share it or open it to view status.</p>
+                    <p className="text-slate-200">{t('paymentCreated')}</p>
                     <Link
                       href={`/c/${claimId}`}
                       className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90"
                     >
-                      View payment
+                      {t('viewPayment')}
                     </Link>
                   </div>
                 </div>
@@ -384,14 +378,14 @@ export default function Home() {
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
                     <div ref={wrapperRef} className="relative">
                       <div className="flex items-center justify-between mb-5">
-                        <Label className="text-slate-300 text-xl font-sans font-medium">Send</Label>
+                        <Label className="text-slate-300 text-xl font-sans font-medium">{t('send')}</Label>
                         {canMultiSend && (
                           <button
                             type="button"
                             onClick={() => { setShowMultiSend(true); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
                             className="text-slate-500 hover:text-slate-300 text-base sm:text-sm font-medium transition-colors"
                           >
-                            Try multi send
+                            {t('multiSend')}
                           </button>
                         )}
                       </div>
@@ -421,9 +415,9 @@ export default function Home() {
                               style={{
                                 fontSize: `${amountFontPx}px`,
                                 lineHeight: 1.05,
-                                width: `${(amountInputWidthPx || Math.round(amountFontPx * 0.62)) + amountGapPx}px`,
+                                width: `${amountInputWidthPx + amountGapPx}px`,
                               }}
-                              aria-label="Amount in USD"
+                              aria-label={t('amountLabel')}
                             />
                             <span
                               className="font-semibold font-sans text-slate-500 ml-1"
@@ -434,7 +428,7 @@ export default function Home() {
                           </div>
                         </div>
                       </div>
-                      <Label className="text-slate-300 text-xl font-sans font-medium">To</Label>
+                      <Label className="text-slate-300 text-xl font-sans font-medium">{t('to')}</Label>
                       <div className="relative mt-3">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
                           {looksLikeEmail ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
@@ -442,7 +436,7 @@ export default function Home() {
                         <Input
                           type="text"
                           name="send-to-recipient"
-                          placeholder="Loofta, Twitter username, exact email"
+                          placeholder={t('recipientPlaceholder')}
                           value={recipient}
                           onChange={(e) => {
                             const raw = e.target.value;
@@ -451,21 +445,19 @@ export default function Home() {
                           }}
                           autoComplete="off"
                           className="h-12 pl-10 mb-2 bg-white/5 border-white/10 text-white text-md placeholder:text-slate-500 placeholder:text-[20px]"
-                          style={{
-                            fontSize: `20px`,
-                          }}
+                          style={{ fontSize: `20px` }}
                         />
                       </div>
                       {showDropdown && (
                         <ul className="absolute z-50 top-full left-0 right-0 mt-1 rounded-xl border border-white/10 bg-[#1a1a1f] py-1 shadow-lg max-h-48 overflow-auto">
                           {loadingSuggestions ? (
-                            <li className="px-3 py-2 text-slate-300 text-base md:text-sm">Searching…</li>
+                            <li className="px-3 py-2 text-slate-300 text-sm">{t('searching')}</li>
                           ) : suggestions.length > 0 ? (
                             suggestions.map((u) => (
                               <li key={u}>
                                 <button
                                   type="button"
-                                  className="w-full text-left px-3 py-2 text-white hover:bg-white/10 text-base md:text-sm"
+                                  className="w-full text-left px-3 py-2 text-white hover:bg-white/10 text-sm"
                                   onClick={() => {
                                     setRecipient(u);
                                     setDropdownClosed(true);
@@ -473,18 +465,18 @@ export default function Home() {
                                 >
                                   <span>@{u}</span>
                                   {suggestions.length === 1 && isExactEmail(searchQuery) && (
-                                    <span className="text-slate-400 text-base md:text-sm ml-1">(from email)</span>
+                                    <span className="text-slate-400 text-sm ml-1">{t('fromEmail')}</span>
                                   )}
                                 </button>
                               </li>
                             ))
                           ) : (
-                            <li className="px-3 py-2 text-slate-400 text-base md:text-sm">No users found</li>
+                            <li className="px-3 py-2 text-slate-400 text-sm">{t('noUsersFound')}</li>
                           )}
                         </ul>
                       )}
                       <p className="text-base sm:text-sm text-slate-400 mt-0.5 mb-1.5">
-                        Loofta or Twitter username, or exact email – they claim by signing in with that account.
+                        {t('recipientHint')}
                       </p>
                     </div>
                     <Button
@@ -492,7 +484,7 @@ export default function Home() {
                       disabled={!recipient.trim()}
                       className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
                     >
-                      {authenticated ? "Continue" : "Sign in to continue"}
+                      {authenticated ? t('continue') : t('signInToContinue')}
                     </Button>
                   </div>
                 </>
@@ -509,7 +501,7 @@ export default function Home() {
                     onClick={() => { setShowClaimOverlay(false); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
                     className="text-slate-400 hover:text-white text-base font-medium"
                   >
-                    ← Back to receive
+                    {t('backToReceive')}
                   </button>
                   <ClaimPageContent embedInApp />
                 </>
@@ -519,12 +511,12 @@ export default function Home() {
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
                     <p className="text-slate-300 text-xl font-medium flex gap-3 font-sans items-center">
                       <LinkIcon className={"text-orange-400 w-4 h-4"} />
-                      Share your personal link
+                      {t('sharePersonalLink')}
                     </p>
                     {authenticated && username ? (
                       <>
                         <p className="text-slate-300 text-base sm:text-sm">
-                          Anyone can pay you by opening this link. You receive in your preferred token and chain.
+                          {t('personalLinkDescription')}
                         </p>
                         <div className="flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5">
                           <span className="flex-1 text-base sm:text-sm font-mono text-white truncate">
@@ -538,9 +530,9 @@ export default function Home() {
                               setLinkCopied(true);
                               setTimeout(() => setLinkCopied(false), 2000);
                             }}
-                            className="shrink-0 px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 hover:text-white hover:bg-white/15 text-base md:text-sm font-medium transition-colors"
+                            className="shrink-0 px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 hover:text-white hover:bg-white/15 text-sm font-medium transition-colors"
                           >
-                            {linkCopied ? "Copied" : "Copy"}
+                            {linkCopied ? t('copied') : t('copy')}
                           </button>
                         </div>
                         <Button
@@ -548,13 +540,13 @@ export default function Home() {
                           className="w-full h-12 rounded-xl"
                           onClick={() => useAuthStore.getState().setOpenShareModal(true)}
                         >
-                          Share & settings
+                          {t('shareAndSettings')}
                         </Button>
                       </>
                     ) : (
                       <>
                         <p className="text-slate-300 text-base sm:text-sm">
-                          Sign in to get your own payment link. Add Twitter later to get a unique @username.
+                          {t('signInForLink')}
                         </p>
                         <Button
                           type="button"
@@ -562,7 +554,7 @@ export default function Home() {
                           onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}
                           className="w-full h-12 rounded-xl font-semibold"
                         >
-                          Sign in to get your payment link
+                          {t('signInToGetLink')}
                         </Button>
                       </>
                     )}
@@ -572,17 +564,17 @@ export default function Home() {
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
                     <p className="text-slate-300 text-xl flex gap-3 font-sans font-medium items-center">
                       <PlusIcon className={"text-orange-400 w-4 h-4"} />
-                      Create new payment link
+                      {t('createPaymentLink')}
                     </p>
                     <p className="text-slate-300 text-base sm:text-sm">
-                      Create a one-off payment request. You choose amount, token, and chain. No account required to create.
+                      {t('createLinkDescription')}
                     </p>
                     <Button
                       type="button"
                       onClick={() => { setShowClaimOverlay(true); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
                       className="w-full h-11 rounded-xl text-base font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 border-0"
                     >
-                      Create new payment link
+                      {t('createNewLink')}
                     </Button>
                   </div>
                 </>
@@ -592,11 +584,11 @@ export default function Home() {
         </div>
       </div>
 
-      {/* FAQ — below the fold, above footer (same styling as /about), wider than main column */}
+      {/* FAQ */}
       <section className="md:pb-16 px-4 mt-2 pb-24">
         <div className="max-w-xl mx-auto">
           <h2 className="text-3xl md:text-4xl font-medium font-sans text-white text-center mb-8 md:mb-10">
-            Frequently asked<br />questions
+            {t('faqTitle')}
           </h2>
           <div className="flex flex-col gap-4">
             {faqItems.map((item, index) => (

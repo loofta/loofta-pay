@@ -1,0 +1,369 @@
+{
+  "BottomNav": {
+    "send": "送金",
+    "receive": "受取",
+    "history": "履歴",
+    "profile": "プロフィール"
+  },
+
+  "AppShell": {
+    "bannerMainnet": "メインネットベータ — 本物のUSDCでプライベート決済を送受信できます。メール、Xユーザー名、またはLooftaユーザー名で誰にでも支払えます。",
+    "bannerDevnet": "MagicBlock PERでプライベート決済を送受信 — デブネット。メール、Xユーザー名、またはLooftaユーザー名で誰にでも支払えます。",
+    "bannerContact": "ご質問はTelegramでお問い合わせください",
+    "dismissBanner": "バナーを閉じる"
+  },
+
+  "MinimalHeader": {
+    "balance": "残高",
+    "sparks": "Sparks",
+    "waitlist": "ウェイトリスト",
+    "profile": "プロフィール",
+    "signIn": "ログイン",
+    "logOut": "ログアウト",
+    "mainnetBeta": "メインネットベータ",
+    "mainnetViewOnly": "メインネット（閲覧のみ）",
+    "devnet": "デブネット",
+    "paymentsDisabled": "決済無効 — 残高と出金のみ",
+    "openMenu": "メニューを開く",
+    "closeMenu": "メニューを閉じる",
+    "earnSparks": "アクティビティでSparksを獲得",
+    "requestAccess": "メインネットへの早期アクセスを申請"
+  },
+
+  "SettingsPage": {
+    "title": "プロフィール",
+    "username": "ユーザー名",
+    "email": "メール",
+    "shareYourLink": "リンクを共有",
+    "settings": "設定",
+    "logOut": "ログアウト",
+    "copyUsername": "ユーザー名をコピー",
+    "signInPrompt": "プロフィールを表示するにはログインしてください。",
+    "goToHome": "ホームへ"
+  },
+
+  "HistoryPage": {
+    "title": "決済履歴",
+    "amountSent": "送金額",
+    "amountReceived": "受取額",
+    "recentPayments": "最近の決済",
+    "sent": "送金済み",
+    "received": "受取済み",
+    "to": "宛先",
+    "from": "送信元",
+    "anonymous": "匿名",
+    "noPayments": "まだ決済がありません。",
+    "noPaymentsMatch": "検索に一致する決済がありません。",
+    "searchPlaceholder": "送信者、受取人、またはメッセージで検索...",
+    "signInTitle": "決済履歴",
+    "signInPrompt": "送受信した決済を確認するにはログインしてください。",
+    "signIn": "ログイン",
+    "refresh": "更新",
+    "refreshList": "リストを更新",
+    "search": "検索",
+    "status": {
+      "SUCCESS": "支払済み",
+      "PRIVATE_TRANSFER_PENDING": "未請求",
+      "CANCELLED": "キャンセル済み",
+      "OPEN": "オープン",
+      "PENDING_DEPOSIT": "保留中",
+      "IN_FLIGHT": "処理中",
+      "REFUNDED": "返金済み",
+      "EXPIRED": "期限切れ"
+    }
+  },
+
+  "HomePage": {
+    "send": "送金",
+    "to": "宛先",
+    "amountLabel": "USD金額",
+    "recipientPlaceholder": "Loofta、Twitterユーザー名、正確なメール",
+    "recipientHint": "LooftaまたはTwitterユーザー名、または正確なメール — そのアカウントでログインして請求します。",
+    "continue": "続ける",
+    "signInToContinue": "続けるにはログインしてください",
+    "multiSend": "一括送金を試す",
+    "newPayment": "← 新しい決済",
+    "paymentCreated": "決済リンクが作成されました。共有するか開いてステータスを確認してください。",
+    "viewPayment": "決済を表示",
+    "receive": "受取",
+    "backToReceive": "← 受取に戻る",
+    "sharePersonalLink": "個人リンクを共有",
+    "personalLinkDescription": "このリンクを開くことで誰でもあなたに支払いができます。希望するトークンとチェーンで受け取ります。",
+    "copy": "コピー",
+    "copied": "コピー済み",
+    "shareAndSettings": "共有・設定",
+    "signInForLink": "自分の決済リンクを取得するにはログインしてください。後でTwitterを追加して一意の@usernameを取得できます。",
+    "signInToGetLink": "決済リンクを取得するにはログインしてください",
+    "createPaymentLink": "新しい決済リンクを作成",
+    "createLinkDescription": "一回限りの支払いリクエストを作成します。金額、トークン、チェーンを選択します。作成にアカウントは不要です。",
+    "createNewLink": "新しい決済リンクを作成",
+    "faqTitle": "よくある質問",
+    "searching": "検索中…",
+    "noUsersFound": "ユーザーが見つかりません",
+    "fromEmail": "（メールより）",
+    "faq": {
+      "fees": {
+        "question": "手数料はいくらですか？",
+        "answer1": "Loofta Payのプライベート決済には、送信者に請求される固定手数料があります — 送金額の<bold>10 BPS</bold>と<bold>0.002 SOL</bold>のガス代（両方ともUSDCで支払い）。すべての手数料はMagicBlockのプライバシーインフラに直接支払われます。Looftaは一切取りません。受取人は常に要求された正確な金額を受け取ります。",
+        "answer2": "小額送金で0.4%〜4.4%以上を請求するSolanaの他のプライバシーツール（Umbra、Privacy Cash、Houdini Swap）と比較して、Looftaの固定手数料はすべての送金額で一貫して最も低いです。"
+      },
+      "privatePayments": {
+        "question": "プライベート決済はどのように機能しますか？",
+        "answer": "プライベート決済はMagicBlockのPrivate Ephemeral Rollup (PER)を使用します — 典型的な完全公開の送金ではなく、プライベートな可視性のために構築されたインフラです。つまり、観察者は通常オンチェーンで見られる同じ決済詳細を見ることができず、あなたのアクティビティを追跡したり関連付けたりすることがはるかに難しくなります。より強力な決済プライバシーが必要な場合に選択するオプションです。"
+      },
+      "sendBeforeAccount": {
+        "question": "アカウントがない人にも送れますか？",
+        "answer": "はい。Twitter/Xユーザー名またはメールに送ることができます。サインアップして決済を請求するためのリンクが届きます。その身元でログインすると、資金を請求できます。"
+      },
+      "retrieveWallet": {
+        "question": "組み込みのLoofta Payウォレットはどうやって取得しますか？",
+        "answer1": "アカウントメニューを開き、<bold>設定</bold>に移動して、<bold>秘密鍵をエクスポート</bold>を使用して組み込みLoofta Payウォレットをバックアップしてください。そこでSolanaアドレスも確認できます。",
+        "answer2": "このウォレットをLoofta Pay<bold>外部</bold>でインポートまたは使用した場合、アプリ内使用のために設計したプライバシーとセキュリティの前提が適用されなくなる可能性があり、<bold>プライバシーが侵害される可能性があります</bold>。アクティビティをLoofta Pay内に留めることを強くお勧めします。",
+        "answer3": "人々があなたに支払えるように、組み込みウォレットアドレスを共有<bold>しないでください</bold>。代わりに<bold>Looftaユーザー名</bold>または<bold>メール</bold>を共有してください — それが他者があなたに資金を送る方法です。",
+        "answer4": "お金を移動するには、組み込みアドレスを公開する代わりに、<bold>引出し</bold>を使用して管理する<bold>新しい</bold>SolanaウォレットにUSDCを送ってください（Solana USDCでスポンサー付きガスにより無料）。"
+      },
+      "burnerWallet": {
+        "question": "バーナーウォレットとは何ですか？",
+        "answer": "バーナーウォレットは、決済のために生成する一時的な入金アドレスです。このアドレスに資金を送ると、Loofta Payが受取人にルーティングします。支払いのためにウォレットを接続する必要はありません — 入金アドレスに送るだけです。"
+      },
+      "morphoVault": {
+        "question": "Morpho Vaultは私の収益をどのように安全に保ちますか？",
+        "answer1": "Morpho VaultはLoofta残高の利回りを支えるプロトコルです — DeFiで受動的収入を得る最も安全で最も監査されている方法の一つです。",
+        "answer2": "リスクの上にリスクを積み上げる利回り商品とは異なり、Morphoは透明で過剰担保された貸付市場で運営されています。すべてのポジションはオンチェーンで見ることができます。隠された戦略なし、ロックされた資金なし、不透明なファンドマネージャーなし。あなたのUSDCは検証された貸付活動を通じて収益を得ます — いつでも引き出すことができます。",
+        "answer3": "Morphoは傷のないセキュリティ記録で何十億ドルもの貸付量を処理しました。残高が収益を上げるとき、安全に収益を上げます。"
+      },
+      "looftaPoints": {
+        "question": "Loofta Pointsはどのように機能しますか？",
+        "answer1": "受け取ったすべての決済が自動的にLoofta Pointsを獲得します — オプトイン不要。ポイントはアカウントに蓄積され、Looftaのパートナーネットワーク全体で報酬を解除します：クリエイターやフリーランサーが既に使用しているツールとサービスの割引。",
+        "answer2": "ポイントは使用量に応じてスケールします — Loofta Payが主な支払いレイヤーになるほど、より多く稼ぎ返します。パートナーネットワークが成長するにつれて、ポイントの価値も高まります。"
+      },
+      "apy": {
+        "question": "受取金額のAPYと自動複利？",
+        "answer": "受け取った残高でUSD APYを構築しており、すべての請求済み決済が自動複利されます。近日公開予定。"
+      },
+      "devnet": {
+        "question": "デブネットにいます — テスト用SOLとUSDCはどうやって入手しますか？",
+        "answer": "<solanaLink>Solanaフォーセット</solanaLink>から無料のデブネットSOLを入手してください。デブネットUSDCは<circleLink>Circleフォーセット</circleLink>を使用してください。"
+      }
+    }
+  },
+
+  "MarketingPage": {
+    "nav": {
+      "payReceive": "支払い・受取",
+      "features": "機能",
+      "privacy": "プライバシー",
+      "earn": "稼ぐ",
+      "business": "ビジネス",
+      "zcash": "Zcash",
+      "launchApp": "アプリを起動"
+    },
+    "hero": {
+      "iWantToGetPaid": "支払いを受け取りたい",
+      "iWantToSend": "送金したい",
+      "receiveHeadline1": "リンク一つ。",
+      "receiveHeadline2": "何でも",
+      "receiveHeadlineGradient": "受け取る",
+      "sendHeadline1": "誰にでも",
+      "sendHeadlineGradient": "送れる",
+      "sendHeadline2": "どこからでも。",
+      "receiveSubtitle": "決済リンクを共有してください。誰でもどこからでも、どんな通貨でも送れます — SolanaでUSDCを受け取り、本当に欲しいものに引き出します。",
+      "sendSubtitle": "ウォレットアドレス不要。相手の登録も不要。メール、@handle、またはユーザー名に送れば、ログイン時に請求します。",
+      "createYourLink": "リンクを作成",
+      "sendAPayment": "決済を送る",
+      "seeHowItWorks": "仕組みを見る",
+      "payByEmail": "メールで支払う",
+      "dragToFlick": "ドラッグして切り替え →"
+    },
+    "chains": {
+      "tagline": "どのチェーンからでも支払い · 希望のものを受け取る"
+    },
+    "features": {
+      "pill": "三つの柱",
+      "headline1": "決済があなたのために",
+      "headline2": "機能するように構築。",
+      "item0Eyebrow": "01 · 受け入れる",
+      "item0Title": "リンク一つ。どのトークンも。",
+      "item0Body": "ユーザー名が決済リンクになります。送信者は20以上のチェーンから支払います — 希望する正確なトークンを受け取ります。",
+      "item1Eyebrow": "02 · 守る",
+      "item1Title": "活動を公開記録の外に。",
+      "item1Body": "MagicBlockのPrivate Ephemeral Rollupが決済をルーティングし、金額と相手方があなただけのものになります。設定不要。",
+      "item2Eyebrow": "03 · 稼ぐ",
+      "item2Title": "アイドル残高はアイドルのままではありません。",
+      "item2Body": "決済間のすべてのドルがMorphoボールトを通じて利回りを複利します。いつでもどこでもどのトークンとしても引き出せます。"
+    },
+    "privacy": {
+      "pill": "MagicBlock PER",
+      "headline1": "重要な唯一の",
+      "headline2": "台帳は",
+      "headlineGradient": "あなたのもの",
+      "headline3": "です。",
+      "body": "Private Ephemeral Rollupが金額、相手方、パターンを公開の観察者から保護します。設定不要、新しいウォレット不要 — トグルだけ。",
+      "bullet1": "決済詳細がオンチェーンで保護される",
+      "bullet2": "相手方を関連付けることができない",
+      "bullet3": "トグル一つ。既存のフローで動作。",
+      "receiptLabel": "領収書",
+      "receiptBadge": "プライベート",
+      "rollupVerified": "エフェメラルロールアップ · 検証済み"
+    },
+    "earn": {
+      "pill": "Morphoボールト",
+      "headline1": "残高が",
+      "headline2": "常に稼働。",
+      "body": "決済間のすべての瞬間、アイドル状態のUSDCが監査済みMorphoボールトを通じて利回りを稼ぎます。即時引き出し — バックグラウンドで解除します。",
+      "apyLabel": "現在のAPY*",
+      "pointsLabel": "Loofta Points",
+      "available": "利用可能残高",
+      "earning": "稼働中"
+    },
+    "business": {
+      "pill": "ビジネス向け",
+      "headline1": "給与、支払い、",
+      "headline2": "すべて一か所で。",
+      "body": "5カ国の請負業者への支払いから、KYC付きのハッカソン賞金の支給まで — Looftaが複雑な部分を処理します。",
+      "bookDemo": "ビジネスデモを予約",
+      "bulkEyebrow": "一括払い",
+      "bulkTitle": "署名一つで200人に支払い。",
+      "bulkBody": "CSVをアップロードするかリストを貼り付けてください。フリーランサー、クリエイター、ハッカソン受賞者、または全給与を — 各自が受け取りたい通貨の組み合わせで支払います。",
+      "bulkBadge": "200+受取人 · 1tx",
+      "ctaEyebrow": "お問い合わせ",
+      "ctaTitle": "給与または助成金プログラムを管理していますか？",
+      "ctaBody": "50人以上の受取人に支払うチームのためのカスタム量価格、専任サポート、オンボーディングサポート。",
+      "contactSales": "営業に連絡",
+      "feature0Title": "支払いをスケジュール",
+      "feature0Body": "来週火曜日の支払いをキューに追加します。または毎月1日。オンラインかどうかに関わらず時間通りに送ります。",
+      "feature1Title": "定期支払い",
+      "feature1Body": "一度設定するだけ。毎月1日の給与、毎月15日の謝礼、週次サブスクリプション。いつでも一時停止または編集できます。",
+      "feature2Title": "KYCゲート付き請求",
+      "feature2Body": "受取人が請求する前に身元確認を要求します。ハッカソン賞金、助成金、またはコンプライアンスバウンドの送金に最適です。",
+      "feature3Title": "請求書",
+      "feature3Body": "クリーンな請求書リンクを送ります。クライアントは好きな方法で支払います。希望するものを受け取ります。照合は処理済み。"
+    },
+    "zcash": {
+      "pill": "Zcash · ZEC",
+      "headline1": "プライベートマネー、",
+      "headlineGradient": "本当にプライベート。",
+      "body": "金額や相手方を公開することなく、Zcashを受け取り、要求し、スワップし、出金します。シールドされたZEC上に構築されたLooftaの完全な一面。",
+      "shieldedByDefault": "デフォルトでシールド",
+      "shieldedTitle": "Zcashが使われるべき方法でZECを受け取る。",
+      "shieldedBody": "@usernameへのすべての支払いはシールドされたアドレスに決済されます。透明な部分なし、メタデータ漏洩なし。金額を見ることはありません。",
+      "bullet1": "送信者はどのチェーンからでも支払えます — ZEC不要",
+      "bullet2": "入金時にスワップし、シールド入金",
+      "bullet3": "すべてのプールにわたる統合シールド残高",
+      "getLink": "ZECリンクを取得",
+      "moreInfo": "詳細情報",
+      "tile0Eyebrow": "P2P",
+      "tile0Title": "ZECをP2P送金",
+      "tile0Body": "@usernameを渡せば、シールドされたZECで支払います。取引所アカウント不要、KYCブリッジ不要、漏洩なし。",
+      "tile1Eyebrow": "出金",
+      "tile1Title": "プライベートに換金",
+      "tile1Body": "オンチェーントレースなしでZECをUSD、EUR、または現地銀行に変換します。資金はRevolut、Wise、または任意のアカウントに届きます。",
+      "tile2Eyebrow": "リクエスト",
+      "tile2Title": "ZECでの支払いをリクエスト",
+      "tile2Body": "リンク一つ。金額を設定してどこでも共有。送信者はどのチェーンからでも支払います — シールドされたZECを受け取ります。",
+      "tile3Eyebrow": "スワップ",
+      "tile3Title": "ZECをどの方向にもスワップ",
+      "tile3Body": "ZEC ↔ USDC、SOL、ETH、USDT。NEAR IntentsとオンチェーンDEXを通じた最適ルート。数秒で決済。"
+    },
+    "builtOn": {
+      "pill": "スタック",
+      "body": "すべての決済は0.5秒未満でSolanaに決済されます。MagicBlockのPrivate Ephemeral Rollupが金額と相手方をデフォルトで公開台帳の外に保ちます — すべてのユーザー、毎回。",
+      "readArchitecture": "アーキテクチャを読む",
+      "howPerWorks": "PERの仕組み",
+      "settlementLayer": "決済レイヤー",
+      "finality": "ファイナリティ",
+      "privacyLayer": "プライバシーレイヤー",
+      "byDefault": "デフォルトで",
+      "poweredWith": "搭載",
+      "spec0Label": "決済",
+      "spec0Value": "Solana L1",
+      "spec0Sub": "~400msファイナリティ",
+      "spec1Label": "プライバシーレイヤー",
+      "spec1Value": "MagicBlock PER",
+      "spec1Sub": "Private Ephemeral Rollup",
+      "spec2Label": "安定資産",
+      "spec2Value": "USDC",
+      "spec2Sub": "SolanaのCircleネイティブ",
+      "spec3Label": "カストディ",
+      "spec3Value": "ノンカストディアル",
+      "spec3Sub": "鍵がデバイスを離れることはありません"
+    },
+    "cta": {
+      "headline1": "支払いを",
+      "headlineGradient": "受け取る準備はできていますか？",
+      "body": "無料アカウント。シードフレーズ不要。ウォレットインストール不要。30秒で準備完了。",
+      "createLink": "決済リンクを作成",
+      "sendPayment": "決済を送る"
+    },
+    "footer": {
+      "tagline": "ノンカストディアル · プライベート · デブネット",
+      "privacy": "プライバシー",
+      "brand": "ブランド"
+    }
+  },
+
+  "UserMenu": {
+    "username": "ユーザー名",
+    "email": "メール",
+    "copyUsername": "ユーザー名をコピー",
+    "shareYourLink": "リンクを共有",
+    "sparks": "Sparks",
+    "settings": "設定",
+    "mainnetBeta": "メインネットベータ",
+    "mainnetViewOnly": "メインネット（閲覧のみ）",
+    "devnet": "デブネット",
+    "paymentsDisabled": "決済無効 — 残高と出金のみ",
+    "balanceWithdrawOnly": "残高と出金のみ — 決済にはベータアクセスが必要",
+    "logOut": "ログアウト",
+    "noUsernameTitle": "決済リンクを共有",
+    "noUsernameBody": "決済リンクを取得して支払いの受け取りを開始するには、アカウントメニューでユーザー名を設定してください。",
+    "gotIt": "わかりました",
+    "shareModalTitle": "今すぐお金の受け取りを開始",
+    "shareModalSubtitle": "決済を受け取るには決済リンクを共有してください",
+    "yourPaymentLink": "あなたの決済リンク",
+    "copied": "コピー済み！",
+    "copyLink": "リンクをコピー",
+    "copyLinkButton": "リンクをコピー",
+    "privatePayments": "🔒 プライベート決済",
+    "enabled": "有効",
+    "comingSoon": "近日公開",
+    "privatePaymentsDescEnabled": "あなたのリンクへのすべての支払いはプライバシーのためにMagicBlock Private Ephemeral Rollupを使用します。",
+    "privatePaymentsDescDisabled": "利用可能になったとき、あなたのリンクへのすべての支払いはプライバシーのためにMagicBlock Private Ephemeral Rollupを使用します。",
+    "close": "閉じる",
+    "settingsTitle": "設定",
+    "settingsSubtitle": "ウォレット、ログイン方法、セキュリティ。",
+    "network": "ネットワーク",
+    "signInMethods": "ログイン方法",
+    "connected": "接続済み",
+    "addSecondMethod": "アカウントを復元できるように2番目の方法を追加してください。",
+    "addTwitter": "Twitterを追加",
+    "addEmail": "メールを追加",
+    "paymentLink": "決済リンク",
+    "useTwitterAsLink": "Twitterを決済リンクとして使用: @{handle}",
+    "updating": "更新中…",
+    "useHandle": "@{handle}を使用",
+    "walletAddress": "ウォレットアドレス",
+    "clickToHide": "クリックして短縮版を表示",
+    "clickToCopy": "アドレスをクリックして全体をコピー",
+    "viewOnSolscan": "Solscanで表示",
+    "loadingWallet": "ウォレットを読み込み中...",
+    "walletAutoCreated": "必要に応じてウォレットが自動的に作成されます。"
+  },
+
+  "Footer": {
+    "forYou": "あなたのために",
+    "forBusiness": "ビジネス向け",
+    "company": "会社",
+    "socialsAndDocs": "ソーシャル & ドキュメント",
+    "send": "送金",
+    "receive": "受取",
+    "history": "履歴",
+    "settings": "設定",
+    "checkout": "チェックアウト",
+    "partners": "パートナー",
+    "about": "About",
+    "copyright": "© {year} Loofta. All rights reserved.",
+    "language": "言語",
+    "currency": "通貨"
+  }
+}
