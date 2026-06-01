@@ -139,6 +139,16 @@ export default function SettingsPage() {
         >
           {t('logOut')}
         </button>
+
+        <div className="mt-8 flex items-center justify-center gap-4">
+          <Link href="/terms" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">
+            Terms of Service
+          </Link>
+          <span className="text-slate-700 text-xs">·</span>
+          <Link href="/privacy" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">
+            Privacy Policy
+          </Link>
+        </div>
       </div>
     </div>
   );
