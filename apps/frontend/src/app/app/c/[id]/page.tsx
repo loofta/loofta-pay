@@ -68,6 +68,7 @@ import {
   privatePaymentWaitingAfterSenderCopy,
 } from "@/lib/privatePaymentCopy";
 import { getCachedMainnetAccess, setCachedMainnetAccess } from "@/lib/mainnetAccessCache";
+import { buildClaimPrivateTransfer } from "@/services/api/claims";
 
 function formatPerTransferStepName(step: string): string {
   const labels: Record<string, string> = {
@@ -1131,6 +1132,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [lastFailedPayMethod, setLastFailedPayMethod] = useState<"loofta" | "wallet" | null>(null);
   /** Actual fee confirmed by onTxBuilt — replaces the estimate once the tx is built. */
   const [pendingFeeUsdc, setPendingFeeUsdc] = useState<number | null>(null);
+  /** True while silently pre-building tx to get real fee before modal opens. */
+  const [preBuilding, setPreBuilding] = useState(false);
   /** When set, we're waiting for on-chain confirmation; show tracker UI in Pay Now modal. */
   const [confirmingTxSignature, setConfirmingTxSignature] = useState<string | null>(null);
   const [confirmingTxSource, setConfirmingTxSource] = useState<"loofta" | "wallet" | null>(null);
@@ -1843,7 +1846,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       (claim as { recipient_pending_email?: boolean })?.recipient_pending_email;
     setPayingWithWallet(true);
     setPayWithWalletError(null);
-    setPendingFeeUsdc(null);
     setPerTransferPhase({ phase: "preparing" });
     try {
       let publicKey: PublicKey;
@@ -1948,6 +1950,19 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     }
   }
 
+  async function preBuildFee(): Promise<number | null> {
+    const senderAddress = solanaPayment.senderAddress;
+    if (!senderAddress || !claim?.id || !user?.id) return null;
+    try {
+      const accessToken = await getAccessToken();
+      const apiCluster = networkMode === "mainnet" ? "mainnet" : "devnet";
+      const txData = await buildClaimPrivateTransfer(claim.id, user.id, senderAddress, accessToken, apiCluster);
+      return txData.feeAmountUsdc ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async function payWithLooftaBalance(gasless = true) {
     const isPending = !!(claim as { recipient_pending_username?: boolean; recipient_pending_email?: boolean })?.recipient_pending_username || (claim as { recipient_pending_email?: boolean })?.recipient_pending_email;
     console.log("[PayWithLoofta] Clicked:", { claimId: claim?.id, isPending, hasBurner: !!(claim as { claim_burner_address?: string })?.claim_burner_address });
@@ -1983,7 +1998,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     setShowPayNowModal(true);
     setPayingWithLoofta(true);
     setPayWithLooftaError(null);
-    setPendingFeeUsdc(null);
     try {
       // Normalize and validate Solana recipient (base58) — use burner when recipient not yet claimed
       if (effectiveRecipient) {
@@ -3555,30 +3569,40 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       </Button>
                     ) : (
                           <GradientActionButton
-                            onClick={() => {
+                            onClick={async () => {
                               if (!authenticated) { login(); return; }
                               setPayWithLooftaError(null);
                               setPayWithWalletError(null);
                               setConfirmingTxSignature(null);
                               setConfirmingTxSource(null);
                               setPerTransferPhase(null);
+                              setPendingFeeUsdc(null);
+                              setPreBuilding(true);
+                              try {
+                                const fee = await preBuildFee();
+                                if (fee != null) setPendingFeeUsdc(fee);
+                              } finally {
+                                setPreBuilding(false);
+                              }
                               setShowPayNowModal(true);
                             }}
                             disabled={
-                              mainnetViewOnly
+                              preBuilding
                                 ? true
-                                : isWrongNetwork
+                                : mainnetViewOnly
                                   ? true
-                                  : claimAmountUSD < 5
+                                  : isWrongNetwork
                                     ? true
-                                    : requiresPrivate && !isPrivateMode
+                                    : claimAmountUSD < 5
                                       ? true
-                                      : !authenticated
-                                        ? false
-                                        : !isPayerWalletReady || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS"
+                                      : requiresPrivate && !isPrivateMode
+                                        ? true
+                                        : !authenticated
+                                          ? false
+                                          : !isPayerWalletReady || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS"
                             }
-                            loading={preparing || (authenticated && !isPayerWalletReady)}
-                            loadingText="Wallet loading…"
+                            loading={preBuilding || preparing || (authenticated && !isPayerWalletReady)}
+                            loadingText={preBuilding ? "Calculating fees…" : "Wallet loading…"}
                           >
                             {isWrongNetwork && claimExpectedNetwork ? `Switch to ${claimExpectedNetwork}` : !authenticated ? "Sign in to pay" : "Pay now"}
                           </GradientActionButton>
@@ -4217,10 +4241,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               <DialogHeader className="flex flex-col items-center justify-center text-center space-y-0 pb-5 sm:text-center" aria-hidden>
                 <div className="mb-3 text-4xl">💳</div>
                 <h2 className="text-xl font-semibold text-gray-900 text-center">
-                  Pay ${privatePayTotal.toFixed(2)}
+                  Pay ${(pendingFeeUsdc != null ? claimAmountUSD + pendingFeeUsdc : privatePayTotal).toFixed(2)}
                 </h2>
                 <p className="pt-0.5 text-base md:text-sm text-center text-muted-foreground">
-                  ${claimAmountUSD.toFixed(2)} + ~$
+                  ${claimAmountUSD.toFixed(2)} + {pendingFeeUsdc != null ? "" : "~"}$
                   {pendingFeeUsdc != null
                     ? pendingFeeUsdc.toFixed(3)
                     : (privatePayProtocolFee + privatePayGasFee).toFixed(3)}{" "}
@@ -4229,7 +4253,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               </DialogHeader>
               <div className="space-y-3">
                 {(() => {
-                  const needed = privatePayTotal;
+                  const needed = pendingFeeUsdc != null ? claimAmountUSD + pendingFeeUsdc : privatePayTotal;
                   const hasEnough = solanaPayment.hasEnoughBalance(needed);
                   const isLoading = solanaPayment.isBalanceLoading;
                   if (!isLoading && !hasEnough) {
