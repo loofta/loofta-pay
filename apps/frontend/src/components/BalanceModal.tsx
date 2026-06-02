@@ -302,7 +302,35 @@ export function BalanceModal({
     if (!solanaAddress) return;
     setBankLoading(true);
     try {
-      await fundWallet({ address: solanaAddress, options: { chain: solanaChain, asset: "USDC", defaultFundingMethod: "card" } });
+      // Fetch a server-issued Coinbase session token (auth-gated, no wildcard CORS)
+      let sessionToken: string | undefined;
+      try {
+        const accessToken = await getAccessToken();
+        const res = await fetch("/api/coinbase/session", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
+          body: JSON.stringify({ walletAddress: solanaAddress, blockchains: ["solana"] }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          sessionToken = data.token;
+        }
+      } catch {
+        // Non-fatal: fall through and let Privy handle session generation
+      }
+
+      await fundWallet({
+        address: solanaAddress,
+        options: {
+          chain: solanaChain,
+          asset: "USDC",
+          defaultFundingMethod: "card",
+          ...(sessionToken ? { sessionToken } : {}),
+        },
+      });
       onRefresh();
     } finally {
       setBankLoading(false);
