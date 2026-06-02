@@ -48,6 +48,8 @@ export function Footer() {
             <h4 className="text-white font-semibold mb-4">{t('company')}</h4>
             <ul className="space-y-2">
               <li><a href={looftaXyz.about} className="text-slate-400 hover:text-white transition-colors">{t('about')}</a></li>
+              <li><a href="/terms" className="text-slate-400 hover:text-white transition-colors">Terms of Service</a></li>
+              <li><a href="/privacy" className="text-slate-400 hover:text-white transition-colors">Privacy Policy</a></li>
             </ul>
           </div>
 

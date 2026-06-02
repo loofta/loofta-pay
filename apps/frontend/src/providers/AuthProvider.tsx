@@ -1,9 +1,14 @@
 "use client";
 
 import { PrivyProvider } from "@privy-io/react-auth";
-import { toSolanaWalletConnectors } from "@privy-io/react-auth/solana";
+import { toSolanaWalletConnectors, useSolanaFundingPlugin } from "@privy-io/react-auth/solana";
 import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
 import React from "react";
+
+function SolanaPlugins() {
+  useSolanaFundingPlugin();
+  return null;
+}
 
 import { getSolanaCluster, getSolanaHttpRpc, getSolanaWsRpc } from "@/lib/solanaCluster";
 
@@ -76,6 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				},
 			}}
 		>
+			<SolanaPlugins />
 			{children}
 		</PrivyProvider>
 	);
