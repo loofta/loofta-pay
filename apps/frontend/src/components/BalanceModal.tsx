@@ -18,8 +18,9 @@ import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight } from "lucide-react";
-import { usePrivy, useDepositAddress } from "@privy-io/react-auth";
-import { useWallets, useSignAndSendTransaction, useFundWallet, useSolanaFundingPlugin } from "@privy-io/react-auth/solana";
+import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
+import { usePrivy } from "@privy-io/react-auth";
+import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
 import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSend";
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
@@ -248,9 +249,11 @@ export function BalanceModal({
   const [depositAddressForPolling, setDepositAddressForPolling] = useState<string | null>(null);
   const [bridgeStatus, setBridgeStatus] = useState<string | null>(null);
 
-  const [cryptoLoading, setCryptoLoading] = useState(false);
-  const [receiveLoading, setReceiveLoading] = useState(false);
-  const [bankLoading, setBankLoading] = useState(false);
+  // Blink crypto deposit
+  const [blinkDepositing, setBlinkDepositing] = useState(false);
+  const [blinkError, setBlinkError] = useState<string | null>(null);
+  const blinkDepositRef = useRef<BlinkDeposit | null>(null);
+  const [coinbaseLoading, setCoinbaseLoading] = useState(false);
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -258,82 +261,103 @@ export function BalanceModal({
   const { wallets: solanaWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
 
-  useSolanaFundingPlugin();
-  const { fundWallet } = useFundWallet();
-  const { createDepositAddress } = useDepositAddress();
-  const mode = devnetMode ? "devnet" : "mainnet";
-  const solanaChain = getPrivySolanaChainForMode(mode);
-  const solanaDestChain = mode === "mainnet"
-    ? "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
-    : "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
-  const usdcMint = mode === "mainnet"
-    ? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-    : "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
-
-  // Direct Solana USDC receive — opens Privy's QR/address screen, no cross-chain routing
-  const handleReceiveUsdc = async () => {
-    if (!solanaAddress) return;
-    setReceiveLoading(true);
-    try {
-      await fundWallet({ address: solanaAddress, options: { chain: solanaChain, asset: "USDC", defaultFundingMethod: "manual" } });
-      onRefresh();
-    } finally {
-      setReceiveLoading(false);
+  // Blink signer: called by the SDK to sign each request server-side
+  const getBlinkSigner = useCallback(async (data: unknown) => {
+    const token = await getAccessToken();
+    const res = await fetch("/api/blink/sign", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({})) as { error?: string };
+      throw new Error(err.error ?? "Signer request failed");
     }
-  };
+    return res.json();
+  }, [getAccessToken]);
 
-  // Cross-chain deposit — opens Privy's token/network picker (EVM → Solana via Relay)
-  const handleCrossChainDeposit = async () => {
+  // Blink: open the SDK's own deposit modal (no iframe in our UI)
+  const handleBlinkDeposit = async () => {
     if (!solanaAddress) return;
-    setCryptoLoading(true);
+    setBlinkDepositing(true);
+    setBlinkError(null);
     try {
-      await createDepositAddress({
-        destinationChain: solanaDestChain,
-        destinationCurrency: usdcMint,
-        destinationAddress: solanaAddress,
+      if (!blinkDepositRef.current) {
+        const { Deposit } = await import("@swype-org/deposit");
+        blinkDepositRef.current = new Deposit({ signer: getBlinkSigner, debug: true });
+      }
+      await blinkDepositRef.current.requestDeposit({
+        amount: null,
+        chainId: 792703809,
+        address: solanaAddress,
+        token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
       });
+      toast({ title: "Deposit complete!", description: "USDC will appear in your balance shortly." });
       onRefresh();
+    } catch (err: unknown) {
+      const { DepositError, getDisplayMessage } = await import("@swype-org/deposit");
+      const msg = err instanceof DepositError ? getDisplayMessage(err) : "Deposit failed. Please try again.";
+      setBlinkError(msg);
     } finally {
-      setCryptoLoading(false);
+      setBlinkDepositing(false);
     }
   };
 
-  const handleBankDeposit = async () => {
+  // Coinbase Onramp: fetch a session token then open pay.coinbase.com in a popup (460×730)
+  const handleCoinbaseOnramp = async () => {
     if (!solanaAddress) return;
-    setBankLoading(true);
+    setCoinbaseLoading(true);
     try {
-      // Fetch a server-issued Coinbase session token (auth-gated, no wildcard CORS)
-      let sessionToken: string | undefined;
-      try {
-        const accessToken = await getAccessToken();
-        const res = await fetch("/api/coinbase/session", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-          },
-          body: JSON.stringify({ walletAddress: solanaAddress, blockchains: ["solana"] }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          sessionToken = data.token;
-        }
-      } catch {
-        // Non-fatal: fall through and let Privy handle session generation
+      const accessToken = await getAccessToken();
+      const sessionRes = await fetch("/api/coinbase/session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify({ walletAddress: solanaAddress, blockchains: ["solana"] }),
+      });
+
+      if (!sessionRes.ok) {
+        const err = await sessionRes.json().catch(() => ({})) as { error?: string; detail?: string };
+        const msg = err.detail || err.error || `Session error ${sessionRes.status}`;
+        toast({ variant: "destructive", title: "Could not start Coinbase session", description: msg });
+        return;
       }
 
-      await fundWallet({
-        address: solanaAddress,
-        options: {
-          chain: solanaChain,
-          asset: "USDC",
-          defaultFundingMethod: "card",
-          ...(sessionToken ? { sessionToken } : {}),
-        },
-      });
-      onRefresh();
+      const sessionData = await sessionRes.json();
+      const sessionToken: string | undefined = sessionData.token;
+      if (!sessionToken) {
+        toast({ variant: "destructive", title: "Could not start Coinbase session", description: "No session token returned." });
+        return;
+      }
+
+      const params = new URLSearchParams();
+      params.set("appId", "68e3c83a-3d5a-49aa-a8fa-7ef26d824de1");
+      params.set("defaultNetwork", "solana");
+      params.set("defaultAsset", "USDC");
+      params.set("addresses", JSON.stringify({ [solanaAddress]: ["solana"] }));
+      params.set("assets", JSON.stringify(["USDC"]));
+      params.set("sessionToken", sessionToken);
+
+      const onrampUrl = `https://pay.coinbase.com/buy/select-asset?${params.toString()}`;
+
+      // Open in Coinbase's recommended popup size
+      const popup = window.open(
+        onrampUrl,
+        "coinbase-onramp",
+        "width=460,height=730,left=200,top=100,resizable=yes,scrollbars=yes"
+      );
+      // Fallback: if popup blocked, navigate directly
+      if (!popup) window.open(onrampUrl, "_blank");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not open Coinbase Onramp.";
+      toast({ variant: "destructive", title: "Onramp error", description: msg });
     } finally {
-      setBankLoading(false);
+      setCoinbaseLoading(false);
     }
   };
 
@@ -374,6 +398,11 @@ export function BalanceModal({
   const destChain = effectiveToken?.chain || "";
   const isNearIntentsWithdraw = !BETA_SOLANA_ONLY && !isUSDCOnSolana && effectiveToken && usdcSolanaToken;
   const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
+
+  // Clear Blink error when modal closes
+  useEffect(() => {
+    if (!open) setBlinkError(null);
+  }, [open]);
 
   // On open: load history and resume any in-progress Near Intents withdrawal
   useEffect(() => {
@@ -744,91 +773,68 @@ export function BalanceModal({
                   )}
                 </div>
               ) : (
-                /* Three deposit method cards — no custom picker */
+                /* Two deposit options */
                 <div className="py-2 space-y-3">
 
-                  {/* 1. Receive USDC on Solana — direct address/QR via Privy */}
-                  <button
-                    type="button"
-                    disabled={!solanaAddress || receiveLoading || cryptoLoading || bankLoading}
-                    onClick={handleReceiveUsdc}
-                    className={cn(
-                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                      dark
-                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    )}
-                  >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      {receiveLoading
-                        ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
-                        : <img src="/images/icons/deposit-receive.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                      }
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Receive USDC on Solana</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                        QR code · wallet address
-                      </p>
-                    </div>
-                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                  </button>
+                    {/* 1. Crypto deposit via Blink SDK (opens its own modal) */}
+                    <button
+                      type="button"
+                      disabled={!solanaAddress || blinkDepositing || coinbaseLoading}
+                      onClick={handleBlinkDeposit}
+                      className={cn(
+                        "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                        dark
+                          ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                          : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      )}
+                    >
+                      <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                        {blinkDepositing
+                          ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
+                          : <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                        }
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Crypto deposit</p>
+                        <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                          ETH · BTC · USDC · USDT — any chain
+                        </p>
+                      </div>
+                      <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                    </button>
 
-                  {/* 2. Bridge from another chain — Privy cross-chain picker */}
-                  <button
-                    type="button"
-                    disabled={!solanaAddress || receiveLoading || cryptoLoading || bankLoading}
-                    onClick={handleCrossChainDeposit}
-                    className={cn(
-                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                      dark
-                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    {blinkError && (
+                      <p className="text-sm text-red-500 text-center px-1">{blinkError}</p>
                     )}
-                  >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      {cryptoLoading
-                        ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
-                        : <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                      }
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Bridge from another chain</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                        ETH · BTC · USDC · USDT — any chain
-                      </p>
-                    </div>
-                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                  </button>
 
-                  {/* 3. Bank / onramp */}
-                  <button
-                    type="button"
-                    disabled={!solanaAddress || receiveLoading || cryptoLoading || bankLoading}
-                    onClick={handleBankDeposit}
-                    className={cn(
-                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                      dark
-                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    )}
-                  >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      {bankLoading
-                        ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
-                        : <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                      }
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit from bank</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                        Coinbase Pay · MoonPay
-                      </p>
-                    </div>
-                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                  </button>
+                    {/* 2. Fiat / bank via Coinbase Onramp popup */}
+                    <button
+                      type="button"
+                      disabled={!solanaAddress || blinkDepositing || coinbaseLoading}
+                      onClick={handleCoinbaseOnramp}
+                      className={cn(
+                        "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                        dark
+                          ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                          : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      )}
+                    >
+                      <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                        {coinbaseLoading
+                          ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
+                          : <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                        }
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Buy with card or bank</p>
+                        <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                          Apple Pay · card · bank transfer
+                        </p>
+                      </div>
+                      <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                    </button>
 
-                </div>
+                  </div>
               )}
             </div>
           )}
