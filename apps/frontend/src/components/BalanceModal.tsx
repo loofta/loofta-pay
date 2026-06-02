@@ -18,9 +18,8 @@ import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight } from "lucide-react";
-import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
-import { usePrivy } from "@privy-io/react-auth";
-import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
+import { usePrivy, useDepositAddress } from "@privy-io/react-auth";
+import { useWallets, useSignAndSendTransaction, useFundWallet, useSolanaFundingPlugin } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
 import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSend";
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
@@ -249,12 +248,9 @@ export function BalanceModal({
   const [depositAddressForPolling, setDepositAddressForPolling] = useState<string | null>(null);
   const [bridgeStatus, setBridgeStatus] = useState<string | null>(null);
 
-  // Blink crypto deposit state
-  const [blinkStep, setBlinkStep] = useState<"select" | "amount">("select");
-  const [blinkAmount, setBlinkAmount] = useState("10");
-  const [blinkDepositing, setBlinkDepositing] = useState(false);
-  const blinkMirrorRef = useRef<HTMLSpanElement | null>(null);
-  const [blinkInputWidthPx, setBlinkInputWidthPx] = useState(48);
+  const [cryptoLoading, setCryptoLoading] = useState(false);
+  const [receiveLoading, setReceiveLoading] = useState(false);
+  const [bankLoading, setBankLoading] = useState(false);
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -262,81 +258,54 @@ export function BalanceModal({
   const { wallets: solanaWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
 
-  // Dynamic font sizing for blink amount (matches send flow)
-  const blinkDisplayAmt = blinkAmount.length > 0 ? blinkAmount : "0";
-  const blinkDigitCount = Math.max(1, blinkAmount.replace(/[^0-9]/g, "").length || 1);
-  function computeBlinkFontPx(digits: number) {
-    const maxPx = 72;
-    const minPx = 28;
-    const delta = Math.max(0, digits - 5) * 7;
-    return Math.max(minPx, maxPx - delta);
-  }
-  const blinkFontPx = computeBlinkFontPx(blinkDigitCount);
-  const blinkSuffixPx = Math.max(18, Math.round(blinkFontPx * 0.52));
+  useSolanaFundingPlugin();
+  const { fundWallet } = useFundWallet();
+  const { createDepositAddress } = useDepositAddress();
+  const mode = devnetMode ? "devnet" : "mainnet";
+  const solanaChain = getPrivySolanaChainForMode(mode);
+  const solanaDestChain = mode === "mainnet"
+    ? "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+    : "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+  const usdcMint = mode === "mainnet"
+    ? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    : "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 
-  useEffect(() => {
-    const el = blinkMirrorRef.current;
-    if (!el) return;
-    setBlinkInputWidthPx(Math.ceil(el.getBoundingClientRect().width));
-  }, [blinkDisplayAmt, blinkFontPx]);
-
-  function sanitizeBlinkAmount(v: string) {
-    let s = v.replace(/,/g, ".").replace(/[^0-9.]/g, "");
-    const parts = s.split(".");
-    if (parts.length > 2) s = parts[0] + "." + parts.slice(1).join("");
-    const p = s.split(".");
-    if (p.length === 2) return (p[1] || "").length > 0 ? `${p[0]}.${(p[1] || "").slice(0, 2)}` : p[0];
-    return p[0] ?? "";
-  }
-
-  // Lazy Deposit instance — created on first click, client-side only, avoids SSR null crash
-  const blinkDepositRef = useRef<BlinkDeposit | null>(null);
-  const [blinkError, setBlinkError] = useState<string | null>(null);
-
-  const getBlinkSigner = useCallback(async (data: unknown) => {
-    const token = await getAccessToken();
-    const res = await fetch("/api/blink/sign", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(err.error ?? "Signer request failed");
-    }
-    return res.json();
-  }, [getAccessToken]);
-
-  const handleBlinkDeposit = async () => {
-    const amt = parseFloat(blinkAmount || "10");
+  // Direct Solana USDC receive — opens Privy's QR/address screen, no cross-chain routing
+  const handleReceiveUsdc = async () => {
     if (!solanaAddress) return;
-    setBlinkDepositing(true);
-    setBlinkError(null);
+    setReceiveLoading(true);
     try {
-      if (!blinkDepositRef.current) {
-        const { Deposit } = await import("@swype-org/deposit");
-        blinkDepositRef.current = new Deposit({ signer: getBlinkSigner, debug: true });
-      }
-      await blinkDepositRef.current.requestDeposit({
-        amount: null,
-        chainId: 792703809,
-        address: solanaAddress,
-        token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-      });
-
-
-      toast({ title: "Deposit complete!", description: `$${amt.toFixed(2)} USDC will appear in your balance shortly.` });
+      await fundWallet({ address: solanaAddress, options: { chain: solanaChain, asset: "USDC", defaultFundingMethod: "manual" } });
       onRefresh();
-      setBlinkAmount("");
-    } catch (err: unknown) {
-      const { DepositError, getDisplayMessage } = await import("@swype-org/deposit");
-      const msg = err instanceof DepositError ? getDisplayMessage(err) : "Deposit failed. Please try again.";
-      setBlinkError(msg);
     } finally {
-      setBlinkDepositing(false);
+      setReceiveLoading(false);
+    }
+  };
+
+  // Cross-chain deposit — opens Privy's token/network picker (EVM → Solana via Relay)
+  const handleCrossChainDeposit = async () => {
+    if (!solanaAddress) return;
+    setCryptoLoading(true);
+    try {
+      await createDepositAddress({
+        destinationChain: solanaDestChain,
+        destinationCurrency: usdcMint,
+        destinationAddress: solanaAddress,
+      });
+      onRefresh();
+    } finally {
+      setCryptoLoading(false);
+    }
+  };
+
+  const handleBankDeposit = async () => {
+    if (!solanaAddress) return;
+    setBankLoading(true);
+    try {
+      await fundWallet({ address: solanaAddress, options: { chain: solanaChain, asset: "USDC", defaultFundingMethod: "card" } });
+      onRefresh();
+    } finally {
+      setBankLoading(false);
     }
   };
 
@@ -377,14 +346,6 @@ export function BalanceModal({
   const destChain = effectiveToken?.chain || "";
   const isNearIntentsWithdraw = !BETA_SOLANA_ONLY && !isUSDCOnSolana && effectiveToken && usdcSolanaToken;
   const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
-
-  // Reset blink step on modal close
-  useEffect(() => {
-    if (!open) {
-      setBlinkStep("select");
-      setBlinkAmount("");
-    }
-  }, [open]);
 
   // On open: load history and resume any in-progress Near Intents withdrawal
   useEffect(() => {
@@ -671,8 +632,8 @@ export function BalanceModal({
   };
 
   const contentCls = dark
-    ? "sm:max-w-md border-white/10 bg-[#0f0f12] text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-gray-400]:!text-slate-500 [&_.bg-gray-100]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.border-gray-300]:!border-white/20 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&>button]:!text-slate-400 [&>button:hover]:!text-white"
-    : "sm:max-w-md";
+    ? "sm:max-w-lg border-white/10 bg-[#0f0f12] text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-gray-400]:!text-slate-500 [&_.bg-gray-100]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.border-gray-300]:!border-white/20 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&>button]:!text-slate-400 [&>button:hover]:!text-white"
+    : "sm:max-w-lg";
 
   return (
     <Dialog modal={false} open={open} onOpenChange={(o) => !o && onClose()}>
@@ -680,7 +641,7 @@ export function BalanceModal({
         className={cn(
           contentCls,
           "left-0 right-0 top-0 translate-x-0 translate-y-0 h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col",
-          "sm:left-1/2 sm:right-auto sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-md sm:rounded-lg sm:border sm:p-6 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block"
+          "sm:left-1/2 sm:right-auto sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-lg sm:rounded-xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block"
         )}
       >
         {/* Drag handle — mobile only */}
@@ -754,158 +715,91 @@ export function BalanceModal({
                     </div>
                   )}
                 </div>
-              ) : blinkStep === "select" ? (
-                /* Step 1: method selection */
+              ) : (
+                /* Three deposit method cards — no custom picker */
                 <div className="py-2 space-y-3">
-                  {/* Deposit with crypto — active */}
+
+                  {/* 1. Receive USDC on Solana — direct address/QR via Privy */}
                   <button
                     type="button"
-                    disabled={!solanaAddress}
-                    onClick={() => {
-                      handleBlinkDeposit();
-                    }}
+                    disabled={!solanaAddress || receiveLoading || cryptoLoading || bankLoading}
+                    onClick={handleReceiveUsdc}
                     className={cn(
-                      "w-full flex items-start gap-4 p-4 rounded-xl border-2 text-left transition-colors",
+                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
                       dark
-                        ? "border-white/15 bg-white/5 hover:bg-white/10 hover:border-white/25 disabled:opacity-50 disabled:cursor-not-allowed"
-                        : "border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     )}
                   >
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
-                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                      </svg>
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      {receiveLoading
+                        ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
+                        : <img src="/images/icons/deposit-receive.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                      }
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-lg md:text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with crypto</p>
-                      <p className={`text-base md:text-sm mt-1 leading-relaxed ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                        Any token, any chain — powered by Blink
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Receive USDC on Solana</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        QR code · wallet address
                       </p>
                     </div>
-                    <ArrowRight className={`h-4 w-4 shrink-0 mt-1.5 ${dark ? "text-slate-500" : "text-gray-400"}`} />
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
 
-                  {/* Deposit with fiat — coming soon */}
-                  <div className={cn(
-                    "w-full flex items-start gap-4 p-4 rounded-xl border-2 opacity-40 cursor-not-allowed select-none",
-                    dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"
-                  )}>
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${dark ? "bg-orange-500/15" : "bg-orange-50"}`}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
-                        <path d="M17 1l4 4-4 4" /><path d="M3 11V9a4 4 0 0 1 4-4h14" /><path d="M7 23l-4-4 4-4" /><path d="M21 13v2a4 4 0 0 1-4 4H3" />
-                      </svg>
+                  {/* 2. Bridge from another chain — Privy cross-chain picker */}
+                  <button
+                    type="button"
+                    disabled={!solanaAddress || receiveLoading || cryptoLoading || bankLoading}
+                    onClick={handleCrossChainDeposit}
+                    className={cn(
+                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                      dark
+                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      {cryptoLoading
+                        ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
+                        : <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                      }
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className={`text-lg md:text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with fiat</p>
-                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-400" : "bg-gray-200 text-gray-500"}`}>Coming soon</span>
-                      </div>
-                      <p className={`text-base md:text-sm mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                        Revolut · Venmo · CashApp · Wise · PayPal
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Bridge from another chain</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        ETH · BTC · USDC · USDT — any chain
                       </p>
                     </div>
-                  </div>
-                </div>
-              ) : (
-                /* Step 2: amount entry */
-                <div className="flex flex-col items-center pt-4 pb-2 gap-6">
-                  {/* Back button */}
-                  <div className="w-full flex items-center">
-                    <button
-                      type="button"
-                      onClick={() => { setBlinkStep("select"); setBlinkAmount(""); }}
-                      className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"}`}
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M19 12H5M12 5l-7 7 7 7" />
-                      </svg>
-                      Back
-                    </button>
-                  </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
 
-                  {/* Big number amount display — matches send flow */}
-                  <div className="relative flex flex-col items-center w-full">
-                    <span
-                      ref={blinkMirrorRef}
-                      aria-hidden="true"
-                      className="invisible absolute -z-50 font-semibold font-sans tracking-tight tabular-nums"
-                      style={{ fontSize: `${blinkFontPx}px`, lineHeight: 1.05 }}
-                    >
-                      {blinkDisplayAmt}
-                    </span>
-                    <div className="flex items-baseline tabular-nums">
-                      <span
-                        className={`font-semibold font-sans ${dark ? "text-slate-500" : "text-gray-400"}`}
-                        style={{ fontSize: `${blinkSuffixPx}px`, lineHeight: 1.05 }}
-                      >
-                        $
-                      </span>
-                      <input
-                        inputMode="decimal"
-                        value={blinkAmount}
-                        onChange={(e) => setBlinkAmount(sanitizeBlinkAmount(e.target.value))}
-                        placeholder="0"
-                        autoFocus
-                        className={cn(
-                          "font-semibold font-sans tracking-tight tabular-nums",
-                          "border-0 bg-transparent outline-none p-0 m-0 text-center",
-                          dark ? "text-white placeholder:text-slate-600" : "text-gray-900 placeholder:text-gray-300"
-                        )}
-                        style={{
-                          fontSize: `${blinkFontPx}px`,
-                          lineHeight: 1.05,
-                          width: `${blinkInputWidthPx + 8}px`,
-                          minWidth: "2ch",
-                        }}
-                        aria-label="Deposit amount in USD"
-                      />
-                      <span
-                        className={`font-semibold font-sans ml-2 ${dark ? "text-slate-500" : "text-gray-400"}`}
-                        style={{ fontSize: `${blinkSuffixPx}px`, lineHeight: 1.05 }}
-                      >
-                        USD
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Quick-select amounts */}
-                  <div className="flex gap-2 flex-wrap justify-center">
-                    {[10, 25, 50, 100, 250].map((amt) => (
-                      <button
-                        key={amt}
-                        type="button"
-                        onClick={() => setBlinkAmount(String(amt))}
-                        className={cn(
-                          "px-4 py-1.5 rounded-full text-sm font-medium transition-colors",
-                          blinkAmount === String(amt)
-                            ? "bg-orange-500 text-white"
-                            : dark
-                              ? "bg-white/10 text-slate-300 hover:bg-white/15"
-                              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                        )}
-                      >
-                        ${amt}
-                      </button>
-                    ))}
-                  </div>
-
-                  {blinkError && (
-                    <p className="text-sm text-red-500 text-center">{blinkError}</p>
-                  )}
-
-                  <Button
-                    className="w-full h-12 text-base font-semibold rounded-xl"
-                    onClick={handleBlinkDeposit}
-                    disabled={!solanaAddress || !blinkAmount || parseFloat(blinkAmount) <= 0 || blinkDepositing}
+                  {/* 3. Bank / onramp */}
+                  <button
+                    type="button"
+                    disabled={!solanaAddress || receiveLoading || cryptoLoading || bankLoading}
+                    onClick={handleBankDeposit}
+                    className={cn(
+                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                      dark
+                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
                   >
-                    {blinkDepositing ? (
-                      <><Loader2 className="h-4 w-4 animate-spin mr-2" />Preparing…</>
-                    ) : "Deposit"}
-                  </Button>
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      {bankLoading
+                        ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
+                        : <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                      }
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit from bank</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        Coinbase Pay · MoonPay
+                      </p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
 
-                  <p className={`text-sm text-center ${dark ? "text-slate-600" : "text-gray-400"}`}>
-                    Any token, any chain · powered by Blink
-                  </p>
                 </div>
               )}
             </div>

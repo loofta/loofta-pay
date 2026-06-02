@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { MinimalHeader } from "@/components/layout/MinimalHeader";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -11,8 +12,8 @@ const EFFECTIVE_DATE = "June 1, 2026";
 function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
     <section id={id} className="scroll-mt-8">
-      <h2 className="mb-4 font-display text-[20px] font-medium text-white">{title}</h2>
-      <div className="flex flex-col gap-3 font-grotesk text-[15px] leading-[1.7] text-slate-400">
+      <h2 className="mb-4 font-display text-2xl font-medium text-white">{title}</h2>
+      <div className="flex flex-col gap-3 font-grotesk text-base leading-[1.75] text-slate-400">
         {children}
       </div>
     </section>
@@ -60,16 +61,13 @@ const TOC = [
 
 export default function TermsPage() {
   return (
-    <main className="min-h-screen bg-[#0a0a0c] px-6 py-20 text-white antialiased md:px-10">
+    <>
+      <MinimalHeader />
+    <main className="min-h-screen bg-[#0a0a0c] px-6 py-16 text-white antialiased md:px-10">
       <div className="mx-auto max-w-[760px]">
-        {/* back nav */}
-        <Link href="/" className="mb-10 inline-flex font-grotesk text-[13px] text-slate-500 hover:text-white transition-colors">
-          ← Back
-        </Link>
-
         {/* header */}
         <div className="mb-12">
-          <p className="mb-3 font-grotesk text-[13px] uppercase tracking-widest text-[#FF1301]">Legal</p>
+          <p className="mb-3 font-grotesk text-sm uppercase tracking-widest text-[#FF1301]">Legal</p>
           <h1 className="mb-4 font-display text-[clamp(2rem,5vw,3.2rem)] font-medium leading-[1.08] tracking-[-0.03em] text-white">
             Terms of Service
           </h1>
@@ -80,20 +78,20 @@ export default function TermsPage() {
 
         {/* intro callout */}
         <div className="mb-12 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-6">
-          <p className="font-grotesk text-[15px] leading-[1.7] text-slate-400">
+          <p className="font-grotesk text-base leading-[1.75] text-slate-400">
             Please read these Terms of Service carefully before using Loofta Pay. By accessing or using the Service, you agree to be bound by these Terms. If you do not agree, do not use the Service.
           </p>
         </div>
 
         {/* table of contents */}
         <div className="mb-14 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-6">
-          <h2 className="mb-4 font-display text-[15px] font-medium text-white">Contents</h2>
+          <h2 className="mb-4 font-display text-base font-medium text-white">Contents</h2>
           <nav className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {TOC.map((item) => (
               <a
                 key={item.id}
                 href={`#${item.id}`}
-                className="font-grotesk text-[13px] text-slate-500 hover:text-white transition-colors"
+                className="font-grotesk text-sm text-slate-500 hover:text-white transition-colors"
               >
                 {item.label}
               </a>
@@ -346,14 +344,15 @@ export default function TermsPage() {
 
         {/* footer link */}
         <div className="mt-16 flex items-center justify-between border-t border-white/[0.06] pt-8">
-          <Link href="/privacy" className="font-grotesk text-[13px] text-slate-500 hover:text-white transition-colors">
+          <Link href="/privacy" className="font-grotesk text-sm text-slate-500 hover:text-white transition-colors">
             Privacy Policy →
           </Link>
-          <Link href="/" className="font-grotesk text-[13px] text-slate-500 hover:text-white transition-colors">
+          <Link href="/" className="font-grotesk text-sm text-slate-500 hover:text-white transition-colors">
             Back to Loofta
           </Link>
         </div>
       </div>
     </main>
+    </>
   );
 }
