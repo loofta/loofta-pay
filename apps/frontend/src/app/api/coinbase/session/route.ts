@@ -116,7 +116,7 @@ export async function POST(request: Request) {
 
   // 4. Sign CDP JWT and fetch session token from Coinbase
   try {
-    const uri = "api.developer.coinbase.com/onramp/v1/token";
+    const uri = "POST api.developer.coinbase.com/onramp/v1/token";
     const cdpJwt = makeCdpJwt(keyName, apiSecret, uri);
 
     const coinbaseRes = await fetch("https://api.developer.coinbase.com/onramp/v1/token", {
