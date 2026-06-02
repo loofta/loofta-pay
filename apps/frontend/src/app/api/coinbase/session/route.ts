@@ -82,9 +82,13 @@ export async function POST(request: Request) {
   const headers = { "Content-Type": "application/json", ...corsHeaders(origin) };
 
   // 1. Authenticate — only verified Loofta users may request tokens
-  const userId = await getVerifiedUserId(request);
-  if (!userId) {
-    return new NextResponse(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
+  // In development the NestJS backend may not be running, so skip the check.
+  const isDev = process.env.NODE_ENV === "development";
+  if (!isDev) {
+    const userId = await getVerifiedUserId(request);
+    if (!userId) {
+      return new NextResponse(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
+    }
   }
 
   // 2. Parse body
