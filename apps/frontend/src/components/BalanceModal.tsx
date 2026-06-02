@@ -17,7 +17,7 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
-import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock } from "lucide-react";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
@@ -202,6 +202,38 @@ function ProgressSteps({
 
 function shortAddr(addr: string, h = 6, t = 4) {
   return addr.length > h + t ? `${addr.slice(0, h)}…${addr.slice(-t)}` : addr;
+}
+
+function IconBubble({ active, dark, children }: { active: boolean; dark: boolean; children: React.ReactNode }) {
+  return (
+    <span className="relative shrink-0 inline-flex h-7 w-7 items-center justify-center rounded-full">
+      <span
+        aria-hidden="true"
+        className={cn(
+          "absolute inset-0 rounded-full transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          active
+            ? "bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_10px_24px_rgba(255,122,42,0.25)] scale-[1.02]"
+            : dark
+              ? "bg-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+              : "bg-gray-100"
+        )}
+      />
+      {active && (
+        <span
+          aria-hidden="true"
+          className="absolute -inset-1 rounded-full blur-md opacity-60 bg-[radial-gradient(circle,rgba(255,122,42,0.55),transparent_60%)]"
+        />
+      )}
+      <span className={cn(
+        "relative z-10 shrink-0 flex items-center justify-center",
+        "[&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:stroke-[2.25]",
+        "transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+        active ? "translate-y-[-0.5px] text-white" : dark ? "text-slate-400" : "text-gray-500"
+      )}>
+        {children}
+      </span>
+    </span>
+  );
 }
 
 export interface BalanceModalProps {
@@ -689,8 +721,8 @@ export function BalanceModal({
   };
 
   const contentCls = dark
-    ? "sm:max-w-lg border-white/10 bg-[#0f0f12] text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-gray-400]:!text-slate-500 [&_.bg-gray-100]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.border-gray-300]:!border-white/20 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&>button]:!text-slate-400 [&>button:hover]:!text-white"
-    : "sm:max-w-lg";
+    ? "sm:max-w-xl border-white/10 bg-[#0f0f12] text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-gray-400]:!text-slate-500 [&_.bg-gray-100]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.border-gray-300]:!border-white/20 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&>button]:!text-slate-400 [&>button:hover]:!text-white"
+    : "sm:max-w-xl";
 
   return (
     <Dialog modal={false} open={open} onOpenChange={(o) => !o && onClose()}>
@@ -698,54 +730,100 @@ export function BalanceModal({
         className={cn(
           contentCls,
           "left-0 right-0 top-0 translate-x-0 translate-y-0 h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col",
-          "sm:left-1/2 sm:right-auto sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-lg sm:rounded-xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block"
+          "sm:left-1/2 sm:right-auto sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-xl sm:rounded-2xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block",
+          "[&>button]:h-12 [&>button]:w-12 [&>button]:rounded-full [&>button_svg]:h-5 [&>button_svg]:w-5"
         )}
       >
         {/* Drag handle — mobile only */}
-        <div className="sm:hidden flex justify-center pt-3 pb-1 shrink-0">
+        <div className="sm:hidden flex justify-center pt-5 pb-2 shrink-0">
           <div className={`w-10 h-1 rounded-full ${dark ? "bg-white/20" : "bg-gray-300"}`} />
         </div>
 
         {/* Scrollable content area */}
-        <div className="flex-1 min-h-0 overflow-y-auto sm:contents px-4 pb-4 sm:p-0 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto sm:contents px-6 pb-6 sm:p-0 space-y-5 sm:space-y-4">
 
-          <DialogHeader className="pb-1 pt-2 sm:pt-0">
-            <DialogTitle className={dark ? "text-white text-lg sm:text-xl" : undefined}>Balance</DialogTitle>
-            <DialogDescription className={dark ? "text-slate-400 text-base md:text-sm" : undefined}>
+          <DialogHeader className="pb-0 pt-2 sm:pt-0">
+            <DialogTitle className={cn("text-3xl sm:text-4xl font-bold tracking-tight", dark ? "text-white" : "text-gray-900")}>
+              Balance
+            </DialogTitle>
+            <DialogDescription className={cn("text-base font-medium mt-0.5", dark ? "text-slate-400" : "text-gray-500")}>
               {loadingBalance ? "Loading…" : `$${balanceUSD} USDC available`}
             </DialogDescription>
           </DialogHeader>
 
-          {/* Tabs */}
-          <div className={`flex gap-1 p-1 rounded-lg ${dark ? "bg-white/10" : "bg-gray-100"}`}>
+          {/* Tabs — SendReceiveTabs style with sliding indicator */}
+          <div className={cn(
+            "relative flex rounded-2xl p-1 overflow-hidden",
+            dark
+              ? "bg-white/[0.05] border border-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+              : "bg-gray-100 border border-gray-200"
+          )}>
+            {/* Sliding pill */}
+            <div
+              aria-hidden="true"
+              className={cn(
+                "absolute inset-y-1 left-1 rounded-xl w-[calc(33.333%-0.167rem)]",
+                "transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                dark
+                  ? "bg-gradient-to-b from-white/[0.08] to-white/[0.03] shadow-[0_8px_24px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.08)] border border-white/[0.08]"
+                  : "bg-white shadow-sm border border-gray-200",
+                tab === "topup" ? "translate-x-0" : tab === "withdraw" ? "translate-x-full" : "translate-x-[200%]"
+              )}
+            />
+            {/* Orange glow — dark mode only */}
+            {dark && (
+              <div
+                aria-hidden="true"
+                className={cn(
+                  "pointer-events-none absolute inset-y-1 left-1 rounded-xl w-[calc(33.333%-0.167rem)] opacity-40",
+                  "bg-[radial-gradient(80%_140%_at_50%_0%,rgba(255,122,42,0.35),transparent_60%)]",
+                  "transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                  tab === "topup" ? "translate-x-0" : tab === "withdraw" ? "translate-x-full" : "translate-x-[200%]"
+                )}
+              />
+            )}
+
+            {/* Top Up */}
             <button
               type="button"
               onClick={() => setTab("topup")}
-              className={`flex-1 rounded-md py-2 text-base md:text-sm font-medium ${tab === "topup" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
+              className="group relative z-10 flex-1 inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]"
             >
-              Top Up
+              <IconBubble active={tab === "topup"} dark={dark}><ArrowDown /></IconBubble>
+              <span className={cn("relative z-10 font-semibold text-base transition-colors duration-300",
+                tab === "topup" ? (dark ? "text-slate-100" : "text-gray-900") : (dark ? "text-slate-400" : "text-gray-500")
+              )}>Top Up</span>
             </button>
+
+            {/* Withdraw */}
             <button
               type="button"
               onClick={() => setTab("withdraw")}
-              className={`flex-1 rounded-md py-2 text-base md:text-sm font-medium ${tab === "withdraw" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
+              className="group relative z-10 flex-1 inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]"
             >
-              {withdrawStep !== "idle" && withdrawStep !== "complete" && withdrawStep !== "failed" ? (
-                <span className="flex items-center justify-center gap-1.5">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  In Progress
-                </span>
-              ) : "Withdraw"}
+              <IconBubble active={tab === "withdraw"} dark={dark}>
+                {withdrawStep !== "idle" && withdrawStep !== "complete" && withdrawStep !== "failed"
+                  ? <Loader2 className="animate-spin" />
+                  : <ArrowUp />
+                }
+              </IconBubble>
+              <span className={cn("relative z-10 font-semibold text-base transition-colors duration-300",
+                tab === "withdraw" ? (dark ? "text-slate-100" : "text-gray-900") : (dark ? "text-slate-400" : "text-gray-500")
+              )}>
+                {withdrawStep !== "idle" && withdrawStep !== "complete" && withdrawStep !== "failed" ? "Active" : "Withdraw"}
+              </span>
             </button>
+
+            {/* Recent */}
             <button
               type="button"
-              onClick={() => {
-                setRecentWithdrawals(getWithdrawalHistory());
-                setTab("history");
-              }}
-              className={`flex-1 rounded-md py-2 text-base md:text-sm font-medium ${tab === "history" ? (dark ? "bg-white/20 text-white" : "bg-white text-gray-900 shadow-sm") : dark ? "text-slate-400 hover:text-white" : "text-gray-600 hover:text-gray-900"}`}
+              onClick={() => { setRecentWithdrawals(getWithdrawalHistory()); setTab("history"); }}
+              className="group relative z-10 flex-1 inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]"
             >
-              Recent
+              <IconBubble active={tab === "history"} dark={dark}><Clock /></IconBubble>
+              <span className={cn("relative z-10 font-semibold text-base transition-colors duration-300",
+                tab === "history" ? (dark ? "text-slate-100" : "text-gray-900") : (dark ? "text-slate-400" : "text-gray-500")
+              )}>Recent</span>
             </button>
           </div>
 
