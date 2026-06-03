@@ -71,12 +71,6 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   const params = await props.params;
   const supabase = getSupabaseAdmin();
 
-  // Authentication required — unauthenticated users cannot read claim details.
-  const requestingUserId = await getVerifiedUserId(request);
-  if (!requestingUserId) {
-    return NextResponse.json({ error: "Authentication required to view this payment." }, { status: 403 });
-  }
-
   // Try payments table first; fall back to legacy claims
   let rawPayment: Record<string, unknown> | null = null;
   let isLegacy = false;
@@ -112,39 +106,56 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     return NextResponse.json({ error: "This payment doesn't exist." }, { status: 404 });
   }
 
-  // Access control: only the creator or the intended recipient may view a claim.
+  const direction = String((rawPayment?.direction as string) || "from_sender");
+
+  // from_recipient = payment request link created by the recipient — visible to anyone (payer doesn't need auth to view).
+  // from_sender = private payment link — only creator or intended recipient may view.
+  const isPublicPaymentRequest = direction === "from_recipient";
+
   const createdBy = String(rawPayment?.created_by ?? "");
-  const recipientUserId = String((paymentRow as Record<string, unknown> | null)?.recipient_user_id ?? "");
-  const isCreator = !!createdBy && createdBy === requestingUserId;
-  const isKnownRecipient = !!recipientUserId && recipientUserId === requestingUserId;
-  if (!isCreator && !isKnownRecipient) {
-    // For PENDING_EMAIL/USERNAME claims the recipient_user_id is null (unregistered user).
-    // Delegate identity check to the backend which has full Privy linked-account access.
-    const ra = String(rawPayment?.recipient_address ?? "").trim();
-    const isPendingIdentity = ra.startsWith(PENDING_EMAIL_PREFIX) || ra.startsWith(PENDING_USERNAME_PREFIX);
-    if (isPendingIdentity) {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-      const authHeader = request.headers.get("authorization");
-      const legacyId = request.headers.get("x-privy-user-id");
-      try {
-        const checkRes = await fetch(`${backendUrl}/claims/${params.id}/recipient-check`, {
-          headers: {
-            ...(authHeader ? { authorization: authHeader } : {}),
-            ...(legacyId ? { "x-privy-user-id": legacyId } : {}),
-          },
-        });
-        const checkData = checkRes.ok ? await checkRes.json().catch(() => ({})) : {};
-        if (!checkData?.isRecipient) {
+
+  const requestingUserId = await getVerifiedUserId(request);
+
+  if (!isPublicPaymentRequest) {
+    // Authentication required for from_sender payments.
+    if (!requestingUserId) {
+      return NextResponse.json({ error: "Authentication required to view this payment." }, { status: 403 });
+    }
+
+    // Access control: only the creator or the intended recipient may view a claim.
+    const recipientUserId = String((paymentRow as Record<string, unknown> | null)?.recipient_user_id ?? "");
+    const isCreator = !!createdBy && createdBy === requestingUserId;
+    const isKnownRecipient = !!recipientUserId && recipientUserId === requestingUserId;
+    if (!isCreator && !isKnownRecipient) {
+      // For PENDING_EMAIL/USERNAME claims the recipient_user_id is null (unregistered user).
+      // Delegate identity check to the backend which has full Privy linked-account access.
+      const ra = String(rawPayment?.recipient_address ?? "").trim();
+      const isPendingIdentity = ra.startsWith(PENDING_EMAIL_PREFIX) || ra.startsWith(PENDING_USERNAME_PREFIX);
+      if (isPendingIdentity) {
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+        const authHeader = request.headers.get("authorization");
+        const legacyId = request.headers.get("x-privy-user-id");
+        try {
+          const checkRes = await fetch(`${backendUrl}/claims/${params.id}/recipient-check`, {
+            headers: {
+              ...(authHeader ? { authorization: authHeader } : {}),
+              ...(legacyId ? { "x-privy-user-id": legacyId } : {}),
+            },
+          });
+          const checkData = checkRes.ok ? await checkRes.json().catch(() => ({})) : {};
+          if (!checkData?.isRecipient) {
+            return NextResponse.json({ error: "Payment not found." }, { status: 404 });
+          }
+          // isRecipient confirmed — fall through to return the claim
+        } catch {
           return NextResponse.json({ error: "Payment not found." }, { status: 404 });
         }
-        // isRecipient confirmed — fall through to return the claim
-      } catch {
+      } else {
         return NextResponse.json({ error: "Payment not found." }, { status: 404 });
       }
-    } else {
-      return NextResponse.json({ error: "Payment not found." }, { status: 404 });
     }
   }
+  // from_recipient: public payment request — anyone can view, no access control needed
 
   // Run creator username lookup and intent fetch in parallel
   const creatorUsernamePromise = createdBy.includes('did:privy:')
