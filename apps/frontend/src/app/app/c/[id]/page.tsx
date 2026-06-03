@@ -3422,7 +3422,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                                 ? `@${claim.recipient_username}`
                                 : null}
                         </>
-                      ) : "Payment request"}
+                      ) : (
+                        <>
+                          {"Payment request from "}
+                          {claim?.creator_username
+                            ? `@${claim.creator_username}`
+                            : claim?.creator_email || "Anonymous"}
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
