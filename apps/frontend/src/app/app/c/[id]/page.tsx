@@ -689,7 +689,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       const token = await getAccessToken();
       return fetchClaim(id, token);
     },
-    enabled: !!user?.id,
+    enabled: privyReady,
     staleTime: 60_000,
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: false,
@@ -2606,7 +2606,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             <Skeleton className="h-4 w-4/5" />
             <Skeleton className="h-12 w-full rounded-xl mt-2" />
           </div>
-        ) : !authenticated ? (
+        ) : !authenticated && claim?.direction !== 'from_recipient' ? (
           <div className="py-16 flex flex-col items-center text-center">
             <div className="w-16 h-16 rounded-full bg-white/10 border border-white/10 flex items-center justify-center mb-5">
               <LogIn className="w-7 h-7 text-slate-400" />
@@ -2626,7 +2626,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           </div>
         ) : claim ? (
           <>
-            {!isCreatorView && !isRecipient ? (
+            {!isCreatorView && !isRecipient && claim?.direction !== 'from_recipient' ? (
               <div className="py-16 flex flex-col items-center text-center">
                 <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-5 text-4xl select-none">
                   🔍
