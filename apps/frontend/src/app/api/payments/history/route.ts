@@ -85,38 +85,20 @@ function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & {
 
 async function getVerifiedUserId(request: Request): Promise<string | null> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-
   const authHeader = request.headers.get("authorization");
-  if (authHeader?.startsWith("Bearer ")) {
-    try {
-      const res = await fetch(`${backendUrl}/users/me`, {
-        headers: { authorization: authHeader },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.userId) return data.userId;
-      }
-    } catch (e) {
-      console.warn("[payments/history] Backend verify failed:", e);
-    }
-    return null;
-  }
+  if (!authHeader?.startsWith("Bearer ")) return null;
 
-  const legacyId = request.headers.get("x-privy-user-id");
-  if (legacyId) {
-    try {
-      const res = await fetch(`${backendUrl}/users/me`, {
-        headers: { "x-privy-user-id": legacyId },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.userId) return data.userId;
-      }
-    } catch (e) {
-      console.warn("[payments/history] Legacy header verify failed:", e);
+  try {
+    const res = await fetch(`${backendUrl}/users/me`, {
+      headers: { authorization: authHeader },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.userId ?? null;
     }
+  } catch (e) {
+    console.warn("[payments/history] Backend verify failed:", e);
   }
-
   return null;
 }
 
@@ -146,13 +128,9 @@ export async function GET(request: Request) {
     if (walletAddresses.length === 0) {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
       const authHeader = request.headers.get("authorization");
-      const legacyId = request.headers.get("x-privy-user-id");
       try {
         const res = await fetch(`${backendUrl}/users/me/wallet/balance`, {
-          headers: {
-            ...(authHeader ? { authorization: authHeader } : {}),
-            ...(legacyId ? { "x-privy-user-id": legacyId } : {}),
-          },
+          headers: authHeader ? { authorization: authHeader } : {},
         });
         if (res.ok) {
           const data = await res.json();

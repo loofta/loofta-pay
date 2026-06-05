@@ -59,7 +59,6 @@ async function bootstrap() {
       .setDescription('Backend API for Loofta Swap - Cross-chain payment infrastructure')
       .setVersion('1.0')
       .addBearerAuth()
-      .addApiKey({ type: 'apiKey', name: 'x-privy-user-id', in: 'header' }, 'privy-auth')
       .addTag('organizations', 'Organization management')
       .addTag('claims', 'Payment claims and deposits')
       .addTag('intents', 'Cross-chain intent operations')

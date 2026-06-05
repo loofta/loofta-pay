@@ -81,45 +81,6 @@ describe('AuthGuard', () => {
     });
   });
 
-  // Legacy header path
-  describe('x-privy-user-id (legacy)', () => {
-    it('sets req.user when the user ID is verified by Privy API', async () => {
-      privy.verifyUserId.mockResolvedValue(true);
-      const ctx = makeContext({ 'x-privy-user-id': VALID_USER_ID });
-
-      const result = await guard.canActivate(ctx);
-      const req = ctx.switchToHttp().getRequest();
-
-      expect(result).toBe(true);
-      expect(req.user).toEqual({ id: VALID_USER_ID });
-      expect(privy.verifyUserId).toHaveBeenCalledWith(VALID_USER_ID);
-    });
-
-    it('throws UnauthorizedException when Privy API rejects the user ID', async () => {
-      privy.verifyUserId.mockResolvedValue(false);
-      const ctx = makeContext({ 'x-privy-user-id': 'did:privy:fake_id' });
-
-      await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
-      await expect(guard.canActivate(ctx)).rejects.toThrow('Invalid user ID');
-    });
-
-    it('prefers Bearer token over x-privy-user-id when both are sent', async () => {
-      privy.verifyAccessToken.mockResolvedValue(VALID_USER_ID);
-      const ctx = makeContext({
-        authorization: `Bearer ${VALID_TOKEN}`,
-        'x-privy-user-id': 'did:privy:other_user',
-      });
-
-      const result = await guard.canActivate(ctx);
-      const req = ctx.switchToHttp().getRequest();
-
-      expect(result).toBe(true);
-      expect(req.user).toEqual({ id: VALID_USER_ID });
-      expect(privy.verifyAccessToken).toHaveBeenCalled();
-      expect(privy.verifyUserId).not.toHaveBeenCalled();
-    });
-  });
-
   // No credentials
   describe('no credentials', () => {
     it('throws UnauthorizedException when no auth header is present', async () => {
@@ -174,27 +135,6 @@ describe('OptionalAuthGuard', () => {
   it('returns true without throwing for an invalid JWT (user left as undefined)', async () => {
     privy.verifyAccessToken.mockResolvedValue(null);
     const ctx = makeContext({ authorization: `Bearer bad.token` });
-
-    const result = await guard.canActivate(ctx);
-    const req = ctx.switchToHttp().getRequest();
-
-    expect(result).toBe(true);
-    expect(req.user).toBeUndefined();
-  });
-
-  it('sets req.user for a valid x-privy-user-id header', async () => {
-    privy.verifyUserId.mockResolvedValue(true);
-    const ctx = makeContext({ 'x-privy-user-id': VALID_USER_ID });
-
-    await guard.canActivate(ctx);
-    const req = ctx.switchToHttp().getRequest();
-
-    expect(req.user).toEqual({ id: VALID_USER_ID });
-  });
-
-  it('leaves req.user undefined when Privy rejects the legacy user ID', async () => {
-    privy.verifyUserId.mockResolvedValue(false);
-    const ctx = makeContext({ 'x-privy-user-id': 'did:privy:fake' });
 
     const result = await guard.canActivate(ctx);
     const req = ctx.switchToHttp().getRequest();

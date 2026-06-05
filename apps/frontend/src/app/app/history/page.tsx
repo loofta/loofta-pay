@@ -110,7 +110,7 @@ async function fetchPaymentHistory(
 ): Promise<{ sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[] }> {
   const headers: Record<string, string> = accessToken
     ? { authorization: `Bearer ${accessToken}` }
-    : { "x-privy-user-id": userId };
+    : {};
   const params = networkMode ? `?network=${networkMode}` : "";
   const r = await fetch(`/api/payments/history${params}`, { headers, cache: "no-store" });
   if (!r.ok) {

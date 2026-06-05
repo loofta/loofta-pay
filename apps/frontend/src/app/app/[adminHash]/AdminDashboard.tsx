@@ -507,12 +507,9 @@ export default function AdminDashboard() {
   const userIdRef = useRef(userId);
   useEffect(() => { userIdRef.current = userId; }, [userId]);
 
-  // Build auth headers — prefer Bearer JWT, fall back to legacy header
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const token = await getAccessToken().catch(() => null);
-    if (token) return { authorization: `Bearer ${token}` };
-    const uid = userIdRef.current;
-    return uid ? { "x-privy-user-id": uid } : {};
+    return token ? { authorization: `Bearer ${token}` } : {};
   }, [getAccessToken]);
 
   // ── Auth check ──────────────────────────────────────────────────────────────

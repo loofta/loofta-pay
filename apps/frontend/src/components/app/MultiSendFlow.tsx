@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   useWallets as useSolanaWallets,
@@ -28,7 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
-import { PlusIcon, XIcon, CheckCircle2, Copy, ExternalLink, Loader2, ArrowLeft } from "lucide-react";
+import { PlusIcon, XIcon, CheckCircle2, Copy, ExternalLink, Loader2, ArrowLeft, UploadCloud, FileDown, AlertCircle } from "lucide-react";
 import { MessageInput } from "@/components/MessageInput";
 
 type ConfirmFeeData = {
@@ -63,6 +63,55 @@ function inferType(s: string): "email" | "username" {
   return looksLikeEmail(s) ? "email" : "username";
 }
 
+const EXAMPLE_CSV = `recipient,amount,message
+alice@email.com,100,Thanks for the work!
+bob_username,50,Invoice #1234
+carol@email.com,200,Great job this month
+diana,75,`;
+
+function parseCSVLine(line: string, delimiter: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { inQuotes = !inQuotes; }
+    else if (line.startsWith(delimiter, i) && !inQuotes) { result.push(current); current = ""; i += delimiter.length - 1; }
+    else { current += c; }
+  }
+  result.push(current);
+  return result;
+}
+
+function parseCSV(text: string): { rows: MultiSendRow[]; errors: string[] } {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const errors: string[] = [];
+  const newRows: MultiSendRow[] = [];
+  const firstLine = lines[0]?.toLowerCase() ?? "";
+  const hasHeader = /^(recipient|email|username|to)/.test(firstLine);
+  const dataLines = hasHeader ? lines.slice(1) : lines;
+  const sample = dataLines[0] ?? "";
+  const delimiter = (sample.match(/\t/g) ?? []).length >= (sample.match(/,/g) ?? []).length ? "\t" : ",";
+
+  for (let i = 0; i < dataLines.length; i++) {
+    const parts = parseCSVLine(dataLines[i], delimiter);
+    const recipient = parts[0]?.trim().replace(/^@/, "") ?? "";
+    const amountStr = parts[1]?.trim() ?? "";
+    const message = parts[2]?.trim() ?? "";
+
+    if (!recipient) { errors.push(`Row ${i + 1}: recipient is empty`); continue; }
+    const amount = parseFloat(amountStr);
+    if (!Number.isFinite(amount) || amount < 5) { errors.push(`Row ${i + 1}: amount must be ≥ $5`); continue; }
+    newRows.push({
+      id: `ms-csv-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 5)}`,
+      recipient,
+      amount: String(amount),
+      message,
+    });
+  }
+  return { rows: newRows, errors };
+}
+
 function newRow(): MultiSendRow {
   return { id: `ms-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, recipient: "", amount: "100", message: "" };
 }
@@ -81,6 +130,10 @@ export interface MultiSendFlowProps {
 export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   const { rows, reviewPending, completedLinks, hydrated, setRows, setReviewPending, setCompletedLinks, clear } = useMultiSendStore();
   const [phase, setPhase] = useState<SendPhase>({ kind: "idle" });
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [csvErrors, setCsvErrors] = useState<string[]>([]);
+  const [showPaste, setShowPaste] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { user, getAccessToken, login, authenticated } = usePrivy();
   const networkMode = useAuthStore((s) => s.networkMode);
@@ -111,6 +164,42 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       setPhase((p) => p.kind === "idle" ? { kind: "review" } : p);
     }
   }, [hydrated]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function downloadExample() {
+    const blob = new Blob([EXAMPLE_CSV], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "loofta-multisend-example.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleCSVFile(file: File) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const { rows: newRows, errors } = parseCSV(text);
+      setCsvErrors(errors);
+      if (newRows.length > 0) {
+        const capped = newRows.slice(0, 10);
+        const padded = capped.length < 2 ? [...capped, ...defaultRows().slice(capped.length)] : capped;
+        setRows(padded);
+        if (newRows.length > 10) {
+          setCsvErrors((prev) => [`Only the first 10 recipients were imported (max 10)`, ...prev]);
+        }
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleCSVFile(file);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function addRow() {
     if (rows.length >= 10) return;
@@ -614,6 +703,104 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         <p className="text-white text-xl font-semibold">Multi Send</p>
       </div>
 
+      {/* CSV import zone */}
+      <div className="space-y-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleCSVFile(f);
+            e.target.value = "";
+          }}
+        />
+        <div
+          onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+          onDragLeave={() => setIsDragOver(false)}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+          className={`cursor-pointer rounded-xl border-2 border-dashed p-5 text-center transition-all select-none ${
+            isDragOver
+              ? "border-orange-400/60 bg-orange-500/10"
+              : "border-white/15 hover:border-white/30 hover:bg-white/5"
+          }`}
+        >
+          <UploadCloud className={`w-6 h-6 mx-auto mb-2 transition-colors ${isDragOver ? "text-orange-400" : "text-slate-500"}`} />
+          <p className="text-white text-sm font-semibold">Import from CSV</p>
+          <p className="text-slate-500 text-sm mt-0.5">Drag & drop or click to browse</p>
+          <p className="text-slate-600 text-sm font-mono mt-2">recipient, amount, message</p>
+        </div>
+
+        <div className="flex items-center justify-center gap-4">
+          <button
+            type="button"
+            onClick={downloadExample}
+            className="flex items-center gap-1.5 text-slate-400 hover:text-white text-sm transition-colors"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            Download example
+          </button>
+          <span className="text-slate-700 text-sm">·</span>
+          <button
+            type="button"
+            onClick={() => { setShowPaste((v) => !v); setCsvErrors([]); }}
+            className="flex items-center gap-1.5 text-slate-400 hover:text-white text-sm transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+              <rect x="5" y="1" width="9" height="12" rx="1.5" />
+              <path d="M2 4v10a1.5 1.5 0 0 0 1.5 1.5H11" />
+              <path d="M8 5h3M8 8h3M8 11h1" strokeLinecap="round" />
+            </svg>
+            {showPaste ? "Hide paste" : "Paste text"}
+          </button>
+        </div>
+
+        {showPaste && (
+          <div className="rounded-xl border border-white/15 bg-white/5 p-3 space-y-2">
+            <p className="text-slate-400 text-sm">Paste CSV or spreadsheet rows — comma or tab separated</p>
+            <textarea
+              autoFocus
+              rows={5}
+              placeholder={"alice@email.com, 100, Thanks!\nbob_username, 50\ncarol@email.com, 200, Invoice #42"}
+              className="w-full rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-slate-600 text-sm font-mono p-2.5 resize-none focus:outline-none focus:border-white/30"
+              onPaste={(e) => {
+                const text = e.clipboardData.getData("text");
+                if (!text.trim()) return;
+                e.preventDefault();
+                const { rows: newRows, errors } = parseCSV(text);
+                setCsvErrors(errors);
+                if (newRows.length > 0) {
+                  const capped = newRows.slice(0, 10);
+                  const padded = capped.length < 2 ? [...capped, ...defaultRows().slice(capped.length)] : capped;
+                  setRows(padded);
+                  if (newRows.length > 10) setCsvErrors((prev) => [`Only the first 10 recipients were imported (max 10)`, ...prev]);
+                  if (errors.length === 0) setShowPaste(false);
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {csvErrors.length > 0 && (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 space-y-1">
+            {csvErrors.map((err, i) => (
+              <p key={i} className="text-red-400 text-sm flex items-start gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                {err}
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-3">
+        <div className="h-px flex-1 bg-white/10" />
+        <span className="text-slate-500 text-sm shrink-0">or add manually</span>
+        <div className="h-px flex-1 bg-white/10" />
+      </div>
+
       <div className="space-y-3">
         {rows.map((row, idx) => (
           <div key={row.id} className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2.5">
@@ -673,16 +860,27 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         ))}
       </div>
 
-      {rows.length < 10 && (
-        <button
-          type="button"
-          onClick={addRow}
-          className="flex items-center gap-1.5 text-slate-400 hover:text-white text-base md:text-sm font-medium transition-colors"
-        >
-          <PlusIcon className="w-4 h-4" />
-          Add recipient
-        </button>
-      )}
+      <div className="flex items-center justify-between">
+        {rows.length < 10 ? (
+          <button
+            type="button"
+            onClick={addRow}
+            className="flex items-center gap-1.5 text-slate-400 hover:text-white text-base md:text-sm font-medium transition-colors"
+          >
+            <PlusIcon className="w-4 h-4" />
+            Add recipient
+          </button>
+        ) : <span />}
+        {rows.some((r) => r.recipient.trim() || r.amount !== "100" || r.message.trim()) && (
+          <button
+            type="button"
+            onClick={() => { setRows(defaultRows()); setCsvErrors([]); setShowPaste(false); }}
+            className="text-slate-500 hover:text-red-400 text-base md:text-sm transition-colors"
+          >
+            Clear all
+          </button>
+        )}
+      </div>
 
       <div className="flex items-center justify-between text-base text-slate-400 border-t border-white/10 pt-3">
         <span>{rows.length} recipient{rows.length > 1 ? "s" : ""}</span>

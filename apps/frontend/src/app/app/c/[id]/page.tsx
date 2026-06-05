@@ -185,7 +185,7 @@ function ClaimPageSenderShareView({
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
     getSenderAccessToken().then((token) => {
       fetch(`${backendUrl}/claims/${claimId}/reclaim-eligibility`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : { "x-privy-user-id": userId },
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
         .then((r) => (r.ok ? r.json() : { canReclaim: false }))
         .then((data) => setCanReclaim(!!data?.canReclaim))
@@ -212,7 +212,7 @@ function ClaimPageSenderShareView({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(senderToken ? { Authorization: `Bearer ${senderToken}` } : { "x-privy-user-id": userId }),
+          ...(senderToken ? { Authorization: `Bearer ${senderToken}` } : {}),
         },
       });
       if (!r.ok) {
@@ -521,14 +521,11 @@ async function updateClaimStatus(
     feeAmountUsdc?: number;
     feeBreakdown?: { looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number };
   },
-  userId?: string,
   accessToken?: string | null,
 ) {
   const authHeader: Record<string, string> = accessToken
     ? { Authorization: `Bearer ${accessToken}` }
-    : userId
-      ? { "x-privy-user-id": userId }
-      : {};
+    : {};
   try {
     // Try backend API first (more reliable)
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -748,7 +745,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
       const token = await getAccessToken();
       const r = await fetch(`${backendUrl}/claims/${id}/recipient-check`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : { "x-privy-user-id": user.id },
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!r.ok) return { isRecipient: false };
       const data = await r.json();
@@ -834,7 +831,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(claimToken ? { Authorization: `Bearer ${claimToken}` } : { "x-privy-user-id": user!.id }),
+          ...(claimToken ? { Authorization: `Bearer ${claimToken}` } : {}),
         },
       });
       console.info("[Claim] /claim response:", claimResp.status);
@@ -846,7 +843,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         // shows immediately after /claim 200.
         const retrySweepHeaders: Record<string, string> = { "Content-Type": "application/json" };
         if (claimToken) retrySweepHeaders["Authorization"] = `Bearer ${claimToken}`;
-        else retrySweepHeaders["x-privy-user-id"] = user!.id;
         fetch(`${backendUrl}/claims/${id}/claim-retry-sweep`, {
           method: "POST",
           headers: retrySweepHeaders,
@@ -861,7 +857,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         console.info("[Claim] Already claimed — retry-sweep in background…");
         const retrySweepHeaders: Record<string, string> = { "Content-Type": "application/json" };
         if (claimToken) retrySweepHeaders["Authorization"] = `Bearer ${claimToken}`;
-        else retrySweepHeaders["x-privy-user-id"] = user!.id;
         fetch(`${backendUrl}/claims/${id}/claim-retry-sweep`, {
           method: "POST",
           headers: retrySweepHeaders,
@@ -1005,7 +1000,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
       const diagToken = await getAccessToken();
       const r = await fetch(`${backendUrl}/claims/${id}/troubleshoot-burner`, {
-        headers: diagToken ? { Authorization: `Bearer ${diagToken}` } : { "x-privy-user-id": user.id },
+        headers: diagToken ? { Authorization: `Bearer ${diagToken}` } : {},
       });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
@@ -1033,7 +1028,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(sweepToken ? { Authorization: `Bearer ${sweepToken}` } : { "x-privy-user-id": user.id }),
+          ...(sweepToken ? { Authorization: `Bearer ${sweepToken}` } : {}),
         },
       });
       if (!r.ok) {
@@ -1068,7 +1063,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(reclaimToken ? { Authorization: `Bearer ${reclaimToken}` } : { "x-privy-user-id": user.id }),
+          ...(reclaimToken ? { Authorization: `Bearer ${reclaimToken}` } : {}),
         },
       });
       if (!r.ok) {
@@ -1704,7 +1699,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
       const authHeader: Record<string, string> = perToken
         ? { Authorization: `Bearer ${perToken}` }
-        : { "x-privy-user-id": user.id };
+        : {};
 
       // Saved immediately after sendRawTransaction, before confirmation polling.
       let broadcastedSignature: string | null = null;
@@ -1750,7 +1745,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               paidWithToken: "USDC",
               paidWithChain: "solana",
             },
-            user?.id,
             perToken,
           );
           setStatus("PRIVATE_TRANSFER_PENDING");
@@ -1778,7 +1772,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           ...(paidFeeUsdc != null ? { feeAmountUsdc: paidFeeUsdc } : {}),
           ...(paidFeeBreakdown ? { feeBreakdown: paidFeeBreakdown } : {}),
         },
-        user?.id,
         perToken,
       );
       setStatus("SUCCESS");
@@ -1921,7 +1914,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           ...(walletFeeUsdc != null ? { feeAmountUsdc: walletFeeUsdc } : {}),
           ...(walletFeeBreakdown ? { feeBreakdown: walletFeeBreakdown } : {}),
         },
-        user?.id,
         walletToken,
       );
       console.info("[PayWithWallet] Claim status updated to SUCCESS");
@@ -2102,7 +2094,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           ...(looftaFeeUsdc != null ? { feeAmountUsdc: looftaFeeUsdc } : {}),
           ...(looftaFeeBreakdown ? { feeBreakdown: looftaFeeBreakdown } : {}),
         },
-        user?.id,
         looFtaToken,
       );
       console.info("[PayWithLoofta] Claim status updated to SUCCESS");
@@ -2186,7 +2177,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           isPrivate: true,
           paidWithToken: "USDC",
           paidWithChain: "solana",
-        }, user?.id, perToken);
+        }, perToken);
         setStatus("SUCCESS");
         useClaimPayStore.getState().setStatus(id, "SUCCESS");
         await claimQuery.refetch();
@@ -2257,19 +2248,20 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         const destinationAsset = statusQuery.data?.destinationAsset;
 
         // Deposit was just detected - record the time
-        updateClaimStatus(id, "IN_FLIGHT", { // DB status (valid constraint)
-          paidWith: paidToken?.symbol
-            ? `${paidToken.symbol} on ${paidToken.chain || selectedFrom?.chain}`
-            : selectedFrom?.symbol
-              ? `${selectedFrom.symbol} on ${selectedFrom.chain}`
-              : undefined,
-          depositReceivedAt: new Date().toISOString(), // Record when deposit was detected
-          // Store route info from 1-click API response
-          originAsset,
-          destinationAsset,
-        }, user?.id).catch((e) => {
-          console.error("[statusQuery] Failed to update deposit_received_at:", e);
-        });
+        getAccessToken().catch(() => null).then((statusToken) =>
+          updateClaimStatus(id, "IN_FLIGHT", {
+            paidWith: paidToken?.symbol
+              ? `${paidToken.symbol} on ${paidToken.chain || selectedFrom?.chain}`
+              : selectedFrom?.symbol
+                ? `${selectedFrom.symbol} on ${selectedFrom.chain}`
+                : undefined,
+            depositReceivedAt: new Date().toISOString(),
+            originAsset,
+            destinationAsset,
+          }, statusToken).catch((e) => {
+            console.error("[statusQuery] Failed to update deposit_received_at:", e);
+          })
+        );
       }
 
       // When status becomes terminal, update the claim in DB (only once per status)
@@ -2279,6 +2271,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
         // Update claim in DB then refresh cache
         (async () => {
+          const statusToken = await getAccessToken().catch(() => null);
           if (upperStatus === "SUCCESS") {
             await updateClaimStatus(id, "SUCCESS", {
               paidWith: paidToken?.symbol
@@ -2286,10 +2279,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 : selectedFrom?.symbol
                   ? `${selectedFrom.symbol} on ${selectedFrom.chain}`
                   : undefined,
-            }, user?.id);
+            }, statusToken);
             queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
           } else {
-            await updateClaimStatus(id, upperStatus, undefined, user?.id);
+            await updateClaimStatus(id, upperStatus, undefined, statusToken);
           }
           // Refetch claim after DB is updated
           claimQuery.refetch();
@@ -2344,7 +2337,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     useClaimPayStore.getState().setStatus(id, "IN_FLIGHT");
 
     // Update claim status in database
-    updateClaimStatus(id, "IN_FLIGHT", { txHash: hash }, user?.id).catch((e) => {
+    const statusToken = await getAccessToken().catch(() => null);
+    updateClaimStatus(id, "IN_FLIGHT", { txHash: hash }, statusToken).catch((e) => {
       console.error("[onSubmitTxHash] Failed to update claim status:", e);
     });
 
@@ -2526,7 +2520,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           const deleteToken = await getAccessToken();
                           const r = await fetch(`/api/claims/${id}`, {
                             method: "DELETE",
-                            headers: deleteToken ? { Authorization: `Bearer ${deleteToken}` } : { "x-privy-user-id": user.id },
+                            headers: deleteToken ? { Authorization: `Bearer ${deleteToken}` } : {},
                           });
                           if (!r.ok) {
                             const err = await r.json().catch(() => ({}));
