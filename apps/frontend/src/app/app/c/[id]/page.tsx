@@ -408,7 +408,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
     isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
-    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean },
+    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -1145,10 +1145,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const payNowModalDismissLocked =
     confirmingTxSignature !== null || payingWithLoofta || payingWithWallet || perTransferPhase !== null;
 
-  // All payments are private via MagicBlock PER.
-  const requiresPrivate = true;
-  const privateRequired = true;
-  const privatePayActive = true;
+  // fee_on_sender: true (default) = fees charged on top of amount; false = fees deducted from amount
+  const isFeeOnSender = (claim as any)?.fee_on_sender !== false;
+  // requiresPrivate: false only when claim was explicitly created as non-private
+  const requiresPrivate = claim ? (claim as any).is_private !== false : true;
+  const privateRequired = requiresPrivate;
+  const privatePayActive = requiresPrivate;
   const isCreatorView = !!user?.id && claim?.created_by === user.id;
   const isSenderPendingFundedView =
     isCreatorView &&
@@ -3240,28 +3242,56 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
                   <div className="text-base font-medium text-slate-200 mb-2">Payment summary</div>
                   <div className="text-base text-gray-700 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-600">Recipient receives</span>
-                      <span className="text-lg font-semibold text-gray-900">
-                        <span className="inline-flex items-center gap-1">
-                          <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={18} />
-                          ${parseFloat(claim.amount || "0").toFixed(2)}
-                        </span>
-                      </span>
-                    </div>
-                    {paidFeeUsdc != null && paidFeeUsdc > 0 && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-600 text-base md:text-sm">Platform fee</span>
-                        <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
-                      </div>
-                    )}
-                    {paidFeeUsdc != null && (
-                      <div className="flex items-center justify-between border-t border-gray-200 pt-1 mt-1">
-                        <span className="text-gray-600 font-medium">You paid</span>
-                        <span className="text-base font-semibold text-gray-900">
-                          ${(parseFloat(claim.amount || "0") + paidFeeUsdc).toFixed(4)}
-                        </span>
-                      </div>
+                    {isFeeOnSender ? (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600">Recipient receives</span>
+                          <span className="text-lg font-semibold text-gray-900">
+                            <span className="inline-flex items-center gap-1">
+                              <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={18} />
+                              ${parseFloat(claim.amount || "0").toFixed(2)}
+                            </span>
+                          </span>
+                        </div>
+                        {paidFeeUsdc != null && paidFeeUsdc > 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600 text-base md:text-sm">Platform fee</span>
+                            <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
+                          </div>
+                        )}
+                        {paidFeeUsdc != null && (
+                          <div className="flex items-center justify-between border-t border-gray-200 pt-1 mt-1">
+                            <span className="text-gray-600 font-medium">You paid</span>
+                            <span className="text-base font-semibold text-gray-900">
+                              ${(parseFloat(claim.amount || "0") + paidFeeUsdc).toFixed(4)}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600 font-medium">You paid</span>
+                          <span className="text-lg font-semibold text-gray-900">
+                            ${parseFloat(claim.amount || "0").toFixed(2)}
+                          </span>
+                        </div>
+                        {paidFeeUsdc != null && paidFeeUsdc > 0 && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600 text-base md:text-sm">Platform fee (deducted)</span>
+                            <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between border-t border-gray-200 pt-1 mt-1">
+                          <span className="text-gray-600">Recipient receives</span>
+                          <span className="text-lg font-semibold text-gray-900">
+                            <span className="inline-flex items-center gap-1">
+                              <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={18} />
+                              ${(parseFloat(claim.amount || "0") - (paidFeeUsdc ?? 0)).toFixed(2)}
+                            </span>
+                          </span>
+                        </div>
+                      </>
                     )}
                     {user?.id && claim?.created_by === user.id && (() => {
                       const recipientLabel =
@@ -3532,18 +3562,37 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
                     <div className="text-base md:text-sm font-medium font-sans text-gray-700 mb-2">Payment breakdown</div>
                     <div className="space-y-1.5 text-base md:text-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-600">Amount to recipient</span>
-                        <span className="font-semibold font-sans text-gray-900">${claimAmountUSD.toFixed(2)}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-600">Platform fee</span>
-                        <span className="font-medium text-gray-700">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
-                      </div>
-                      <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
-                        <span className="font-medium font-sans text-gray-900">Total</span>
-                        <span className="font-semibold font-sans text-lg text-gray-900">${privatePayTotal.toFixed(2)}</span>
-                      </div>
+                      {isFeeOnSender ? (
+                        <>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600">Recipient receives</span>
+                            <span className="font-semibold font-sans text-gray-900">${claimAmountUSD.toFixed(2)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600">Platform fee</span>
+                            <span className="font-medium text-gray-700">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
+                          </div>
+                          <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
+                            <span className="font-medium font-sans text-gray-900">You pay</span>
+                            <span className="font-semibold font-sans text-lg text-gray-900">${privatePayTotal.toFixed(2)}</span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600">You pay</span>
+                            <span className="font-semibold font-sans text-gray-900">${claimAmountUSD.toFixed(2)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600">Platform fee (deducted)</span>
+                            <span className="font-medium text-gray-700">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
+                          </div>
+                          <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
+                            <span className="font-medium font-sans text-gray-900">Recipient receives</span>
+                            <span className="font-semibold font-sans text-lg text-gray-900">~${(claimAmountUSD - (privatePayProtocolFee + privatePayGasFee)).toFixed(2)}</span>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
 

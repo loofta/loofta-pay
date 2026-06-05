@@ -9,7 +9,6 @@ import type { TokenSelection } from "@/app/utils/types";
 import { Button } from "@/components/ui/button";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
 import { findTokenBySelection } from "@/lib/tokens";
 import { maskLink } from "@/lib/format";
@@ -18,7 +17,7 @@ import { ArrowRight, Wallet } from "lucide-react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { useRouter, usePathname } from "next/navigation";
-import { PRIVATE_PAYMENT_COMING_SOON, PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
+import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { useAuthStore } from "@/store/auth";
 import { CROSS_CHAIN_ENABLED } from "@/lib/features";
 import { MessageInput } from "@/components/MessageInput";
@@ -55,6 +54,8 @@ async function createClaim(formData: {
   direction?: "from_sender" | "from_recipient";
   description?: string;
   cluster?: 'devnet' | 'mainnet';
+  isPrivate?: boolean;
+  feeOnSender?: boolean;
 }): Promise<{ id: string; link: string }> {
   const r = await fetch("/api/claims/create", {
     method: "POST",
@@ -111,13 +112,11 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
   const [amountMode, setAmountMode] = useState<"USD" | "TOKEN">("USD");
   const [showConfetti, setShowConfetti] = useState<boolean>(false);
   const { isPrivateMode, setIsPrivateMode, createdLink, setCreatedLink, clearLink, hydrated: claimHydrated } = useClaimStore();
-
-  useEffect(() => {
-    if (PRIVATE_PAYMENT_ENABLED) setIsPrivateMode(true);
-  }, [setIsPrivateMode]);
+  const [feeOnSender, setFeeOnSender] = useState(true);
+  const [wantsPrivate, setWantsPrivate] = useState(true);
+  const [showMessage, setShowMessage] = useState(false);
   const [showPrivacyInfo, setShowPrivacyInfo] = useState<boolean>(false);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
-  const [hasSeenPrivateTutorial, setHasSeenPrivateTutorial] = useState<boolean>(false);
   const [showAccessRequested, setShowAccessRequested] = useState<boolean>(false);
   const [pendingAccessRequest, setPendingAccessRequest] = useState<boolean>(false);
 
@@ -141,6 +140,16 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
 
   const solanaWallet = solanaWallets?.[0];
   const defaultLooftaToken = tokens.find((t) => t.symbol === "USDC" && String(t.chain).toLowerCase().includes("sol"));
+
+  const isAddressMatchesEmbeddedWallet = receiveDestination === "other" && !!recipient.trim() && recipient.trim() === solanaWallet?.address;
+  const mustBePrivate = receiveDestination === "loofta" || isAddressMatchesEmbeddedWallet;
+  const effectiveIsPrivate = mustBePrivate || wantsPrivate;
+  const canTogglePrivacy = !mustBePrivate && receiveDestination === "other";
+
+  useEffect(() => {
+    setIsPrivateMode(effectiveIsPrivate);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveIsPrivate]);
 
   // Prefill recipient with logged-in user's Solana wallet when they have one
   useEffect(() => {
@@ -216,13 +225,14 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
 
   // Auto-select USDC on Solana when entering private mode (PER / private pay)
   useEffect(() => {
-    if (isPrivateMode && tokens.length > 0) {
+    if (effectiveIsPrivate && tokens.length > 0) {
       const usdcSolana = tokens.find(t => t.symbol === 'USDC' && String(t.chain).toLowerCase().includes('sol'));
       if (usdcSolana) {
         setToSel({ symbol: usdcSolana.symbol, chain: usdcSolana.chain });
       }
     }
-  }, [isPrivateMode, tokens]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveIsPrivate, tokens]);
 
   function sanitizeNumberInput(v: string, maxDecimals: number = 9) {
     // keep digits and one dot, convert comma to dot
@@ -300,6 +310,8 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         direction: "from_recipient",
         description: combinedDescription,
         cluster: networkMode === "mainnet" ? "mainnet" : "devnet",
+        isPrivate: effectiveIsPrivate,
+        feeOnSender,
       });
       setCreatedLink(res.link);
       setShowConfetti(true);
@@ -693,7 +705,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                           onChange={(e) => onChangeAmount(e.target.value)}
                           placeholder="0"
                           className="text-gray-900 placeholder:text-gray-300 font-semibold font-sans tracking-tight border-0 bg-transparent outline-none tabular-nums p-0 m-0"
-                          style={{ fontSize: `${amountFontPx}px`, lineHeight: 1.1, width: `${inputWidthPx + amountGapPx}px`, backgroundColor: 'transparent !important' }}
+                          style={{ fontSize: `${amountFontPx}px`, lineHeight: 1.1, width: `${inputWidthPx + amountGapPx}px`, minWidth: '1.1ch', backgroundColor: 'transparent !important' }}
                         />
                         <span className="font-semibold font-sans text-slate-500 ml-1" style={{ fontSize: `${suffixFontPx}px`, lineHeight: 1.1 }}>
                           USD
@@ -861,74 +873,111 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                       </>
                     )}
 
-                    {/* Private payment — switch hidden when app defaults to private (PER) */}
-                    {!PRIVATE_PAYMENT_ENABLED ? (
-                      <div
-                        className={`p-4 rounded-xl border ${!PRIVATE_PAYMENT_COMING_SOON && isPrivateMode
-                          ? 'bg-amber-500/10 border-amber-400/30'
-                          : 'bg-white/5 border-white/10'
-                          }`}
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-base font-semibold text-white">
-                                🔒 Private payment
-                              </span>
-                              {PRIVATE_PAYMENT_COMING_SOON && (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm md:text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-400/30">
-                                  Coming soon
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-base md:text-sm text-slate-400">
-                              When on, payment uses MagicBlock PER. You receive in your chosen token (e.g. USDC on Solana); both addresses stay private.
-                            </p>
-                          </div>
-                          <Switch
-                            checked={PRIVATE_PAYMENT_COMING_SOON ? false : isPrivateMode}
-                            onCheckedChange={PRIVATE_PAYMENT_COMING_SOON ? () => { } : (checked) => {
-                              setIsPrivateMode(checked);
-                              if (checked && !hasSeenPrivateTutorial) {
-                                setShowPrivacyInfo(true);
-                                setHasSeenPrivateTutorial(true);
-                              }
-                            }}
-                            disabled={PRIVATE_PAYMENT_COMING_SOON}
-                            className="shrink-0 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
-                          />
+                    {/* Options: fee direction + privacy */}
+                    <div className="space-y-3 pt-1">
+                      {/* Fee direction */}
+                      <div>
+                        <p className="text-gray-600 mb-2 text-sm">Who pays the fees?</p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setFeeOnSender(true)}
+                            className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all ${feeOnSender ? 'border-orange-400/50 bg-orange-500/20 text-white' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'}`}
+                          >
+                            Fees on sender
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFeeOnSender(false)}
+                            className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all ${!feeOnSender ? 'border-orange-400/50 bg-orange-500/20 text-white' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'}`}
+                          >
+                            Fees on me
+                          </button>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="p-4 rounded-xl border border-amber-400/30 bg-amber-500/10">
-                        <p className="text-base md:text-sm text-slate-200">
-                          <span className="font-semibold text-white">🔒 Private payment</span>
-                          {" "}— MagicBlock PER is on for every link you create.
+                        <p className="mt-1.5 text-slate-500 text-sm">
+                          {feeOnSender
+                            ? "Sender pays ~0.10% + $0.20 on top"
+                            : parsedAmount > 0
+                              ? `You receive ~$${Math.max(0, parsedAmount - Math.ceil((parsedAmount * 0.001 + 0.20) * 100) / 100).toFixed(2)} after fees`
+                              : "Fees deducted from your amount"}
                         </p>
                       </div>
-                    )}
 
-                    {/* Message + GIF */}
-                    <div>
-                      <label className="text-gray-600 mb-1 block text-base md:text-sm">Message <span className="text-gray-400">(optional)</span></label>
-                      <MessageInput
-                        value={message}
-                        onChange={setMessage}
-                        placeholder="Add a note…"
-                        maxLength={300}
-                        gifUrl={gifUrl || null}
-                        onGifChange={(url) => setGifUrl(url ?? "")}
-                        className="mt-1 [&_input]:h-11 [&_input]:bg-white/5 [&_input]:border-white/10 [&_input]:text-white [&_input]:placeholder:text-slate-500"
-                      />
+                      {/* Privacy toggle — only for external wallets different from embedded */}
+                      {canTogglePrivacy && (
+                        <div>
+                          <p className="text-gray-600 mb-2 text-sm">Privacy</p>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setWantsPrivate(true)}
+                              className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all ${wantsPrivate ? 'border-orange-400/50 bg-orange-500/20 text-white' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'}`}
+                            >
+                              🔒 Private
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setWantsPrivate(false)}
+                              className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all ${!wantsPrivate ? 'border-orange-400/50 bg-orange-500/20 text-white' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'}`}
+                            >
+                              Not private
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {mustBePrivate && (
+                        <p className="flex items-center gap-1.5 text-slate-500 text-sm">
+                          <span>🔒</span>
+                          {receiveDestination === "loofta"
+                            ? "Private by default for your Loofta wallet"
+                            : "Private required — address matches your embedded wallet"}
+                        </p>
+                      )}
                     </div>
 
-                    {/* Create Button - same for standard and private */}
+                    {/* Message + GIF — collapsible */}
+                    <div>
+                      {!showMessage ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowMessage(true)}
+                          className="flex items-center gap-2 text-slate-400 hover:text-white text-sm font-medium transition-colors py-1"
+                        >
+                          <span className="text-base leading-none font-semibold">+</span>
+                          Add a message or GIF
+                        </button>
+                      ) : (
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="text-gray-600 text-sm">Message <span className="text-gray-400">(optional)</span></label>
+                            <button
+                              type="button"
+                              onClick={() => { setShowMessage(false); setMessage(""); setGifUrl(""); }}
+                              className="text-slate-500 hover:text-slate-300 text-sm transition-colors"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <MessageInput
+                            value={message}
+                            onChange={setMessage}
+                            placeholder="Add a note…"
+                            maxLength={300}
+                            gifUrl={gifUrl || null}
+                            onGifChange={(url) => setGifUrl(url ?? "")}
+                            className="[&_input]:h-11 [&_input]:bg-white/5 [&_input]:border-white/10 [&_input]:text-white [&_input]:placeholder:text-slate-500"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Create button */}
                     {authenticated && !showAccessRequested ? (
                       <GradientActionButton
                         onClick={() => onCreate()}
                         disabled={
                           creating ||
-                          (parsedAmount > 0 && (usdValue ?? parsedAmount) < 5) ||
+                          parsedAmount < 5 ||
                           !(parsedAmount > 0 &&
                             (receiveDestination === "loofta"
                               ? !!(solanaWallet?.address && defaultLooftaToken)
@@ -937,7 +986,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         loading={creating}
                         loadingText="Creating…"
                       >
-                        {!PRIVATE_PAYMENT_COMING_SOON && (isPrivateMode || PRIVATE_PAYMENT_ENABLED) ? (
+                        {effectiveIsPrivate ? (
                           <>
                             <ShieldIcon className="w-5 h-5" />
                             Create payment link

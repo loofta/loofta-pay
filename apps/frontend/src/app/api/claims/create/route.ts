@@ -7,7 +7,7 @@ import { generateShortId } from "@/lib/shortId";
 
 export async function POST(request: Request) {
   try {
-    const { amount, toSel, recipient, userId, description, direction, cluster } = await request.json();
+    const { amount, toSel, recipient, userId, description, direction, cluster, feeOnSender, isPrivate } = await request.json();
     if (!amount || !recipient) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
@@ -32,6 +32,8 @@ export async function POST(request: Request) {
         is_devnet: isDevnet,
         description: description ? String(description).slice(0, 1000) : null,
         short_id: shortId,
+        fee_on_sender: feeOnSender !== false,
+        is_private: isPrivate !== false,
       })
       .select("id")
       .single();
