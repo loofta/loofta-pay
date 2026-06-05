@@ -22,22 +22,12 @@ export class AdminGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
 
-    // Prefer Bearer JWT; fall back to x-privy-user-id (legacy)
     const authHeader = (request.headers['authorization'] as string | undefined)?.trim();
-    let userId: string | undefined;
+    if (!authHeader?.startsWith('Bearer ')) throw new UnauthorizedException('Authentication required');
 
-    if (authHeader?.startsWith('Bearer ')) {
-      const token = authHeader.slice(7).trim();
-      const verified = await this.privy.verifyAccessToken(token);
-      if (!verified) throw new UnauthorizedException('Invalid or expired token');
-      userId = verified;
-    } else {
-      const legacyId = (request.headers['x-privy-user-id'] as string | undefined)?.trim();
-      if (!legacyId) throw new UnauthorizedException('Authentication required');
-      const valid = await this.privy.verifyUserId(legacyId);
-      if (!valid) throw new UnauthorizedException('Invalid user ID');
-      userId = legacyId;
-    }
+    const token = authHeader.slice(7).trim();
+    const userId = await this.privy.verifyAccessToken(token);
+    if (!userId) throw new UnauthorizedException('Invalid or expired token');
 
     const isAdmin = await this.checkAdminStatus(userId);
     if (!isAdmin) {

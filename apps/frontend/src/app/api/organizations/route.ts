@@ -19,21 +19,30 @@ function generateOrgReferral(): string {
   return result;
 }
 
-// Helper to check admin access
 async function checkAdminAccess(request: NextRequest): Promise<{ authorized: boolean; error?: string }> {
-  const userId = request.headers.get("x-privy-user-id");
-  
-  if (!userId) {
-    return { authorized: false, error: "No user ID provided" };
+  const authHeader = request.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return { authorized: false, error: "Bearer token required" };
   }
-  
+
+  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  let userId: string | null = null;
+  try {
+    const res = await fetch(`${backendUrl}/users/me`, {
+      headers: { authorization: authHeader },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      userId = data.userId ?? null;
+    }
+  } catch {
+    return { authorized: false, error: "Auth service unavailable" };
+  }
+
+  if (!userId) return { authorized: false, error: "Invalid or expired token" };
+
   const adminStatus = await isAdmin(userId);
-  
-  if (!adminStatus) {
-    return { authorized: false, error: "Unauthorized - Admin access required" };
-  }
-  
-  return { authorized: true };
+  return adminStatus ? { authorized: true } : { authorized: false, error: "Admin access required" };
 }
 
 /**
