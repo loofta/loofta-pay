@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { Button } from "@/components/ui/button";
@@ -13,7 +15,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import {
   Loader2, RefreshCw, Shield, Search, ChevronDown, ChevronRight,
-  ExternalLink, Pencil, AlertTriangle, Copy, Zap, BarChart2,
+  ExternalLink, Pencil, AlertTriangle, Copy, Zap, BarChart2, SendHorizonal,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -428,6 +430,8 @@ export default function AdminDashboard() {
   const { authenticated, userId, login, ready } = useAuth();
   const { getAccessToken } = usePrivy();
   const { toast } = useToast();
+  const pathname = usePathname(); // /app/[adminHash]
+  const outreachUrl = `${pathname}/outreach`;
 
   // Auth
   const [isAuthorized, setIsAuthorized] = useState(false);
@@ -899,6 +903,13 @@ export default function AdminDashboard() {
           <BarChart2 className="w-3.5 h-3.5" />
           Analytics
         </button>
+        <Link
+          href={outreachUrl}
+          className="px-4 py-2 text-base md:text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-orange-400 hover:border-orange-500/50 transition-colors flex items-center gap-1.5 ml-auto"
+        >
+          <SendHorizonal className="w-3.5 h-3.5" />
+          Outreach
+        </Link>
       </div>
 
       {/* ── Waitlist tab ── */}

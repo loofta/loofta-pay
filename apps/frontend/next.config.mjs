@@ -48,6 +48,7 @@ const nextConfig = {
       { protocol: 'https', hostname: 'assets.relay.link' },
       { protocol: 'https', hostname: '*.relay.link' },
       { protocol: 'https', hostname: 'home.privy.io' },
+      { protocol: 'https', hostname: 'pbs.twimg.com' },
     ],
   },
   webpack: (config, { isServer }) => {
@@ -119,7 +120,7 @@ const nextConfig = {
               "default-src 'self'",
               "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com https://unpkg.com https://*.spline.design https://*.splinetool.com https://va.vercel-scripts.com",
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com https://cdn.fontshare.com",
-              "img-src 'self' data: blob: https://raw.githubusercontent.com https://s2.coinmarketcap.com https://assets.coingecko.com https://coin-images.coingecko.com https://near-intents.org https://dd.dexscreener.com https://ipfs.sintral.me https://*.walletconnect.com https://*.spline.design https://*.splinetool.com https://*.supabase.co https://*.supabase.in https://api.qrserver.com https://*.giphy.com https://media.giphy.com https://i.giphy.com https://m.media-amazon.com https://assets.relay.link https://*.relay.link https://home.privy.io",
+              "img-src 'self' data: blob: https://raw.githubusercontent.com https://s2.coinmarketcap.com https://assets.coingecko.com https://coin-images.coingecko.com https://near-intents.org https://dd.dexscreener.com https://ipfs.sintral.me https://*.walletconnect.com https://*.spline.design https://*.splinetool.com https://*.supabase.co https://*.supabase.in https://api.qrserver.com https://*.giphy.com https://media.giphy.com https://i.giphy.com https://m.media-amazon.com https://assets.relay.link https://*.relay.link https://home.privy.io https://pbs.twimg.com",
               "font-src 'self' data: https://fonts.gstatic.com https://fonts.googleapis.com https://cdn.fontshare.com https://api.fontshare.com",
               "object-src 'none'",
               "base-uri 'self'",

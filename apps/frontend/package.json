@@ -12,6 +12,7 @@
     "postinstall": "mkdir -p node_modules/@lightprotocol/hasher.rs/dist/browser-fat/es && (test -f node_modules/@lightprotocol/hasher.rs/dist/hasher_wasm_simd_bg.wasm && cp node_modules/@lightprotocol/hasher.rs/dist/hasher_wasm_simd_bg.wasm node_modules/@lightprotocol/hasher.rs/dist/browser-fat/es/ || true) && (test -f node_modules/@lightprotocol/hasher.rs/dist/light_wasm_hasher_bg.wasm && cp node_modules/@lightprotocol/hasher.rs/dist/light_wasm_hasher_bg.wasm node_modules/@lightprotocol/hasher.rs/dist/browser-fat/es/ || true)"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
     "@coral-xyz/anchor": "^0.32.1",
     "@defuse-protocol/one-click-sdk-typescript": "0.1.1",
     "@duneanalytics/client-sdk": "^0.2.5",
