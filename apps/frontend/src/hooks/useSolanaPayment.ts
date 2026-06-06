@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   useWallets,
@@ -13,11 +13,7 @@ import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSen
 import { useAuthStore } from "@/store/auth";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
-import {
-  EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS,
-  embeddedSolanaUsdcBalanceQueryKey,
-  fetchEmbeddedSolanaUsdcBalance,
-} from "@/services/solanaBalance";
+import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -39,7 +35,6 @@ export interface UseSolanaPaymentOptions {
  */
 export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
   const { enabled = true } = options;
-  const queryClient = useQueryClient();
   const { getAccessToken, user, authenticated } = usePrivy();
   const { wallets: standardWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
@@ -47,48 +42,39 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
   const networkMode = useAuthStore((s) => s.networkMode);
   const [isLoading, setIsLoading] = useState(false);
 
-  const { data: balanceData, refetch: refreshBalance } = useQuery({
-    queryKey: ["solanaPaymentBalance", user?.id, networkMode],
+  // Address resolution: backend gives canonical wallet address; falls back to client-derived.
+  // Long stale time — address never changes once set.
+  const { data: addressData } = useQuery({
+    queryKey: ["solanaPaymentAddress", user?.id, networkMode],
     queryFn: async () => {
       const token = await getAccessToken?.();
       if (!token || !user?.id) throw new Error("Not authenticated");
       const clientAddress = deriveSolanaEmbeddedAddress(user);
-      // Use backend only to resolve the canonical wallet address.
-      // Backend balance is cluster-locked (reflects backend's configured network, not networkMode),
-      // so always fetch balance client-side with the correct networkMode RPC.
       let walletAddress: string | undefined;
       try {
         const r = await fetch(`${BACKEND_URL}/users/me/wallet/balance`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (r.ok) {
-          const json = (await r.json()) as { balanceUSD?: number; walletAddress?: string };
+          const json = (await r.json()) as { walletAddress?: string };
           walletAddress = json.walletAddress;
         }
       } catch {
         // Backend failed, fall back to client-derived address
       }
-      const address = walletAddress || clientAddress;
-
-      // Always fetch balance client-side so networkMode (mainnet vs devnet) is respected.
-      let balanceUSD = 0;
-      if (address) {
-        const row = await queryClient.fetchQuery({
-          queryKey: embeddedSolanaUsdcBalanceQueryKey(address, networkMode),
-          queryFn: () => fetchEmbeddedSolanaUsdcBalance(address, networkMode),
-          staleTime: EMBEDDED_SOLANA_USDC_BALANCE_STALE_MS,
-        });
-        balanceUSD = row.balanceUSD;
-      }
-      return { balanceUSD, walletAddress: address ?? undefined };
+      return { walletAddress: walletAddress || clientAddress };
     },
+    staleTime: 5 * 60 * 1000,
     enabled: enabled && authenticated === true && !!getAccessToken && !!user?.id,
   });
 
-  const balanceUSD = balanceData?.balanceUSD ?? 0;
+  // Balance from the shared hook — same cache entry as the header (auto-polls every 5s).
+  const { balanceUSD, isLoading: isBalanceFetching, refetch: refreshBalance } =
+    useEmbeddedSolanaUsdcBalance({ enabled: enabled && authenticated === true });
+
   const senderAddress =
-    balanceData?.walletAddress ?? deriveSolanaEmbeddedAddress(user);
-  const isBalanceLoading = enabled && balanceData === undefined;
+    addressData?.walletAddress ?? deriveSolanaEmbeddedAddress(user);
+  const isBalanceLoading = enabled && isBalanceFetching;
 
   const makePayment = async (
     config: SolanaPaymentConfig
@@ -164,7 +150,7 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
     balanceUSD,
     isBalanceLoading,
     hasInsufficientBalance: (amount: number) => {
-      if (balanceData === undefined) return false;
+      if (isBalanceFetching) return false;
       return balanceUSD < amount;
     },
     hasEnoughBalance: (amount: number) => balanceUSD >= amount,

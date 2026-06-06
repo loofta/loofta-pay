@@ -12,7 +12,7 @@ import {
   Loader2, Play, Trash2, Zap, Check, X, RefreshCw,
   SlidersHorizontal, Target, SendHorizonal, ArrowLeft, Search,
   Mic2, Briefcase, Building2, ChevronDown, ChevronUp, MapPin, Users,
-  Copy, MessageCircle, UserCheck, Activity,
+  Copy, MessageCircle, UserCheck, Activity, Square, CheckSquare2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -137,13 +137,15 @@ const glassBtnActive = "bg-white/[0.10] border border-white/[0.12] shadow-[inset
 // ─── Prospect Card ────────────────────────────────────────────────────────────
 
 function ProspectCard({
-  prospect, config, adminHash, onUpdate, onDelete,
+  prospect, config, adminHash, onUpdate, onDelete, selected, onToggleSelect,
 }: {
   prospect: Prospect;
   config: OutreachConfig;
   adminHash: string;
   onUpdate: (p: Prospect) => void;
   onDelete: (id: string) => void;
+  selected: boolean;
+  onToggleSelect: () => void;
 }) {
   const { toast } = useToast();
   const [editedMessage, setEditedMessage] = useState(prospect.draft_message ?? "");
@@ -227,6 +229,7 @@ function ProspectCard({
   return (
     <div className={cn(
       "rounded-xl border p-4 transition-colors",
+      selected         ? "ring-1 ring-white/25"  : "",
       isRejected      ? "border-white/10         bg-white/5               opacity-40"
       : isApproved    ? "border-emerald-500/30   bg-emerald-500/[0.06]"
       : isSent        ? "border-violet-500/30    bg-violet-500/[0.06]"
@@ -236,6 +239,19 @@ function ProspectCard({
 
       {/* Header row */}
       <div className="flex items-start gap-3">
+
+        {/* Checkbox */}
+        <button
+          onClick={onToggleSelect}
+          className={cn(
+            "shrink-0 mt-1 h-5 w-5 rounded border transition-colors flex items-center justify-center",
+            selected
+              ? "bg-white/20 border-white/40 text-white"
+              : "border-white/20 text-transparent hover:border-white/40",
+          )}
+        >
+          {selected ? <CheckSquare2 className="h-4 w-4" /> : <Square className="h-4 w-4 opacity-0 group-hover:opacity-100" />}
+        </button>
 
         {/* Avatar */}
         <a href={`https://x.com/${prospect.handle}`} target="_blank" rel="noopener noreferrer" className="shrink-0 mt-0.5">
@@ -612,7 +628,12 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
   const newCount     = prospects.filter((p) => p.status === "new").length;
   const draftedCount = prospects.filter((p) => p.status === "drafted" && p.qualified === true).length;
 
-  const [checkingEngagement, setCheckingEngagement] = useState(false);
+  const [checkingEngagement, setCheckingEngagement]   = useState(false);
+  const [selected, setSelected]                       = useState<Set<string>>(new Set());
+  const [bulkDraftingSelected, setBulkDraftingSelected] = useState(false);
+
+  // Clear selection when tab changes
+  useEffect(() => { setSelected(new Set()); }, [filter]);
 
   type BulkJob = {
     id: string;
@@ -672,6 +693,61 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
       }).then((r) => r.ok ? r.json() : null).then((u) => u && handleUpdate(u)),
     ));
     toast({ title: `Approved ${toApprove.length} message${toApprove.length > 1 ? "s" : ""}` });
+  }
+
+  async function bulkDraftSelected() {
+    const toRun = prospects.filter((p) =>
+      selected.has(p.id) && (p.status === "new" || (p.status === "drafted" && p.qualified === false)),
+    );
+    if (!toRun.length) return;
+    setBulkDraftingSelected(true);
+    setProspects((prev) => prev.map((p) => toRun.find((r) => r.id === p.id) ? { ...p, status: "drafting" as const } : p));
+    for (const p of toRun) {
+      const res = await fetch("/api/outreach/draft", {
+        method: "POST",
+        headers: { ...authH(), "Content-Type": "application/json" },
+        body: JSON.stringify({ prospectId: p.id, config }),
+      });
+      if (res.ok) {
+        const u: Prospect = await res.json();
+        setProspects((prev) => prev.map((x) => x.id === u.id ? u : x));
+      } else {
+        setProspects((prev) => prev.map((x) => x.id === p.id ? { ...x, status: "new" as const } : x));
+      }
+    }
+    setBulkDraftingSelected(false);
+    setSelected(new Set());
+    toast({ title: `Drafted ${toRun.length} prospect${toRun.length > 1 ? "s" : ""}` });
+  }
+
+  async function bulkApproveSelected() {
+    const toApprove = prospects.filter((p) =>
+      selected.has(p.id) && p.status === "drafted" && p.qualified === true,
+    );
+    if (!toApprove.length) return;
+    const h = { "x-admin-secret": adminHash, "Content-Type": "application/json" };
+    await Promise.all(toApprove.map((p) =>
+      fetch(`/api/outreach/prospects/${p.id}`, {
+        method: "PATCH", headers: h,
+        body: JSON.stringify({ status: "approved", final_message: p.draft_message ?? "" }),
+      }).then((r) => r.ok ? r.json() : null).then((u) => u && handleUpdate(u)),
+    ));
+    setSelected(new Set());
+    toast({ title: `Approved ${toApprove.length} message${toApprove.length > 1 ? "s" : ""}` });
+  }
+
+  async function bulkRejectSelected() {
+    const toReject = prospects.filter((p) => selected.has(p.id));
+    if (!toReject.length) return;
+    const h = { "x-admin-secret": adminHash, "Content-Type": "application/json" };
+    await Promise.all(toReject.map((p) =>
+      fetch(`/api/outreach/prospects/${p.id}`, {
+        method: "PATCH", headers: h,
+        body: JSON.stringify({ status: "rejected" }),
+      }).then((r) => r.ok ? r.json() : null).then((u) => u && handleUpdate(u)),
+    ));
+    setSelected(new Set());
+    toast({ title: `Rejected ${toReject.length} prospect${toReject.length > 1 ? "s" : ""}` });
   }
 
   async function bulkSendDMs() {
@@ -872,6 +948,20 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
                 </button>
               ))}
             </div>
+            {filtered.length > 0 && (
+              <button
+                onClick={() => {
+                  const allIds = new Set(filtered.map((p) => p.id));
+                  const allSelected = filtered.every((p) => selected.has(p.id));
+                  setSelected(allSelected ? new Set() : allIds);
+                }}
+                className={cn("inline-flex items-center gap-1.5 h-8 px-3 text-sm font-mono font-medium rounded-lg border transition-colors", glassBtn)}
+              >
+                {filtered.every((p) => selected.has(p.id)) && filtered.length > 0
+                  ? <><CheckSquare2 className="h-3.5 w-3.5" /> deselect all</>
+                  : <><Square className="h-3.5 w-3.5" /> select all</>}
+              </button>
+            )}
             <div className="flex gap-2 ml-auto flex-wrap">
               {(Object.entries(TYPE_META) as [ProspectType, typeof TYPE_META[ProspectType]][]).map(([t, m]) => (
                 <button
@@ -895,6 +985,38 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
             </div>
           </div>
 
+          {/* Bulk action toolbar */}
+          {selected.size > 0 && (() => {
+            const draftable  = prospects.filter((p) => selected.has(p.id) && (p.status === "new" || (p.status === "drafted" && p.qualified === false))).length;
+            const approvable = prospects.filter((p) => selected.has(p.id) && p.status === "drafted" && p.qualified === true).length;
+            return (
+              <div className="flex flex-wrap items-center gap-2 mb-4 px-4 py-2.5 rounded-xl bg-white/[0.06] border border-white/10">
+                <span className="text-sm font-mono font-medium text-gray-300">{selected.size} selected</span>
+                <div className="h-4 w-px bg-white/15 mx-1" />
+                {draftable > 0 && (
+                  <button onClick={bulkDraftSelected} disabled={bulkDraftingSelected}
+                    className={cn("inline-flex items-center gap-1.5 h-8 px-3 text-sm rounded-lg font-medium transition-colors disabled:opacity-50", glassBtn)}>
+                    {bulkDraftingSelected ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    draft {draftable > 1 ? `(${draftable})` : ""}
+                  </button>
+                )}
+                {approvable > 0 && (
+                  <button onClick={bulkApproveSelected}
+                    className="inline-flex items-center gap-1.5 h-8 px-3 text-sm rounded-lg font-medium bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20 transition-colors">
+                    <Check className="h-3.5 w-3.5" /> approve {approvable > 1 ? `(${approvable})` : ""}
+                  </button>
+                )}
+                <button onClick={bulkRejectSelected}
+                  className={cn("inline-flex items-center gap-1.5 h-8 px-3 text-sm rounded-lg font-medium transition-colors", glassBtn, "text-red-400/70 hover:text-red-300 hover:border-red-500/20")}>
+                  <X className="h-3.5 w-3.5" /> reject
+                </button>
+                <button onClick={() => setSelected(new Set())} className="ml-auto text-gray-500 hover:text-gray-300 transition-colors">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            );
+          })()}
+
           {loadingProspects ? (
             <div className="flex items-center justify-center h-40 gap-2 text-gray-600">
               <Loader2 className="h-5 w-5 animate-spin" />
@@ -911,7 +1033,13 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
             <div className="space-y-3">
               {filtered.map((p) => (
                 <ProspectCard key={p.id} prospect={p} config={config} adminHash={adminHash}
-                  onUpdate={handleUpdate} onDelete={handleDelete} />
+                  onUpdate={handleUpdate} onDelete={handleDelete}
+                  selected={selected.has(p.id)}
+                  onToggleSelect={() => setSelected((prev) => {
+                    const next = new Set(prev);
+                    next.has(p.id) ? next.delete(p.id) : next.add(p.id);
+                    return next;
+                  })} />
               ))}
             </div>
           )}
