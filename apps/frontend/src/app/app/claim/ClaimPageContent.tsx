@@ -113,7 +113,6 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
   const [showConfetti, setShowConfetti] = useState<boolean>(false);
   const { isPrivateMode, setIsPrivateMode, createdLink, setCreatedLink, clearLink, hydrated: claimHydrated } = useClaimStore();
   const [feeOnSender, setFeeOnSender] = useState(true);
-  const [wantsPrivate, setWantsPrivate] = useState(true);
   const [showMessage, setShowMessage] = useState(false);
   const [showPrivacyInfo, setShowPrivacyInfo] = useState<boolean>(false);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
@@ -141,15 +140,10 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
   const solanaWallet = solanaWallets?.[0];
   const defaultLooftaToken = tokens.find((t) => t.symbol === "USDC" && String(t.chain).toLowerCase().includes("sol"));
 
-  const isAddressMatchesEmbeddedWallet = receiveDestination === "other" && !!recipient.trim() && recipient.trim() === solanaWallet?.address;
-  const mustBePrivate = receiveDestination === "loofta" || isAddressMatchesEmbeddedWallet;
-  const effectiveIsPrivate = mustBePrivate || wantsPrivate;
-  const canTogglePrivacy = !mustBePrivate && receiveDestination === "other";
-
   useEffect(() => {
-    setIsPrivateMode(effectiveIsPrivate);
+    setIsPrivateMode(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveIsPrivate]);
+  }, []);
 
   // Prefill recipient with logged-in user's Solana wallet when they have one
   useEffect(() => {
@@ -223,16 +217,16 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
     }
   }, [showPrivacyInfo]);
 
-  // Auto-select USDC on Solana when entering private mode (PER / private pay)
+  // Auto-select USDC on Solana (always private)
   useEffect(() => {
-    if (effectiveIsPrivate && tokens.length > 0) {
+    if (tokens.length > 0) {
       const usdcSolana = tokens.find(t => t.symbol === 'USDC' && String(t.chain).toLowerCase().includes('sol'));
       if (usdcSolana) {
         setToSel({ symbol: usdcSolana.symbol, chain: usdcSolana.chain });
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveIsPrivate, tokens]);
+  }, [tokens]);
 
   function sanitizeNumberInput(v: string, maxDecimals: number = 9) {
     // keep digits and one dot, convert comma to dot
@@ -310,7 +304,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         direction: "from_recipient",
         description: combinedDescription,
         cluster: networkMode === "mainnet" ? "mainnet" : "devnet",
-        isPrivate: effectiveIsPrivate,
+        isPrivate: true,
         feeOnSender,
       });
       setCreatedLink(res.link);
@@ -873,66 +867,34 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                       </>
                     )}
 
-                    {/* Options: fee direction + privacy */}
+                    {/* Options: exact out / exact in */}
                     <div className="space-y-3 pt-1">
-                      {/* Fee direction */}
                       <div>
-                        <p className="text-gray-600 mb-2 text-sm">Who pays the fees?</p>
+                        <p className="text-gray-600 mb-2 text-sm">Fee direction</p>
                         <div className="flex gap-2">
                           <button
                             type="button"
                             onClick={() => setFeeOnSender(true)}
                             className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all ${feeOnSender ? 'border-orange-400/50 bg-orange-500/20 text-white' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'}`}
                           >
-                            Fees on sender
+                            Exact out
                           </button>
                           <button
                             type="button"
                             onClick={() => setFeeOnSender(false)}
                             className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all ${!feeOnSender ? 'border-orange-400/50 bg-orange-500/20 text-white' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'}`}
                           >
-                            Fees on me
+                            Exact in
                           </button>
                         </div>
                         <p className="mt-1.5 text-slate-500 text-sm">
                           {feeOnSender
-                            ? "Sender pays ~0.10% + $0.20 on top"
+                            ? "Recipient gets the exact amount. Fees are charged to sender."
                             : parsedAmount > 0
                               ? `You receive ~$${Math.max(0, parsedAmount - Math.ceil((parsedAmount * 0.001 + 0.20) * 100) / 100).toFixed(2)} after fees`
-                              : "Fees deducted from your amount"}
+                              : "Fees may be deducted from the recipient amount."}
                         </p>
                       </div>
-
-                      {/* Privacy toggle — only for external wallets different from embedded */}
-                      {canTogglePrivacy && (
-                        <div>
-                          <p className="text-gray-600 mb-2 text-sm">Privacy</p>
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setWantsPrivate(true)}
-                              className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all ${wantsPrivate ? 'border-orange-400/50 bg-orange-500/20 text-white' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'}`}
-                            >
-                              🔒 Private
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setWantsPrivate(false)}
-                              className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all ${!wantsPrivate ? 'border-orange-400/50 bg-orange-500/20 text-white' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'}`}
-                            >
-                              Not private
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      {mustBePrivate && (
-                        <p className="flex items-center gap-1.5 text-slate-500 text-sm">
-                          <span>🔒</span>
-                          {receiveDestination === "loofta"
-                            ? "Private by default for your Loofta wallet"
-                            : "Private required — address matches your embedded wallet"}
-                        </p>
-                      )}
                     </div>
 
                     {/* Message + GIF — collapsible */}
@@ -986,14 +948,10 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         loading={creating}
                         loadingText="Creating…"
                       >
-                        {effectiveIsPrivate ? (
-                          <>
-                            <ShieldIcon className="w-5 h-5" />
-                            Create payment link
-                          </>
-                        ) : (
-                          "Create payment link"
-                        )}
+                        <>
+                          <ShieldIcon className="w-5 h-5" />
+                          Create payment link
+                        </>
                       </GradientActionButton>
                     ) : (
                       <button
