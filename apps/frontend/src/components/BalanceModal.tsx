@@ -17,7 +17,7 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
-import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, Coins, ChevronLeft } from "lucide-react";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
@@ -37,9 +37,6 @@ import { cn } from "@/lib/utils";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 
 const LOG_PREFIX = "[BalanceModal]";
-
-// BETA: flip to false to re-enable Near Intents cross-chain withdrawals
-const BETA_SOLANA_ONLY = true;
 
 type WithdrawalStep = "idle" | "submitting" | "sent" | "bridging" | "complete" | "failed";
 
@@ -286,6 +283,8 @@ export function BalanceModal({
   const [blinkError, setBlinkError] = useState<string | null>(null);
   const blinkDepositRef = useRef<BlinkDeposit | null>(null);
   const [coinbaseLoading, setCoinbaseLoading] = useState(false);
+  const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | null>(null);
+  const [coinbaseOfframpLoading, setCoinbaseOfframpLoading] = useState(false);
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -393,6 +392,53 @@ export function BalanceModal({
     }
   };
 
+  // Coinbase Off-ramp: fetch offramp session token then open sell popup
+  const handleCoinbaseOfframp = async () => {
+    if (!solanaAddress) return;
+    setCoinbaseOfframpLoading(true);
+    try {
+      const accessToken = await getAccessToken();
+      const sessionRes = await fetch("/api/coinbase/offramp-session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify({ walletAddress: solanaAddress, blockchains: ["solana"] }),
+      });
+
+      if (!sessionRes.ok) {
+        const err = await sessionRes.json().catch(() => ({})) as { error?: string; detail?: string };
+        toast({ variant: "destructive", title: "Could not start Coinbase session", description: err.detail || err.error || `Session error ${sessionRes.status}` });
+        return;
+      }
+
+      const { token: sessionToken } = await sessionRes.json();
+      if (!sessionToken) {
+        toast({ variant: "destructive", title: "Could not start Coinbase session", description: "No session token returned." });
+        return;
+      }
+
+      const params = new URLSearchParams();
+      params.set("appId", "68e3c83a-3d5a-49aa-a8fa-7ef26d824de1");
+      params.set("sessionToken", sessionToken);
+      params.set("defaultNetwork", "solana");
+      params.set("defaultAsset", "USDC");
+      params.set("redirectUrl", window.location.origin);
+      // partnerUserRef: required, max 50 chars
+      if (user?.id) params.set("partnerUserRef", user.id.slice(0, 50));
+
+      const offrampUrl = `https://pay.coinbase.com/v3/sell/input?${params.toString()}`;
+      const popup = window.open(offrampUrl, "coinbase-offramp", "width=460,height=730,left=200,top=100,resizable=yes,scrollbars=yes");
+      if (!popup) window.open(offrampUrl, "_blank");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not open Coinbase Off-ramp.";
+      toast({ variant: "destructive", title: "Off-ramp error", description: msg });
+    } finally {
+      setCoinbaseOfframpLoading(false);
+    }
+  };
+
   const wallet = useMemo(
     () => (solanaAddress ? solanaWallets?.find((w) => w.address === solanaAddress) : undefined),
     [solanaAddress, solanaWallets]
@@ -410,31 +456,44 @@ export function BalanceModal({
 
   const withdrawTokens = useMemo(() => {
     const solLower = (c: string | undefined) => (c || "").toLowerCase() === "solana" || (c || "").toLowerCase() === "sol";
+    if (withdrawMethod === "near-intents") {
+      return tokens.filter((t) => !solLower(t.chain));
+    }
     const usdcSol = usdcSolanaToken ? [usdcSolanaToken] : [];
     const otherChains = tokens.filter((t) => !solLower(t.chain));
     return [...usdcSol, ...otherChains];
-  }, [tokens, usdcSolanaToken]);
+  }, [tokens, usdcSolanaToken, withdrawMethod]);
 
   const selectedFrom = useMemo(
     () => findTokenBySelection(withdrawTokens, fromSel ?? (usdcSolanaToken ? { symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain } : undefined)),
     [withdrawTokens, fromSel, usdcSolanaToken]
   );
 
-  const effectiveToken = selectedFrom || usdcSolanaToken;
-  const isUSDCOnSolana =
-    effectiveToken?.symbol === "USDC" &&
-    (effectiveToken?.chain === "solana" || effectiveToken?.chain === "sol");
+  const effectiveToken = withdrawMethod === "usdc-sol"
+    ? usdcSolanaToken
+    : (selectedFrom || usdcSolanaToken);
+  const isUSDCOnSolana = withdrawMethod === "usdc-sol";
   const payFromBalanceNum = parseFloat(balanceUSD) || 0; // display only
   // Exact spendable balance truncated to USDC precision (6 dp) — never rounds up
   const spendableBalance = Math.floor((balanceExact ?? payFromBalanceNum) * 1_000_000) / 1_000_000;
   const destChain = effectiveToken?.chain || "";
-  const isNearIntentsWithdraw = !BETA_SOLANA_ONLY && !isUSDCOnSolana && effectiveToken && usdcSolanaToken;
+  const isNearIntentsWithdraw = withdrawMethod === "near-intents" && !!selectedFrom && !!usdcSolanaToken;
   const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
 
-  // Clear Blink error when modal closes
+  // Clear Blink error and reset withdraw method when modal closes
   useEffect(() => {
-    if (!open) setBlinkError(null);
+    if (!open) {
+      setBlinkError(null);
+      setWithdrawMethod(null);
+    }
   }, [open]);
+
+  // Reset token selection and address when withdraw method changes
+  useEffect(() => {
+    setFromSel(undefined);
+    setWithdrawAddress("");
+    setAddressRiskStatus("idle");
+  }, [withdrawMethod]);
 
   // On open: load history and resume any in-progress Near Intents withdrawal
   useEffect(() => {
@@ -1021,14 +1080,111 @@ export function BalanceModal({
                 setActiveWithdrawal(null);
                 setBridgeStatus(null);
                 setDepositAddressForPolling(null);
+                setWithdrawMethod(null);
                 if (withdrawStep === "complete") onRefresh();
               }}
             />
           )}
 
-          {/* Withdraw tab — form */}
-          {tab === "withdraw" && withdrawStep === "idle" && (
-            <div className="space-y-4 py-4">
+          {/* Withdraw tab — method selection */}
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod === null && (
+            <div className="py-2 space-y-3">
+
+              {/* 1. USDC on Solana */}
+              <button
+                type="button"
+                disabled={!solanaAddress}
+                onClick={() => setWithdrawMethod("usdc-sol")}
+                className={cn(
+                  "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                  dark
+                    ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                    : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                )}
+              >
+                <div className="w-12 h-12 shrink-0 rounded-xl flex items-center justify-center bg-[#9945FF]/10">
+                  <Coins className="h-6 w-6 text-[#9945FF]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>USDC on Solana</p>
+                  <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    Direct to any Solana wallet
+                  </p>
+                </div>
+                <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+              </button>
+
+              {/* 2. Other token via Near Intents */}
+              <button
+                type="button"
+                disabled={!solanaAddress}
+                onClick={() => setWithdrawMethod("near-intents")}
+                className={cn(
+                  "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                  dark
+                    ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                    : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                )}
+              >
+                <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                  <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Other token or chain</p>
+                  <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    ETH · BTC · SOL · USDT — cross-chain
+                  </p>
+                </div>
+                <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+              </button>
+
+              {/* 3. Bank or card via Coinbase off-ramp */}
+              <button
+                type="button"
+                disabled={!solanaAddress || coinbaseOfframpLoading}
+                onClick={handleCoinbaseOfframp}
+                className={cn(
+                  "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                  dark
+                    ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                    : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                )}
+              >
+                <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                  {coinbaseOfframpLoading
+                    ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
+                    : <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                  }
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Bank or credit card</p>
+                  <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    Apple Pay · card · bank transfer
+                  </p>
+                </div>
+                <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+              </button>
+
+            </div>
+          )}
+
+          {/* Withdraw tab — form (method selected) */}
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && (
+            <div className="space-y-4 py-2">
+
+              {/* Back button */}
+              <button
+                type="button"
+                onClick={() => setWithdrawMethod(null)}
+                className={cn(
+                  "flex items-center gap-1 text-base font-medium transition-colors",
+                  dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"
+                )}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Back
+              </button>
+
               {/* Balance */}
               <div>
                 <Label className={`text-base md:text-sm font-medium mb-2 block ${dark ? "text-slate-400" : "text-gray-500"}`}>
@@ -1055,34 +1211,27 @@ export function BalanceModal({
                     </div>
                   </div>
                 </div>
-                {!loadingBalance && payFromBalanceNum <= 0 && isUSDCOnSolana && (
+                {!loadingBalance && payFromBalanceNum <= 0 && (
                   <p className={`text-base md:text-sm mt-2 ${dark ? "text-amber-400" : "text-amber-600"}`}>No balance to withdraw.</p>
                 )}
               </div>
 
-              {/* Token selector */}
-              <div>
-                <Label className={`text-base md:text-sm font-medium mb-2 block ${dark ? "text-slate-300" : "text-gray-700"}`}>
-                  Withdraw to
-                </Label>
-                <TokenCombobox
-                  tokens={withdrawTokens}
-                  value={fromSel ?? (usdcSolanaToken ? { symbol: usdcSolanaToken.symbol, chain: usdcSolanaToken.chain } : undefined)}
-                  onChange={setFromSel}
-                  placeholder="USDC on Solana (free) or other token"
-                  className={dark ? "w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white text-center placeholder:text-slate-400" : "w-full h-12 rounded-xl border-2 border-gray-200 bg-white text-center"}
-                  defaultShowAllChains
-                />
-                {BETA_SOLANA_ONLY && !isUSDCOnSolana ? (
-                  <p className={`text-base md:text-sm mt-1.5 font-medium ${dark ? "text-amber-400" : "text-amber-600"}`}>
-                    Cross-chain withdrawals coming soon — only USDC on Solana is available in beta.
-                  </p>
-                ) : (
-                  <p className={`text-base md:text-sm mt-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    Free withdrawal to any Solana wallet.
-                  </p>
-                )}
-              </div>
+              {/* Token selector — Near Intents only */}
+              {withdrawMethod === "near-intents" && (
+                <div>
+                  <Label className={`text-base md:text-sm font-medium mb-2 block ${dark ? "text-slate-300" : "text-gray-700"}`}>
+                    Withdraw to
+                  </Label>
+                  <TokenCombobox
+                    tokens={withdrawTokens}
+                    value={fromSel}
+                    onChange={setFromSel}
+                    placeholder="Select token and chain"
+                    className={dark ? "w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white text-center placeholder:text-slate-400" : "w-full h-12 rounded-xl border-2 border-gray-200 bg-white text-center"}
+                    defaultShowAllChains
+                  />
+                </div>
+              )}
 
               {/* Amount input */}
               <div>
@@ -1158,19 +1307,19 @@ export function BalanceModal({
               )}
 
               <div className="flex gap-2 pt-2">
-                <Button variant="outline" onClick={onClose} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
-                  Cancel
+                <Button variant="outline" onClick={() => setWithdrawMethod(null)} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
+                  Back
                 </Button>
                 <Button
                   onClick={handleWithdraw}
                   disabled={
                     devnetMode ||
                     withdrawing ||
-                    (BETA_SOLANA_ONLY && !isUSDCOnSolana) ||
                     withdrawAmountNum < 1 ||
                     withdrawAmountNum > spendableBalance ||
                     !withdrawAddress.trim() ||
                     !wallet ||
+                    (withdrawMethod === "near-intents" && !selectedFrom) ||
                     (isUSDCOnSolana ? addressRiskStatus !== "safe" : !destinationAddressValid)
                   }
                   className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1181,7 +1330,7 @@ export function BalanceModal({
                       {stepLabel(withdrawStep, Boolean(isNearIntentsWithdraw))}
                     </span>
                   ) : (
-                    isNearIntentsWithdraw ? `Bridge to ${effectiveToken?.symbol}` : "Withdraw USDC"
+                    isNearIntentsWithdraw ? `Bridge to ${effectiveToken?.symbol || "token"}` : "Withdraw USDC"
                   )}
                 </Button>
               </div>
