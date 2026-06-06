@@ -52,7 +52,7 @@ type OutreachConfig = {
 };
 
 const DEFAULT_CONFIG: OutreachConfig = {
-  product_pitch:       "Loofta Pay — private payments on Solana. Get paid and pay others without exposing your whole wallet history.",
+  product_pitch:       "Loofta Pay — private payments on Solana. Get paid and pay others without exposing your whole wallet history. Cash out in any token, any chain.",
   message_tone:        "casual, crypto-native, low-pressure, peer-to-peer (not salesy)",
   call_to_action:      "ask if they'd want early access",
   creator_pitch:       "Get paid for your content and collabs in USDC instantly, with no wallet history exposed to brands.",
@@ -503,10 +503,12 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
     Promise.all([
       fetch("/api/outreach/config",    { headers: h }).then((r) => r.json()),
       fetch("/api/outreach/prospects", { headers: h }).then((r) => r.json()),
-    ]).then(([cfg, { prospects: list }]) => {
+      fetch("/api/outreach/bulk-send", { headers: h }).then((r) => r.ok ? r.json() : null),
+    ]).then(([cfg, { prospects: list }, job]) => {
       if (cfg && !cfg.error) setConfig((c) => ({ ...c, ...cfg }));
       setProspects(list ?? []);
       setLoadingProspects(false);
+      if (job?.status === "running") setBulkJob(job);
     });
   }, [authH]);
 
@@ -612,6 +614,17 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
 
   const [checkingEngagement, setCheckingEngagement] = useState(false);
 
+  type BulkJob = {
+    id: string;
+    status: "running" | "done" | "stopped";
+    total: number;
+    sent: number;
+    current_handle: string | null;
+    error: string | null;
+    finished_at: string | null;
+  };
+  const [bulkJob, setBulkJob] = useState<BulkJob | null>(null);
+
   async function bulkClean() {
     const toDelete = prospects.filter((p) =>
       p.status === "rejected" || (p.status === "drafted" && p.qualified === false),
@@ -660,6 +673,34 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
     ));
     toast({ title: `Approved ${toApprove.length} message${toApprove.length > 1 ? "s" : ""}` });
   }
+
+  async function bulkSendDMs() {
+    const res = await fetch("/api/outreach/bulk-send", { method: "POST", headers: authH() });
+    const body = await res.json();
+    if (!res.ok) {
+      toast({ title: body.error ?? "Failed to start bulk send", variant: "destructive" });
+      return;
+    }
+    setBulkJob({ id: body.jobId, status: "running", total: body.total, sent: 0, current_handle: null, error: null, finished_at: null });
+  }
+
+  // Poll for job status every 5s while a job is running
+  useEffect(() => {
+    if (bulkJob?.status !== "running") return;
+    const timer = setInterval(async () => {
+      const res = await fetch("/api/outreach/bulk-send", { headers: authH() });
+      if (!res.ok) return;
+      const job: BulkJob = await res.json();
+      setBulkJob(job);
+      if (job.status !== "running") {
+        const { prospects: list } = await fetch("/api/outreach/prospects", { headers: authH() }).then((r) => r.json());
+        setProspects(list ?? []);
+        if (job.status === "done")    toast({ title: `Sent ${job.sent} DM${job.sent !== 1 ? "s" : ""}` });
+        if (job.status === "stopped") toast({ title: job.error ?? "Bulk send stopped", variant: "destructive" });
+      }
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, [bulkJob?.status, authH]);
 
   return (
     <div className="min-h-screen bg-[#0f0f12] text-white font-sans">
@@ -797,6 +838,27 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
                 approve all ({draftedCount})
               </button>
             )}
+            {filter === "approved" && (stats.approved > 0 || bulkJob?.status === "running") && (() => {
+              const running = bulkJob?.status === "running";
+              const label   = running
+                ? (bulkJob!.current_handle
+                    ? `sending ${bulkJob!.sent + 1} / ${bulkJob!.total} — @${bulkJob!.current_handle}`
+                    : `pausing… ${bulkJob!.sent} / ${bulkJob!.total} sent`)
+                : `send all DMs (${stats.approved})`;
+              return (
+                <button
+                  onClick={bulkSendDMs}
+                  disabled={running}
+                  className={cn(
+                    "inline-flex items-center gap-2 h-9 px-4 text-sm rounded-xl font-medium transition-colors disabled:opacity-50",
+                    glassBtn, "border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10",
+                  )}
+                >
+                  {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SendHorizonal className="h-3.5 w-3.5" />}
+                  {label}
+                </button>
+              );
+            })()}
           </div>
           <div className="flex flex-wrap items-center gap-3 mb-5">
             <div className="flex gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
