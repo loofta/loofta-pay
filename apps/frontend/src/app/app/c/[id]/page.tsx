@@ -4219,7 +4219,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               : perTransferPhase
                 ? "Payment in progress"
                 : claim?.amount
-                  ? `Pay $${privatePayTotal.toFixed(2)}`
+                  ? `Pay $${isFeeOnSender ? privatePayTotal.toFixed(2) : claimAmountUSD.toFixed(2)}`
                   : "Pay now"}
           </DialogTitle>
           {confirmingTxSignature ? (
@@ -4324,19 +4324,27 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               <DialogHeader className="flex flex-col items-center justify-center text-center space-y-0 pb-5 sm:text-center" aria-hidden>
                 <div className="mb-3 text-4xl">💳</div>
                 <h2 className="text-xl font-semibold text-gray-900 text-center">
-                  Pay ${(pendingFeeUsdc != null ? claimAmountUSD + pendingFeeUsdc : privatePayTotal).toFixed(2)}
+                  Pay ${isFeeOnSender
+                    ? (pendingFeeUsdc != null ? claimAmountUSD + pendingFeeUsdc : privatePayTotal).toFixed(2)
+                    : claimAmountUSD.toFixed(2)}
                 </h2>
                 <p className="pt-0.5 text-base md:text-sm text-center text-muted-foreground">
-                  ${claimAmountUSD.toFixed(2)} + {pendingFeeUsdc != null ? "" : "~"}$
-                  {pendingFeeUsdc != null
-                    ? pendingFeeUsdc.toFixed(3)
-                    : (privatePayProtocolFee + privatePayGasFee).toFixed(3)}{" "}
-                  fee
+                  {isFeeOnSender ? (
+                    <>${claimAmountUSD.toFixed(2)} + {pendingFeeUsdc != null ? "" : "~"}$
+                    {pendingFeeUsdc != null
+                      ? pendingFeeUsdc.toFixed(3)
+                      : (privatePayProtocolFee + privatePayGasFee).toFixed(3)}{" "}
+                    fee</>
+                  ) : (
+                    <>fees deducted from recipient</>
+                  )}
                 </p>
               </DialogHeader>
               <div className="space-y-3">
                 {(() => {
-                  const needed = pendingFeeUsdc != null ? claimAmountUSD + pendingFeeUsdc : privatePayTotal;
+                  const needed = isFeeOnSender
+                    ? (pendingFeeUsdc != null ? claimAmountUSD + pendingFeeUsdc : privatePayTotal)
+                    : claimAmountUSD;
                   const hasEnough = solanaPayment.hasEnoughBalance(needed);
                   const isLoading = solanaPayment.isBalanceLoading;
                   if (!isLoading && !hasEnough) {

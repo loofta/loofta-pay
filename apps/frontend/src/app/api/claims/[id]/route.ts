@@ -60,7 +60,6 @@ function normalisePayment(raw: Record<string, unknown>): Record<string, unknown>
     paid_with_chain: raw.from_chain ?? null,
     paid_with_token: raw.from_token ?? null,
     // Removed fields — default to null so UI doesn't break
-    is_private: null,
     creator_email: null,
     // Short URL identifier — null for payments created before short links were introduced
     short_id: raw.short_id ?? null,
@@ -77,7 +76,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
   const { data: paymentRow } = await supabase
     .from("payments")
-    .select("id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc")
+    .select("id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private")
     .eq("id", params.id)
     .maybeSingle();
 
