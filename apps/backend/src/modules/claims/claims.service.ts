@@ -24,6 +24,7 @@ import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/
 import {
   MAGICBLOCK_GAS_SOL,
   MAGICBLOCK_GAS_USDC,
+  MAGICBLOCK_VOLUME_FEE_BPS,
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
   grossUpForMagicblockFee,
   requestMagicblockPrivateTransfer,
@@ -789,6 +790,9 @@ export class ClaimsService {
       throw new BadRequestException('Minimum payment amount is $5.00 USDC.');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
+    // fee_on_sender=true (Exact out): gross up so recipient receives exactly baseUnits, fees added on top.
+    // fee_on_sender=false (Exact in): send baseUnits directly, MB deducts its fee from the amount, recipient gets less.
+    const feeOnSender = (row as any).fee_on_sender !== false;
     const cluster = requestCluster
       ?? (isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet');
     const effectiveMint = cluster === 'mainnet'
@@ -802,36 +806,38 @@ export class ClaimsService {
       .eq('id', claimId);
     this.logger.log(`[PrivatePay] stamped claim ${claimId}: is_devnet=${correctIsDevnet} sender_user_id=${privyUserId}`);
 
-    // MagicBlock cost = 10 BPS volume fee (gross-up so recipient gets exactly baseUnits)
-    // + flat 0.2 USDC gasless relay fee charged as USDC via a prepended instruction.
+    // MagicBlock cost = 10 BPS volume fee + flat 0.2 USDC gasless relay fee.
     const relayFeeUnits = gasless ? Math.round(MAGICBLOCK_GAS_USDC * 1_000_000) : 0;
-
     const grossUnits = grossUpForMagicblockFee(baseUnits);
+    // Exact out: sender pays grossUnits + relay → recipient gets exactly baseUnits.
+    // Exact in:  sender pays (baseUnits - relay) + relay = baseUnits total. MB deducts 10 BPS from (baseUnits - relay) before delivery.
+    const transferUnits = feeOnSender ? grossUnits : baseUnits - relayFeeUnits;
+    const estimatedMbVolumeFeeUnits = feeOnSender
+      ? (grossUnits - baseUnits)
+      : Math.ceil((baseUnits - relayFeeUnits) * MAGICBLOCK_VOLUME_FEE_BPS / 10_000);
+
     this.logger.log(
-      `[PrivatePay] claim=${claimId} amount=${amountUsd} baseUnits=${baseUnits} relayFeeUnits=${relayFeeUnits}` +
-      ` grossUnits=${grossUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… gasless=${gasless}`,
+      `[PrivatePay] claim=${claimId} amount=${amountUsd} baseUnits=${baseUnits} feeOnSender=${feeOnSender}` +
+      ` transferUnits=${transferUnits} relayFeeUnits=${relayFeeUnits} cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… gasless=${gasless}`,
     );
 
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
       to,
       mint: effectiveMint.toBase58(),
-      amount: grossUnits,
+      amount: transferUnits,
       cluster,
       ...(gasless ? { gasless: true } : {}),
     });
-
-    const mbVolumeFeeUnits = grossUnits - baseUnits;
 
     // Decode the actual debit from the transaction — ground truth over the gross estimate.
     const conn = cluster !== 'localhost' ? this.solanaSponsor.getConnectionForCluster(cluster) : undefined;
     const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, senderWallet.trim(), effectiveMint, conn);
     // For private transfers the main instruction is confidential; decodeActualSenderDebit only
     // sees the relay-fee SPL transfer (actualDebitUnits ≈ relay fee << baseUnits).
-    // Total fee = estimated BPS volume fee + actual decoded relay fee.
-    const estimatedFeeUnits = mbVolumeFeeUnits + relayFeeUnits;
+    const estimatedFeeUnits = estimatedMbVolumeFeeUnits + relayFeeUnits;
     const feeUnits = (actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits)
-      ? mbVolumeFeeUnits + actualDebitUnits
+      ? estimatedMbVolumeFeeUnits + actualDebitUnits
       : estimatedFeeUnits;
     this.logger.log(`[PrivatePay] claim=${claimId} decoded relay=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits} (${actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits ? 'actual-relay' : 'estimated'})`);
 
@@ -839,7 +845,7 @@ export class ClaimsService {
       ...txResponse,
       feeAmountUsdc: feeUnits / 1_000_000,
       feeBreakdown: {
-        looftaBpsUsdc: mbVolumeFeeUnits / 1_000_000,
+        looftaBpsUsdc: estimatedMbVolumeFeeUnits / 1_000_000,
         solRecoveryUsdc: relayFeeUnits / 1_000_000,
         solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
         solPriceUsd: 0,
