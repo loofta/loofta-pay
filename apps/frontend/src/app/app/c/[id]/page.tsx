@@ -3242,7 +3242,26 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
                   <div className="text-base font-medium text-slate-200 mb-2">Payment summary</div>
                   <div className="text-base text-gray-700 space-y-1">
-                    {isFeeOnSender ? (
+                    {!requiresPrivate ? (
+                      /* Non-private: no fees, sender pays = recipient receives */
+                      <>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600 font-medium">You paid</span>
+                          <span className="text-lg font-semibold text-gray-900">
+                            ${parseFloat(claim.amount || "0").toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between border-t border-gray-200 pt-1 mt-1">
+                          <span className="text-gray-600">Recipient receives</span>
+                          <span className="text-lg font-semibold text-gray-900">
+                            <span className="inline-flex items-center gap-1">
+                              <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={18} />
+                              ${parseFloat(claim.amount || "0").toFixed(2)}
+                            </span>
+                          </span>
+                        </div>
+                      </>
+                    ) : isFeeOnSender ? (
                       <>
                         <div className="flex items-center justify-between">
                           <span className="text-gray-600">Recipient receives</span>
@@ -3540,13 +3559,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
             {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) && (!deposit ? (
               <>
-                {/* Private-only indicator */}
-                <div className="mt-5 flex gap-2 text-base md:text-sm text-gray-600">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0 mt-0.5">
-                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                  </svg>
-                  <p className="min-w-0 leading-relaxed">{PRIVATE_PAYMENT_ALL_PRIVATE_LINE}</p>
-                </div>
+                {/* Private indicator — only when payment is private */}
+                {requiresPrivate && (
+                  <div className="mt-5 flex gap-2 text-base md:text-sm text-gray-600">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0 mt-0.5">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    </svg>
+                    <p className="min-w-0 leading-relaxed">{PRIVATE_PAYMENT_ALL_PRIVATE_LINE}</p>
+                  </div>
+                )}
 
                 {/* Minimum amount notice */}
                 {claimAmountUSD > 0 && claimAmountUSD < 5 && (
@@ -3562,7 +3583,19 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
                     <div className="text-base md:text-sm font-medium font-sans text-gray-700 mb-2">Payment breakdown</div>
                     <div className="space-y-1.5 text-base md:text-sm">
-                      {isFeeOnSender ? (
+                      {!requiresPrivate ? (
+                        /* Non-private: no fees */
+                        <>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600">You pay</span>
+                            <span className="font-semibold font-sans text-gray-900">${claimAmountUSD.toFixed(2)}</span>
+                          </div>
+                          <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
+                            <span className="font-medium font-sans text-gray-900">Recipient receives</span>
+                            <span className="font-semibold font-sans text-lg text-gray-900">${claimAmountUSD.toFixed(2)}</span>
+                          </div>
+                        </>
+                      ) : isFeeOnSender ? (
                         <>
                           <div className="flex items-center justify-between">
                             <span className="text-gray-600">Recipient receives</span>
