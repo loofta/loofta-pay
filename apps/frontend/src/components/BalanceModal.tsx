@@ -971,10 +971,10 @@ export function BalanceModal({
             <button
               type="button"
               onClick={() => setTab("topup")}
-              className="group relative z-10 flex-1 inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]"
+              className="group relative z-10 flex-1 inline-flex flex-col items-center justify-center gap-1 rounded-xl px-2 py-2 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]"
             >
               <IconBubble active={tab === "topup"} dark={dark}><ArrowDown /></IconBubble>
-              <span className={cn("relative z-10 font-semibold text-base transition-colors duration-300",
+              <span className={cn("relative z-10 font-semibold text-sm transition-colors duration-300",
                 tab === "topup" ? (dark ? "text-slate-100" : "text-gray-900") : (dark ? "text-slate-400" : "text-gray-500")
               )}>Top Up</span>
             </button>
@@ -983,7 +983,7 @@ export function BalanceModal({
             <button
               type="button"
               onClick={() => setTab("withdraw")}
-              className="group relative z-10 flex-1 inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]"
+              className="group relative z-10 flex-1 inline-flex flex-col items-center justify-center gap-1 rounded-xl px-2 py-2 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]"
             >
               <IconBubble active={tab === "withdraw"} dark={dark}>
                 {withdrawStep !== "idle" && withdrawStep !== "complete" && withdrawStep !== "failed"
@@ -991,7 +991,7 @@ export function BalanceModal({
                   : <ArrowUp />
                 }
               </IconBubble>
-              <span className={cn("relative z-10 font-semibold text-base transition-colors duration-300",
+              <span className={cn("relative z-10 font-semibold text-sm transition-colors duration-300",
                 tab === "withdraw" ? (dark ? "text-slate-100" : "text-gray-900") : (dark ? "text-slate-400" : "text-gray-500")
               )}>
                 {withdrawStep !== "idle" && withdrawStep !== "complete" && withdrawStep !== "failed" ? "Active" : "Withdraw"}
@@ -1002,10 +1002,10 @@ export function BalanceModal({
             <button
               type="button"
               onClick={() => { setRecentWithdrawals(getWithdrawalHistory()); setTab("history"); }}
-              className="group relative z-10 flex-1 inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]"
+              className="group relative z-10 flex-1 inline-flex flex-col items-center justify-center gap-1 rounded-xl px-2 py-2 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]"
             >
               <IconBubble active={tab === "history"} dark={dark}><Clock /></IconBubble>
-              <span className={cn("relative z-10 font-semibold text-base transition-colors duration-300",
+              <span className={cn("relative z-10 font-semibold text-sm transition-colors duration-300",
                 tab === "history" ? (dark ? "text-slate-100" : "text-gray-900") : (dark ? "text-slate-400" : "text-gray-500")
               )}>Recent</span>
             </button>
