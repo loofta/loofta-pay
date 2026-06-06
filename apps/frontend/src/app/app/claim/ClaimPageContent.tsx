@@ -877,22 +877,22 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                             onClick={() => setFeeOnSender(true)}
                             className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all ${feeOnSender ? 'border-orange-400/50 bg-orange-500/20 text-white' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'}`}
                           >
-                            Exact out
+                            Fees on sender
                           </button>
                           <button
                             type="button"
                             onClick={() => setFeeOnSender(false)}
                             className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all ${!feeOnSender ? 'border-orange-400/50 bg-orange-500/20 text-white' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'}`}
                           >
-                            Exact in
+                            Fees on me
                           </button>
                         </div>
                         <p className="mt-1.5 text-slate-500 text-sm">
                           {feeOnSender
-                            ? "Recipient gets the exact amount. Fees are charged to sender."
+                            ? "Sender pays fees on top — you receive the full amount"
                             : parsedAmount > 0
                               ? `You receive ~$${Math.max(0, parsedAmount - Math.ceil((parsedAmount * 0.001 + 0.20) * 100) / 100).toFixed(2)} after fees`
-                              : "Fees may be deducted from the recipient amount."}
+                              : "Fees deducted from what you receive"}
                         </p>
                       </div>
                     </div>
