@@ -17,7 +17,7 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
-import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, Coins, ChevronLeft } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft } from "lucide-react";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
@@ -35,6 +35,7 @@ import {
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { cn } from "@/lib/utils";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
+import { QRCodeSVG } from "qrcode.react";
 
 const LOG_PREFIX = "[BalanceModal]";
 
@@ -286,6 +287,19 @@ export function BalanceModal({
   const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | null>(null);
   const [coinbaseOfframpLoading, setCoinbaseOfframpLoading] = useState(false);
 
+  // Near Intents top-up deposit
+  const [topUpView, setTopUpView] = useState<"near-intents-deposit" | null>(null);
+  const [depositFromSel, setDepositFromSel] = useState<TokenSelection | undefined>(undefined);
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositRefundAddr, setDepositRefundAddr] = useState("");
+  const [depositSubmitting, setDepositSubmitting] = useState(false);
+  const [depositAddr, setDepositAddr] = useState<string | null>(null);
+  const [depositMemo, setDepositMemo] = useState<string | null>(null);
+  const [depositBridgeStatus, setDepositBridgeStatus] = useState<string | null>(null);
+  const [depositPollAddr, setDepositPollAddr] = useState<string | null>(null);
+  const [depositQuoteOut, setDepositQuoteOut] = useState<string | null>(null);
+  const depositPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { user, getAccessToken } = usePrivy();
@@ -439,6 +453,33 @@ export function BalanceModal({
     }
   };
 
+  // Near Intents top-up: get deposit address
+  const handleGetDepositAddress = async () => {
+    if (!selectedDepositToken || !usdcSolanaToken || !solanaAddress || !depositAmountNum) return;
+    setDepositSubmitting(true);
+    try {
+      const info = await getDepositInfo({
+        fromToken: selectedDepositToken as NearToken,
+        toToken: usdcSolanaToken as NearToken,
+        amount: depositAmountNum.toString(),
+        recipient: solanaAddress,
+        sender: depositRefundAddr || solanaAddress,
+        refundAddress: depositRefundAddr || solanaAddress,
+        slippageBps: 100,
+      });
+      if (!info.depositAddress) throw new Error("No deposit address returned");
+      setDepositAddr(info.depositAddress);
+      setDepositMemo(info.memo ?? null);
+      setDepositPollAddr(info.depositAddress);
+      setDepositBridgeStatus("PENDING");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not get deposit address";
+      toast({ variant: "destructive", title: "Failed to get deposit address", description: msg });
+    } finally {
+      setDepositSubmitting(false);
+    }
+  };
+
   const wallet = useMemo(
     () => (solanaAddress ? solanaWallets?.find((w) => w.address === solanaAddress) : undefined),
     [solanaAddress, solanaWallets]
@@ -453,6 +494,19 @@ export function BalanceModal({
       ),
     [tokens]
   );
+
+  // Near Intents deposit (top-up) — tokens and selected token
+  const depositTokens = useMemo(() => {
+    const isSol = (c: string | undefined) => (c || "").toLowerCase() === "solana" || (c || "").toLowerCase() === "sol";
+    return tokens.filter((t) => !isSol(t.chain));
+  }, [tokens]);
+  const selectedDepositToken = useMemo(
+    () => findTokenBySelection(depositTokens, depositFromSel),
+    [depositTokens, depositFromSel]
+  );
+  const depositAmountNum = parseFloat(depositAmount) || 0;
+  const depositChain = selectedDepositToken?.chain || "";
+  const depositRefundAddrValid = !depositRefundAddr || isValidAddressForChain(depositRefundAddr, depositChain);
 
   const withdrawTokens = useMemo(() => {
     const solLower = (c: string | undefined) => (c || "").toLowerCase() === "solana" || (c || "").toLowerCase() === "sol";
@@ -480,13 +534,78 @@ export function BalanceModal({
   const isNearIntentsWithdraw = withdrawMethod === "near-intents" && !!selectedFrom && !!usdcSolanaToken;
   const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
 
-  // Clear Blink error and reset withdraw method when modal closes
+  // Clear Blink error and reset states when modal closes
   useEffect(() => {
     if (!open) {
       setBlinkError(null);
       setWithdrawMethod(null);
+      // Keep deposit state alive while a deposit is still pending
+      if (!depositAddr || TERMINAL_BRIDGE_STATUSES.has(depositBridgeStatus || "")) {
+        setTopUpView(null);
+        setDepositFromSel(undefined);
+        setDepositAmount("");
+        setDepositRefundAddr("");
+        setDepositAddr(null);
+        setDepositMemo(null);
+        setDepositBridgeStatus(null);
+        setDepositPollAddr(null);
+        setDepositQuoteOut(null);
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Deposit quote estimation (Near Intents top-up)
+  useEffect(() => {
+    if (!selectedDepositToken || !usdcSolanaToken || !depositAmountNum) {
+      setDepositQuoteOut(null);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const r = await getAccurateQuote({
+          fromToken: selectedDepositToken as NearToken,
+          toToken: usdcSolanaToken as NearToken,
+          amount: depositAmountNum.toString(),
+          slippageBps: 100,
+          dryRun: true,
+        });
+        if (!cancelled && r.amountOut) setDepositQuoteOut(r.amountOut);
+      } catch { /* non-fatal */ }
+    }, 600);
+    return () => { cancelled = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDepositToken?.tokenId, depositAmountNum, usdcSolanaToken]);
+
+  // Deposit bridge polling (Near Intents top-up)
+  useEffect(() => {
+    if (!depositPollAddr || TERMINAL_BRIDGE_STATUSES.has(depositBridgeStatus || "")) {
+      if (depositPollingRef.current) clearInterval(depositPollingRef.current);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const result = await getExecutionStatus(depositPollAddr);
+        if (cancelled) return;
+        const s = String(result?.status || result?.executionStatus || result?.state || "PENDING").toUpperCase();
+        setDepositBridgeStatus(s);
+        if (TERMINAL_BRIDGE_STATUSES.has(s)) {
+          setDepositPollAddr(null);
+          if (SUCCESS_BRIDGE_STATUSES.has(s)) onRefresh();
+        }
+      } catch { /* ignore */ }
+    };
+    poll();
+    depositPollingRef.current = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      if (depositPollingRef.current) clearInterval(depositPollingRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [depositPollAddr]);
 
   // Reset token selection and address when withdraw method changes
   useEffect(() => {
@@ -500,6 +619,12 @@ export function BalanceModal({
     if (!open) return;
     const history = getWithdrawalHistory();
     setRecentWithdrawals(history);
+
+    // Restore deposit view if a Near Intents top-up is still pending
+    if (depositAddr && !TERMINAL_BRIDGE_STATUSES.has(depositBridgeStatus || "")) {
+      setTab("topup");
+      setTopUpView("near-intents-deposit");
+    }
 
     const latest = history[0];
     if (
@@ -886,8 +1011,8 @@ export function BalanceModal({
             </button>
           </div>
 
-          {/* Top Up tab */}
-          {tab === "topup" && (
+          {/* Top Up tab — method cards */}
+          {tab === "topup" && topUpView === null && (
             <div className="py-2">
               {devnetMode ? (
                 <div className={`rounded-xl border-2 p-4 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
@@ -896,82 +1021,212 @@ export function BalanceModal({
                   {solanaAddress && (
                     <div className={`flex items-center gap-2 rounded-lg p-3 ${dark ? "bg-white/5" : "bg-white border border-gray-200"}`}>
                       <p className={`text-base md:text-sm font-mono flex-1 break-all ${dark ? "text-slate-300" : "text-gray-700"}`}>{solanaAddress}</p>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(solanaAddress);
-                          toast({ title: "Copied!", description: "Wallet address copied to clipboard." });
-                        }}
-                        className={`shrink-0 p-1.5 rounded-lg transition-colors ${dark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-gray-100 text-gray-400 hover:text-gray-700"}`}
-                      >
+                      <button type="button" onClick={() => { navigator.clipboard.writeText(solanaAddress); toast({ title: "Copied!" }); }} className={`shrink-0 p-1.5 rounded-lg transition-colors ${dark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-gray-100 text-gray-400 hover:text-gray-700"}`}>
                         <Copy className="h-4 w-4" />
                       </button>
                     </div>
                   )}
                 </div>
               ) : (
-                /* Two deposit options */
                 <div className="py-2 space-y-3">
 
-                    {/* 1. Crypto deposit via Blink SDK (opens its own modal) */}
-                    <button
-                      type="button"
-                      disabled={!solanaAddress || blinkDepositing || coinbaseLoading}
-                      onClick={handleBlinkDeposit}
-                      className={cn(
-                        "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                        dark
-                          ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                          : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      )}
-                    >
-                      <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                        {blinkDepositing
-                          ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
-                          : <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                        }
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Crypto deposit</p>
-                        <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                          ETH · BTC · USDC · USDT — any chain
-                        </p>
-                      </div>
-                      <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                    </button>
+                  {/* 1. Crypto deposit via Blink */}
+                  <button type="button" disabled={!solanaAddress || blinkDepositing || coinbaseLoading} onClick={handleBlinkDeposit}
+                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      {blinkDepositing ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" /> : <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Crypto deposit</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>ETH · USDC · USDT — any chain</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
 
-                    {blinkError && (
-                      <p className="text-sm text-red-500 text-center px-1">{blinkError}</p>
+                  {blinkError && <p className="text-sm text-red-500 text-center px-1">{blinkError}</p>}
+
+                  {/* 2. More crypto via Near Intents */}
+                  <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("near-intents-deposit")}
+                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      <img src="/images/icons/deposit-receive.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>More crypto deposit</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>ZEC · TON · BTC — cross-chain</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+
+                  {/* 3. Fiat / bank via Coinbase Onramp */}
+                  <button type="button" disabled={!solanaAddress || blinkDepositing || coinbaseLoading} onClick={handleCoinbaseOnramp}
+                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      {coinbaseLoading ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" /> : <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Buy with card or bank</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Apple Pay · card · bank transfer</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Top Up tab — Near Intents deposit form / address view */}
+          {tab === "topup" && !devnetMode && topUpView === "near-intents-deposit" && (
+            <div className="space-y-4 py-2">
+
+              {/* Back */}
+              <button type="button" onClick={() => { setTopUpView(null); setDepositAddr(null); setDepositMemo(null); setDepositPollAddr(null); setDepositBridgeStatus(null); setDepositFromSel(undefined); setDepositAmount(""); setDepositRefundAddr(""); setDepositQuoteOut(null); }}
+                className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
+                <ChevronLeft className="h-4 w-4" />Back
+              </button>
+
+              {depositAddr ? (
+                /* ── Deposit address view ── */
+                <div className="space-y-3">
+
+                  {/* Status */}
+                  <div className={`flex items-center gap-3 rounded-2xl px-4 py-3.5 ${dark ? "bg-white/5 border border-white/10" : "bg-gradient-to-r from-orange-50/70 to-amber-50/30 border border-orange-100"}`}>
+                    {!depositBridgeStatus || depositBridgeStatus === "PENDING" ? (
+                      <Loader2 className="h-5 w-5 animate-spin text-blue-400 shrink-0" />
+                    ) : SUCCESS_BRIDGE_STATUSES.has(depositBridgeStatus) ? (
+                      <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0" />
+                    )}
+                    <div>
+                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>{bridgeStatusLabel(depositBridgeStatus)}</p>
+                      {depositQuoteOut && (
+                        <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-500"}`}>~{Number(depositQuoteOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} USDC expected</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Send instructions */}
+                  <div className={`rounded-2xl border overflow-hidden ${dark ? "border-white/10" : "border-gray-100"}`}>
+                    <div className={`px-4 py-3 border-b ${dark ? "border-white/[0.06] bg-white/5" : "border-gray-100 bg-gray-50/60"}`}>
+                      <p className={`text-sm font-medium ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        Send <span className={`font-bold ${dark ? "text-white" : "text-gray-900"}`}>{depositAmountNum} {selectedDepositToken?.symbol}</span> to this address
+                      </p>
+                    </div>
+
+                    {/* Address row */}
+                    <div className="px-4 py-3">
+                      <p className={`text-xs font-medium mb-1.5 uppercase tracking-wide ${dark ? "text-slate-500" : "text-gray-400"}`}>Deposit address</p>
+                      <div className="flex items-center gap-2">
+                        <p className={`text-sm font-mono flex-1 break-all ${dark ? "text-slate-300" : "text-gray-700"}`}>{depositAddr}</p>
+                        <button type="button" onClick={() => { navigator.clipboard.writeText(depositAddr!); toast({ title: "Copied!", description: "Deposit address copied." }); }}
+                          className={`shrink-0 p-2 rounded-lg transition-colors ${dark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-gray-100 text-gray-400 hover:text-gray-700"}`}>
+                          <Copy className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Memo row (only if present) */}
+                    {depositMemo && (
+                      <div className={`px-4 py-3 border-t ${dark ? "border-white/[0.06]" : "border-gray-100"}`}>
+                        <p className={`text-xs font-medium mb-1.5 uppercase tracking-wide text-amber-500`}>⚠ Memo — required</p>
+                        <div className="flex items-center gap-2">
+                          <p className={`text-sm font-mono flex-1 break-all ${dark ? "text-slate-300" : "text-gray-700"}`}>{depositMemo}</p>
+                          <button type="button" onClick={() => { navigator.clipboard.writeText(depositMemo!); toast({ title: "Copied!", description: "Memo copied." }); }}
+                            className={`shrink-0 p-2 rounded-lg transition-colors ${dark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-gray-100 text-gray-400 hover:text-gray-700"}`}>
+                            <Copy className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
                     )}
 
-                    {/* 2. Fiat / bank via Coinbase Onramp popup */}
-                    <button
-                      type="button"
-                      disabled={!solanaAddress || blinkDepositing || coinbaseLoading}
-                      onClick={handleCoinbaseOnramp}
-                      className={cn(
-                        "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                        dark
-                          ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                          : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      )}
-                    >
-                      <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                        {coinbaseLoading
-                          ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
-                          : <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                        }
+                    {/* QR code */}
+                    <div className={`flex justify-center py-4 border-t ${dark ? "border-white/[0.06]" : "border-gray-100"}`}>
+                      <div className={`p-3 rounded-xl ${dark ? "bg-white" : "bg-white border border-gray-100"}`}>
+                        <QRCodeSVG value={depositAddr} size={140} />
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Buy with card or bank</p>
-                        <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                          Apple Pay · card · bank transfer
-                        </p>
-                      </div>
-                      <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                    </button>
-
+                    </div>
                   </div>
+
+                  {SUCCESS_BRIDGE_STATUSES.has(depositBridgeStatus || "") && (
+                    <Button onClick={() => { setTopUpView(null); setDepositAddr(null); setDepositMemo(null); setDepositPollAddr(null); setDepositBridgeStatus(null); setDepositFromSel(undefined); setDepositAmount(""); setDepositRefundAddr(""); setDepositQuoteOut(null); }}
+                      className="w-full bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90 text-white">
+                      Done
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                /* ── Token + amount form ── */
+                <div className="space-y-4">
+
+                  {/* Token selector */}
+                  <div>
+                    <Label className={`text-sm font-medium mb-2 block ${dark ? "text-slate-300" : "text-gray-700"}`}>Token to deposit</Label>
+                    <TokenCombobox
+                      tokens={depositTokens}
+                      value={depositFromSel}
+                      onChange={setDepositFromSel}
+                      placeholder="Select token and chain"
+                      className={dark ? "w-full h-11 rounded-xl border border-white/20 bg-white/10 text-white placeholder:text-slate-400" : "w-full h-11 rounded-xl border border-gray-200 bg-white"}
+                      defaultShowAllChains
+                    />
+                  </div>
+
+                  {/* Amount */}
+                  <div>
+                    <Label htmlFor="deposit-amount" className={dark ? "text-slate-300" : undefined}>Amount to send</Label>
+                    <Input
+                      id="deposit-amount"
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="0.00"
+                      value={depositAmount}
+                      onChange={(e) => setDepositAmount(e.target.value)}
+                      className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                    />
+                    {depositQuoteOut && (
+                      <p className={`text-sm mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        <ArrowRight className="h-3.5 w-3.5 shrink-0" />
+                        ~{Number(depositQuoteOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} USDC received
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Refund address (optional) */}
+                  <div>
+                    <Label htmlFor="deposit-refund" className={dark ? "text-slate-300" : undefined}>
+                      Your {selectedDepositToken?.chain || "source"} address <span className={`font-normal ${dark ? "text-slate-500" : "text-gray-400"}`}>(for refunds if deposit fails)</span>
+                    </Label>
+                    <Input
+                      id="deposit-refund"
+                      placeholder={`Enter your ${selectedDepositToken?.chain || "source"} address`}
+                      value={depositRefundAddr}
+                      onChange={(e) => setDepositRefundAddr(e.target.value)}
+                      className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                    />
+                    {depositRefundAddr && !depositRefundAddrValid && (
+                      <p className="text-sm text-red-400 mt-1 flex items-center gap-1.5">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                        Invalid address for {depositChain}
+                      </p>
+                    )}
+                  </div>
+
+                  <Button
+                    onClick={handleGetDepositAddress}
+                    disabled={depositSubmitting || !selectedDepositToken || !depositAmountNum || (!!depositRefundAddr && !depositRefundAddrValid)}
+                    className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
+                  >
+                    {depositSubmitting ? (
+                      <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Getting deposit address…</span>
+                    ) : "Get deposit address"}
+                  </Button>
+                </div>
               )}
             </div>
           )}
@@ -1102,13 +1357,13 @@ export function BalanceModal({
                     : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 )}
               >
-                <div className="w-12 h-12 shrink-0 rounded-xl flex items-center justify-center bg-[#9945FF]/10">
-                  <Coins className="h-6 w-6 text-[#9945FF]" />
+                <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                  <img src="/images/icons/withdraw-usdc.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>USDC on Solana</p>
                   <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    Direct to any Solana wallet
+                    Any Solana wallet · Free &amp; instant
                   </p>
                 </div>
                 <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
@@ -1132,7 +1387,7 @@ export function BalanceModal({
                 <div className="min-w-0 flex-1">
                   <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Other token or chain</p>
                   <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    ETH · BTC · SOL · USDT — cross-chain
+                    ETH · BTC · SOL · USDT — any chain
                   </p>
                 </div>
                 <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
@@ -1185,58 +1440,64 @@ export function BalanceModal({
                 Back
               </button>
 
-              {/* Balance */}
-              <div>
-                <Label className={`text-base md:text-sm font-medium mb-2 block ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                  {isNearIntentsWithdraw ? "Paying from (USDC on Solana)" : "Available balance"}
-                </Label>
-                <div className={`p-4 rounded-xl border-2 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${dark ? "bg-white/10 border border-white/10" : "bg-white border border-gray-200"}`}>
-                      {(isNearIntentsWithdraw ? usdcSolanaToken : effectiveToken) && (
-                        <TokenIcon
-                          token={(isNearIntentsWithdraw ? usdcSolanaToken : effectiveToken)!}
-                          chain={isNearIntentsWithdraw ? "solana" : effectiveToken?.chain}
-                          size={24}
-                        />
-                      )}
+              {/* Balance + route summary */}
+              {withdrawMethod === "near-intents" ? (
+                /* Near Intents: FROM → TO visual flow */
+                <div className={`rounded-2xl border overflow-hidden ${dark ? "border-white/10" : "border-gray-100"}`}>
+                  {/* FROM row */}
+                  <div className={`flex items-center gap-3 px-4 py-3.5 ${dark ? "bg-white/5" : "bg-orange-50/50"}`}>
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${dark ? "bg-white/10" : "bg-white shadow-sm border border-orange-100"}`}>
+                      {usdcSolanaToken && <TokenIcon token={usdcSolanaToken} chain="solana" size={20} />}
                     </div>
-                    <div>
-                      <p className={`text-base md:text-sm font-medium ${dark ? "text-slate-300" : "text-gray-600"}`}>
-                        {isNearIntentsWithdraw ? "USDC / Solana" : `${effectiveToken?.symbol || "USDC"} / ${effectiveToken?.chain || "Solana"}`}
-                      </p>
-                      <p className={`text-xl font-semibold mt-0.5 ${dark ? "text-white" : "text-gray-900"}`}>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-medium ${dark ? "text-slate-400" : "text-gray-500"}`}>From your balance</p>
+                      <p className={`text-base font-bold leading-tight ${dark ? "text-white" : "text-gray-900"}`}>
                         {loadingBalance ? "…" : `$${balanceUSD}`}
+                        <span className={`text-sm font-normal ml-1.5 ${dark ? "text-slate-400" : "text-gray-400"}`}>USDC · Solana</span>
                       </p>
                     </div>
                   </div>
+                  {/* Bridge label */}
+                  <div className={`flex items-center gap-2 px-4 py-1.5 border-y ${dark ? "border-white/[0.06] bg-white/[0.02]" : "border-gray-100 bg-gray-50/60"}`}>
+                    <ArrowDown className={`h-3.5 w-3.5 shrink-0 ${dark ? "text-slate-500" : "text-gray-400"}`} />
+                    <span className={`text-sm ${dark ? "text-slate-500" : "text-gray-400"}`}>Cross-chain via Near Intents</span>
+                  </div>
+                  {/* TO row — token selector */}
+                  <div className={`px-4 py-3.5 ${dark ? "" : ""}`}>
+                    <p className={`text-sm font-medium mb-2 ${dark ? "text-slate-300" : "text-gray-600"}`}>You receive</p>
+                    <TokenCombobox
+                      tokens={withdrawTokens}
+                      value={fromSel}
+                      onChange={setFromSel}
+                      placeholder="Select token and chain"
+                      className={dark ? "w-full h-11 rounded-xl border border-white/20 bg-white/10 text-white placeholder:text-slate-400" : "w-full h-11 rounded-xl border border-gray-200 bg-white"}
+                      defaultShowAllChains
+                    />
+                  </div>
                 </div>
-                {!loadingBalance && payFromBalanceNum <= 0 && (
-                  <p className={`text-base md:text-sm mt-2 ${dark ? "text-amber-400" : "text-amber-600"}`}>No balance to withdraw.</p>
-                )}
-              </div>
-
-              {/* Token selector — Near Intents only */}
-              {withdrawMethod === "near-intents" && (
-                <div>
-                  <Label className={`text-base md:text-sm font-medium mb-2 block ${dark ? "text-slate-300" : "text-gray-700"}`}>
-                    Withdraw to
-                  </Label>
-                  <TokenCombobox
-                    tokens={withdrawTokens}
-                    value={fromSel}
-                    onChange={setFromSel}
-                    placeholder="Select token and chain"
-                    className={dark ? "w-full h-12 rounded-xl border-2 border-white/20 bg-white/10 text-white text-center placeholder:text-slate-400" : "w-full h-12 rounded-xl border-2 border-gray-200 bg-white text-center"}
-                    defaultShowAllChains
-                  />
+              ) : (
+                /* USDC on Solana: compact balance pill */
+                <div className={`flex items-center gap-3 rounded-2xl px-4 py-3.5 ${dark ? "bg-white/5 border border-white/10" : "bg-gradient-to-r from-orange-50/70 to-amber-50/30 border border-orange-100"}`}>
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${dark ? "bg-white/10" : "bg-white shadow-sm border border-orange-100/60"}`}>
+                    {effectiveToken && <TokenIcon token={effectiveToken} chain={effectiveToken?.chain} size={22} />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-medium ${dark ? "text-slate-400" : "text-gray-500"}`}>Available to withdraw</p>
+                    <p className={`text-xl font-bold leading-tight ${dark ? "text-white" : "text-gray-900"}`}>
+                      {loadingBalance ? "…" : `$${balanceUSD}`}
+                      <span className={`text-sm font-normal ml-1.5 ${dark ? "text-slate-400" : "text-gray-400"}`}>USDC</span>
+                    </p>
+                  </div>
+                  {!loadingBalance && payFromBalanceNum <= 0 && (
+                    <span className="text-sm font-medium text-amber-500">Empty</span>
+                  )}
                 </div>
               )}
 
-              {/* Amount input */}
+              {/* Amount */}
               <div>
                 <Label htmlFor="withdraw-amount" className={dark ? "text-slate-300" : undefined}>
-                  Amount to send (USDC)
+                  {withdrawMethod === "near-intents" ? "Amount to bridge (USDC)" : "Amount to send (USDC)"}
                 </Label>
                 <div className="mt-1 flex gap-2">
                   <Input
@@ -1334,9 +1595,6 @@ export function BalanceModal({
                   )}
                 </Button>
               </div>
-              {!loadingBalance && payFromBalanceNum <= 0 && (
-                <p className={`text-base md:text-sm text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>Add funds to withdraw.</p>
-              )}
             </div>
           )}
 

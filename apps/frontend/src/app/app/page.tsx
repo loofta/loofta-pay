@@ -415,7 +415,7 @@ export default function Home() {
                               style={{
                                 fontSize: `${amountFontPx}px`,
                                 lineHeight: 1.05,
-                                width: `${amountInputWidthPx + amountGapPx}px`,
+                                width: `${Math.max(amountInputWidthPx, Math.round(amountFontPx * 0.6)) + amountGapPx}px`,
                               }}
                               aria-label={t('amountLabel')}
                             />

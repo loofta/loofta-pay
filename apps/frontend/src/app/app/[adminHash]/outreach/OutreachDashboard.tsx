@@ -323,11 +323,11 @@ function ProspectCard({
         <p className="mt-2 text-base text-slate-400 italic pl-[60px]">{prospect.qualification_reason}</p>
       )}
 
-      {/* Draft / approved message */}
-      {(qualified || isApproved) && (
+      {/* Draft / approved / sent message */}
+      {(qualified || isApproved || isSent) && (
         <div className="mt-4 pt-4 border-t border-white/10">
           <div className="flex items-center justify-between mb-2">
-            <FieldLabel>{isApproved ? "approved message" : "draft message"}</FieldLabel>
+            <FieldLabel>{isSent ? "sent message" : isApproved ? "approved message" : "draft message"}</FieldLabel>
             {qualified && !isEditing && (
               <button onClick={() => setIsEditing(true)} className="text-xs font-mono font-medium uppercase tracking-wide text-slate-500 hover:text-white transition-colors">
                 edit
@@ -345,7 +345,11 @@ function ProspectCard({
           ) : (
             <div className="rounded-lg bg-white/5 border border-white/10 px-3 py-2.5">
               <p className="text-base text-white leading-relaxed whitespace-pre-wrap">
-                {isApproved ? (prospect.final_message ?? prospect.draft_message) : prospect.draft_message}
+                {isSent
+                  ? (prospect.final_message ?? prospect.draft_message)
+                  : isApproved
+                    ? (prospect.final_message ?? prospect.draft_message)
+                    : prospect.draft_message}
               </p>
             </div>
           )}
@@ -389,12 +393,12 @@ function ProspectCard({
             </div>
           )}
           {isSent && (
-            <div className="flex items-center gap-3 mt-3">
-              <span className="inline-flex items-center gap-1.5 text-xs text-gray-500">
-                <SendHorizonal className="h-3 w-3" /> sent
+            <div className="flex items-center gap-3 mt-3 pt-3 border-t border-white/10">
+              <span className="inline-flex items-center gap-1.5 text-base text-slate-500 font-medium">
+                <SendHorizonal className="h-4 w-4" /> sent
               </span>
-              {prospect.replied  && <span className="inline-flex items-center gap-1.5 text-xs text-orange-400"><MessageCircle className="h-3 w-3" /> replied</span>}
-              {prospect.followed && <span className="inline-flex items-center gap-1.5 text-xs text-teal-400"><UserCheck className="h-3 w-3" /> follows you</span>}
+              {prospect.replied  && <span className="inline-flex items-center gap-1.5 text-base text-orange-400 font-medium"><MessageCircle className="h-4 w-4" /> replied</span>}
+              {prospect.followed && <span className="inline-flex items-center gap-1.5 text-base text-teal-400 font-medium"><UserCheck className="h-4 w-4" /> follows you</span>}
             </div>
           )}
         </div>
@@ -507,8 +511,9 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
   const [newType, setNewType]     = useState<ProspectType>("freelancer");
   const [adding, setAdding]       = useState(false);
 
-  const [runningBatch, setRunningBatch] = useState(false);
-  const [discovering, setDiscovering]   = useState(false);
+  const [runningBatch, setRunningBatch]     = useState(false);
+  const [discovering, setDiscovering]       = useState(false);
+  const [discoveringDefi, setDiscoveringDefi] = useState(false);
   const [filter, setFilter]             = useState<Filter>("all");
   const [typeFilter, setTypeFilter]     = useState<Set<ProspectType>>(new Set());
 
@@ -607,6 +612,28 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
     } else {
       const lastLine = Array.isArray(debug) ? debug[debug.length - 1] : undefined;
       toast({ title: "No new prospects found", description: lastLine ?? "Check console for debug log." });
+    }
+  }
+
+  async function discoverDefi() {
+    setDiscoveringDefi(true);
+    const res = await fetch("/api/outreach/discover-defi", {
+      method: "POST",
+      headers: { ...authH(), "Content-Type": "application/json" },
+    });
+    setDiscoveringDefi(false);
+    const body = await res.json().catch(() => ({}));
+    console.log("[discover-defi] debug:", body.debug);
+    if (!res.ok) {
+      toast({ title: "DeFi discovery failed", description: body.error ?? "unknown", variant: "destructive" });
+      return;
+    }
+    const { added, prospects: newOnes } = body;
+    if (added > 0) {
+      setProspects((prev) => [...(newOnes ?? []), ...prev]);
+      toast({ title: `Found ${added} DeFi project${added > 1 ? "s" : ""} on DefiLlama` });
+    } else {
+      toast({ title: "No new DeFi projects found" });
     }
   }
 
@@ -878,6 +905,12 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
             className={cn("w-full h-11 text-sm rounded-xl font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50", glassBtn)}>
             {discovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
             {discovering ? "searching X…" : "discover on X"}
+          </button>
+
+          <button onClick={discoverDefi} disabled={discoveringDefi}
+            className={cn("w-full h-11 text-sm rounded-xl font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50", glassBtn, "text-emerald-400/80 hover:text-emerald-300 hover:border-emerald-500/20")}>
+            {discoveringDefi ? <Loader2 className="h-4 w-4 animate-spin" /> : <Building2 className="h-4 w-4" />}
+            {discoveringDefi ? "scanning DefiLlama…" : "discover DeFi projects"}
           </button>
 
           <GradientActionButton onClick={runBatch} loading={runningBatch} loadingText="running agent…"

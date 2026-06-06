@@ -94,13 +94,15 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = getSupabaseAdmin();
-    const { data: existing } = await supabase
-      .from("outreach_prospects")
-      .select("handle");
-    const knownHandles = new Set(
-      (existing ?? []).map((r: { handle: string }) => r.handle.toLowerCase()),
-    );
-    debugLog.push(`already in queue: ${knownHandles.size}`);
+    const [{ data: existing }, { data: excluded }] = await Promise.all([
+      supabase.from("outreach_prospects").select("handle"),
+      supabase.from("outreach_excluded_handles").select("handle"),
+    ]);
+    const knownHandles = new Set([
+      ...(existing ?? []).map((r: { handle: string }) => r.handle.toLowerCase()),
+      ...(excluded ?? []).map((r: { handle: string }) => r.handle.toLowerCase()),
+    ]);
+    debugLog.push(`already in queue: ${(existing ?? []).length}, excluded: ${(excluded ?? []).length}`);
 
     const discovered: Array<{ handle: string; bio: string; hint_type: ProspectType; location: string | null; profile_image_url: string | null; followers_count: number | null }> = [];
 

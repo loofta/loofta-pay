@@ -36,7 +36,23 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   }
   const { id } = await params;
   const supabase = getSupabaseAdmin();
+
+  // Fetch the handle first so we can permanently exclude it
+  const { data: prospect } = await supabase
+    .from("outreach_prospects")
+    .select("handle")
+    .eq("id", id)
+    .single();
+
   const { error } = await supabase.from("outreach_prospects").delete().eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Block this handle from re-appearing in future discovery runs
+  if (prospect?.handle) {
+    await supabase
+      .from("outreach_excluded_handles")
+      .upsert({ handle: prospect.handle.toLowerCase() }, { onConflict: "handle" });
+  }
+
   return NextResponse.json({ ok: true });
 }
