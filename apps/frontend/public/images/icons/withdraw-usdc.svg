@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <defs>
+    <radialGradient id="coin" cx="36%" cy="28%" r="72%">
+      <stop offset="0%" stop-color="#FFD9B0"/>
+      <stop offset="38%" stop-color="#FF8832"/>
+      <stop offset="100%" stop-color="#C84200"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="36%" cy="24%" r="44%">
+      <stop offset="0%" stop-color="white" stop-opacity="0.60"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="edge" cx="50%" cy="50%" r="50%">
+      <stop offset="80%" stop-color="transparent"/>
+      <stop offset="100%" stop-color="#8C2C00" stop-opacity="0.4"/>
+    </radialGradient>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#B03800" flood-opacity="0.30"/>
+    </filter>
+  </defs>
+  <!-- Soft ground shadow -->
+  <ellipse cx="60" cy="113" rx="30" ry="6" fill="#B03800" opacity="0.12"/>
+  <!-- Coin body -->
+  <circle cx="60" cy="55" r="46" fill="url(#coin)" filter="url(#sh)"/>
+  <!-- Edge depth -->
+  <circle cx="60" cy="55" r="46" fill="url(#edge)"/>
+  <!-- Gloss overlay -->
+  <circle cx="60" cy="55" r="46" fill="url(#glow)"/>
+  <!-- Subtle inner ring -->
+  <circle cx="60" cy="55" r="34" stroke="white" stroke-width="1.5" stroke-opacity="0.22" fill="none"/>
+  <!-- Up arrow (thick, rounded, white) -->
+  <line x1="60" y1="79" x2="60" y2="42" stroke="white" stroke-width="7" stroke-linecap="round"/>
+  <polyline points="44,56 60,37 76,56" fill="none" stroke="white" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
