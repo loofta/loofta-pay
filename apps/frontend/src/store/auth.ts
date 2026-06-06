@@ -16,6 +16,8 @@ type AuthState = {
 	openShareModal: boolean;
 	openSettingsModal: boolean;
 	isOnboardingOpen: boolean;
+	tier: string;
+	totalVolumeUsd: number;
 	setAuth: (v: { authenticated: boolean; userId?: string; email?: string; username?: string | null }) => void;
 	setUsername: (username: string | null) => void;
 	setMainnetAccess: (access: boolean) => void;
@@ -23,6 +25,7 @@ type AuthState = {
 	setOpenShareModal: (open: boolean) => void;
 	setOpenSettingsModal: (open: boolean) => void;
 	setIsOnboardingOpen: (open: boolean) => void;
+	setTier: (tier: string, totalVolumeUsd: number) => void;
 };
 
 // SSR-safe storage: only use localStorage on client so Next.js build/SSR doesn't break
@@ -55,6 +58,9 @@ export const useAuthStore = create<AuthState>()(
 			openShareModal: false,
 			openSettingsModal: false,
 			isOnboardingOpen: false,
+			tier: 'noob',
+			totalVolumeUsd: 0,
+			setTier: (tier, totalVolumeUsd) => set({ tier, totalVolumeUsd }),
 			setAuth: (v) =>
 				set((state) => {
 					const authenticated = !!v.authenticated;
@@ -66,6 +72,8 @@ export const useAuthStore = create<AuthState>()(
 							username: null,
 							mainnetAccess: false,
 							networkMode: CLUSTER_DEFAULT_NETWORK_MODE,
+							tier: 'noob',
+							totalVolumeUsd: 0,
 						};
 					}
 					const newUserId = v.userId ?? state.userId;

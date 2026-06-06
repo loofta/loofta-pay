@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
 import { useAuthStore } from "@/store/auth";
 import { getCachedMainnetAccess, setCachedMainnetAccess } from "@/lib/mainnetAccessCache";
+import { getTierForVolume } from "@/lib/tiers";
 import { useToast } from "@/components/ui/use-toast";
 import {
   Dialog,
@@ -39,6 +40,29 @@ function getTwitterUsername(linkedAccounts: Array<{ type?: string; username?: st
   return s.length >= 3 ? s : null;
 }
 
+function formatVolume(n: number): string {
+  if (n >= 1000000) return `$${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`;
+  if (n >= 1000) return `$${n / 1000}k`;
+  return `$${n}`;
+}
+
+function TierBadge({ volumeUsd, dark }: { volumeUsd: number; dark: boolean }) {
+  const info = getTierForVolume(volumeUsd);
+  const thresholds = [1000, 50000, 100000, 1000000];
+  const nextThreshold = thresholds.find((t) => t > volumeUsd);
+  const next = nextThreshold ? `${formatVolume(nextThreshold)} to next tier` : null;
+  return (
+    <div className={`flex items-center justify-between mt-2 pt-2 pb-1 border-t ${dark ? "border-white/10" : "border-gray-200"}`}>
+      <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${info.color} ${info.bg}`}>
+        {info.label}
+      </span>
+      {next && (
+        <span className={`text-sm ${dark ? "text-gray-500" : "text-gray-400"}`}>{next}</span>
+      )}
+    </div>
+  );
+}
+
 interface UserMenuProps {
   username: string | null;
   email: string | undefined;
@@ -62,6 +86,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const networkMode = useAuthStore((s) => s.networkMode);
   const setMainnetAccess = useAuthStore((s) => s.setMainnetAccess);
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
+  const tier = useAuthStore((s) => s.tier);
+  const totalVolumeUsd = useAuthStore((s) => s.totalVolumeUsd);
+  const setTier = useAuthStore((s) => s.setTier);
 
   const openShareModalFromStore = useAuthStore((s) => s.openShareModal);
   const setOpenShareModal = useAuthStore((s) => s.setOpenShareModal);
@@ -334,6 +361,25 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     check();
   }, [authenticated, privyUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Fetch user tier (volume-based status) on mount
+  useEffect(() => {
+    if (!authenticated || !getAccessToken || !privyUser?.id) return;
+    const fetchTier = async () => {
+      try {
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+        const token = await getAccessToken();
+        const res = await fetch(`${backendUrl}/users/me/tier`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const { tier: t, totalVolumeUsd: vol } = await res.json();
+          setTier(t, vol);
+        }
+      } catch { /* non-critical */ }
+    };
+    fetchTier();
+  }, [authenticated, privyUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Update user preferences
   const handleTogglePrivatePayments = async (checked: boolean) => {
     if (!authenticated || !getAccessToken || !privyUser?.id) return;
@@ -499,6 +545,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   </div>
                 </div>
               )}
+
+              {/* Tier badge */}
+              <TierBadge volumeUsd={totalVolumeUsd} dark={isDarkPage} />
 
             </div>
 
