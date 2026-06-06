@@ -12,6 +12,7 @@ import { LooftaPayLogoLink } from "@/components/layout/LooftaPayLogoLink";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { Switch } from "@/components/ui/switch";
 import { useTranslations } from "next-intl";
+import { getTierForVolume } from "@/lib/tiers";
 
 const HEADER_HEIGHT = 64;
 
@@ -27,6 +28,8 @@ function MobileMenu({
   networkMode,
   setNetworkMode,
   mainnetAccess,
+  tier,
+  totalVolumeUsd,
 }: {
   open: boolean;
   onClose: () => void;
@@ -39,6 +42,8 @@ function MobileMenu({
   networkMode: string;
   setNetworkMode: (mode: "mainnet" | "devnet") => void;
   mainnetAccess: boolean;
+  tier: string;
+  totalVolumeUsd: number;
 }) {
   const t = useTranslations('MinimalHeader');
   const pathname = usePathname();
@@ -63,6 +68,14 @@ function MobileMenu({
             {username && email && (
               <p className="text-base text-slate-400 truncate">{email}</p>
             )}
+            {(() => {
+              const info = getTierForVolume(totalVolumeUsd);
+              return (
+                <span className={`inline-block mt-0.5 text-sm font-semibold px-2 py-0.5 rounded-full ${info.color} ${info.bg}`}>
+                  {info.label}
+                </span>
+              );
+            })()}
           </div>
           <button
             type="button"
@@ -157,6 +170,8 @@ export function MinimalHeader() {
   const networkMode = useAuthStore((s) => s.networkMode);
   const mainnetAccess = useAuthStore((s) => s.mainnetAccess);
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
+  const tier = useAuthStore((s) => s.tier);
+  const totalVolumeUsd = useAuthStore((s) => s.totalVolumeUsd);
   const pathname = usePathname();
   const headerRef = useRef<HTMLElement>(null);
 
@@ -327,6 +342,8 @@ export function MinimalHeader() {
           networkMode={networkMode}
           setNetworkMode={setNetworkMode}
           mainnetAccess={mainnetAccess ?? false}
+          tier={tier}
+          totalVolumeUsd={totalVolumeUsd}
         />
       )}
     </>

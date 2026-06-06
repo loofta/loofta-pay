@@ -5,6 +5,21 @@ import { PrivyVerificationService } from '@/auth/privy-verification.service';
 
 const SEARCH_CACHE_TTL_MS = 60 * 1000; // 1 min
 
+const TIER_THRESHOLDS: [number, string][] = [
+  [1000000, 'legend'],
+  [100000,  'mogul'],
+  [50000,   'whale'],
+  [1000,    'hustler'],
+  [0,       'peon'],
+];
+
+function computeTierKey(volumeUsd: number): string {
+  for (const [min, key] of TIER_THRESHOLDS) {
+    if (volumeUsd >= min) return key;
+  }
+  return 'noob';
+}
+
 const WALLET_CACHE_TTL = 120; // 2 min — wallet address rarely changes
 
 @Injectable()
@@ -352,6 +367,16 @@ export class UsersService {
     return {
       requirePrivatePayments: user.require_private_payments || false,
     };
+  }
+
+  async getUserTier(privyUserId: string): Promise<{ totalVolumeUsd: number; tier: string }> {
+    const { data, error } = await this.supabaseService.appUsers
+      .select('total_volume_usd')
+      .eq('privy_user_id', privyUserId)
+      .maybeSingle();
+
+    const volume = error || !data ? 0 : (Number((data as Record<string, unknown>).total_volume_usd) || 0);
+    return { totalVolumeUsd: volume, tier: computeTierKey(volume) };
   }
 
   /**

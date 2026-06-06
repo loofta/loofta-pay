@@ -100,6 +100,23 @@ export class UsersController {
     return prefs;
   }
 
+  @Get('me/tier')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current user tier based on mainnet volume' })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      properties: {
+        totalVolumeUsd: { type: 'number' },
+        tier: { type: 'string' },
+      },
+    },
+  })
+  async getMyTier(@PrivyUser() user: { id: string }) {
+    return this.usersService.getUserTier(user.id);
+  }
+
   /**
    * Update privacy preferences
    */

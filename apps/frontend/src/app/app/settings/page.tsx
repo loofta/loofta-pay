@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { useAuthStore } from "@/store/auth";
 import { useRouter } from "next/navigation";
 import { Settings } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { TIERS, getTierForVolume } from "@/lib/tiers";
 
 function CopyIcon({ className }: { className?: string }) {
   return (
@@ -44,14 +46,23 @@ function ShareIcon({ className }: { className?: string }) {
   );
 }
 
+function formatVol(n: number): string {
+  if (n >= 1000000) return `$${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`;
+  if (n >= 1000) return `$${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k`;
+  return `$${n.toFixed(0)}`;
+}
+
 export default function SettingsPage() {
   const t = useTranslations('SettingsPage');
   const router = useRouter();
   const { authenticated, logout } = useAuth();
   const username = useAuthStore((s) => s.username ?? null);
   const email = useAuthStore((s) => s.email);
+  const tier = useAuthStore((s) => s.tier);
+  const totalVolumeUsd = useAuthStore((s) => s.totalVolumeUsd);
   const setOpenShareModal = useAuthStore((s) => s.setOpenShareModal);
   const setOpenSettingsModal = useAuthStore((s) => s.setOpenSettingsModal);
+  const [statusOpen, setStatusOpen] = useState(false);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -104,6 +115,71 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
+
+        {/* Tier status card */}
+        {(() => {
+          const info = getTierForVolume(totalVolumeUsd);
+          const nextTier = TIERS.find((t) => t.minVolume > totalVolumeUsd);
+          const remaining = nextTier ? nextTier.minVolume - totalVolumeUsd : 0;
+          return (
+            <div className="rounded-xl bg-white/5 border border-white/10 p-4 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-medium text-slate-400">Status</p>
+                <span className={`text-sm font-semibold px-2.5 py-0.5 rounded-full ${info.color} ${info.bg}`}>
+                  {info.label}
+                </span>
+              </div>
+              <div className="flex items-end justify-between">
+                <div>
+                  <p className="text-xs text-slate-500 mb-0.5">Total volume</p>
+                  <p className="text-base font-bold text-white">{formatVol(totalVolumeUsd)}</p>
+                </div>
+                {nextTier && (
+                  <p className="text-xs text-slate-500 text-right">
+                    {formatVol(remaining)} to <span className="text-slate-300">{nextTier.label}</span>
+                  </p>
+                )}
+                {!nextTier && (
+                  <p className="text-xs text-slate-400">Top tier 🏆</p>
+                )}
+              </div>
+
+              {/* About status levels accordion */}
+              <button
+                type="button"
+                onClick={() => setStatusOpen((v) => !v)}
+                className="mt-3 w-full flex items-center justify-between pt-3 border-t border-white/10 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                <span>About status levels</span>
+                <span className={`transition-transform duration-200 ${statusOpen ? "rotate-45" : ""}`}>+</span>
+              </button>
+
+              <div className={`grid transition-all duration-200 ease-out ${statusOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+                <div className="overflow-hidden">
+                  <p className="text-xs text-slate-400 mt-3 mb-2">
+                    Your status is based on total USDC volume sent and received on Loofta — mainnet only.
+                  </p>
+                  <div className="space-y-1.5">
+                    {TIERS.map((t) => {
+                      const isActive = t.key === info.key;
+                      return (
+                        <div
+                          key={t.key}
+                          className={`flex items-center justify-between rounded-lg px-3 py-2 ${isActive ? "bg-white/8 border border-white/10" : ""}`}
+                        >
+                          <span className={`text-sm font-semibold ${t.color}`}>{t.label}</span>
+                          <span className="text-xs text-slate-500">
+                            {formatVol(t.minVolume)}{t.maxVolume ? ` – ${formatVol(t.maxVolume)}` : "+"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="h-px bg-white/10 my-2" />
 
