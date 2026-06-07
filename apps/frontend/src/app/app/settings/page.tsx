@@ -132,7 +132,7 @@ export default function SettingsPage() {
               <div className="flex items-end justify-between">
                 <div>
                   <p className="text-xs text-slate-500 mb-0.5">Total volume</p>
-                  <p className="text-base font-bold text-white">{formatVol(totalVolumeUsd)}</p>
+                  <p className="text-base font-medium text-white">{formatVol(totalVolumeUsd)}</p>
                 </div>
                 {nextTier && (
                   <p className="text-xs text-slate-500 text-right">
