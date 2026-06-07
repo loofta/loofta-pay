@@ -3,9 +3,11 @@
 import { useEffect, useState, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
+import { useCreateWallet } from "@privy-io/react-auth/solana";
 import { useAuthStore } from "@/store/auth";
 import { UsernameSetupModal } from "@/components/UsernameSetupModal";
 import { WelcomeOnboarding } from "@/components/WelcomeOnboarding";
+import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
 /**
  * Syncs authenticated user to store (username) and shows username/onboarding modals.
@@ -14,16 +16,33 @@ import { WelcomeOnboarding } from "@/components/WelcomeOnboarding";
 export function UserSync() {
   const { authenticated, email, userId } = useAuth();
   const { user: privyUser, ready: privyReady } = usePrivy();
+  const { createWallet } = useCreateWallet();
   const username = useAuthStore((s) => s.username ?? null);
   const setUsername = useAuthStore((s) => s.setUsername);
   const setAuth = useAuthStore((s) => s.setAuth);
   const setIsOnboardingOpen = useAuthStore((s) => s.setIsOnboardingOpen);
+  const walletCreatedRef = useRef(false);
   const [showUsernameModal, setShowUsernameModal] = useState(false);
   const [showWelcomeOnboarding, setShowWelcomeOnboarding] = useState(false);
   /** Avoid re-opening welcome modal when Privy refreshes `user` (fixes flicker / “stuck” after skip). */
   const welcomeDismissedRef = useRef(false);
 
   const welcomeSessionDismissedKey = (uid: string) => `loofta_welcome_onboarding_dismissed_${uid}`;
+
+  // Ensure the user has a Solana embedded wallet. Privy's createOnLogin config handles new logins,
+  // but users who signed up before Solana wallets were enabled land here with no wallet.
+  useEffect(() => {
+    if (!privyReady || !authenticated || !privyUser) return;
+    if (walletCreatedRef.current) return;
+    const hasSolanaWallet = !!deriveSolanaEmbeddedAddress(privyUser);
+    if (hasSolanaWallet) return;
+    walletCreatedRef.current = true;
+    createWallet().catch((e) => {
+      // Non-fatal: wallet may already exist or creation may be in progress
+      console.warn("[UserSync] Could not create Solana embedded wallet:", e?.message ?? e);
+      walletCreatedRef.current = false;
+    });
+  }, [privyReady, authenticated, privyUser, createWallet]);
 
   // Check user and set username from backend
   useEffect(() => {
