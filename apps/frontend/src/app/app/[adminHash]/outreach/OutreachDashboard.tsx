@@ -52,12 +52,18 @@ type OutreachConfig = {
 };
 
 const DEFAULT_CONFIG: OutreachConfig = {
-  product_pitch:       "Loofta Pay — private payments on Solana. Get paid and pay others without exposing your whole wallet history. Cash out in any token, any chain.",
-  message_tone:        "casual, crypto-native, low-pressure, peer-to-peer (not salesy)",
-  call_to_action:      "ask if they'd want early access",
-  creator_pitch:       "Get paid for your content and collabs in USDC instantly, with no wallet history exposed to brands.",
-  freelancer_pitch:    "Get paid across borders in USDC instantly. No bank account required, no fees, no wallet history.",
-  web3_project_pitch:  "Pay your contributors privately in USDC — no gas complexity, no public payment history, works for any wallet.",
+  product_pitch:
+    "Loofta Pay - private payments on Solana. Pay or get paid in any token, recipient withdraws in whatever they want. The payment is private on-chain, so no one can trace the amount, the sender, or link it back to a wallet history.",
+  message_tone:
+    "casual, direct, peer-to-peer. Lisa is a founder reaching out, not a sales rep. Short sentences. No startup-speak.",
+  call_to_action:
+    "We're onboarding early users now - they get priority setup and direct support from me. End with a strong yes/no: 'want in?' or 'worth a chat?' Never say 'want to try it'.",
+  creator_pitch:
+    "Your sponsors can look up your wallet before they negotiate - they see every brand deal you've taken and how much you got paid. Loofta lets you get paid privately in any token, withdraw in whatever you want. Early users get priority onboarding and direct support. Close with urgency: 'spots are limited - want in?' or 'we're giving early users priority access - want in?'",
+  freelancer_pitch:
+    "When a client pays you on-chain, they can see your full income history - who else paid you, how much, every project. Loofta pays you privately in any token your client has. No forced conversions, no exposed history. Early users get priority setup.",
+  web3_project_pitch:
+    "When you pay contributors from your treasury, they can all see each other's payments and how much your treasury holds. Loofta lets you streamline payments across your whole contributor base privately - pay in any token you hold, everyone receives cleanly. Early teams get priority onboarding and direct support.",
 };
 
 // ─── Type metadata ────────────────────────────────────────────────────────────
