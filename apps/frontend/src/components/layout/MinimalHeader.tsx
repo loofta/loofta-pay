@@ -12,7 +12,7 @@ import { LooftaPayLogoLink } from "@/components/layout/LooftaPayLogoLink";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { Switch } from "@/components/ui/switch";
 import { useTranslations } from "next-intl";
-import { getTierForVolume } from "@/lib/tiers";
+import { TIERS, getTierForVolume } from "@/lib/tiers";
 
 const HEADER_HEIGHT = 64;
 
@@ -60,7 +60,7 @@ function MobileMenu({
       {/* Drawer */}
       <div className="fixed inset-0 z-50 flex flex-col bg-[#0f0f12] shadow-2xl animate-in slide-in-from-right duration-200">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 h-16 border-b border-white/10 shrink-0">
+        <div className="flex items-start justify-between px-5 py-4 border-b border-white/10 shrink-0">
           <div className="min-w-0">
             <p className="text-base font-semibold text-white truncate">
               {username ? `@${username}` : (email ?? "Account")}
@@ -70,17 +70,34 @@ function MobileMenu({
             )}
             {(() => {
               const info = getTierForVolume(totalVolumeUsd);
+              const nextTier = TIERS.find((t) => t.minVolume > totalVolumeUsd);
+              const vol = totalVolumeUsd >= 1000
+                ? `$${(totalVolumeUsd / 1000).toFixed(totalVolumeUsd % 1000 === 0 ? 0 : 1)}k`
+                : `$${totalVolumeUsd.toFixed(0)}`;
+              const nextVol = nextTier
+                ? nextTier.minVolume >= 1000000
+                  ? `$${nextTier.minVolume / 1000000}M`
+                  : nextTier.minVolume >= 1000
+                    ? `$${nextTier.minVolume / 1000}k`
+                    : `$${nextTier.minVolume}`
+                : null;
               return (
-                <span className={`inline-block mt-0.5 text-sm font-semibold px-2 py-0.5 rounded-full ${info.color} ${info.bg}`}>
-                  {info.label}
-                </span>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${info.color} ${info.bg}`}>
+                    {info.label}
+                  </span>
+                  <span className="text-sm text-slate-400">{vol} volume</span>
+                  {nextTier && (
+                    <span className="text-sm text-slate-500">&middot; {nextVol} to {nextTier.label}</span>
+                  )}
+                </div>
               );
             })()}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-colors shrink-0"
+            className="p-2 mt-0.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-colors shrink-0"
             aria-label={t('closeMenu')}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

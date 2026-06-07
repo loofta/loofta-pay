@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
 import { useAuthStore } from "@/store/auth";
 import { getCachedMainnetAccess, setCachedMainnetAccess } from "@/lib/mainnetAccessCache";
-import { getTierForVolume } from "@/lib/tiers";
+import { TIERS, getTierForVolume } from "@/lib/tiers";
 import { useToast } from "@/components/ui/use-toast";
 import {
   Dialog,
@@ -48,17 +48,25 @@ function formatVolume(n: number): string {
 
 function TierBadge({ volumeUsd, dark }: { volumeUsd: number; dark: boolean }) {
   const info = getTierForVolume(volumeUsd);
-  const thresholds = [1000, 50000, 100000, 1000000];
-  const nextThreshold = thresholds.find((t) => t > volumeUsd);
-  const next = nextThreshold ? `${formatVolume(nextThreshold)} to next tier` : null;
+  const nextTier = TIERS.find((t) => t.minVolume > volumeUsd);
   return (
-    <div className={`flex items-center justify-between mt-2 pt-2 pb-1 border-t ${dark ? "border-white/10" : "border-gray-200"}`}>
-      <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${info.color} ${info.bg}`}>
-        {info.label}
-      </span>
-      {next && (
-        <span className={`text-sm ${dark ? "text-gray-500" : "text-gray-400"}`}>{next}</span>
-      )}
+    <div className={`mt-2 pt-2 pb-1 border-t ${dark ? "border-white/10" : "border-gray-200"}`}>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className={`text-sm font-medium ${dark ? "text-gray-400" : "text-gray-500"}`}>Status</span>
+        <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${info.color} ${info.bg}`}>
+          {info.label}
+        </span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className={`text-sm ${dark ? "text-gray-500" : "text-gray-400"}`}>
+          {formatVolume(volumeUsd)} sent &amp; received
+        </span>
+        {nextTier && (
+          <span className={`text-sm ${dark ? "text-gray-600" : "text-gray-400"}`}>
+            {formatVolume(nextTier.minVolume - volumeUsd)} to {nextTier.label}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

@@ -13,11 +13,11 @@ type ProspectType = "creator" | "freelancer" | "web3_project";
 
 const TYPE_CONTEXT: Record<ProspectType, string> = {
   creator:
-    "This is a creator or influencer (YouTube, Twitter threads, newsletters, KOLs). They get paid for content, brand deals, collabs, and promos. Pain: sponsors pay late, payments are wired, their wallet history is exposed to brands.",
+    "Creator or influencer (KOL, newsletter, YouTube, Twitter threads). Gets paid for content, brand deals, collabs, promos. Real pain: sponsors can look up their wallet address before negotiating rates - they see every inbound payment, every brand deal amount. They also get stuck converting tokens because brands always pay in whatever the brand holds. Loofta lets them receive in any token, privately - no wallet forensics possible. CTA: early access with perks - priority onboarding and direct support from Lisa. Close with something like: 'we're giving early users priority access - want in?' or 'spots are limited - want in?'",
   freelancer:
-    "This is a web3 freelancer or contractor (dev, designer, writer). They work for multiple clients, often across borders. Pain: invoicing is annoying, international payments are slow, crypto payments expose their entire wallet history.",
+    "Web3 freelancer or contractor (dev, designer, writer, auditor). Works for multiple clients. Real pain: when a client pays them on-chain, the client can see every other project they've worked on, how much they earned, who else paid them - full income history exposed. With Loofta they get paid privately in any token their client holds, and withdraw to whatever they want. No awkward 'I only have ETH' moments.",
   web3_project:
-    "This is a web3 project or protocol that pays contributors, bounty hunters, grantees, or remote team members in crypto. Pain: distributing payments to multiple contributors is messy, public on-chain history, different wallet formats. DEFAULT TO QUALIFYING unless there is strong evidence they are purely a trading bot, a scam, or completely dormant with zero activity.",
+    "Web3 protocol or project that pays contributors, grantees, bounty hunters, or a distributed team. Real pain: when they pay contributors from their treasury, every recipient can see the full payment list - who got what, how much the treasury has, who the other contributors are. Loofta decouples payments from treasury visibility. They can pay in any token they hold; contributors receive privately. DEFAULT TO QUALIFYING unless purely a trading bot, scam, or completely dormant.",
 };
 
 function buildPrompt(
@@ -37,56 +37,59 @@ function buildPrompt(
     web3_project:  config.web3_project_pitch,
   };
 
-  return `You are an outreach agent for Loofta Pay.
+  return `You are writing outbound DMs for Lisa, founder of Loofta Pay.
 
-PRODUCT:
+WHAT LOOFTA ACTUALLY IS:
 ${config.product_pitch}
 
-TONE:
-${config.message_tone}
+KEY DIFFERENTIATORS (work these in naturally, not as a list):
+- Pay or get paid in ANY token - no forced USDC conversion
+- Recipients withdraw in whatever token they want
+- Payments are private on-chain - no one can trace the amount, sender, or link it to a wallet's history
+- Works on Solana, any wallet
 
-CTA:
-${config.call_to_action}
+TONE: ${config.message_tone}
+
+CTA: ${config.call_to_action}
 
 ---
 PROSPECT:
 Handle: @${prospect.handle}
-Current type hint: ${prospect.type}
+Type hint: ${prospect.type}
 Location: ${prospect.location || "(unknown)"}
 Bio / signals: ${prospect.bio || "(no bio)"}
 
 ---
-CONTEXT FOR THIS PROSPECT TYPE:
+WHAT THIS TYPE OF PERSON ACTUALLY CARES ABOUT:
 ${TYPE_CONTEXT[prospect.type] ?? TYPE_CONTEXT.freelancer}
 
-TYPE-SPECIFIC ANGLE:
+SPECIFIC ANGLE TO USE:
 ${typePitch[prospect.type] ?? config.product_pitch}
 
 ---
-YOUR TASK:
+TASK:
 
-1. RECLASSIFY — Based on their bio and signals, confirm or correct the type.
-   Choose exactly one: "creator" | "freelancer" | "web3_project"
+1. RECLASSIFY - confirm or correct: "creator" | "freelancer" | "web3_project"
 
-2. QUALIFY — Is this person a realistic fit for Loofta Pay? Default to YES unless clearly not.
-   Good fit: creates content for pay, does freelance work, runs a project with any kind of contributor or team payments.
-   Only mark NOT qualified if: obvious trading/price bot, completely inactive account (no recent posts), or zero connection to getting paid or paying others.
+2. QUALIFY - default YES. Only NO if: price/trading bot, completely dead account, zero connection to paying or being paid.
 
-3. DRAFT — If qualified, write a short outbound DM (2-3 sentences max).
-   - Always open with exactly: "Hey, Lisa here, founder of @looftapay"
-   - Personalize to their specific bio / recent activity
-   - Use the type-specific angle above
-   - Sound like a person, not a startup
-   - Never use em dashes (—), never say "revolutionize", "seamless", "ecosystem", "leverage"
-   - No hashtags, no emojis unless they clearly use them
-   - End with the CTA
+3. DRAFT - 2-3 sentences max. Rules:
+   - Open with exactly: "Hey, Lisa here, founder of @looftapay"
+   - Reference something specific from their bio or signal - don't be generic
+   - Name the specific pain (wallet visibility, token friction, treasury exposure) - don't just name the solution
+   - The "any token in, any token out" angle is underused - use it when relevant
+   - For projects/teams: the scale angle works well - "streamline payments across your whole contributor base"
+   - Do NOT say: "first protocol", "revolutionize", "seamless", "ecosystem", "leverage", "excited to", "love what you're doing", "want to try it"
+   - Do NOT use em dashes or en dashes - use a comma or period instead. This is critical.
+   - No hashtags, no emojis
+   - CTA must be strong and specific: reference early user perks (priority onboarding + direct support from Lisa). End with a concrete yes/no question like "want in?" or "worth a chat?" - not "want to try it"
 
-Respond ONLY with valid JSON, no markdown:
+Respond ONLY with raw JSON (no markdown fences, no explanation):
 {
   "type": "creator"|"freelancer"|"web3_project",
   "qualified": true|false,
   "qualification_reason": "one sentence",
-  "message": "draft DM text" | null
+  "message": "draft DM text or null if not qualified"
 }`;
 }
 
@@ -131,8 +134,16 @@ export async function POST(req: NextRequest) {
     // Normalize any stale "KOL" value Claude might still return
     if (parsed.type === "KOL") parsed.type = "creator";
     if (!["creator","freelancer","web3_project"].includes(parsed.type)) parsed.type = "creator";
-    // Strip em dashes regardless of prompt compliance
-    if (parsed.message) parsed.message = parsed.message.replace(/—/g, "-").replace(/–/g, "-");
+    // Strip all dash variants and curly quotes regardless of prompt compliance
+    if (parsed.message) {
+      parsed.message = parsed.message
+        .replace(/—/g, ",")   // em dash → comma
+        .replace(/–/g, "-")   // en dash → hyphen
+        .replace(/‒/g, "-")   // figure dash → hyphen
+        .replace(/―/g, "-")   // horizontal bar → hyphen
+        .replace(/[‘’]/g, "'")  // curly single quotes → straight
+        .replace(/[“”]/g, '"'); // curly double quotes → straight
+    }
 
     const { data: updated, error: updateErr } = await supabase
       .from("outreach_prospects")

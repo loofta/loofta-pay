@@ -1092,6 +1092,60 @@ export class ClaimsService {
     throw new Error(`Transaction ${signature} confirmation timed out`);
   }
 
+  /**
+   * Poll until confirmed OR the blockhash's lastValidBlockHeight is exceeded.
+   * Returns true if confirmed, false if expired (caller should rebuild + resend).
+   */
+  private async pollUntilConfirmedOrExpired(
+    conn: Connection,
+    signature: string,
+    lastValidBlockHeight: number,
+    intervalMs = 1_500,
+  ): Promise<boolean> {
+    while (true) {
+      const [{ value: statuses }, blockHeight] = await Promise.all([
+        conn.getSignatureStatuses([signature], { searchTransactionHistory: true }),
+        conn.getBlockHeight('confirmed'),
+      ]);
+      const status = statuses[0];
+      if (status?.err) throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
+      if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return true;
+      if (blockHeight > lastValidBlockHeight) return false;
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
+
+  /**
+   * Send a transaction and confirm it with blockhash-expiry-aware retries.
+   * If the blockhash window expires before confirmation, re-signs with a fresh blockhash and retries.
+   * The transaction must have its instructions already set; blockhash/feePayer/signatures are managed here.
+   */
+  private async sendAndConfirmWithRebuild(
+    conn: Connection,
+    tx: Transaction,
+    feePayer: PublicKey,
+    signers: Keypair[],
+    label: string,
+    maxAttempts = 3,
+  ): Promise<string> {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = feePayer;
+      tx.signatures = [];
+      for (const signer of signers) tx.partialSign(signer);
+      const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 2 });
+      this.logger.log(`[${label}] attempt ${attempt}/${maxAttempts} sent ${sig.slice(0, 8)}… (validUntilBlock=${lastValidBlockHeight})`);
+      const confirmed = await this.pollUntilConfirmedOrExpired(conn, sig, lastValidBlockHeight);
+      if (confirmed) {
+        this.logger.log(`[${label}] confirmed: ${sig.slice(0, 8)}…`);
+        return sig;
+      }
+      this.logger.warn(`[${label}] blockhash expired before confirmation, rebuilding (attempt ${attempt + 1}/${maxAttempts})`);
+    }
+    throw new Error(`Transaction failed to confirm after ${maxAttempts} blockhash windows`);
+  }
+
   /** True when the latest intent for this payment came from a non-Solana chain (NEAR intent cross-chain). */
   private async isCrossChainPayment(claimId: string): Promise<boolean> {
     const supabase = this.supabaseService.getClient();
@@ -1302,20 +1356,19 @@ export class ClaimsService {
           }
         }
         sweepTx.add(createTransferInstruction(burnerAta, recipientAta, burnerKeypair.publicKey, balance));
-        const { blockhash } = await conn.getLatestBlockhash('confirmed');
-        sweepTx.recentBlockhash = blockhash;
-        sweepTx.feePayer = feePayerKp?.publicKey ?? burnerKeypair.publicKey;
-        sweepTx.sign(burnerKeypair);
-        const signers = [burnerKeypair];
-        if (feePayerKp) {
-          sweepTx.sign(feePayerKp);
-          signers.push(feePayerKp);
+        const feePayerPubkey = feePayerKp?.publicKey ?? burnerKeypair.publicKey;
+        const sweepSigners = feePayerKp ? [burnerKeypair, feePayerKp] : [burnerKeypair];
+        // Guard: fee payer must have SOL or the tx will be silently dropped (causes "timed out" not "failed").
+        const feePayerSolBalance = await conn.getBalance(feePayerPubkey).catch(() => 0);
+        if (feePayerSolBalance < 10_000) {
+          throw new Error(
+            `Fee payer ${feePayerPubkey.toBase58().slice(0, 8)}… has insufficient SOL (${feePayerSolBalance} lamports). Please top up the fee payer wallet.`,
+          );
         }
         this.logger.log(
-          `Claim ${claimId}: [SWEEP] direct SPL burner->recipient ${balance} base units (burner ${burnerKeypair.publicKey.toBase58().slice(0, 8)} → ${wallet.slice(0, 8)})`,
+          `Claim ${claimId}: [SWEEP] direct SPL burner->recipient ${balance} base units (burner ${burnerKeypair.publicKey.toBase58().slice(0, 8)} → ${wallet.slice(0, 8)}) feePayer=${feePayerPubkey.toBase58().slice(0, 8)} sol=${feePayerSolBalance}`,
         );
-        const sig = await conn.sendTransaction(sweepTx, signers, { skipPreflight: true });
-        await this.pollConfirmTransaction(conn, sig);
+        const sig = await this.sendAndConfirmWithRebuild(conn, sweepTx, feePayerPubkey, sweepSigners, `sweep-${claimId.slice(0, 8)}`);
         this.logger.log(
           `Claim ${claimId}: [MONEY] ✅ swept ${balance} base-units USDC (${(Number(balance) / 1_000_000).toFixed(6)} USDC) burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} -> recipient=${wallet.slice(0, 8)} tx=${sig}`,
         );
@@ -1688,19 +1741,11 @@ export class ClaimsService {
               }
             }
             tx.add(createTransferInstruction(burnerAta, creatorAta, burnerKeypair.publicKey, balance));
-            const { blockhash } = await conn.getLatestBlockhash('confirmed');
-            tx.recentBlockhash = blockhash;
             const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
-            tx.feePayer = feePayerKp?.publicKey ?? burnerKeypair.publicKey;
-            tx.sign(burnerKeypair);
-            const signers = [burnerKeypair];
-            if (feePayerKp) {
-              tx.sign(feePayerKp);
-              signers.push(feePayerKp);
-            }
+            const reclaimFeePayerPubkey = feePayerKp?.publicKey ?? burnerKeypair.publicKey;
+            const reclaimSigners = feePayerKp ? [burnerKeypair, feePayerKp] : [burnerKeypair];
             this.logger.log(`Claim ${claimId}: sending reclaim transfer ${balance} USDC burner->creator ${creatorWallet.slice(0, 8)}...`);
-            const sig = await conn.sendTransaction(tx, signers, { skipPreflight: true });
-            await this.pollConfirmTransaction(conn, sig);
+            const sig = await this.sendAndConfirmWithRebuild(conn, tx, reclaimFeePayerPubkey, reclaimSigners, `reclaim-${claimId.slice(0, 8)}`);
             this.logger.log(`Claim ${claimId}: [MONEY] reclaimed ${balance} USDC from burner ${burnerKeypair.publicKey.toBase58()} to creator ${creatorWallet} tx=${sig}`);
           } else {
             this.logger.log(`Claim ${claimId}: burner ${burnerKeypair.publicKey.toBase58()} has 0 USDC balance, nothing to transfer`);
