@@ -17,7 +17,8 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
-import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X } from "lucide-react";
+import { PEER_PLATFORMS, getPlatform, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
@@ -40,6 +41,7 @@ import { QRCodeSVG } from "qrcode.react";
 const LOG_PREFIX = "[BalanceModal]";
 
 type WithdrawalStep = "idle" | "submitting" | "sent" | "bridging" | "complete" | "failed";
+type PeerStep = "platform" | "form" | "bridging" | "creating-deposit" | "deposited" | "complete" | "cancelling" | "cancelled" | "failed";
 
 const TERMINAL_BRIDGE_STATUSES = new Set(["SUCCESS", "COMPLETED", "REFUNDED", "FAILED", "EXPIRED"]);
 const SUCCESS_BRIDGE_STATUSES = new Set(["SUCCESS", "COMPLETED"]);
@@ -284,8 +286,23 @@ export function BalanceModal({
   const [blinkError, setBlinkError] = useState<string | null>(null);
   const blinkDepositRef = useRef<BlinkDeposit | null>(null);
   const [coinbaseLoading, setCoinbaseLoading] = useState(false);
-  const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | null>(null);
+  const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | "peer-offramp" | null>(null);
   const [coinbaseOfframpLoading, setCoinbaseOfframpLoading] = useState(false);
+
+  // Peer offramp state
+  const [peerPlatformId, setPeerPlatformId] = useState<string | null>(null);
+  const [peerIdentifier, setPeerIdentifier] = useState("");
+  const [peerCurrency, setPeerCurrency] = useState("USD");
+  const [peerStep, setPeerStep] = useState<PeerStep>("platform");
+  const [peerSubmitting, setPeerSubmitting] = useState(false);
+  const [peerOfframpId, setPeerOfframpId] = useState<string | null>(null);
+  const [peerBridgeDepositAddress, setPeerBridgeDepositAddress] = useState<string | null>(null);
+  const [peerBridgeMemo, setPeerBridgeMemo] = useState<string | null>(null);
+  const [peerBridgeTxSig, setPeerBridgeTxSig] = useState<string | null>(null);
+  const [peerBridgeStatus, setPeerBridgeStatus] = useState<string | null>(null);
+  const peerBridgePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const peerStatusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [platformCooldowns, setPlatformCooldowns] = useState<Record<string, number>>({});
 
   // Near Intents top-up deposit
   const [topUpView, setTopUpView] = useState<"near-intents-deposit" | null>(null);
@@ -534,11 +551,106 @@ export function BalanceModal({
   const isNearIntentsWithdraw = withdrawMethod === "near-intents" && !!selectedFrom && !!usdcSolanaToken;
   const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
 
+  // Peer offramp: bridge polling
+  useEffect(() => {
+    if (peerStep !== "bridging" || !peerBridgeDepositAddress) {
+      if (peerBridgePollRef.current) clearInterval(peerBridgePollRef.current);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const result = await getExecutionStatus(peerBridgeDepositAddress);
+        const s = String(result?.status || result?.executionStatus || result?.state || "PENDING").toUpperCase();
+        setPeerBridgeStatus(s);
+        if (SUCCESS_BRIDGE_STATUSES.has(s) && !cancelled) {
+          // USDC arrived on Base — tell backend to create ZKP2P deposit
+          setPeerStep("creating-deposit");
+          const token = await getAccessToken();
+          const createRes = await fetch(`/api/offramp/${peerOfframpId}?action=create-deposit`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (createRes.ok) {
+            setPeerStep("deposited");
+          } else {
+            const err = await createRes.json().catch(() => ({})) as { message?: string };
+            // If USDC hasn't landed yet, backend returns BRIDGING — keep polling
+            if ((err as any)?.status === "BRIDGING") {
+              setPeerStep("bridging");
+            } else {
+              setPeerStep("failed");
+            }
+          }
+        } else if (TERMINAL_BRIDGE_STATUSES.has(s) && !cancelled) {
+          setPeerStep(s === "REFUNDED" ? "cancelled" : "failed");
+        }
+      } catch { /* ignore */ }
+    };
+    poll();
+    peerBridgePollRef.current = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      if (peerBridgePollRef.current) clearInterval(peerBridgePollRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerStep, peerBridgeDepositAddress]);
+
+  // Peer offramp: ZKP2P deposit status polling
+  useEffect(() => {
+    if (peerStep !== "deposited" || !peerOfframpId) {
+      if (peerStatusPollRef.current) clearInterval(peerStatusPollRef.current);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/offramp/${peerOfframpId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json() as { status?: string };
+        if (data.status === "COMPLETE" && !cancelled) {
+          setPeerStep("complete");
+          onRefresh();
+        } else if ((data.status === "CANCELLED" || data.status === "FAILED") && !cancelled) {
+          setPeerStep(data.status === "CANCELLED" ? "cancelled" : "failed");
+        }
+      } catch { /* ignore */ }
+    };
+    poll();
+    peerStatusPollRef.current = setInterval(poll, 10000);
+    return () => {
+      cancelled = true;
+      if (peerStatusPollRef.current) clearInterval(peerStatusPollRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerStep, peerOfframpId]);
+
+  // Compute per-platform cooldown remainders when the platform picker is shown
+  useEffect(() => {
+    if (withdrawMethod !== "peer-offramp" || peerStep !== "platform") return;
+    const cooldowns: Record<string, number> = {};
+    for (const p of PEER_PLATFORMS) {
+      cooldowns[p.id] = getPlatformCooldownRemaining(p.id, p.cooldownHours);
+    }
+    setPlatformCooldowns(cooldowns);
+  }, [withdrawMethod, peerStep]);
+
   // Clear Blink error and reset states when modal closes
   useEffect(() => {
     if (!open) {
       setBlinkError(null);
       setWithdrawMethod(null);
+      // Reset peer offramp unless an active deposit is in-flight
+      if (!["deposited", "bridging", "creating-deposit"].includes(peerStep)) {
+        setPeerPlatformId(null); setPeerIdentifier(""); setPeerCurrency("USD");
+        setPeerStep("platform"); setPeerOfframpId(null);
+        setPeerBridgeDepositAddress(null); setPeerBridgeMemo(null);
+        setPeerBridgeTxSig(null); setPeerBridgeStatus(null);
+      }
       // Keep deposit state alive while a deposit is still pending
       if (!depositAddr || TERMINAL_BRIDGE_STATUSES.has(depositBridgeStatus || "")) {
         setTopUpView(null);
@@ -776,6 +888,115 @@ export function BalanceModal({
       // non-fatal
     }
   }, [getAccessToken, devnetMode]);
+
+  const resetPeer = () => {
+    setPeerStep("platform"); setPeerPlatformId(null); setPeerIdentifier(""); setPeerCurrency("USD");
+    setPeerOfframpId(null); setPeerBridgeDepositAddress(null); setPeerBridgeMemo(null);
+    setPeerBridgeTxSig(null); setPeerBridgeStatus(null);
+  };
+
+  const handlePeerSubmit = async () => {
+    const platform = getPlatform(peerPlatformId ?? "");
+    if (!platform || !peerIdentifier.trim() || !solanaAddress || !wallet) return;
+    if (withdrawAmountNum < 1) {
+      toast({ variant: "destructive", title: "Minimum $1", description: "Minimum offramp is $1.00 USDC." });
+      return;
+    }
+    if (withdrawAmountNum > spendableBalance) {
+      toast({ variant: "destructive", title: "Insufficient balance" });
+      return;
+    }
+    if (withdrawAmountNum > platform.maxUSDC) {
+      toast({ variant: "destructive", title: `${platform.name} limit is $${platform.maxUSDC} USDC` });
+      return;
+    }
+    const cooldownRemaining = getPlatformCooldownRemaining(platform.id, platform.cooldownHours);
+    if (cooldownRemaining > 0) {
+      toast({ variant: "destructive", title: `${platform.name} is in cooldown`, description: `${formatCooldown(cooldownRemaining)}` });
+      return;
+    }
+    setPeerSubmitting(true);
+    try {
+      const token = await getAccessToken();
+
+      // 1. Prepare: get Near Intents bridge deposit address
+      const prepRes = await fetch("/api/offramp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          platform: platform.processorName,
+          identifier: peerIdentifier.trim(),
+          currency: peerCurrency,
+          amountUSDC: withdrawAmountNum,
+          solanaAddress,
+        }),
+      });
+      const prep = await prepRes.json() as { id?: string; depositAddress?: string; memo?: string; message?: string };
+      if (!prepRes.ok || !prep.depositAddress) {
+        throw new Error((prep as any).message || "Failed to prepare offramp");
+      }
+      setPeerOfframpId(prep.id ?? null);
+      setPeerBridgeDepositAddress(prep.depositAddress);
+      setPeerBridgeMemo(prep.memo ?? null);
+
+      // 2. Send Solana USDC to bridge deposit address
+      setPeerStep("bridging");
+      const mode = devnetMode ? "devnet" : "mainnet";
+      const { Connection: SolanaConnection } = await import("@solana/web3.js");
+      const connection = new SolanaConnection(getRpcForMode(mode), "confirmed");
+
+      const sig = await sendUsdcWithPrivyEmbeddedWallet({
+        senderAddress: solanaAddress,
+        recipientAddress: prep.depositAddress,
+        amountUSDC: withdrawAmountNum,
+        connection,
+        wallet,
+        privyUserId: user?.id,
+        signAndSendTransaction,
+        memo: prep.memo ?? undefined,
+        usdcMint: getUsdcMintForMode(mode),
+        chain: getPrivySolanaChainForMode(mode),
+      });
+
+      setPeerBridgeTxSig(sig);
+      setPeerBridgeStatus("PENDING");
+      recordPlatformWithdraw(platform.id);
+
+      // Confirm bridge start on backend (fire-and-forget)
+      fetch(`/api/offramp/${prep.id}?action=confirm-bridge`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => { });
+
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("user rejected") || msg.includes("denied")) {
+        toast({ variant: "destructive", title: "Cancelled" });
+        setPeerStep("form");
+      } else {
+        toast({ variant: "destructive", title: "Failed", description: msg });
+        setPeerStep("failed");
+      }
+    } finally {
+      setPeerSubmitting(false);
+    }
+  };
+
+  const handlePeerCancel = async () => {
+    if (!peerOfframpId) { setWithdrawMethod(null); resetPeer(); return; }
+    const token = await getAccessToken();
+    setPeerStep("cancelling");
+    try {
+      const res = await fetch(`/api/offramp/${peerOfframpId}?action=cancel`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json() as { refundNote?: string };
+      setPeerStep("cancelled");
+      if (data.refundNote) toast({ title: "Cancelling offramp", description: data.refundNote });
+    } catch {
+      toast({ variant: "destructive", title: "Cancel failed", description: "Try again or contact support." });
+      setPeerStep("deposited");
+    }
+  };
 
   const handleWithdraw = async () => {
     const rawAddress = withdrawAddress.trim();
@@ -1318,8 +1539,8 @@ export function BalanceModal({
             </div>
           )}
 
-          {/* Withdraw tab — progress panel */}
-          {tab === "withdraw" && withdrawStep !== "idle" && (
+          {/* Withdraw tab — progress panel (not shown during peer offramp which has its own UI) */}
+          {tab === "withdraw" && withdrawStep !== "idle" && withdrawMethod !== "peer-offramp" && (
             <ProgressSteps
               step={withdrawStep}
               isNearIntents={Boolean(isNearIntentsWithdraw || activeWithdrawal?.isNearIntents)}
@@ -1393,7 +1614,31 @@ export function BalanceModal({
                 <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
               </button>
 
-              {/* 3. Bank or card via Coinbase off-ramp */}
+              {/* 3. Cash out via Peer (ZKP2P) */}
+              <button
+                type="button"
+                disabled={!solanaAddress}
+                onClick={() => { setWithdrawMethod("peer-offramp"); setPeerStep("platform"); }}
+                className={cn(
+                  "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                  dark
+                    ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                    : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                )}
+              >
+                <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                  <img src="/images/icons/withdraw-peer.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cash out with Peer</p>
+                  <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    Venmo · Cash App · Wise · 3 more
+                  </p>
+                </div>
+                <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+              </button>
+
+              {/* 4. Bank or card via Coinbase off-ramp */}
               <button
                 type="button"
                 disabled={!solanaAddress || coinbaseOfframpLoading}
@@ -1423,8 +1668,8 @@ export function BalanceModal({
             </div>
           )}
 
-          {/* Withdraw tab — form (method selected) */}
-          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && (
+          {/* Withdraw tab — form (method selected, not peer-offramp which has its own sections) */}
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "peer-offramp" && (
             <div className="space-y-4 py-2">
 
               {/* Back button */}
@@ -1595,6 +1840,303 @@ export function BalanceModal({
                   )}
                 </Button>
               </div>
+            </div>
+          )}
+
+          {/* ── Peer offramp: platform picker ── */}
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "platform" && (
+            <div className="space-y-4 py-2">
+              <button type="button" onClick={() => setWithdrawMethod(null)}
+                className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
+                <ChevronLeft className="h-4 w-4" />Back
+              </button>
+              <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Choose a platform</p>
+              <div className="grid grid-cols-3 gap-2">
+                {PEER_PLATFORMS.map((p) => {
+                  const cooldownMins = platformCooldowns[p.id] ?? 0;
+                  const inCooldown = cooldownMins > 0;
+                  return (
+                    <button key={p.id} type="button"
+                      disabled={inCooldown}
+                      onClick={() => { setPeerPlatformId(p.id); setPeerCurrency(p.currencies[0]); setPeerStep("form"); }}
+                      className={cn(
+                        "flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all text-center",
+                        inCooldown
+                          ? dark ? "border-white/5 bg-white/[0.02] opacity-50 cursor-not-allowed" : "border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed"
+                          : dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm"
+                      )}>
+                      <img src={p.logo} alt={p.name} className="w-10 h-10 rounded-xl object-cover" />
+                      <span className={`text-sm font-medium leading-tight ${dark ? "text-white" : "text-gray-900"}`}>{p.name}</span>
+                      {inCooldown
+                        ? <span className="text-xs text-amber-400 leading-tight">{formatCooldown(cooldownMins)}</span>
+                        : <span className={`text-xs leading-tight ${dark ? "text-slate-500" : "text-gray-400"}`}>${p.maxUSDC} max</span>
+                      }
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── Peer offramp: form ── */}
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "form" && (() => {
+            const platform = getPlatform(peerPlatformId ?? "");
+            if (!platform) return null;
+            const supportedCurrencies = platform.currencies;
+            return (
+              <div className="space-y-4 py-2">
+                <button type="button" onClick={() => setPeerStep("platform")}
+                  className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
+                  <ChevronLeft className="h-4 w-4" />Back
+                </button>
+
+                {/* Platform badge */}
+                <div className={`flex items-center gap-3 rounded-2xl px-4 py-3 ${dark ? "bg-white/5 border border-white/10" : "bg-orange-50/60 border border-orange-100"}`}>
+                  <img src={platform.logo} alt={platform.name} className="w-8 h-8 rounded-lg object-cover shrink-0" />
+                  <div>
+                    <p className={`text-base font-bold ${dark ? "text-white" : "text-gray-900"}`}>{platform.name}</p>
+                    <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      1:1 · USDC → {peerCurrency} · max ${platform.maxUSDC}
+                      {platform.cooldownHours ? ` · ${platform.cooldownHours}h cooldown` : ""}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Identifier */}
+                <div>
+                  <Label className={dark ? "text-slate-300" : undefined}>{platform.idLabel}</Label>
+                  <Input
+                    placeholder={platform.placeholder}
+                    value={peerIdentifier}
+                    onChange={(e) => setPeerIdentifier(e.target.value)}
+                    className={`mt-1 text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                  />
+                </div>
+
+                {/* Currency */}
+                {supportedCurrencies.length > 1 && (
+                  <div>
+                    <Label className={dark ? "text-slate-300" : undefined}>Receive currency</Label>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {supportedCurrencies.map((c) => (
+                        <button key={c} type="button"
+                          onClick={() => setPeerCurrency(c)}
+                          className={cn(
+                            "px-3 py-1.5 rounded-lg text-sm font-medium border transition-all",
+                            peerCurrency === c
+                              ? "bg-orange-500 border-orange-500 text-white"
+                              : dark ? "border-white/20 text-slate-300 hover:bg-white/10" : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                          )}>
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Amount */}
+                <div>
+                  <Label htmlFor="peer-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
+                  <div className="mt-1 flex gap-2">
+                    <Input id="peer-amount" type="number" min="1" step="0.01" placeholder="0.00"
+                      value={withdrawAmount}
+                      onChange={(e) => setWithdrawAmount(e.target.value)}
+                      className={`flex-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                    />
+                    <Button type="button" variant="outline" size="sm"
+                      onClick={() => setWithdrawAmount(Math.min(spendableBalance, platform.maxUSDC).toFixed(2).replace(/\.?0+$/, ""))}
+                      className={`shrink-0 px-3 ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}>
+                      Max
+                    </Button>
+                  </div>
+                  {withdrawAmountNum > 0 && withdrawAmountNum < 1 && (
+                    <p className="text-sm text-red-400 mt-1">Minimum is $1.00 USDC.</p>
+                  )}
+                  {withdrawAmountNum > platform.maxUSDC && (
+                    <p className="text-sm text-red-400 mt-1">{platform.name} limit is ${platform.maxUSDC} USDC.</p>
+                  )}
+                  {withdrawAmountNum > spendableBalance && withdrawAmountNum <= platform.maxUSDC && spendableBalance > 0 && (
+                    <p className="text-sm text-red-400 mt-1">Exceeds your balance.</p>
+                  )}
+                </div>
+
+                <div className={`rounded-xl border p-3 ${dark ? "border-white/10 bg-white/5" : "border-blue-100 bg-blue-50/60"}`}>
+                  <p className={`text-sm ${dark ? "text-slate-400" : "text-blue-700"}`}>
+                    Your USDC is bridged to Base, then a liquidity provider pays you {peerCurrency} on {platform.name}.
+                    You can cancel anytime to get your USDC back.
+                  </p>
+                </div>
+
+                <div className="flex gap-2 pt-1">
+                  <Button variant="outline" onClick={() => setPeerStep("platform")}
+                    className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
+                    Back
+                  </Button>
+                  <Button
+                    onClick={handlePeerSubmit}
+                    disabled={peerSubmitting || !peerIdentifier.trim() || withdrawAmountNum < 1 || withdrawAmountNum > Math.min(spendableBalance, platform.maxUSDC) || devnetMode}
+                    className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50">
+                    {peerSubmitting
+                      ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Preparing…</span>
+                      : `Cash out $${withdrawAmountNum > 0 ? withdrawAmountNum.toFixed(2) : "0.00"} → ${platform.name}`}
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── Peer offramp: bridge in progress ── */}
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "bridging" && (() => {
+            const platform = getPlatform(peerPlatformId ?? "");
+            const s = (peerBridgeStatus ?? "PENDING").toUpperCase();
+            const isDone = TERMINAL_BRIDGE_STATUSES.has(s);
+            const isSuccess = SUCCESS_BRIDGE_STATUSES.has(s);
+            const steps = [
+              { label: "Send USDC to bridge", sublabel: "Sending to Near Intents → Base", status: peerBridgeTxSig ? "done" : "active" },
+              { label: "Bridge to Base", sublabel: isSuccess ? "USDC arrived on Base" : s === "PROCESSING" ? "Routing…" : "Waiting for confirmation…", status: isSuccess ? "done" : peerBridgeTxSig ? "active" : "pending" },
+              { label: `Create ${platform?.name ?? "platform"} deposit`, sublabel: "Registers your payment details with ZKP2P", status: isSuccess ? "active" : "pending" },
+            ] as const;
+            return (
+              <div className="py-2 space-y-4">
+                <div className="space-y-3">
+                  {steps.map((step, i) => (
+                    <div key={i} className={`flex items-start gap-3 rounded-xl border p-3 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
+                      <div className="mt-0.5 shrink-0 w-6 h-6 flex items-center justify-center">
+                        {step.status === "done" && <CheckCircle2 className="h-5 w-5 text-emerald-400" />}
+                        {step.status === "active" && <Loader2 className="h-5 w-5 text-blue-400 animate-spin" />}
+                        {step.status === "pending" && <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-xs font-bold ${dark ? "border-white/20 text-slate-500" : "border-gray-300 text-gray-400"}`}>{i + 1}</span>}
+                      </div>
+                      <div>
+                        <p className={`text-sm font-medium ${dark ? "text-white" : "text-gray-900"}`}>{step.label}</p>
+                        <p className={`text-sm mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>{step.sublabel}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {peerBridgeTxSig && (
+                  <a href={getExplorerTxUrl("solana", peerBridgeTxSig)} target="_blank" rel="noreferrer"
+                    className={`flex items-center gap-2 text-sm rounded-lg border px-3 py-2 ${dark ? "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10" : "border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100"}`}>
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0" />View Solana transaction
+                  </a>
+                )}
+                {isDone && !isSuccess && (
+                  <Button onClick={() => { resetPeer(); setWithdrawMethod(null); }}
+                    className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white">
+                    Close
+                  </Button>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* ── Peer offramp: creating ZKP2P deposit ── */}
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "creating-deposit" && (
+            <div className="py-6 flex flex-col items-center gap-4">
+              <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
+              <p className={`text-base font-medium ${dark ? "text-white" : "text-gray-900"}`}>Creating deposit on Base…</p>
+              <p className={`text-sm text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>Registering your payment details with the ZKP2P protocol</p>
+            </div>
+          )}
+
+          {/* ── Peer offramp: deposited / waiting for payment ── */}
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "deposited" && (() => {
+            const platform = getPlatform(peerPlatformId ?? "");
+            return (
+              <div className="py-2 space-y-4">
+                <div className={`rounded-2xl border p-4 space-y-1 ${dark ? "border-white/10 bg-white/5" : "border-emerald-100 bg-emerald-50/60"}`}>
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-5 w-5 animate-spin text-emerald-500 shrink-0" />
+                    <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Waiting for payment</p>
+                  </div>
+                  <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-600"}`}>
+                    A liquidity provider will send <strong>{peerCurrency}</strong> to your {platform?.name} account (<strong>{peerIdentifier}</strong>).
+                    This usually takes a few minutes.
+                  </p>
+                </div>
+
+                <div className={`rounded-xl border p-3 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
+                  <div>
+                    <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-500"}`}>Amount</p>
+                    <p className={`text-base font-bold ${dark ? "text-white" : "text-gray-900"}`}>${withdrawAmountNum.toFixed(2)} USDC → {peerCurrency}</p>
+                  </div>
+                  {platform?.logo && <img src={platform.logo} alt={platform.name} className="w-8 h-8 rounded-lg object-cover shrink-0" />}
+                </div>
+
+                <div className={`rounded-xl border p-3 text-sm ${dark ? "border-amber-400/20 bg-amber-400/5 text-amber-300" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                  Taking too long? You can cancel to get your USDC back. Cancellation is automatic — funds return to your Solana wallet via Near Intents.
+                </div>
+
+                <Button
+                  onClick={handlePeerCancel}
+                  variant="outline"
+                  className={cn("w-full", dark ? "border-white/20 text-slate-300 hover:bg-white/10" : "border-gray-200 text-gray-600 hover:bg-gray-50")}
+                >
+                  <X className="h-4 w-4 mr-2" />Cancel and get USDC back
+                </Button>
+              </div>
+            );
+          })()}
+
+          {/* ── Peer offramp: complete ── */}
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "complete" && (() => {
+            const platform = getPlatform(peerPlatformId ?? "");
+            return (
+              <div className="py-2 space-y-4">
+                <div className={`rounded-2xl border p-5 flex flex-col items-center gap-3 text-center ${dark ? "border-white/10 bg-white/5" : "border-emerald-100 bg-emerald-50/60"}`}>
+                  <CheckCircle2 className="h-10 w-10 text-emerald-400" />
+                  <p className={`text-xl font-bold ${dark ? "text-white" : "text-gray-900"}`}>Offramp complete!</p>
+                  <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-600"}`}>
+                    ${withdrawAmountNum.toFixed(2)} USDC was converted to {peerCurrency} and sent to your {platform?.name} account.
+                  </p>
+                </div>
+                <Button onClick={() => { resetPeer(); setWithdrawMethod(null); onRefresh(); }}
+                  className="w-full bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90 text-white">
+                  Done
+                </Button>
+              </div>
+            );
+          })()}
+
+          {/* ── Peer offramp: cancelling ── */}
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "cancelling" && (
+            <div className="py-6 flex flex-col items-center gap-4">
+              <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
+              <p className={`text-base font-medium ${dark ? "text-white" : "text-gray-900"}`}>Cancelling…</p>
+              <p className={`text-sm text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>Withdrawing from ZKP2P and bridging your USDC back</p>
+            </div>
+          )}
+
+          {/* ── Peer offramp: cancelled ── */}
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "cancelled" && (
+            <div className="py-2 space-y-4">
+              <div className={`rounded-2xl border p-5 flex flex-col items-center gap-3 text-center ${dark ? "border-white/10 bg-white/5" : "border-orange-100 bg-orange-50/60"}`}>
+                <CheckCircle2 className="h-10 w-10 text-amber-400" />
+                <p className={`text-xl font-bold ${dark ? "text-white" : "text-gray-900"}`}>Cancelled</p>
+                <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-600"}`}>
+                  Your USDC is being returned to your Solana wallet via Near Intents. It may take a few minutes to arrive.
+                </p>
+              </div>
+              <Button onClick={() => { resetPeer(); setWithdrawMethod(null); onRefresh(); }}
+                className="w-full" variant="outline">
+                Close
+              </Button>
+            </div>
+          )}
+
+          {/* ── Peer offramp: failed ── */}
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "failed" && (
+            <div className="py-2 space-y-4">
+              <div className={`rounded-2xl border p-5 flex flex-col items-center gap-3 text-center ${dark ? "border-white/10 bg-white/5" : "border-red-100 bg-red-50/40"}`}>
+                <AlertTriangle className="h-10 w-10 text-red-400" />
+                <p className={`text-xl font-bold ${dark ? "text-white" : "text-gray-900"}`}>Something went wrong</p>
+                <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-600"}`}>
+                  If you sent USDC, Near Intents will refund it automatically. Contact support if funds don&apos;t return.
+                </p>
+              </div>
+              <Button onClick={() => { resetPeer(); setWithdrawMethod(null); }}
+                className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white">
+                Close
+              </Button>
             </div>
           )}
 

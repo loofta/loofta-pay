@@ -22,6 +22,7 @@ import { SendPaymentModule } from './modules/send-payment/send-payment.module';
 import { RewardsModule } from './modules/rewards/rewards.module';
 import { WaitlistModule } from './modules/waitlist/waitlist.module';
 import { TwitterPaymentsModule } from './modules/twitter-payments/twitter-payments.module';
+import { OfframpModule } from './modules/offramp/offramp.module';
 
 @Module({
   imports: [
@@ -76,6 +77,7 @@ import { TwitterPaymentsModule } from './modules/twitter-payments/twitter-paymen
     RewardsModule,
     WaitlistModule,
     TwitterPaymentsModule,
+    OfframpModule,
   ],
   providers: [
     {
