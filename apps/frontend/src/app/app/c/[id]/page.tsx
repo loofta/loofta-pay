@@ -69,6 +69,7 @@ import {
 } from "@/lib/privatePaymentCopy";
 import { getCachedMainnetAccess, setCachedMainnetAccess } from "@/lib/mainnetAccessCache";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
+import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
 function formatPerTransferStepName(step: string): string {
   const labels: Record<string, string> = {
@@ -788,6 +789,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   /** Logged-in pending recipient cannot claim until burner USDC ATA has a balance (or burner address is missing). */
   const waitingForBurnerFunds =
     !!user?.id && isPendingRecipientClaim && (!burnerAddr || !burnerIsReady);
+  /** True while Privy hasn't finished creating the user's embedded Solana wallet (created async after login). */
+  const walletNotReady = !!user?.id && !deriveSolanaEmbeddedAddress(user);
 
   const solPriceQuery = useQuery({
     queryKey: ["sol-price"],
@@ -2971,34 +2974,34 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     <button
                       type="button"
                       onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
-                      disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
+                      disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady}
                       className={cn(
                         "hidden md:inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
                         "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-                        (claimAsRecipientMutation.isPending || waitingForBurnerFunds) &&
+                        (claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady) &&
                         "opacity-50 cursor-not-allowed hover:opacity-50",
                       )}
                     >
                       <CheckCircle2 className="h-4 w-4" />
                       Claim to wallet
-                      {waitingForBurnerFunds ? " (not ready)" : ""}
+                      {walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}
                     </button>
                     {/* Mobile: sticky above BottomNav (h-16 = 64px) */}
                     <div className="md:hidden fixed bottom-16 left-0 right-0 z-40 px-4 py-3 bg-[#0f0f12]/95 backdrop-blur-sm border-t border-white/10">
                       <button
                         type="button"
                         onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
-                        disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
+                        disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady}
                         className={cn(
                           "w-full flex items-center justify-center gap-2 rounded-xl py-4 font-semibold text-base transition-all",
                           "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-                          (claimAsRecipientMutation.isPending || waitingForBurnerFunds) && "opacity-50 cursor-not-allowed hover:opacity-50",
+                          (claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady) && "opacity-50 cursor-not-allowed hover:opacity-50",
                         )}
                       >
                         {claimAsRecipientMutation.isPending ? (
                           <><Loader2 className="h-5 w-5 animate-spin" /><span>Claiming…</span></>
                         ) : (
-                          <><CheckCircle2 className="h-5 w-5" /><span>Claim to wallet{waitingForBurnerFunds ? " (not ready)" : ""}</span></>
+                          <><CheckCircle2 className="h-5 w-5" /><span>Claim to wallet{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span></>
                         )}
                       </button>
                     </div>
@@ -3060,34 +3063,34 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <button
                         type="button"
                         onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
-                        disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
+                        disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady}
                         className={cn(
                           "hidden md:inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
                           "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-                          (claimAsRecipientMutation.isPending || waitingForBurnerFunds) &&
+                          (claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady) &&
                           "opacity-50 cursor-not-allowed hover:opacity-50",
                         )}
                       >
                         <CheckCircle2 className="h-4 w-4" />
                         Claim to wallet
-                        {waitingForBurnerFunds ? " (not ready)" : ""}
+                        {walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}
                       </button>
                       {/* Mobile: sticky above BottomNav (h-16 = 64px) */}
                       <div className="md:hidden fixed bottom-16 left-0 right-0 z-40 px-4 py-3 bg-[#0f0f12]/95 backdrop-blur-sm border-t border-white/10">
                         <button
                           type="button"
                           onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
-                          disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds}
+                          disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady}
                           className={cn(
                             "w-full flex items-center justify-center gap-2 rounded-xl py-4 font-semibold text-base transition-all",
                             "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-                            (claimAsRecipientMutation.isPending || waitingForBurnerFunds) && "opacity-50 cursor-not-allowed hover:opacity-50",
+                            (claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady) && "opacity-50 cursor-not-allowed hover:opacity-50",
                           )}
                         >
                           {claimAsRecipientMutation.isPending ? (
                             <><Loader2 className="h-5 w-5 animate-spin" /><span>Claiming…</span></>
                           ) : (
-                            <><CheckCircle2 className="h-5 w-5" /><span>Claim to wallet{waitingForBurnerFunds ? " (not ready)" : ""}</span></>
+                            <><CheckCircle2 className="h-5 w-5" /><span>Claim to wallet{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span></>
                           )}
                         </button>
                       </div>
