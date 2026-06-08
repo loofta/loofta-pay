@@ -44,13 +44,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				// https://dashboard.privy.io → your app → Login Methods → Socials → enable Twitter/X.
 				loginMethods: ["email", "twitter"],
 				embeddedWallets: {
-					// Don't create EVM wallets - only Solana
+					// Create EVM (Base) wallets for users who don't have one yet.
+					// Needed for non-custodial peer offramp (ZKP2P on Base).
 					ethereum: {
-						createOnLogin: "off", // Explicitly disable EVM wallet creation
+						createOnLogin: "users-without-wallets",
 					},
 					solana: {
-						createOnLogin: "all-users", // Create Solana wallet for all users on login
+						createOnLogin: "all-users",
 					},
+					// Disable Privy's signing confirmation modal — app drives its own UX.
+					showWalletUIs: false,
 				},
 				// Solana RPC clients required for Privy to send transactions and show balances in modals.
 				// Use Helius or a custom RPC (env) for reachable endpoints; public RPC is rate-limited.

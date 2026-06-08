@@ -74,6 +74,7 @@
     "lucide-react": "^0.428.0",
     "next": "^16.0.7",
     "next-intl": "^4.11.2",
+    "permissionless": "^0.3.6",
     "postinstall": "^0.11.2",
     "qrcode.react": "^4.2.0",
     "react": "^19",
