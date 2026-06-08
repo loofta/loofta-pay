@@ -6,20 +6,31 @@ export type Locale = (typeof locales)[number];
 export const defaultLocale: Locale = 'en';
 
 function detectFromAcceptLanguage(acceptLanguage: string): Locale {
-  const normalized = acceptLanguage.toLowerCase();
-  if (normalized.includes('pt')) return 'pt-BR';
-  if (normalized.includes('fr')) return 'fr';
-  if (normalized.includes('de')) return 'de';
-  if (normalized.includes('it')) return 'it';
-  if (normalized.includes('tr')) return 'tr';
-  if (normalized.includes('zh')) return 'zh-CN';
-  if (normalized.includes('ko')) return 'ko';
-  if (normalized.includes('ja')) return 'ja';
-  if (normalized.includes('id')) return 'id';
-  if (normalized.includes('fil') || normalized.includes('tl')) return 'fil';
-  if (normalized.includes('vi')) return 'vi';
-  if (normalized.includes('ar')) return 'ar';
-  if (normalized.includes('hi')) return 'hi';
+  // Parse into entries sorted by q-value (highest priority first).
+  // e.g. "vi-VN,vi;q=0.9,fr-FR;q=0.1" → [vi-VN(1.0), vi(0.9), fr-FR(0.1)]
+  const entries = acceptLanguage
+    .split(',')
+    .map(part => {
+      const [tag, q] = part.trim().split(';q=');
+      return { tag: tag.trim().toLowerCase(), q: q ? parseFloat(q) : 1.0 };
+    })
+    .sort((a, b) => b.q - a.q);
+
+  for (const { tag } of entries) {
+    if (tag.startsWith('pt')) return 'pt-BR';
+    if (tag.startsWith('fr')) return 'fr';
+    if (tag.startsWith('de')) return 'de';
+    if (tag.startsWith('it')) return 'it';
+    if (tag.startsWith('tr')) return 'tr';
+    if (tag.startsWith('zh')) return 'zh-CN';
+    if (tag.startsWith('ko')) return 'ko';
+    if (tag.startsWith('ja')) return 'ja';
+    if (tag.startsWith('id')) return 'id';
+    if (tag === 'fil' || tag.startsWith('fil-') || tag === 'tl' || tag.startsWith('tl-')) return 'fil';
+    if (tag.startsWith('vi')) return 'vi';
+    if (tag.startsWith('ar')) return 'ar';
+    if (tag.startsWith('hi')) return 'hi';
+  }
   return defaultLocale;
 }
 
@@ -36,8 +47,11 @@ export default getRequestConfig(async () => {
     locale = detectFromAcceptLanguage(acceptLanguage);
   }
 
+  const messages = await import(`@/messages/${locale}.json`)
+    .catch(() => import('@/messages/en.json'));
+
   return {
     locale,
-    messages: (await import(`@/messages/${locale}.json`)).default,
+    messages: messages.default,
   };
 });
