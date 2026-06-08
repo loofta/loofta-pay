@@ -139,7 +139,7 @@ export class RewardsService {
       {
         key: 'payment_to_unregistered',
         label: 'Pay someone not yet on Loofta',
-        description: 'Send a payment to someone who has not signed up yet',
+        description: 'Send a payment to someone who has not signed up yet using their email address or X handle. They need to claim it for you earn to the points.',
         sparks: TASK_SPARKS.payment_to_unregistered,
         completed: hasPaymentToUnregistered,
       },
