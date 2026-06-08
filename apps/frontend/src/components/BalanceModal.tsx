@@ -18,9 +18,9 @@ import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X } from "lucide-react";
-import { PEER_PLATFORMS, getPlatform, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
+import { PEER_PLATFORMS, getPlatform, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, clearPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, useWallets as useEvmWallets, useCreateWallet, useSendTransaction as useEvmSendTransaction } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
 import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSend";
@@ -39,9 +39,16 @@ import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@
 import { QRCodeSVG } from "qrcode.react";
 
 const LOG_PREFIX = "[BalanceModal]";
+const PEER_LOG = "[Peer Offramp]";
+const PEER_SESSION_KEY = "loofta_peer_session";
+const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+const ZKP2P_RATE_1_TO_1 = "1000000000000000000";
 
 type WithdrawalStep = "idle" | "submitting" | "sent" | "bridging" | "complete" | "failed";
-type PeerStep = "platform" | "form" | "bridging" | "creating-deposit" | "deposited" | "complete" | "cancelling" | "cancelled" | "failed";
+type PeerStep = "platform" | "form" | "bridging" | "creating-deposit" | "deposit-error" | "deposited" | "complete" | "cancelling" | "cancelled" | "failed";
+
+// "cancelling" intentionally excluded — requires active signing and can't be resumed; maps to deposit-error on restore
+const ACTIVE_PEER_STEPS = new Set<PeerStep>(["bridging", "creating-deposit", "deposit-error", "deposited"]);
 
 const TERMINAL_BRIDGE_STATUSES = new Set(["SUCCESS", "COMPLETED", "REFUNDED", "FAILED", "EXPIRED"]);
 const SUCCESS_BRIDGE_STATUSES = new Set(["SUCCESS", "COMPLETED"]);
@@ -300,8 +307,16 @@ export function BalanceModal({
   const [peerBridgeMemo, setPeerBridgeMemo] = useState<string | null>(null);
   const [peerBridgeTxSig, setPeerBridgeTxSig] = useState<string | null>(null);
   const [peerBridgeStatus, setPeerBridgeStatus] = useState<string | null>(null);
+  const [peerBaseWalletAddress, setPeerBaseWalletAddress] = useState<string | null>(null);
+  const [peerAmountUSDC, setPeerAmountUSDC] = useState<number>(0);
+  const [peerZkp2pDepositId, setPeerZkp2pDepositId] = useState<string | null>(null);
   const peerBridgePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const peerStatusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const peerZkp2pSigningRef = useRef(false);
+  const [peerCancelSubStep, setPeerCancelSubStep] = useState<"getting-address" | "signing-withdraw" | "signing-transfer" | "bridging-back" | null>(null);
+  const [peerBridgeBackDepositAddress, setPeerBridgeBackDepositAddress] = useState<string | null>(null);
+  const [peerBridgeBackStatus, setPeerBridgeBackStatus] = useState<string | null>(null);
+  const peerBridgeBackPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [platformCooldowns, setPlatformCooldowns] = useState<Record<string, number>>({});
 
   // Near Intents top-up deposit
@@ -322,6 +337,17 @@ export function BalanceModal({
   const { user, getAccessToken } = usePrivy();
   const { wallets: solanaWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
+  const { wallets: evmWallets } = useEvmWallets();
+  const { createWallet: createEvmWallet } = useCreateWallet();
+  const { sendTransaction: privySendEvmTx } = useEvmSendTransaction();
+
+  // Keep a ref so async callbacks always see the latest EVM wallets list
+  const evmWalletsRef = useRef(evmWallets);
+  useEffect(() => { evmWalletsRef.current = evmWallets; }, [evmWallets]);
+
+  // Keep a ref to Privy's sendTransaction for use in async effects
+  const privySendEvmTxRef = useRef(privySendEvmTx);
+  useEffect(() => { privySendEvmTxRef.current = privySendEvmTx; }, [privySendEvmTx]);
 
   // Blink signer: called by the SDK to sign each request server-side
   const getBlinkSigner = useCallback(async (data: unknown) => {
@@ -551,42 +577,59 @@ export function BalanceModal({
   const isNearIntentsWithdraw = withdrawMethod === "near-intents" && !!selectedFrom && !!usdcSolanaToken;
   const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
 
+  // Persist active peer session to localStorage so page refresh restores state
+  useEffect(() => {
+    if (ACTIVE_PEER_STEPS.has(peerStep) && peerOfframpId) {
+      const session = {
+        peerPlatformId, peerIdentifier, peerCurrency, peerStep, peerOfframpId,
+        peerBridgeDepositAddress, peerBridgeMemo, peerBridgeTxSig, peerBridgeStatus,
+        peerBaseWalletAddress, peerAmountUSDC, peerZkp2pDepositId,
+        peerBridgeBackDepositAddress,
+      };
+      localStorage.setItem(PEER_SESSION_KEY, JSON.stringify(session));
+      console.log(PEER_LOG, "session saved", session);
+    } else if (peerStep === "cancelling" && peerOfframpId && peerBridgeBackDepositAddress) {
+      const session = {
+        peerPlatformId, peerIdentifier, peerCurrency, peerStep, peerOfframpId,
+        peerBridgeDepositAddress, peerBridgeMemo, peerBridgeTxSig, peerBridgeStatus,
+        peerBaseWalletAddress, peerAmountUSDC, peerZkp2pDepositId,
+        peerBridgeBackDepositAddress,
+      };
+      localStorage.setItem(PEER_SESSION_KEY, JSON.stringify(session));
+      console.log(PEER_LOG, "session saved (cancelling+bridging-back)", session);
+    } else if (["complete", "cancelled", "failed"].includes(peerStep)) {
+      localStorage.removeItem(PEER_SESSION_KEY);
+      console.log(PEER_LOG, "session cleared — terminal state:", peerStep);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerStep, peerBridgeStatus, peerBridgeTxSig, peerOfframpId, peerZkp2pDepositId, peerBridgeBackDepositAddress]);
+
   // Peer offramp: bridge polling
   useEffect(() => {
     if (peerStep !== "bridging" || !peerBridgeDepositAddress) {
       if (peerBridgePollRef.current) clearInterval(peerBridgePollRef.current);
       return;
     }
+    console.log(PEER_LOG, "bridge polling started", { depositAddress: peerBridgeDepositAddress });
     let cancelled = false;
     const poll = async () => {
       if (cancelled) return;
       try {
         const result = await getExecutionStatus(peerBridgeDepositAddress);
         const s = String(result?.status || result?.executionStatus || result?.state || "PENDING").toUpperCase();
+        console.log(PEER_LOG, "bridge status", s);
         setPeerBridgeStatus(s);
         if (SUCCESS_BRIDGE_STATUSES.has(s) && !cancelled) {
-          // USDC arrived on Base — tell backend to create ZKP2P deposit
+          console.log(PEER_LOG, "bridge SUCCESS — moving to Peer signing");
+          // ZKP2P signing is handled by the creating-deposit effect below
           setPeerStep("creating-deposit");
-          const token = await getAccessToken();
-          const createRes = await fetch(`/api/offramp/${peerOfframpId}?action=create-deposit`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (createRes.ok) {
-            setPeerStep("deposited");
-          } else {
-            const err = await createRes.json().catch(() => ({})) as { message?: string };
-            // If USDC hasn't landed yet, backend returns BRIDGING — keep polling
-            if ((err as any)?.status === "BRIDGING") {
-              setPeerStep("bridging");
-            } else {
-              setPeerStep("failed");
-            }
-          }
         } else if (TERMINAL_BRIDGE_STATUSES.has(s) && !cancelled) {
+          console.log(PEER_LOG, "bridge terminal:", s);
           setPeerStep(s === "REFUNDED" ? "cancelled" : "failed");
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.warn(PEER_LOG, "bridge poll error", err);
+      }
     };
     poll();
     peerBridgePollRef.current = setInterval(poll, 5000);
@@ -597,12 +640,189 @@ export function BalanceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peerStep, peerBridgeDepositAddress]);
 
+  // Peer offramp: sign ZKP2P approve + createDeposit on Base using user's Privy EVM wallet
+  useEffect(() => {
+    if (peerStep !== "creating-deposit") {
+      peerZkp2pSigningRef.current = false;
+      return;
+    }
+    if (peerZkp2pSigningRef.current) return; // prevent double-run
+    if (!peerOfframpId || !peerBaseWalletAddress || !peerAmountUSDC || !peerPlatformId) return;
+
+    const platform = getPlatform(peerPlatformId);
+    if (!platform) { setPeerStep("failed"); return; }
+
+    const evmWalletForCheck = evmWalletsRef.current.find(
+      (w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"
+    );
+    if (!evmWalletForCheck) {
+      console.warn(PEER_LOG, "EOA wallet not ready yet, waiting...");
+      return;
+    }
+
+    peerZkp2pSigningRef.current = true;
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        console.log(PEER_LOG, "step 3 — Peer signing on Base (gas sponsored via Privy)", { baseWallet: peerBaseWalletAddress });
+
+        const { base } = await import("viem/chains");
+        const { createPublicClient: mkPublic, createWalletClient, custom, http: httpT, erc20Abi: _erc20Abi, encodeFunctionData } = await import("viem");
+
+        const evmWallet = evmWalletsRef.current.find(
+          (w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"
+        );
+        if (!evmWallet) throw new Error("Base wallet not available — please try again.");
+
+        const rawProvider = await (evmWallet as any).getEthereumProvider();
+        const privySendTx = privySendEvmTxRef.current;
+
+        // Custom transport: intercept eth_sendTransaction and route through Privy's gas sponsorship
+        const sponsoredTransport = custom({
+          async request({ method, params }: { method: string; params: any[] }) {
+            if (method === 'eth_chainId') return '0x2105';
+            if (method === 'eth_sendTransaction') {
+              const tx = params[0];
+              const result = await privySendTx({
+                to: tx.to,
+                data: tx.data,
+                ...(tx.value ? { value: BigInt(tx.value) } : {}),
+                chainId: base.id,
+              }, { sponsor: true });
+              return result.hash;
+            }
+            return rawProvider.request({ method, params });
+          }
+        });
+
+        const sponsoredClient = createWalletClient({
+          chain: base,
+          transport: sponsoredTransport,
+          account: peerBaseWalletAddress as `0x${string}`,
+        });
+
+        const { OfframpClient, getContracts } = await import("@zkp2p/sdk");
+        const client = new OfframpClient({ walletClient: sponsoredClient as any, chainId: base.id, runtimeEnv: 'production' });
+        const { addresses } = getContracts(base.id, "production");
+
+        // Use actual on-chain balance — bridge fee may have reduced the delivered amount
+        const pubClient = mkPublic({ chain: base, transport: httpT("https://mainnet.base.org") });
+        const rawBalance = await pubClient.readContract({
+          address: BASE_USDC_ADDRESS,
+          abi: _erc20Abi,
+          functionName: "balanceOf",
+          args: [peerBaseWalletAddress as `0x${string}`],
+        }) as bigint;
+        if (rawBalance === 0n) throw new Error("No USDC found on Base wallet. It may still be bridging — please wait and retry.");
+        const atomicUsdc = rawBalance;
+        console.log(PEER_LOG, "Base USDC balance", rawBalance.toString(), "requested", Math.round(peerAmountUSDC * 1_000_000));
+
+        // Check allowance — approve via Privy sponsored tx if needed
+        const currentAllowance = await pubClient.readContract({
+          address: BASE_USDC_ADDRESS,
+          abi: _erc20Abi,
+          functionName: "allowance",
+          args: [peerBaseWalletAddress as `0x${string}`, addresses.escrow as `0x${string}`],
+        }) as bigint;
+        console.log(PEER_LOG, "current allowance", currentAllowance.toString(), "needed", atomicUsdc.toString());
+        if (currentAllowance < atomicUsdc) {
+          console.log(PEER_LOG, "approving USDC for Peer escrow (Privy sponsored)...");
+          await privySendTx({
+            to: BASE_USDC_ADDRESS,
+            data: encodeFunctionData({ abi: _erc20Abi, functionName: 'approve', args: [addresses.escrow as `0x${string}`, atomicUsdc] }),
+            chainId: base.id,
+          }, { sponsor: true });
+          console.log(PEER_LOG, "approval complete");
+        } else {
+          console.log(PEER_LOG, "allowance sufficient, skipping approval");
+        }
+
+        if (cancelled) return;
+
+        // ZKP2P expects the raw username without display prefixes (@ for Revolut/Venmo, $ for Cash App)
+        const zkp2pId = peerIdentifier.trim().replace(/^[@$]/, "");
+        // Minimum intent: larger of 10% of deposit or $5 USDC (allows partial fills)
+        const FIVE_USDC = 5_000_000n;
+        const tenPercent = atomicUsdc / 10n;
+        const minIntent = tenPercent > FIVE_USDC ? tenPercent : FIVE_USDC;
+        console.log(PEER_LOG, "signing createDeposit...", { platform: platform.processorName, identifier: zkp2pId, currency: peerCurrency, minIntent: minIntent.toString(), maxIntent: atomicUsdc.toString() });
+        const { hash: depositTxHash } = await client.createDeposit({
+          token: BASE_USDC_ADDRESS,
+          amount: atomicUsdc,
+          intentAmountRange: { min: minIntent, max: atomicUsdc },
+          processorNames: [platform.processorName],
+          payeeData: [{ offchainId: zkp2pId }],
+          conversionRates: [[{ currency: peerCurrency.toUpperCase(), conversionRate: ZKP2P_RATE_1_TO_1 }]],
+        });
+
+        if (cancelled) return;
+
+        // Fetch the newly created deposit ID from on-chain
+        const deposits = await client.getAccountDeposits(peerBaseWalletAddress as `0x${string}`);
+        const latest = Array.isArray(deposits) ? deposits[deposits.length - 1] : null;
+        const depositId = latest?.depositId?.toString() ?? null;
+
+        console.log(PEER_LOG, "Peer deposit created", { depositId, depositTxHash });
+
+        // Notify backend to record the deposit
+        const accessToken = await getAccessToken();
+        await fetch(`/api/offramp/${peerOfframpId}?action=record-deposit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify({ depositId, txHash: depositTxHash }),
+        });
+
+        if (!cancelled) {
+          if (depositId) setPeerZkp2pDepositId(depositId);
+          // Only record cooldown after ZKP2P deposit is confirmed created
+          recordPlatformWithdraw(platform.id);
+          setPeerStep("deposited");
+        }
+      } catch (err: unknown) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(PEER_LOG, "Peer sign error", msg);
+        peerZkp2pSigningRef.current = false;
+
+        const isGasError = msg.includes("insufficient funds for gas") || msg.includes("exceeds the balance of the account");
+        if (isGasError && peerBaseWalletAddress && peerOfframpId) {
+          // Auto-fund gas and retry
+          console.log(PEER_LOG, "gas insufficient — requesting gas funding from backend");
+          toast({ title: "Funding gas…", description: "Getting ETH for your Base wallet, retrying in a moment." });
+          try {
+            const t = await getAccessToken();
+            await fetch(`/api/offramp/${peerOfframpId}?action=fund-gas`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+              body: JSON.stringify({ baseWalletAddress: peerBaseWalletAddress }),
+            });
+          } catch { /* non-fatal */ }
+          // Wait for funding tx to land then retry
+          await new Promise(r => setTimeout(r, 8000));
+          if (!cancelled) setPeerStep("creating-deposit");
+        } else if (msg.includes("user rejected") || msg.includes("denied") || msg.includes("User rejected")) {
+          toast({ variant: "destructive", title: "Signing cancelled", description: "You declined the transaction. Tap retry to try again." });
+          setPeerStep("bridging");
+        } else {
+          toast({ variant: "destructive", title: "Peer deposit failed", description: "Your USDC is on Base. Retry or bridge it back to Solana." });
+          setPeerStep("deposit-error");
+        }
+      }
+    };
+
+    run();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerStep, peerOfframpId, peerBaseWalletAddress, peerAmountUSDC, peerPlatformId, evmWallets]);
+
   // Peer offramp: ZKP2P deposit status polling
   useEffect(() => {
     if (peerStep !== "deposited" || !peerOfframpId) {
       if (peerStatusPollRef.current) clearInterval(peerStatusPollRef.current);
       return;
     }
+    console.log(PEER_LOG, "Peer status polling started", { offrampId: peerOfframpId });
     let cancelled = false;
     const poll = async () => {
       if (cancelled) return;
@@ -612,13 +832,18 @@ export function BalanceModal({
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json() as { status?: string };
+        console.log(PEER_LOG, "Peer status poll", data.status);
         if (data.status === "COMPLETE" && !cancelled) {
+          console.log(PEER_LOG, "offramp COMPLETE");
           setPeerStep("complete");
           onRefresh();
         } else if ((data.status === "CANCELLED" || data.status === "FAILED") && !cancelled) {
+          console.log(PEER_LOG, "offramp terminal:", data.status);
           setPeerStep(data.status === "CANCELLED" ? "cancelled" : "failed");
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.warn(PEER_LOG, "Peer poll error", err);
+      }
     };
     poll();
     peerStatusPollRef.current = setInterval(poll, 10000);
@@ -628,6 +853,54 @@ export function BalanceModal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peerStep, peerOfframpId]);
+
+  // Peer offramp: bridge-back polling (after sending USDC to Near Intents during cancellation)
+  useEffect(() => {
+    if (peerCancelSubStep !== "bridging-back" || !peerBridgeBackDepositAddress) {
+      if (peerBridgeBackPollRef.current) clearInterval(peerBridgeBackPollRef.current);
+      return;
+    }
+    console.log(PEER_LOG, "bridge-back polling started", { depositAddress: peerBridgeBackDepositAddress });
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const result = await getExecutionStatus(peerBridgeBackDepositAddress);
+        const s = String(result?.status || result?.executionStatus || result?.state || "PENDING").toUpperCase();
+        console.log(PEER_LOG, "bridge-back status", s);
+        setPeerBridgeBackStatus(s);
+        if (SUCCESS_BRIDGE_STATUSES.has(s) && !cancelled) {
+          console.log(PEER_LOG, "bridge-back SUCCESS — marking cancelled");
+          const token = await getAccessToken();
+          await fetch(`/api/offramp/${peerOfframpId}?action=mark-cancelled`, {
+            method: "POST", headers: { Authorization: `Bearer ${token}` },
+          }).catch(() => { });
+          if (peerPlatformId) clearPlatformWithdraw(peerPlatformId);
+          setPeerCancelSubStep(null);
+          setPeerBridgeBackDepositAddress(null);
+          setPeerBridgeBackStatus(null);
+          setPeerStep("cancelled");
+          toast({ title: "USDC bridged back", description: "Your USDC has returned to Solana." });
+        } else if (TERMINAL_BRIDGE_STATUSES.has(s) && !SUCCESS_BRIDGE_STATUSES.has(s) && !cancelled) {
+          console.log(PEER_LOG, "bridge-back terminal (refund/fail):", s, "— restoring to deposit-error for retry");
+          setPeerCancelSubStep(null);
+          setPeerBridgeBackDepositAddress(null);
+          setPeerBridgeBackStatus(null);
+          setPeerStep("deposit-error");
+          toast({ variant: "destructive", title: "Bridge refunded", description: "Near Intents refunded your USDC back to Base. Tap 'Bridge USDC back to Solana' to retry." });
+        }
+      } catch (err) {
+        console.warn(PEER_LOG, "bridge-back poll error", err);
+      }
+    };
+    poll();
+    peerBridgeBackPollRef.current = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      if (peerBridgeBackPollRef.current) clearInterval(peerBridgeBackPollRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerCancelSubStep, peerBridgeBackDepositAddress]);
 
   // Compute per-platform cooldown remainders when the platform picker is shown
   useEffect(() => {
@@ -645,11 +918,13 @@ export function BalanceModal({
       setBlinkError(null);
       setWithdrawMethod(null);
       // Reset peer offramp unless an active deposit is in-flight
-      if (!["deposited", "bridging", "creating-deposit"].includes(peerStep)) {
+      if (!["deposited", "bridging", "creating-deposit", "deposit-error"].includes(peerStep)) {
         setPeerPlatformId(null); setPeerIdentifier(""); setPeerCurrency("USD");
         setPeerStep("platform"); setPeerOfframpId(null);
         setPeerBridgeDepositAddress(null); setPeerBridgeMemo(null);
         setPeerBridgeTxSig(null); setPeerBridgeStatus(null);
+        setPeerBaseWalletAddress(null); setPeerAmountUSDC(0); setPeerZkp2pDepositId(null);
+        peerZkp2pSigningRef.current = false;
       }
       // Keep deposit state alive while a deposit is still pending
       if (!depositAddr || TERMINAL_BRIDGE_STATUSES.has(depositBridgeStatus || "")) {
@@ -736,6 +1011,99 @@ export function BalanceModal({
     if (depositAddr && !TERMINAL_BRIDGE_STATUSES.has(depositBridgeStatus || "")) {
       setTab("topup");
       setTopUpView("near-intents-deposit");
+    }
+
+    // Restore active peer offramp session (survives page refresh)
+    let restoredFromSession = false;
+    try {
+      const raw = localStorage.getItem(PEER_SESSION_KEY);
+      if (raw) {
+        const s = JSON.parse(raw) as {
+          peerPlatformId: string | null; peerIdentifier: string; peerCurrency: string;
+          peerStep: PeerStep; peerOfframpId: string | null;
+          peerBridgeDepositAddress: string | null; peerBridgeMemo: string | null;
+          peerBridgeTxSig: string | null; peerBridgeStatus: string | null;
+          peerBaseWalletAddress: string | null; peerAmountUSDC: number;
+          peerZkp2pDepositId: string | null; peerBridgeBackDepositAddress: string | null;
+        };
+        const isResumable = ACTIVE_PEER_STEPS.has(s.peerStep) || s.peerStep === "cancelling";
+        if (isResumable && s.peerOfframpId) {
+          // For cancelling with bridging-back in progress, restore to cancelling + bridging-back
+          const restoredStep: PeerStep = (s.peerStep === "cancelling" && s.peerBridgeBackDepositAddress)
+            ? "cancelling"
+            : s.peerStep === "cancelling"
+              ? "deposit-error"
+              : s.peerStep;
+          console.log(PEER_LOG, "restoring session from localStorage", s, "→ step:", restoredStep);
+          setPeerPlatformId(s.peerPlatformId);
+          setPeerIdentifier(s.peerIdentifier);
+          setPeerCurrency(s.peerCurrency);
+          setPeerStep(restoredStep);
+          setPeerOfframpId(s.peerOfframpId);
+          setPeerBridgeDepositAddress(s.peerBridgeDepositAddress);
+          setPeerBridgeMemo(s.peerBridgeMemo);
+          setPeerBridgeTxSig(s.peerBridgeTxSig);
+          setPeerBridgeStatus(s.peerBridgeStatus);
+          setPeerBaseWalletAddress(s.peerBaseWalletAddress ?? null);
+          setPeerAmountUSDC(s.peerAmountUSDC ?? 0);
+          setPeerZkp2pDepositId(s.peerZkp2pDepositId ?? null);
+          setPeerBridgeBackDepositAddress(s.peerBridgeBackDepositAddress ?? null);
+          // For cancelling with bridge-back in progress, restore sub-step
+          if (restoredStep === "cancelling") {
+            setPeerCancelSubStep("bridging-back");
+          }
+          setWithdrawMethod("peer-offramp");
+          setTab("withdraw");
+          restoredFromSession = true;
+        }
+      }
+    } catch {
+      localStorage.removeItem(PEER_SESSION_KEY);
+    }
+
+    // No localStorage session — check backend for any stuck offramp (e.g. after page refresh mid-flow)
+    if (!restoredFromSession) {
+      getAccessToken().then(async (token) => {
+        if (!token) return;
+        try {
+          const res = await fetch("/api/offramp", {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) return;
+          const record = await res.json() as {
+            id: string; status: string; platform: string; platform_identifier: string;
+            currency: string; amount_usdc: string; zkp2p_deposit_id: string | null;
+          } | null;
+          if (!record?.id) return;
+
+          const baseWallet = evmWalletsRef.current.find(
+            (w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"
+          );
+
+          console.log(PEER_LOG, "auto-detected pending record", { id: record.id, status: record.status, zkp2pDepositId: record.zkp2p_deposit_id });
+          setPeerOfframpId(record.id);
+          setPeerPlatformId(record.platform);
+          setPeerIdentifier(record.platform_identifier);
+          setPeerCurrency(record.currency);
+          setPeerAmountUSDC(parseFloat(record.amount_usdc));
+          if (baseWallet) setPeerBaseWalletAddress(baseWallet.address);
+
+          if (record.status === 'CANCELLING') {
+            // Cancellation was started but not completed — restore to deposit-error so user can finish bridging back
+            console.log(PEER_LOG, "restoring CANCELLING → deposit-error (cancellation incomplete)");
+            if (record.zkp2p_deposit_id) setPeerZkp2pDepositId(record.zkp2p_deposit_id);
+            setPeerStep("deposit-error");
+          } else if (!record.zkp2p_deposit_id) {
+            // Bridge ran but ZKP2P deposit never created — show retry/bridge-back
+            setPeerStep("deposit-error");
+          } else {
+            setPeerZkp2pDepositId(record.zkp2p_deposit_id);
+            setPeerStep("deposited");
+          }
+          setWithdrawMethod("peer-offramp");
+          setTab("withdraw");
+        } catch { /* non-fatal */ }
+      });
     }
 
     const latest = history[0];
@@ -890,9 +1258,133 @@ export function BalanceModal({
   }, [getAccessToken, devnetMode]);
 
   const resetPeer = () => {
+    console.log(PEER_LOG, "reset");
+    localStorage.removeItem(PEER_SESSION_KEY);
+    peerZkp2pSigningRef.current = false;
     setPeerStep("platform"); setPeerPlatformId(null); setPeerIdentifier(""); setPeerCurrency("USD");
     setPeerOfframpId(null); setPeerBridgeDepositAddress(null); setPeerBridgeMemo(null);
     setPeerBridgeTxSig(null); setPeerBridgeStatus(null);
+    setPeerBaseWalletAddress(null); setPeerAmountUSDC(0); setPeerZkp2pDepositId(null);
+    setPeerBridgeBackDepositAddress(null);
+    setPeerBridgeBackStatus(null);
+    setPeerCancelSubStep(null);
+  };
+
+  const handlePeerBridgeBackDirect = async () => {
+    if (!peerBaseWalletAddress || !peerOfframpId || !solanaAddress) return;
+    setPeerStep("cancelling");
+    setPeerCancelSubStep("getting-address");
+    const token = await getAccessToken();
+    try {
+      const { createPublicClient, createWalletClient, custom, http, erc20Abi, encodeFunctionData } = await import("viem");
+      const { base } = await import("viem/chains");
+
+      // Build sponsored wallet client
+      const evmWallet = evmWalletsRef.current.find(
+        (w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"
+      );
+      if (!evmWallet) throw new Error("Base wallet not available");
+      const rawProvider = await (evmWallet as any).getEthereumProvider();
+      const privySendTx = privySendEvmTxRef.current;
+      const sponsoredTransport = custom({
+        async request({ method, params }: { method: string; params: any[] }) {
+          if (method === 'eth_chainId') return '0x2105';
+          if (method === 'eth_sendTransaction') {
+            const tx = params[0];
+            const result = await privySendTx({ to: tx.to, data: tx.data, ...(tx.value ? { value: BigInt(tx.value) } : {}), chainId: base.id }, { sponsor: true });
+            return result.hash;
+          }
+          return rawProvider.request({ method, params });
+        }
+      });
+      const walletClient = createWalletClient({ chain: base, transport: sponsoredTransport, account: peerBaseWalletAddress as `0x${string}` });
+
+      // Step 2: Close any open ZKP2P deposit
+      setPeerCancelSubStep("signing-withdraw");
+      try {
+        const { OfframpClient } = await import("@zkp2p/sdk");
+        const offrampClient = new OfframpClient({ walletClient: walletClient as any, chainId: base.id, runtimeEnv: 'production' });
+
+        let depositIdBigInt: bigint | null = null;
+        if (peerZkp2pDepositId) {
+          depositIdBigInt = BigInt(peerZkp2pDepositId);
+          console.log(PEER_LOG, "bridge-back: using known deposit ID", peerZkp2pDepositId);
+        } else {
+          const deposits = await offrampClient.getAccountDeposits(peerBaseWalletAddress as `0x${string}`);
+          const activeDeposit = Array.isArray(deposits) ? deposits.find((d: any) => {
+            const remaining = d.remainingDeposits ?? d.remainingAmount ?? d.deposit?.remainingDeposits;
+            return remaining !== undefined && BigInt(remaining) > 0n;
+          }) : null;
+          if (activeDeposit) {
+            const depositId = (activeDeposit as any).depositId ?? (activeDeposit as any).deposit?.depositId;
+            depositIdBigInt = BigInt(depositId);
+          }
+        }
+
+        if (depositIdBigInt !== null) {
+          console.log(PEER_LOG, "bridge-back: withdrawing Peer deposit", { depositId: depositIdBigInt.toString() });
+          await offrampClient.withdrawDeposit({ depositId: depositIdBigInt });
+          console.log(PEER_LOG, "bridge-back: Peer deposit withdrawn");
+        } else {
+          console.log(PEER_LOG, "bridge-back: no active Peer deposit found");
+        }
+      } catch (err: any) {
+        console.warn(PEER_LOG, "bridge-back: Peer deposit lookup/withdraw failed (continuing)", err.message);
+      }
+
+      // Step 3: Read ACTUAL on-chain balance (after withdrawal, exact amount to bridge)
+      setPeerCancelSubStep("signing-transfer");
+      const publicClient = createPublicClient({ chain: base, transport: http("https://mainnet.base.org") });
+      const rawBalance = await publicClient.readContract({
+        address: BASE_USDC_ADDRESS, abi: erc20Abi, functionName: "balanceOf",
+        args: [peerBaseWalletAddress as `0x${string}`],
+      }) as bigint;
+      console.log(PEER_LOG, "bridge-back: actual Base USDC balance after withdrawal", rawBalance.toString());
+
+      if (rawBalance === 0n) {
+        await fetch(`/api/offramp/${peerOfframpId}?action=mark-cancelled`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+        setPeerCancelSubStep(null);
+        setPeerStep("cancelled");
+        toast({ title: "Cancelled", description: "No USDC remaining on Base — record cleared." });
+        return;
+      }
+
+      // Get bridge-back address using ACTUAL balance amount (prevents Near Intents "deposit < quoted" refund)
+      const actualAmountUsdc = Number(rawBalance) / 1_000_000;
+      console.log(PEER_LOG, "bridge-back: requesting bridge quote for actual amount", actualAmountUsdc);
+      const bbRes = await fetch(`/api/offramp/${peerOfframpId}?action=bridge-back`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ baseWalletAddress: peerBaseWalletAddress, amountUsdc: actualAmountUsdc }),
+      });
+      const bbData = await bbRes.json() as { depositAddress?: string; amountUsdc?: number };
+      if (!bbRes.ok || !bbData.depositAddress) throw new Error("Could not get refund bridge address");
+      console.log(PEER_LOG, "bridge-back: Near Intents address", bbData.depositAddress, "for amount", actualAmountUsdc);
+
+      // Send exact on-chain balance to bridge
+      await privySendTx({
+        to: BASE_USDC_ADDRESS,
+        data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [bbData.depositAddress as `0x${string}`, rawBalance] }),
+        chainId: base.id,
+      }, { sponsor: true });
+      console.log(PEER_LOG, "bridge-back: USDC sent to Near Intents — starting bridge polling");
+
+      // Step 4: Poll bridge status — don't mark cancelled until bridge confirms
+      setPeerBridgeBackDepositAddress(bbData.depositAddress);
+      setPeerBridgeBackStatus("PENDING");
+      setPeerCancelSubStep("bridging-back");
+      // Polling handled by useEffect
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(PEER_LOG, "bridge-back direct error", msg);
+      setPeerCancelSubStep(null);
+      if (msg.includes("user rejected") || msg.includes("denied")) {
+        toast({ variant: "destructive", title: "Signing cancelled" });
+      } else {
+        toast({ variant: "destructive", title: "Bridge back failed", description: msg });
+      }
+      setPeerStep("deposit-error");
+    }
   };
 
   const handlePeerSubmit = async () => {
@@ -916,10 +1408,33 @@ export function BalanceModal({
       return;
     }
     setPeerSubmitting(true);
+    console.log(PEER_LOG, "submit", { platform: platform.id, amount: withdrawAmountNum, currency: peerCurrency });
     try {
+      // Use Privy EOA embedded wallet — gas sponsored via Privy's gas management ({ sponsor: true })
+      const findEvmWallet = () => evmWalletsRef.current.find(
+        (w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"
+      );
+      let baseWallet = findEvmWallet();
+      if (!baseWallet) {
+        try { await createEvmWallet(); } catch (e: any) {
+          if (!String(e?.message).toLowerCase().includes("already has")) throw e;
+        }
+        for (let i = 0; i < 20; i++) {
+          await new Promise((r) => setTimeout(r, 300));
+          baseWallet = findEvmWallet();
+          if (baseWallet) break;
+        }
+      }
+      if (!baseWallet) throw new Error("Could not load Base wallet. Please try again.");
+      const baseWalletAddr = baseWallet.address;
+      setPeerBaseWalletAddress(baseWalletAddr);
+      setPeerAmountUSDC(withdrawAmountNum);
+      console.log(PEER_LOG, "using Base EOA wallet (sponsored)", baseWalletAddr);
+
       const token = await getAccessToken();
 
-      // 1. Prepare: get Near Intents bridge deposit address
+      // 1. Prepare: get Near Intents bridge deposit address (bridge goes to user's Base wallet)
+      console.log(PEER_LOG, "step 1 — prepare offramp");
       const prepRes = await fetch("/api/offramp", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -929,9 +1444,11 @@ export function BalanceModal({
           currency: peerCurrency,
           amountUSDC: withdrawAmountNum,
           solanaAddress,
+          baseWalletAddress: baseWalletAddr,
         }),
       });
       const prep = await prepRes.json() as { id?: string; depositAddress?: string; memo?: string; message?: string };
+      console.log(PEER_LOG, "prepare response", { status: prepRes.status, id: prep.id, hasDepositAddr: !!prep.depositAddress });
       if (!prepRes.ok || !prep.depositAddress) {
         throw new Error((prep as any).message || "Failed to prepare offramp");
       }
@@ -940,6 +1457,7 @@ export function BalanceModal({
       setPeerBridgeMemo(prep.memo ?? null);
 
       // 2. Send Solana USDC to bridge deposit address
+      console.log(PEER_LOG, "step 2 — send USDC to bridge", { depositAddress: prep.depositAddress, memo: prep.memo });
       setPeerStep("bridging");
       const mode = devnetMode ? "devnet" : "mainnet";
       const { Connection: SolanaConnection } = await import("@solana/web3.js");
@@ -958,9 +1476,9 @@ export function BalanceModal({
         chain: getPrivySolanaChainForMode(mode),
       });
 
+      console.log(PEER_LOG, "USDC sent to bridge", { sig });
       setPeerBridgeTxSig(sig);
       setPeerBridgeStatus("PENDING");
-      recordPlatformWithdraw(platform.id);
 
       // Confirm bridge start on backend (fire-and-forget)
       fetch(`/api/offramp/${prep.id}?action=confirm-bridge`, {
@@ -969,6 +1487,7 @@ export function BalanceModal({
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      console.error(PEER_LOG, "submit error", msg);
       if (msg.includes("user rejected") || msg.includes("denied")) {
         toast({ variant: "destructive", title: "Cancelled" });
         setPeerStep("form");
@@ -983,16 +1502,128 @@ export function BalanceModal({
 
   const handlePeerCancel = async () => {
     if (!peerOfframpId) { setWithdrawMethod(null); resetPeer(); return; }
+    console.log(PEER_LOG, "cancel", { offrampId: peerOfframpId, step: peerStep });
+
+    // USDC is on Base but ZKP2P deposit was never created — bridge back directly
+    if ((peerStep === "creating-deposit" || peerStep === "deposit-error") && peerBaseWalletAddress && !peerZkp2pDepositId) {
+      return handlePeerBridgeBackDirect();
+    }
+
     const token = await getAccessToken();
+
+    // DEPOSITED state: user must sign ZKP2P withdrawDeposit + USDC bridge on Base
+    if (peerStep === "deposited" && peerZkp2pDepositId && peerBaseWalletAddress) {
+      setPeerStep("cancelling");
+      setPeerCancelSubStep("getting-address");
+      try {
+        const { base } = await import("viem/chains");
+        const { createWalletClient, createPublicClient, custom, encodeFunctionData, erc20Abi: _erc20Abi, http: httpT } = await import("viem");
+
+        const evmWallet = evmWalletsRef.current.find(
+          (w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"
+        );
+        if (!evmWallet) throw new Error("Base wallet not available");
+
+        const rawProviderC = await (evmWallet as any).getEthereumProvider();
+        const privySendTxCancel = privySendEvmTxRef.current;
+        const sponsoredTransportCancel = custom({
+          async request({ method, params }: { method: string; params: any[] }) {
+            if (method === 'eth_chainId') return '0x2105';
+            if (method === 'eth_sendTransaction') {
+              const tx = params[0];
+              const result = await privySendTxCancel({
+                to: tx.to, data: tx.data,
+                ...(tx.value ? { value: BigInt(tx.value) } : {}),
+                chainId: base.id,
+              }, { sponsor: true });
+              return result.hash;
+            }
+            return rawProviderC.request({ method, params });
+          }
+        });
+        const walletClient = createWalletClient({
+          chain: base,
+          transport: sponsoredTransportCancel,
+          account: peerBaseWalletAddress as `0x${string}`,
+        });
+
+        // Sign ZKP2P withdrawDeposit (returns USDC to user's Base wallet)
+        setPeerCancelSubStep("signing-withdraw");
+        console.log(PEER_LOG, "cancel step 2 — signing Peer withdrawDeposit (sponsored)", { depositId: peerZkp2pDepositId });
+        const { OfframpClient } = await import("@zkp2p/sdk");
+        const client = new OfframpClient({ walletClient, chainId: base.id, runtimeEnv: 'production' });
+        await client.withdrawDeposit({ depositId: BigInt(peerZkp2pDepositId) });
+        console.log(PEER_LOG, "cancel step 2 done — Peer deposit withdrawn");
+
+        // Read ACTUAL balance after ZKP2P withdrawal (quote must match what we send)
+        setPeerCancelSubStep("signing-transfer");
+        const publicClient = createPublicClient({ chain: base, transport: httpT("https://mainnet.base.org") });
+        const rawBalance = await publicClient.readContract({
+          address: BASE_USDC_ADDRESS,
+          abi: _erc20Abi,
+          functionName: "balanceOf",
+          args: [peerBaseWalletAddress as `0x${string}`],
+        }) as bigint;
+        console.log(PEER_LOG, "cancel step 3 — actual Base balance after Peer withdrawal:", rawBalance.toString());
+
+        if (rawBalance === 0n) {
+          await fetch(`/api/offramp/${peerOfframpId}?action=mark-cancelled`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+          setPeerCancelSubStep(null);
+          setPeerStep("cancelled");
+          toast({ title: "Cancelled", description: "Funds cleared." });
+          return;
+        }
+
+        // Get bridge-back address using actual balance amount
+        const actualAmountUsdc = Number(rawBalance) / 1_000_000;
+        const bbRes = await fetch(`/api/offramp/${peerOfframpId}?action=bridge-back`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ baseWalletAddress: peerBaseWalletAddress, amountUsdc: actualAmountUsdc }),
+        });
+        const bbData = await bbRes.json() as { depositAddress?: string; memo?: string; amountUsdc?: number };
+        if (!bbRes.ok || !bbData.depositAddress) throw new Error("Could not get refund bridge address");
+        console.log(PEER_LOG, "cancel step 3 — bridge-back address", bbData.depositAddress, "for", actualAmountUsdc, "USDC");
+
+        // Send exact balance to bridge
+        await privySendTxCancel({
+          to: BASE_USDC_ADDRESS,
+          data: encodeFunctionData({ abi: _erc20Abi, functionName: 'transfer', args: [bbData.depositAddress as `0x${string}`, rawBalance] }),
+          chainId: base.id,
+        }, { sponsor: true });
+        console.log(PEER_LOG, "cancel step 4 — USDC sent to bridge, starting poll");
+
+        // Poll bridge status — mark cancelled only after bridge confirms
+        setPeerBridgeBackDepositAddress(bbData.depositAddress);
+        setPeerBridgeBackStatus("PENDING");
+        setPeerCancelSubStep("bridging-back");
+        // Polling handled by useEffect
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(PEER_LOG, "cancel error", { msg, step: peerCancelSubStep });
+        setPeerCancelSubStep(null);
+        if (msg.includes("user rejected") || msg.includes("denied")) {
+          toast({ variant: "destructive", title: "Signing cancelled", description: "You can retry cancellation." });
+        } else {
+          toast({ variant: "destructive", title: "Cancel failed", description: msg });
+        }
+        setPeerStep("deposited");
+      }
+      return;
+    }
+
+    // Pre-deposit cancel: backend handles everything
     setPeerStep("cancelling");
     try {
       const res = await fetch(`/api/offramp/${peerOfframpId}?action=cancel`, {
         method: "POST", headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json() as { refundNote?: string };
+      console.log(PEER_LOG, "cancel response", data);
       setPeerStep("cancelled");
       if (data.refundNote) toast({ title: "Cancelling offramp", description: data.refundNote });
-    } catch {
+    } catch (err) {
+      console.error(PEER_LOG, "cancel error", err);
       toast({ variant: "destructive", title: "Cancel failed", description: "Try again or contact support." });
       setPeerStep("deposited");
     }
@@ -1994,7 +2625,7 @@ export function BalanceModal({
             const steps = [
               { label: "Send USDC to bridge", sublabel: "Sending to Near Intents → Base", status: peerBridgeTxSig ? "done" : "active" },
               { label: "Bridge to Base", sublabel: isSuccess ? "USDC arrived on Base" : s === "PROCESSING" ? "Routing…" : "Waiting for confirmation…", status: isSuccess ? "done" : peerBridgeTxSig ? "active" : "pending" },
-              { label: `Create ${platform?.name ?? "platform"} deposit`, sublabel: "Registers your payment details with ZKP2P", status: isSuccess ? "active" : "pending" },
+              { label: `Create ${platform?.name ?? "platform"} deposit`, sublabel: "Registers your payment details with Peer", status: isSuccess ? "active" : "pending" },
             ] as const;
             return (
               <div className="py-2 space-y-4">
@@ -2029,12 +2660,72 @@ export function BalanceModal({
             );
           })()}
 
-          {/* ── Peer offramp: creating ZKP2P deposit ── */}
+          {/* ── Peer offramp: creating ZKP2P deposit (user signs on Base) ── */}
           {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "creating-deposit" && (
             <div className="py-6 flex flex-col items-center gap-4">
               <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
-              <p className={`text-base font-medium ${dark ? "text-white" : "text-gray-900"}`}>Creating deposit on Base…</p>
-              <p className={`text-sm text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>Registering your payment details with the ZKP2P protocol</p>
+              <p className={`text-base font-medium ${dark ? "text-white" : "text-gray-900"}`}>Approve signing in your wallet</p>
+              <p className={`text-sm text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                Two confirmations needed: approve USDC, then create deposit on Base.
+                Check your Privy wallet prompt.
+              </p>
+              {peerBaseWalletAddress && (
+                <Button
+                  onClick={handlePeerBridgeBackDirect}
+                  variant="outline"
+                  className={cn("mt-2", dark ? "border-white/20 !bg-transparent text-slate-200 hover:!bg-white/10 hover:text-white" : "border-gray-300 !bg-transparent text-gray-900 hover:!bg-gray-100 hover:text-gray-900")}
+                >
+                  <X className="h-4 w-4 mr-2" />Bridge USDC back to Solana instead
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/* ── Peer offramp: ZKP2P deposit error — USDC on Base, no deposit created ── */}
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "deposit-error" && (
+            <div className="py-2 space-y-4">
+              <div className={`rounded-2xl border p-5 flex flex-col items-center gap-3 text-center ${dark ? "border-white/10 bg-white/5" : "border-amber-100 bg-amber-50/60"}`}>
+                <AlertTriangle className="h-10 w-10 text-amber-400" />
+                <p className={`text-xl font-bold ${dark ? "text-white" : "text-gray-900"}`}>Peer deposit failed</p>
+                <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-600"}`}>
+                  Your USDC arrived on Base but the Peer deposit couldn&apos;t be created.
+                  You can retry the deposit or bridge your USDC back to Solana.
+                </p>
+              </div>
+              {/* Manual deposit ID entry — for recovery when deposit exists on-chain but ID wasn't saved */}
+              <div className={`rounded-xl border p-3 space-y-2 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
+                <p className={`text-sm font-medium ${dark ? "text-slate-300" : "text-gray-700"}`}>
+                  Peer deposit ID{" "}
+                  <span className={`font-normal ${dark ? "text-slate-500" : "text-gray-400"}`}>(enter if deposit was created)</span>
+                </p>
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    placeholder="e.g. 2289"
+                    value={peerZkp2pDepositId ?? ""}
+                    onChange={(e) => setPeerZkp2pDepositId(e.target.value || null)}
+                    className={`flex-1 font-mono text-sm ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                  />
+                </div>
+                {peerZkp2pDepositId && (
+                  <p className={`text-sm text-emerald-500`}>
+                    Deposit #{peerZkp2pDepositId} will be closed before bridging back.
+                  </p>
+                )}
+              </div>
+              <Button
+                onClick={() => { peerZkp2pSigningRef.current = false; setPeerStep("creating-deposit"); }}
+                className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white"
+              >
+                Retry Peer deposit
+              </Button>
+              <Button
+                onClick={handlePeerBridgeBackDirect}
+                variant="outline"
+                className={cn("w-full", dark ? "border-white/20 !bg-transparent text-slate-200 hover:!bg-white/10 hover:text-white" : "border-gray-300 !bg-transparent text-gray-900 hover:!bg-gray-100 hover:text-gray-900")}
+              >
+                <X className="h-4 w-4 mr-2" />Bridge USDC back to Solana
+              </Button>
             </div>
           )}
 
@@ -2057,7 +2748,7 @@ export function BalanceModal({
                 <div className={`rounded-xl border p-3 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
                   <div>
                     <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-500"}`}>Amount</p>
-                    <p className={`text-base font-bold ${dark ? "text-white" : "text-gray-900"}`}>${withdrawAmountNum.toFixed(2)} USDC → {peerCurrency}</p>
+                    <p className={`text-base font-bold ${dark ? "text-white" : "text-gray-900"}`}>${(peerAmountUSDC || withdrawAmountNum).toFixed(2)} USDC → {peerCurrency}</p>
                   </div>
                   {platform?.logo && <img src={platform.logo} alt={platform.name} className="w-8 h-8 rounded-lg object-cover shrink-0" />}
                 </div>
@@ -2069,7 +2760,7 @@ export function BalanceModal({
                 <Button
                   onClick={handlePeerCancel}
                   variant="outline"
-                  className={cn("w-full", dark ? "border-white/20 text-slate-300 hover:bg-white/10" : "border-gray-200 text-gray-600 hover:bg-gray-50")}
+                  className={cn("w-full", dark ? "border-white/20 !bg-transparent text-slate-200 hover:!bg-white/10 hover:text-white" : "border-gray-300 !bg-transparent text-gray-900 hover:!bg-gray-100 hover:text-gray-900")}
                 >
                   <X className="h-4 w-4 mr-2" />Cancel and get USDC back
                 </Button>
@@ -2098,13 +2789,68 @@ export function BalanceModal({
           })()}
 
           {/* ── Peer offramp: cancelling ── */}
-          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "cancelling" && (
-            <div className="py-6 flex flex-col items-center gap-4">
-              <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
-              <p className={`text-base font-medium ${dark ? "text-white" : "text-gray-900"}`}>Cancelling…</p>
-              <p className={`text-sm text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>Withdrawing from ZKP2P and bridging your USDC back</p>
-            </div>
-          )}
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "cancelling" && (() => {
+            type SubStepDef = { label: string; sublabel: string; status: "done" | "active" | "pending" };
+            const sub = peerCancelSubStep;
+            const steps: SubStepDef[] = [
+              {
+                label: "Setting up wallet",
+                sublabel: "Preparing sponsored Base wallet",
+                status: sub === null ? "pending"
+                  : sub === "getting-address" ? "active"
+                    : "done",
+              },
+              {
+                label: "Close Peer deposit",
+                sublabel: "Withdrawing funds from escrow back to your Base wallet",
+                status: (sub === null || sub === "getting-address") ? "pending"
+                  : sub === "signing-withdraw" ? "active"
+                    : "done",
+              },
+              {
+                label: "Send USDC to bridge",
+                sublabel: "Signing USDC transfer to Near Intents",
+                status: (sub === null || sub === "getting-address" || sub === "signing-withdraw") ? "pending"
+                  : sub === "signing-transfer" ? "active"
+                    : "done",
+              },
+              {
+                label: "Bridge to Solana",
+                sublabel: peerBridgeBackStatus ? bridgeStatusLabel(peerBridgeBackStatus) : "Waiting for Near Intents bridge…",
+                status: (sub === null || sub === "getting-address" || sub === "signing-withdraw" || sub === "signing-transfer") ? "pending"
+                  : sub === "bridging-back" ? "active"
+                    : "done",
+              },
+            ];
+            return (
+              <div className="py-2 space-y-4">
+                <div className={`rounded-2xl border p-4 flex items-center gap-3 ${dark ? "border-white/10 bg-white/5" : "border-orange-100 bg-orange-50/60"}`}>
+                  <Loader2 className="h-5 w-5 animate-spin text-orange-400 shrink-0" />
+                  <div>
+                    <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cancelling…</p>
+                    <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-600"}`}>
+                      {sub === "bridging-back" ? "Bridging your USDC back to Solana…" : "Approve wallet prompts to complete cancellation"}
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {steps.map((s, i) => (
+                    <div key={i} className={`flex items-start gap-3 rounded-xl border p-3 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
+                      <div className="mt-0.5 shrink-0 w-6 h-6 flex items-center justify-center">
+                        {s.status === "done" && <CheckCircle2 className="h-5 w-5 text-emerald-400" />}
+                        {s.status === "active" && <Loader2 className="h-5 w-5 text-orange-400 animate-spin" />}
+                        {s.status === "pending" && <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-xs font-bold ${dark ? "border-white/20 text-slate-500" : "border-gray-300 text-gray-400"}`}>{i + 1}</span>}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-sm font-medium ${s.status === "pending" ? (dark ? "text-slate-500" : "text-gray-400") : (dark ? "text-white" : "text-gray-900")}`}>{s.label}</p>
+                        <p className={`text-sm mt-0.5 ${dark ? "text-slate-500" : "text-gray-500"}`}>{s.sublabel}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* ── Peer offramp: cancelled ── */}
           {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "cancelled" && (
@@ -2117,7 +2863,9 @@ export function BalanceModal({
                 </p>
               </div>
               <Button onClick={() => { resetPeer(); setWithdrawMethod(null); onRefresh(); }}
-                className="w-full" variant="outline">
+                variant="outline"
+                className={cn("w-full", dark ? "border-white/20 !bg-transparent text-slate-200 hover:!bg-white/10 hover:text-white" : "border-gray-300 !bg-transparent text-gray-900 hover:!bg-gray-100 hover:text-gray-900")}
+              >
                 Close
               </Button>
             </div>
@@ -2130,13 +2878,35 @@ export function BalanceModal({
                 <AlertTriangle className="h-10 w-10 text-red-400" />
                 <p className={`text-xl font-bold ${dark ? "text-white" : "text-gray-900"}`}>Something went wrong</p>
                 <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-600"}`}>
-                  If you sent USDC, Near Intents will refund it automatically. Contact support if funds don&apos;t return.
+                  {peerBaseWalletAddress && !peerZkp2pDepositId
+                    ? "Your USDC arrived on Base but the Peer deposit failed. Retry the deposit or bridge your USDC back to Solana."
+                    : "If you sent USDC, Near Intents will refund it automatically. Contact support if funds don't return."
+                  }
                 </p>
               </div>
-              <Button onClick={() => { resetPeer(); setWithdrawMethod(null); }}
-                className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white">
-                Close
-              </Button>
+              {peerBaseWalletAddress && !peerZkp2pDepositId && (
+                <>
+                  <Button
+                    onClick={() => { peerZkp2pSigningRef.current = false; setPeerStep("creating-deposit"); }}
+                    className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white"
+                  >
+                    Retry Peer deposit
+                  </Button>
+                  <Button
+                    onClick={handlePeerBridgeBackDirect}
+                    variant="outline"
+                    className={cn("w-full", dark ? "border-white/20 !bg-transparent text-slate-200 hover:!bg-white/10 hover:text-white" : "border-gray-300 !bg-transparent text-gray-900 hover:!bg-gray-100 hover:text-gray-900")}
+                  >
+                    <X className="h-4 w-4 mr-2" />Bridge USDC back to Solana
+                  </Button>
+                </>
+              )}
+              {(!peerBaseWalletAddress || peerZkp2pDepositId) && (
+                <Button onClick={() => { resetPeer(); setWithdrawMethod(null); }}
+                  className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white">
+                  Close
+                </Button>
+              )}
             </div>
           )}
 

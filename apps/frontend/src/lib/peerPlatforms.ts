@@ -100,6 +100,12 @@ export function recordPlatformWithdraw(platformId: string): void {
   }
 }
 
+export function clearPlatformWithdraw(platformId: string): void {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem(COOLDOWN_KEY(platformId));
+  }
+}
+
 export function formatCooldown(minutes: number): string {
   if (minutes >= 60) {
     const h = Math.floor(minutes / 60);

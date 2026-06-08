@@ -24,15 +24,26 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
   const endpoint =
     action === "confirm-bridge"  ? "confirm-bridge"  :
-    action === "create-deposit"  ? "create-deposit"  :
+    action === "record-deposit"  ? "record-deposit"  :
+    action === "bridge-back"     ? "bridge-back"     :
     action === "cancel"          ? "cancel"          :
+    action === "mark-cancelled"  ? "mark-cancelled"  :
+    action === "fund-gas"        ? "fund-gas"        :
     null;
 
   if (!endpoint) return NextResponse.json({ error: "Unknown action" }, { status: 400 });
 
+  // Actions that carry a request body
+  const hasBody = ["record-deposit", "bridge-back", "fund-gas"].includes(action);
+  const body = hasBody ? await request.text() : undefined;
+
   const res = await fetch(`${backendUrl()}/offramp/${id}/${endpoint}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...fwd(authHeader) },
+    headers: {
+      "Content-Type": "application/json",
+      ...fwd(authHeader),
+    },
+    ...(body !== undefined ? { body } : {}),
   });
 
   const data = await res.json().catch(() => ({}));

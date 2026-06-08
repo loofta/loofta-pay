@@ -1,8 +1,7 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createWalletClient, createPublicClient, http, erc20Abi, type Address } from 'viem';
+import { createPublicClient, http, erc20Abi, type Address } from 'viem';
 import { base } from 'viem/chains';
-import { privateKeyToAccount } from 'viem/accounts';
 import { SupabaseService } from '@/database/supabase.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { CreateOfframpDto } from './dto/create-offramp.dto';
@@ -10,54 +9,56 @@ import { CreateOfframpDto } from './dto/create-offramp.dto';
 const BASE_USDC: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const DEFAULT_BASE_RPC = 'https://mainnet.base.org';
 
-// 1:1 conversion rate in ZKP2P 1e18 format
-const RATE_1_TO_1 = '1000000000000000000';
-
 @Injectable()
 export class OfframpService {
   private readonly logger = new Logger(OfframpService.name);
-  private readonly baseWalletAddress: Address | null = null;
 
   constructor(
     private readonly config: ConfigService,
     private readonly supabase: SupabaseService,
     private readonly nearIntents: NearIntentsService,
-  ) {
-    const pk = config.get<string>('BASE_OFFRAMP_PRIVATE_KEY', '');
-    if (pk) {
-      const key = pk.startsWith('0x') ? pk : `0x${pk}`;
-      const account = privateKeyToAccount(key as `0x${string}`);
-      this.baseWalletAddress = account.address;
-      this.logger.log(`Offramp Base wallet: ${account.address}`);
-    } else {
-      this.logger.warn('BASE_OFFRAMP_PRIVATE_KEY not set — Peer offramp disabled');
-    }
-  }
-
-  private requireBaseWallet(): Address {
-    if (!this.baseWalletAddress) throw new BadRequestException('Peer offramp not configured on this server');
-    return this.baseWalletAddress;
-  }
-
-  private getPrivateKey(): `0x${string}` {
-    const pk = this.config.get<string>('BASE_OFFRAMP_PRIVATE_KEY', '');
-    return (pk.startsWith('0x') ? pk : `0x${pk}`) as `0x${string}`;
-  }
-
-  private getWalletClient() {
-    const rpc = this.config.get<string>('BASE_RPC_URL', DEFAULT_BASE_RPC);
-    const account = privateKeyToAccount(this.getPrivateKey());
-    return createWalletClient({ account, chain: base, transport: http(rpc) });
-  }
+  ) {}
 
   private getPublicClient() {
     const rpc = this.config.get<string>('BASE_RPC_URL', DEFAULT_BASE_RPC);
     return createPublicClient({ chain: base, transport: http(rpc) });
   }
 
-  async prepareOfframp(userId: string, dto: CreateOfframpDto) {
-    const baseWallet = this.requireBaseWallet();
+  // Fund Base wallet with ETH for gas if below threshold. Requires BASE_FUNDER_PRIVATE_KEY env var.
+  private async ensureBaseGas(address: string): Promise<void> {
+    const funderKey = this.config.get<string>('BASE_FUNDER_PRIVATE_KEY');
+    if (!funderKey) {
+      this.logger.warn('BASE_FUNDER_PRIVATE_KEY not set — cannot fund gas for Base wallet');
+      return;
+    }
+    try {
+      const publicClient = this.getPublicClient();
+      const balance = await publicClient.getBalance({ address: address as Address });
+      const threshold = 500_000_000_000n; // 0.0000005 ETH — below this, fund
+      if (balance >= threshold) return;
 
+      const { privateKeyToAccount } = await import('viem/accounts');
+      const { createWalletClient, http, parseEther } = await import('viem');
+      const { base } = await import('viem/chains');
+      const rpc = this.config.get<string>('BASE_RPC_URL', DEFAULT_BASE_RPC);
+      const account = privateKeyToAccount(funderKey as `0x${string}`);
+      const wc = createWalletClient({ chain: base, transport: http(rpc), account });
+      const hash = await wc.sendTransaction({ to: address as Address, value: parseEther('0.005') });
+      this.logger.log(`Gas funded ${address} on Base: ${hash}`);
+    } catch (err: any) {
+      this.logger.warn(`ensureBaseGas failed for ${address}: ${err.message}`);
+    }
+  }
+
+  async fundGas(offrampId: string, userId: string, baseWalletAddress: string): Promise<{ funded: boolean }> {
+    await this.getRecord(offrampId, userId); // ownership check
+    if (!baseWalletAddress) throw new BadRequestException('baseWalletAddress required');
+    await this.ensureBaseGas(baseWalletAddress);
+    return { funded: true };
+  }
+
+  // Non-custodial: bridge goes to the user's own Base wallet (dto.baseWalletAddress).
+  async prepareOfframp(userId: string, dto: CreateOfframpDto) {
     const [solanaUsdcId, baseUsdcId] = await Promise.all([
       this.nearIntents.getDefuseAssetId('USDC', 'solana'),
       this.nearIntents.getDefuseAssetId('USDC', 'base'),
@@ -67,13 +68,16 @@ export class OfframpService {
       fromToken: { tokenId: solanaUsdcId, chain: 'solana', symbol: 'USDC', decimals: 6 },
       toToken:   { tokenId: baseUsdcId,   chain: 'base',   symbol: 'USDC', decimals: 6 },
       amountIn:  dto.amountUSDC.toString(),
-      recipient: baseWallet,
+      recipient: dto.baseWalletAddress,
       refundAddress: dto.solanaAddress,
     });
 
     if (!quote.depositAddress) {
       throw new BadRequestException('Failed to get Near Intents bridge address');
     }
+
+    // Pre-fund user's Base wallet with gas so ZKP2P signing doesn't fail (fire-and-forget)
+    this.ensureBaseGas(dto.baseWalletAddress).catch(e => this.logger.warn('ensureBaseGas:', e.message));
 
     const { data, error } = await this.supabase.getClient()
       .from('offramp_requests')
@@ -100,7 +104,7 @@ export class OfframpService {
       id:             data.id,
       depositAddress: quote.depositAddress,
       memo:           quote.memo ?? null,
-      baseWallet,
+      baseWallet:     dto.baseWalletAddress,
     };
   }
 
@@ -111,84 +115,30 @@ export class OfframpService {
     return { status: 'BRIDGING' };
   }
 
-  async createZkp2pDeposit(offrampId: string, userId: string) {
+  // Called by frontend after user signs ZKP2P approve + createDeposit on Base.
+  async recordDeposit(offrampId: string, userId: string, depositId: string | null, txHash: string | null) {
     const record = await this.getRecord(offrampId, userId);
 
-    if (!['BRIDGING', 'BRIDGE_COMPLETE'].includes(record.status)) {
-      throw new BadRequestException(`Cannot create deposit from status ${record.status}`);
+    if (!['BRIDGING', 'BRIDGE_COMPLETE', 'PENDING_BRIDGE'].includes(record.status)) {
+      throw new BadRequestException(`Cannot record deposit from status ${record.status}`);
     }
 
-    await this.updateStatus(offrampId, 'CREATING_DEPOSIT');
+    await this.supabase.getClient()
+      .from('offramp_requests')
+      .update({
+        zkp2p_deposit_id: depositId ?? null,
+        zkp2p_tx_hash:    txHash ?? null,
+        status:           'DEPOSITED',
+        updated_at:       new Date().toISOString(),
+      })
+      .eq('id', offrampId);
 
-    try {
-      // Verify USDC arrived on Base wallet
-      const publicClient = this.getPublicClient();
-      const usdcBalance = await publicClient.readContract({
-        address: BASE_USDC,
-        abi:     erc20Abi,
-        functionName: 'balanceOf',
-        args:    [this.baseWalletAddress!],
-      }) as bigint;
-
-      const requiredAtomicUsdc = BigInt(Math.round(record.amount_usdc * 1_000_000));
-
-      if (usdcBalance < requiredAtomicUsdc) {
-        // Bridge may still be in transit — caller should retry
-        await this.updateStatus(offrampId, 'BRIDGING');
-        return { status: 'BRIDGING', message: 'USDC not yet arrived on Base, retry shortly' };
-      }
-
-      const { OfframpClient, getContracts } = await import('@zkp2p/sdk');
-      const walletClient = this.getWalletClient();
-      const client = new OfframpClient({ walletClient, chainId: base.id });
-
-      const { addresses } = getContracts(base.id, 'production');
-
-      await client.ensureAllowance({
-        token:    BASE_USDC,
-        amount:   requiredAtomicUsdc,
-        spender:  addresses.escrow as Address,
-        maxApprove: false,
-      });
-
-      // currency is an ISO-4217 string: "USD", "EUR", etc.
-      const { hash: depositTxHash } = await client.createDeposit({
-        token:  BASE_USDC,
-        amount: requiredAtomicUsdc,
-        intentAmountRange: { min: requiredAtomicUsdc, max: requiredAtomicUsdc },
-        processorNames: [record.platform],
-        payeeData:       [{ offchainId: record.platform_identifier }],
-        conversionRates: [[{ currency: record.currency.toUpperCase(), conversionRate: RATE_1_TO_1 }]],
-      });
-
-      // Fetch the newly created deposit ID from on-chain
-      const deposits = await client.getAccountDeposits(this.baseWalletAddress!);
-      const latest = Array.isArray(deposits) ? deposits[deposits.length - 1] : null;
-      const depositId: bigint | undefined = latest?.depositId;
-
-      await this.supabase.getClient()
-        .from('offramp_requests')
-        .update({
-          zkp2p_deposit_id: depositId?.toString() ?? null,
-          zkp2p_tx_hash:    depositTxHash ?? null,
-          status:           'DEPOSITED',
-          updated_at:       new Date().toISOString(),
-        })
-        .eq('id', offrampId);
-
-      return { status: 'DEPOSITED', depositId: depositId?.toString() };
-
-    } catch (err: any) {
-      this.logger.error(`ZKP2P createDeposit failed for ${offrampId}:`, err.message);
-      await this.updateStatus(offrampId, 'FAILED', err.message);
-      throw new BadRequestException(err.message || 'Failed to create ZKP2P deposit');
-    }
+    return { status: 'DEPOSITED', depositId };
   }
 
   async getStatus(offrampId: string, userId: string) {
     const record = await this.getRecord(offrampId, userId);
 
-    // Lazily check for ZKP2P fulfilment when in DEPOSITED state
     if (record.status === 'DEPOSITED' && record.zkp2p_deposit_id) {
       await this.checkFulfilment(record);
       return this.getRecord(offrampId, userId);
@@ -197,6 +147,8 @@ export class OfframpService {
     return record;
   }
 
+  // For PENDING_BRIDGE / BRIDGING: marks CANCELLED directly.
+  // For DEPOSITED: marks CANCELLING and returns a note — frontend handles ZKP2P + bridge signing.
   async cancelOfframp(offrampId: string, userId: string) {
     const record = await this.getRecord(offrampId, userId);
 
@@ -204,44 +156,81 @@ export class OfframpService {
       throw new BadRequestException(`Cannot cancel in status ${record.status}`);
     }
 
-    // Nothing on-chain yet — just mark cancelled
-    if (['PENDING_BRIDGE', 'BRIDGING'].includes(record.status)) {
+    if (['PENDING_BRIDGE', 'BRIDGING', 'CREATING_DEPOSIT'].includes(record.status)) {
       await this.updateStatus(offrampId, 'CANCELLED');
       return { status: 'CANCELLED', refundNote: 'Bridge refunds automatically via Near Intents if funds were sent' };
     }
 
-    if (!['DEPOSITED', 'CREATING_DEPOSIT'].includes(record.status) || !record.zkp2p_deposit_id) {
-      await this.updateStatus(offrampId, 'CANCELLED');
-      return { status: 'CANCELLED' };
-    }
-
+    // DEPOSITED: user must sign ZKP2P withdrawDeposit + USDC bridge on Base.
+    // Mark CANCELLING and let frontend drive the signing.
     await this.updateStatus(offrampId, 'CANCELLING');
+    return {
+      status: 'CANCELLING',
+      zkp2pDepositId: record.zkp2p_deposit_id ?? null,
+      refundNote: 'Sign the ZKP2P withdrawal and USDC bridge on Base to complete cancellation.',
+    };
+  }
 
-    try {
-      const { OfframpClient } = await import('@zkp2p/sdk');
-      const walletClient = this.getWalletClient();
-      const client = new OfframpClient({ walletClient, chainId: base.id });
-
-      await client.withdrawDeposit({ depositId: BigInt(record.zkp2p_deposit_id) });
-
-      // Bridge USDC back from Base to user's Solana wallet via Near Intents
-      await this.bridgeBackToSolana(record);
-
-    } catch (err: any) {
-      this.logger.error(`Cancel failed for ${offrampId}:`, err.message);
-      await this.updateStatus(offrampId, 'FAILED', `Cancel failed: ${err.message}`);
-      throw new BadRequestException(err.message || 'Failed to cancel offramp');
+  // Called by frontend after it has completed ZKP2P withdrawal + Base→Solana USDC transfer.
+  async markCancelled(offrampId: string, userId: string) {
+    const record = await this.getRecord(offrampId, userId);
+    if (['COMPLETE', 'FAILED'].includes(record.status)) {
+      throw new BadRequestException(`Cannot mark cancelled from status ${record.status}`);
     }
-
     await this.supabase.getClient()
       .from('offramp_requests')
       .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq('id', offrampId);
-
-    return { status: 'CANCELLED', refundNote: 'USDC is being returned to your Solana wallet via Near Intents' };
+    return { status: 'CANCELLED' };
   }
 
-  // Poll active DEPOSITED offramps for fulfilment (called by cron)
+  // Returns a Near Intents bridge address for Base USDC → user's Solana wallet.
+  // Frontend uses this address to send USDC after ZKP2P withdrawDeposit.
+  async getBridgeBackAddress(offrampId: string, userId: string, baseWalletAddress: string, amountUsdcOverride?: number) {
+    const record = await this.getRecord(offrampId, userId);
+
+    // Allow bridge-back from any non-terminal, non-complete state
+    if (['COMPLETE', 'CANCELLED', 'FAILED'].includes(record.status)) {
+      throw new BadRequestException(`Cannot bridge back from status ${record.status}`);
+    }
+
+    const [baseUsdcId, solanaUsdcId] = await Promise.all([
+      this.nearIntents.getDefuseAssetId('USDC', 'base'),
+      this.nearIntents.getDefuseAssetId('USDC', 'solana'),
+    ]);
+
+    const amountUsdc = amountUsdcOverride ?? record.amount_usdc;
+    const quote = await this.nearIntents.getDepositQuote({
+      fromToken: { tokenId: baseUsdcId,   chain: 'base',   symbol: 'USDC', decimals: 6 },
+      toToken:   { tokenId: solanaUsdcId, chain: 'solana', symbol: 'USDC', decimals: 6 },
+      amountIn:  amountUsdc.toString(),
+      recipient: record.user_solana_address,
+      refundAddress: baseWalletAddress,
+    });
+
+    if (!quote.depositAddress) throw new BadRequestException('Could not get refund bridge address');
+
+    return {
+      depositAddress: quote.depositAddress,
+      memo:           quote.memo ?? null,
+      amountUsdc,
+    };
+  }
+
+  // Returns the latest non-terminal offramp record for a user (for session recovery on the frontend).
+  async getPendingForUser(userId: string) {
+    const { data } = await this.supabase.getClient()
+      .from('offramp_requests')
+      .select('*')
+      .eq('user_id', userId)
+      .not('status', 'in', '("COMPLETE","CANCELLED","FAILED")')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return data ?? null;
+  }
+
+  // Poll active DEPOSITED offramps for fulfilment (called by cron).
   async processActiveOfframps() {
     const { data: active } = await this.supabase.getClient()
       .from('offramp_requests')
@@ -264,14 +253,18 @@ export class OfframpService {
 
   private async checkFulfilment(record: any) {
     try {
-      const { OfframpClient } = await import('@zkp2p/sdk');
-      const walletClient = this.getWalletClient();
-      const client = new OfframpClient({ walletClient, chainId: base.id });
+      const { getContracts } = await import('@zkp2p/sdk');
+      const { addresses, abis } = getContracts(base.id, 'production');
+      const publicClient = this.getPublicClient();
 
-      const deposit = await client.getDeposit(BigInt(record.zkp2p_deposit_id));
+      const deposit = await publicClient.readContract({
+        address: addresses.escrow as Address,
+        abi:     abis.escrow as any,
+        functionName: 'getDeposit',
+        args:    [BigInt(record.zkp2p_deposit_id)],
+      }) as any;
 
-      // If remaining deposit amount is 0, it was fully fulfilled or withdrawn
-      const remaining = (deposit as any)?.remainingDeposits ?? (deposit as any)?.remainingAmount;
+      const remaining = deposit?.remainingDeposits ?? deposit?.remainingAmount;
       if (remaining !== undefined && BigInt(remaining) === 0n) {
         await this.supabase.getClient()
           .from('offramp_requests')
@@ -281,35 +274,6 @@ export class OfframpService {
     } catch (err: any) {
       this.logger.debug(`checkFulfilment ${record.id}:`, err.message);
     }
-  }
-
-  private async bridgeBackToSolana(record: any) {
-    const [baseUsdcId, solanaUsdcId] = await Promise.all([
-      this.nearIntents.getDefuseAssetId('USDC', 'base'),
-      this.nearIntents.getDefuseAssetId('USDC', 'solana'),
-    ]);
-
-    const quote = await this.nearIntents.getDepositQuote({
-      fromToken: { tokenId: baseUsdcId,   chain: 'base',   symbol: 'USDC', decimals: 6 },
-      toToken:   { tokenId: solanaUsdcId, chain: 'solana', symbol: 'USDC', decimals: 6 },
-      amountIn:  record.amount_usdc.toString(),
-      recipient: record.user_solana_address,
-      refundAddress: this.baseWalletAddress!,
-    });
-
-    if (!quote.depositAddress) throw new Error('Could not get refund bridge address');
-
-    const walletClient = this.getWalletClient();
-    const atomicUsdc = BigInt(Math.round(record.amount_usdc * 1_000_000));
-
-    await walletClient.writeContract({
-      address:      BASE_USDC,
-      abi:          erc20Abi,
-      functionName: 'transfer',
-      args:         [quote.depositAddress as Address, atomicUsdc],
-    });
-
-    this.logger.log(`Refund bridge initiated for offramp ${record.id} → ${record.user_solana_address}`);
   }
 
   private async getRecord(offrampId: string, userId: string) {

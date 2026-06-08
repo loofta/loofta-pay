@@ -15,10 +15,10 @@ export class OfframpController {
   @Post('prepare')
   @UseGuards(AuthGuard)
   @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Prepare a Peer offramp — returns Near Intents bridge address to Base' })
+  @ApiOperation({ summary: 'Prepare a Peer offramp — returns Near Intents bridge address to user\'s Base wallet' })
   async prepare(@Req() req: any, @Body() dto: CreateOfframpDto) {
-    if (!dto.platform || !dto.identifier || !dto.solanaAddress || !(dto.amountUSDC > 0)) {
-      throw new BadRequestException('platform, identifier, solanaAddress, and amountUSDC are required');
+    if (!dto.platform || !dto.identifier || !dto.solanaAddress || !dto.baseWalletAddress || !(dto.amountUSDC > 0)) {
+      throw new BadRequestException('platform, identifier, solanaAddress, baseWalletAddress, and amountUSDC are required');
     }
     return this.offramp.prepareOfframp(req.user.id, dto);
   }
@@ -32,13 +32,39 @@ export class OfframpController {
     return this.offramp.confirmBridge(id, req.user.id);
   }
 
-  @Post(':id/create-deposit')
+  @Post(':id/record-deposit')
   @UseGuards(AuthGuard)
   @ApiSecurity('privy-auth')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Create ZKP2P deposit on Base (called once USDC has arrived)' })
-  async createDeposit(@Req() req: any, @Param('id') id: string) {
-    return this.offramp.createZkp2pDeposit(id, req.user.id);
+  @ApiOperation({ summary: 'Record Peer deposit created by the user\'s Base wallet' })
+  async recordDeposit(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { depositId?: string; txHash?: string },
+  ) {
+    return this.offramp.recordDeposit(id, req.user.id, body.depositId ?? null, body.txHash ?? null);
+  }
+
+  @Post(':id/bridge-back')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get Near Intents bridge address to send Base USDC back to user\'s Solana wallet' })
+  async bridgeBack(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { baseWalletAddress: string; amountUsdc?: number },
+  ) {
+    if (!body.baseWalletAddress) throw new BadRequestException('baseWalletAddress is required');
+    return this.offramp.getBridgeBackAddress(id, req.user.id, body.baseWalletAddress, body.amountUsdc);
+  }
+
+  @Get('pending')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Get latest pending offramp for the current user (for session recovery)' })
+  async getPending(@Req() req: any) {
+    return this.offramp.getPendingForUser(req.user.id);
   }
 
   @Get(':id')
@@ -53,8 +79,31 @@ export class OfframpController {
   @UseGuards(AuthGuard)
   @ApiSecurity('privy-auth')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Cancel offramp — withdraws ZKP2P deposit and bridges USDC back to Solana' })
+  @ApiOperation({ summary: 'Cancel offramp — for DEPOSITED state returns CANCELLING so frontend can sign Peer withdrawal' })
   async cancel(@Req() req: any, @Param('id') id: string) {
     return this.offramp.cancelOfframp(id, req.user.id);
+  }
+
+  @Post(':id/fund-gas')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Fund user\'s Base wallet with ETH for gas if below threshold' })
+  async fundGas(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { baseWalletAddress: string },
+  ) {
+    if (!body.baseWalletAddress) throw new BadRequestException('baseWalletAddress is required');
+    return this.offramp.fundGas(id, req.user.id, body.baseWalletAddress);
+  }
+
+  @Post(':id/mark-cancelled')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mark offramp CANCELLED after frontend completes ZKP2P withdrawal + bridge signing' })
+  async markCancelled(@Req() req: any, @Param('id') id: string) {
+    return this.offramp.markCancelled(id, req.user.id);
   }
 }
