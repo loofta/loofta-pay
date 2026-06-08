@@ -96,17 +96,42 @@ export class WaitlistService {
       .select('id, email');
 
     if (updateError) throw new Error(updateError.message);
-    if (!updated || updated.length === 0) {
-      throw new NotFoundException(`No waitlist entry found with Twitter username: @${handle}`);
-    }
 
-    for (const entry of updated) {
-      if (entry.email) {
-        await this.emailService.sendBetaAccessEmail(entry.email as string);
+    if (updated && updated.length > 0) {
+      for (const entry of updated) {
+        if (entry.email) {
+          await this.emailService.sendBetaAccessEmail(entry.email as string);
+        }
       }
+      return { ok: true, updated: updated.length };
     }
 
-    return { ok: true, updated: updated.length };
+    // No waitlist entry — look up registered user by Loofta username and create one
+    const { data: appUser, error: userError } = await this.supabase.appUsers
+      .select('privy_user_id, email')
+      .ilike('username', handle)
+      .maybeSingle();
+
+    if (userError) throw new Error(userError.message);
+    if (!appUser) {
+      throw new NotFoundException(`No waitlist entry or registered user found for: @${handle}`);
+    }
+
+    const { error: insertError } = await this.supabase.mainnetWaitlist
+      .insert({
+        privy_user_id: appUser.privy_user_id as string,
+        twitter_username: handle,
+        email: appUser.email ?? null,
+        mainnet_access: true,
+      });
+
+    if (insertError) throw new Error(insertError.message);
+
+    if (appUser.email) {
+      await this.emailService.sendBetaAccessEmail(appUser.email as string);
+    }
+
+    return { ok: true, updated: 1 };
   }
 
   async grantAccessByEmail(email: string) {
