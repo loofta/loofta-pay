@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
 import { EmailService } from '../email/email.service';
+import { PrivyVerificationService } from '@/auth/privy-verification.service';
 
 const VALID_SORT_COLS = new Set([
   'created_at', 'display_name', 'email', 'occupation', 'payment_volume', 'mainnet_access',
@@ -21,6 +22,7 @@ export class WaitlistService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly emailService: EmailService,
+    private readonly privyVerification: PrivyVerificationService,
   ) {}
 
   async findAll(opts: WaitlistListOptions = {}) {
@@ -93,14 +95,18 @@ export class WaitlistService {
     const { data: updated, error: updateError } = await this.supabase.mainnetWaitlist
       .update({ mainnet_access: true })
       .ilike('twitter_username', handle)
-      .select('id, email');
+      .select('id, email, privy_user_id');
 
     if (updateError) throw new Error(updateError.message);
 
     if (updated && updated.length > 0) {
       for (const entry of updated) {
-        if (entry.email) {
-          await this.emailService.sendBetaAccessEmail(entry.email as string);
+        const email = await this.resolveEmail(entry.email as string | null, entry.privy_user_id as string | null);
+        if (email && !entry.email) {
+          await this.supabase.mainnetWaitlist.update({ email }).eq('id', entry.id);
+        }
+        if (email) {
+          await this.emailService.sendBetaAccessEmail(email);
         }
       }
       return { ok: true, updated: updated.length };
@@ -117,21 +123,40 @@ export class WaitlistService {
       throw new NotFoundException(`No waitlist entry or registered user found for: @${handle}`);
     }
 
+    const resolvedEmail = await this.resolveEmail(
+      appUser.email as string | null,
+      appUser.privy_user_id as string,
+    );
+
     const { error: insertError } = await this.supabase.mainnetWaitlist
       .insert({
         privy_user_id: appUser.privy_user_id as string,
         twitter_username: handle,
-        email: appUser.email ?? null,
+        email: resolvedEmail,
         mainnet_access: true,
       });
 
     if (insertError) throw new Error(insertError.message);
 
-    if (appUser.email) {
-      await this.emailService.sendBetaAccessEmail(appUser.email as string);
+    if (resolvedEmail) {
+      await this.emailService.sendBetaAccessEmail(resolvedEmail);
     }
 
     return { ok: true, updated: 1 };
+  }
+
+  private async resolveEmail(stored: string | null, privyUserId: string | null): Promise<string | null> {
+    if (stored) return stored;
+    if (!privyUserId) return null;
+    const privyUser = await this.privyVerification.getPrivyUser(privyUserId);
+    for (const account of privyUser?.linked_accounts ?? []) {
+      const type = (account.type || '').toLowerCase();
+      if (type === 'email' || type === 'google' || type === 'apple') {
+        const addr = (account.address || account.email || '').toString().trim();
+        if (addr) return addr;
+      }
+    }
+    return null;
   }
 
   async grantAccessByEmail(email: string) {

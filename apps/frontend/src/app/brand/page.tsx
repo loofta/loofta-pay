@@ -24,9 +24,17 @@ const assets = [
   },
   {
     name: "Icon",
-    description: "App icon — transparent background",
+    description: "App icon — use on dark backgrounds",
     file: "/images/logo/icon_nobg_loofta.svg",
-    filename: "icon_nobg_loofta.svg",
+    filename: "loofta-icon.svg",
+    bg: "bg-[#0a0a0c] border-white/10",
+    square: true,
+  },
+  {
+    name: "Icon White",
+    description: "App icon — use on dark backgrounds",
+    file: "/images/logo/loofta-icon-white.svg",
+    filename: "loofta-icon-white.svg",
     bg: "bg-[#0a0a0c] border-white/10",
     square: true,
   },
@@ -66,7 +74,7 @@ export default function BrandPage() {
         </div>
 
         {/* assets grid */}
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-4">
           {assets.map((a) => (
             <div
               key={a.name}
