@@ -63,7 +63,7 @@ const DEFAULT_CONFIG: OutreachConfig = {
   freelancer_pitch:
     "When a client pays you on-chain, they can see your full income history - who else paid you, how much, every project. Loofta pays you privately in any token your client has. No forced conversions, no exposed history. Early users get priority setup.",
   web3_project_pitch:
-    "When you pay contributors from your treasury, they can all see each other's payments and how much your treasury holds. Loofta lets you streamline payments across your whole contributor base privately - pay in any token you hold, everyone receives cleanly. Early teams get priority onboarding and direct support.",
+    "Hey, Lisa here from Loofta Pay. I'm reaching out to a few projects that pay their team in crypto - is that your case? We're offering free access to our platform to pay your teammates privately, just using their email address. They claim it however they want. Would love to have you in.",
 };
 
 // ─── Type metadata ────────────────────────────────────────────────────────────
@@ -158,6 +158,7 @@ function ProspectCard({
   const [isEditing, setIsEditing]         = useState(false);
   const [imgError, setImgError]           = useState(false);
   const [sending, setSending]             = useState(false);
+  const [drafting, setDrafting]           = useState(false);
 
   useEffect(() => { setEditedMessage(prospect.draft_message ?? ""); }, [prospect.draft_message]);
 
@@ -167,10 +168,12 @@ function ProspectCard({
   }), [adminHash]);
 
   async function draft() {
+    setDrafting(true);
     const res = await fetch("/api/outreach/draft", {
       method: "POST", headers: h(),
       body: JSON.stringify({ prospectId: prospect.id, config }),
     });
+    setDrafting(false);
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
       toast({ title: "Draft failed", description: b.error ?? "unknown", variant: "destructive" });
@@ -370,9 +373,10 @@ function ProspectCard({
                 className={cn("inline-flex items-center gap-2 h-9 px-4 text-base rounded-lg font-medium transition-colors", glassBtn)}>
                 <X className="h-4 w-4" /> Reject
               </button>
-              <button onClick={draft}
-                className={cn("inline-flex items-center gap-2 h-9 px-4 text-base rounded-lg font-medium transition-colors ml-auto", glassBtn)}>
-                <RefreshCw className="h-4 w-4" /> Regenerate
+              <button onClick={draft} disabled={drafting}
+                className={cn("inline-flex items-center gap-2 h-9 px-4 text-base rounded-lg font-medium transition-colors ml-auto disabled:opacity-50", glassBtn)}>
+                {drafting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                {drafting ? "regenerating…" : "Regenerate"}
               </button>
             </div>
           )}
@@ -719,12 +723,15 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
     const toApprove = prospects.filter((p) => p.status === "drafted" && p.qualified === true);
     if (!toApprove.length) return;
     const h = { "x-admin-secret": adminHash, "Content-Type": "application/json" };
-    await Promise.all(toApprove.map((p) =>
-      fetch(`/api/outreach/prospects/${p.id}`, {
-        method: "PATCH", headers: h,
-        body: JSON.stringify({ status: "approved", final_message: p.draft_message ?? "" }),
-      }).then((r) => r.ok ? r.json() : null).then((u) => u && handleUpdate(u)),
-    ));
+    const final_messages = Object.fromEntries(toApprove.map((p) => [p.id, p.draft_message ?? ""]));
+    const res = await fetch("/api/outreach/prospects", {
+      method: "PATCH", headers: h,
+      body: JSON.stringify({ ids: toApprove.map((p) => p.id), final_messages }),
+    });
+    if (res.ok) {
+      const { prospects: updated } = await res.json();
+      updated.forEach((u: Prospect) => handleUpdate(u));
+    }
     toast({ title: `Approved ${toApprove.length} message${toApprove.length > 1 ? "s" : ""}` });
   }
 
@@ -759,12 +766,15 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
     );
     if (!toApprove.length) return;
     const h = { "x-admin-secret": adminHash, "Content-Type": "application/json" };
-    await Promise.all(toApprove.map((p) =>
-      fetch(`/api/outreach/prospects/${p.id}`, {
-        method: "PATCH", headers: h,
-        body: JSON.stringify({ status: "approved", final_message: p.draft_message ?? "" }),
-      }).then((r) => r.ok ? r.json() : null).then((u) => u && handleUpdate(u)),
-    ));
+    const final_messages = Object.fromEntries(toApprove.map((p) => [p.id, p.draft_message ?? ""]));
+    const res = await fetch("/api/outreach/prospects", {
+      method: "PATCH", headers: h,
+      body: JSON.stringify({ ids: toApprove.map((p) => p.id), final_messages }),
+    });
+    if (res.ok) {
+      const { prospects: updated } = await res.json();
+      updated.forEach((u: Prospect) => handleUpdate(u));
+    }
     setSelected(new Set());
     toast({ title: `Approved ${toApprove.length} message${toApprove.length > 1 ? "s" : ""}` });
   }
@@ -958,20 +968,36 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
               const label   = running
                 ? (bulkJob!.current_handle
                     ? `sending ${bulkJob!.sent + 1} / ${bulkJob!.total} — @${bulkJob!.current_handle}`
-                    : `pausing… ${bulkJob!.sent} / ${bulkJob!.total} sent`)
+                    : bulkJob!.sent === 0
+                      ? `starting…`
+                      : `pausing… ${bulkJob!.sent} / ${bulkJob!.total} sent`)
                 : `send all DMs (${stats.approved})`;
               return (
-                <button
-                  onClick={bulkSendDMs}
-                  disabled={running}
-                  className={cn(
-                    "inline-flex items-center gap-2 h-9 px-4 text-sm rounded-xl font-medium transition-colors disabled:opacity-50",
-                    glassBtn, "border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10",
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={bulkSendDMs}
+                    disabled={running}
+                    className={cn(
+                      "inline-flex items-center gap-2 h-9 px-4 text-sm rounded-xl font-medium transition-colors disabled:opacity-50",
+                      glassBtn, "border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10",
+                    )}
+                  >
+                    {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SendHorizonal className="h-3.5 w-3.5" />}
+                    {label}
+                  </button>
+                  {running && (
+                    <button
+                      onClick={async () => {
+                        await fetch("/api/outreach/bulk-send", { method: "DELETE", headers: authH() });
+                        setBulkJob((j) => j ? { ...j, status: "stopped" } : null);
+                      }}
+                      className={cn("inline-flex items-center gap-1.5 h-9 px-3 text-sm rounded-xl font-medium transition-colors", glassBtn, "border-red-500/30 text-red-400 hover:bg-red-500/10")}
+                      title="Stop bulk send"
+                    >
+                      <Square className="h-3.5 w-3.5" /> stop
+                    </button>
                   )}
-                >
-                  {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SendHorizonal className="h-3.5 w-3.5" />}
-                  {label}
-                </button>
+                </div>
               );
             })()}
           </div>
