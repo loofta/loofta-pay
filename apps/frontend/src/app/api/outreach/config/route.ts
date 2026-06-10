@@ -7,7 +7,7 @@ const DEFAULT_CONFIG = {
   call_to_action:       "ask if they'd want early access",
   creator_pitch:        "Get paid for your content and collabs in USDC instantly, with no wallet history exposed to brands.",
   freelancer_pitch:     "Get paid across borders in USDC instantly. No bank account required, no fees, no wallet history.",
-  web3_project_pitch:   "Pay your contributors privately in USDC — no gas complexity, no public payment history, works for any wallet.",
+  web3_project_pitch:   "Hey, Lisa here from Loofta Pay. I'm reaching out to a few projects that pay their team in crypto - is that your case? We're offering free access to our platform to pay your teammates privately, just using their email address. They claim it however they want. Would love to have you in.",
 };
 
 function checkSecret(req: NextRequest) {

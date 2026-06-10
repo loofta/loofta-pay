@@ -815,14 +815,14 @@ export default function AdminDashboard() {
   // ── Auth states ─────────────────────────────────────────────────────────────
   if (!ready || checkingAuth || (authenticated && !userId)) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-950">
+      <div className="min-h-screen flex items-center justify-center bg-[#0f0f12]">
         <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
       </div>
     );
   }
   if (!authenticated || !isAuthorized) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-950">
+      <div className="min-h-screen flex items-center justify-center bg-[#0f0f12]">
         <div className="text-center space-y-4 text-gray-100">
           <Shield className="w-12 h-12 text-red-500 mx-auto" />
           <h1 className="text-xl font-bold">Access Denied</h1>
@@ -845,7 +845,7 @@ export default function AdminDashboard() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 p-4 font-sans">
+    <div className="min-h-screen bg-[#0f0f12] text-gray-100 p-4">
 
       {/* Header */}
       <div className="flex items-center justify-between mb-4">

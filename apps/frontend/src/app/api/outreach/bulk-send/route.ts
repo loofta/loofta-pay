@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { TwitterApi } from "twitter-api-v2";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
-const DELAY_MS = 45_000;
+const randomDelayMs = () => Math.floor(Math.random() * (60_000 - 15_000 + 1)) + 15_000;
 
 function checkSecret(req: NextRequest) {
   const secret = req.headers.get("x-admin-secret");
@@ -29,6 +29,7 @@ async function runBulkSend(jobId: string, prospectIds: string[]) {
   });
 
   let sent = 0;
+  console.log(`[bulk-send] job ${jobId} starting — ${prospectIds.length} prospect(s)`);
 
   for (let i = 0; i < prospectIds.length; i++) {
     const { data: prospect } = await supabase
@@ -37,10 +38,16 @@ async function runBulkSend(jobId: string, prospectIds: string[]) {
       .eq("id", prospectIds[i])
       .single();
 
-    if (!prospect || !["approved", "follow_pending"].includes(prospect.status)) continue;
+    if (!prospect) { console.log(`[bulk-send] [${i+1}/${prospectIds.length}] prospect ${prospectIds[i]} not found — skipping`); continue; }
+    if (!["approved", "follow_pending"].includes(prospect.status)) {
+      console.log(`[bulk-send] [${i+1}/${prospectIds.length}] @${prospect.handle} status="${prospect.status}" — skipping`);
+      continue;
+    }
 
     const message = prospect.final_message ?? prospect.draft_message;
-    if (!message) continue;
+    if (!message) { console.log(`[bulk-send] [${i+1}/${prospectIds.length}] @${prospect.handle} has no message — skipping`); continue; }
+
+    console.log(`[bulk-send] [${i+1}/${prospectIds.length}] sending to @${prospect.handle}…`);
 
     await supabase
       .from("outreach_bulk_jobs")
@@ -49,10 +56,12 @@ async function runBulkSend(jobId: string, prospectIds: string[]) {
 
     try {
       const target = await client.v2.userByUsername(prospect.handle);
-      if (!target.data) continue;
+      if (!target.data) { console.log(`[bulk-send] @${prospect.handle} not found on X — skipping`); continue; }
+      console.log(`[bulk-send] resolved @${prospect.handle} → id ${target.data.id}`);
 
       try {
-        await client.v2.sendDmToParticipant(target.data.id, { text: message });
+        const dmResult = await client.v2.sendDmToParticipant(target.data.id, { text: message });
+        console.log(`[bulk-send] ✓ DM sent to @${prospect.handle}`, JSON.stringify(dmResult));
         await supabase
           .from("outreach_prospects")
           .update({ status: "sent", sent_at: new Date().toISOString(), sent_via: "dm" })
@@ -62,8 +71,10 @@ async function runBulkSend(jobId: string, prospectIds: string[]) {
         const msg = String(dmErr?.message ?? dmErr);
         const is403 = dmErr?.code === 403 || dmErr?.status === 403 || msg.includes("403");
         const is429 = dmErr?.code === 429 || dmErr?.status === 429 || msg.includes("429");
+        console.error(`[bulk-send] DM error for @${prospect.handle} — code=${dmErr?.code ?? dmErr?.status} msg=${msg}`);
 
         if (is429) {
+          console.error(`[bulk-send] rate limited — stopping job`);
           await supabase
             .from("outreach_bulk_jobs")
             .update({ status: "stopped", error: "Rate limited by X", sent, current_handle: null, finished_at: new Date().toISOString() })
@@ -72,8 +83,9 @@ async function runBulkSend(jobId: string, prospectIds: string[]) {
         }
 
         if (is403) {
+          console.log(`[bulk-send] DMs restricted for @${prospect.handle} — following instead`);
           const me = await client.v2.me();
-          await client.v2.follow(me.data.id, target.data.id).catch(() => {});
+          await client.v2.follow(me.data.id, target.data.id).catch((e: any) => console.warn(`[bulk-send] follow failed:`, e?.message));
           await supabase
             .from("outreach_prospects")
             .update({ status: "follow_pending" })
@@ -81,7 +93,7 @@ async function runBulkSend(jobId: string, prospectIds: string[]) {
         }
       }
     } catch (err: any) {
-      console.error(`[bulk-send] error for @${prospect.handle}:`, err?.message);
+      console.error(`[bulk-send] outer error for @${prospect.handle}:`, err?.message, err?.code ?? err?.status);
     }
 
     await supabase
@@ -90,14 +102,17 @@ async function runBulkSend(jobId: string, prospectIds: string[]) {
       .eq("id", jobId);
 
     if (i < prospectIds.length - 1) {
+      const delay = randomDelayMs();
+      console.log(`[bulk-send] waiting ${Math.round(delay / 1000)}s before next DM…`);
       await supabase
         .from("outreach_bulk_jobs")
         .update({ current_handle: null })
         .eq("id", jobId);
-      await new Promise((r) => setTimeout(r, DELAY_MS));
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
 
+  console.log(`[bulk-send] job ${jobId} done — ${sent} sent`);
   await supabase
     .from("outreach_bulk_jobs")
     .update({ status: "done", sent, current_handle: null, finished_at: new Date().toISOString() })
@@ -164,4 +179,19 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
 
   return NextResponse.json(job ?? null);
+}
+
+// DELETE — force-stop any running job (clears stale jobs after server restart)
+export async function DELETE(req: NextRequest) {
+  if (!checkSecret(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase
+    .from("outreach_bulk_jobs")
+    .update({ status: "stopped", error: "Manually stopped", finished_at: new Date().toISOString(), current_handle: null })
+    .eq("status", "running");
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  console.log("[bulk-send] job manually stopped");
+  return NextResponse.json({ ok: true });
 }

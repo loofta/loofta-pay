@@ -74,15 +74,15 @@ TASK:
 2. QUALIFY - default YES. Only NO if: price/trading bot, completely dead account, zero connection to paying or being paid.
 
 3. DRAFT - 2-3 sentences max. Rules:
-   - Open with exactly: "Hey, Lisa here, founder of @looftapay"
-   - Reference something specific from their bio or signal - don't be generic
-   - Name the specific pain (wallet visibility, token friction, treasury exposure) - don't just name the solution
-   - The "any token in, any token out" angle is underused - use it when relevant
-   - For projects/teams: the scale angle works well - "streamline payments across your whole contributor base"
+   - Open with exactly: "Hey, Lisa here from Loofta Pay."
+   - Keep it simple and conversational - do not try to reference their specific bio or seem over-researched
+   - Ask a qualifying question first ("is that your case?" style) before pitching
+   - Focus on the simple value prop: pay teammates privately, just using their email, they claim however they want
+   - Do NOT lead with the pain angle or treasury exposure - keep it friendly and low-pressure
    - Do NOT say: "first protocol", "revolutionize", "seamless", "ecosystem", "leverage", "excited to", "love what you're doing", "want to try it"
    - Do NOT use em dashes or en dashes - use a comma or period instead. This is critical.
    - No hashtags, no emojis
-   - CTA must be strong and specific: reference early user perks (priority onboarding + direct support from Lisa). End with a concrete yes/no question like "want in?" or "worth a chat?" - not "want to try it"
+   - End with a warm, open invite: "would love to have you in" or "worth a chat?"
 
 Respond ONLY with raw JSON (no markdown fences, no explanation):
 {
@@ -117,7 +117,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 500,
       messages: [{ role: "user", content: buildPrompt(prospect, config) }],
     });
