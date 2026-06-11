@@ -600,7 +600,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             {/* Rewards */}
             <div className="mb-2">
               <Link
-                href="/rewards"
+                href="/sparks"
                 onClick={() => setIsOpen(false)}
                 className={`w-full text-left px-3 py-2 rounded-lg text-base md:text-sm transition-colors flex items-center gap-2 ${isDarkPage
                   ? "text-amber-400 hover:bg-amber-400/10"
