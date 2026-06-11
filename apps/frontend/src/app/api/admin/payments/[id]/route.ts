@@ -9,7 +9,12 @@ const VALID_STATUSES = [
   "EXPIRED", "CANCELLED", "DELETED",
 ];
 
-const EDITABLE_FIELDS = ["status", "expires_at", "description", "paid_at", "recipient_address"] as const;
+const EDITABLE_FIELDS = [
+  "status", "expires_at", "description", "paid_at",
+  "recipient_address", "recipient_username", "recipient_email", "recipient_user_id",
+  "created_by", "burner_address", "sender_tx_hash", "sweep_tx_hash",
+  "amount", "direction", "from_chain", "from_token", "to_chain", "to_token", "is_devnet",
+] as const;
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -100,10 +105,17 @@ export async function PATCH(request: NextRequest, { params }: Props) {
   const updates: Record<string, any> = {};
   for (const field of EDITABLE_FIELDS) {
     if (!(field in body)) continue;
-    if (field === "status") {
-      if (!VALID_STATUSES.includes(body.status)) {
-        return NextResponse.json({ error: `Invalid status: ${body.status}` }, { status: 400 });
-      }
+    if (field === "status" && !VALID_STATUSES.includes(body.status)) {
+      return NextResponse.json({ error: `Invalid status: ${body.status}` }, { status: 400 });
+    }
+    if (field === "amount") {
+      const n = Number(body.amount);
+      if (isNaN(n) || n < 0) return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
+      updates.amount = n;
+      continue;
+    }
+    if (field === "is_devnet" && typeof body.is_devnet !== "boolean") {
+      return NextResponse.json({ error: "is_devnet must be boolean" }, { status: 400 });
     }
     updates[field] = body[field];
   }

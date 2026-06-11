@@ -89,6 +89,20 @@ type EditForm = {
   paid_at: string;
   description: string;
   recipient_address: string;
+  recipient_username: string;
+  recipient_email: string;
+  recipient_user_id: string;
+  created_by: string;
+  burner_address: string;
+  sender_tx_hash: string;
+  sweep_tx_hash: string;
+  amount: string;
+  direction: string;
+  from_chain: string;
+  from_token: string;
+  to_chain: string;
+  to_token: string;
+  is_devnet: boolean;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -457,7 +471,12 @@ export default function AdminDashboard() {
   // Edit modal
   const [editTarget, setEditTarget] = useState<Payment | null>(null);
   const [editForm, setEditForm] = useState<EditForm>({
-    status: "", expires_at: "", paid_at: "", description: "", recipient_address: "",
+    status: "", expires_at: "", paid_at: "", description: "",
+    recipient_address: "", recipient_username: "", recipient_email: "",
+    recipient_user_id: "", created_by: "", burner_address: "",
+    sender_tx_hash: "", sweep_tx_hash: "", amount: "",
+    direction: "", from_chain: "", from_token: "", to_chain: "", to_token: "",
+    is_devnet: false,
   });
   const [saving, setSaving] = useState(false);
 
@@ -510,6 +529,28 @@ export default function AdminDashboard() {
   // Keep userId stable in callbacks via ref
   const userIdRef = useRef(userId);
   useEffect(() => { userIdRef.current = userId; }, [userId]);
+
+  // Resizable columns for payments table (11 data columns, indices 0–10)
+  const [colWidths, setColWidths] = useState([110, 80, 140, 150, 90, 120, 140, 55, 110, 90, 90]);
+  const resizeRef = useRef<{ colIdx: number; startX: number; startW: number } | null>(null);
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!resizeRef.current) return;
+      const { colIdx, startX, startW } = resizeRef.current;
+      setColWidths(prev => {
+        const next = [...prev];
+        next[colIdx] = Math.max(50, startW + e.clientX - startX);
+        return next;
+      });
+    };
+    const onUp = () => { resizeRef.current = null; };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, []);
 
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const token = await getAccessToken().catch(() => null);
@@ -756,11 +797,25 @@ export default function AdminDashboard() {
     e.stopPropagation();
     setEditTarget(p);
     setEditForm({
-      status:            p.status,
-      expires_at:        toLocalDatetime(p.expires_at),
-      paid_at:           toLocalDatetime(p.paid_at),
-      description:       p.description ?? "",
-      recipient_address: p.recipient_address ?? "",
+      status:             p.status,
+      expires_at:         toLocalDatetime(p.expires_at),
+      paid_at:            toLocalDatetime(p.paid_at),
+      description:        p.description ?? "",
+      recipient_address:  p.recipient_address ?? "",
+      recipient_username: p.recipient_username ?? "",
+      recipient_email:    p.recipient_email ?? "",
+      recipient_user_id:  p.recipient_user_id ?? "",
+      created_by:         p.created_by ?? "",
+      burner_address:     p.burner_address ?? "",
+      sender_tx_hash:     p.sender_tx_hash ?? "",
+      sweep_tx_hash:      p.sweep_tx_hash ?? "",
+      amount:             String(p.amount ?? ""),
+      direction:          p.direction ?? "",
+      from_chain:         p.from_chain ?? "",
+      from_token:         p.from_token ?? "",
+      to_chain:           p.to_chain ?? "",
+      to_token:           p.to_token ?? "",
+      is_devnet:          p.is_devnet,
     });
   };
 
@@ -775,9 +830,22 @@ export default function AdminDashboard() {
       const newPaidAt = editForm.paid_at ? new Date(editForm.paid_at).toISOString() : null;
       if (newPaidAt !== editTarget.paid_at) body.paid_at = newPaidAt;
       if (editForm.description !== (editTarget.description ?? "")) body.description = editForm.description || null;
-      if (editForm.recipient_address !== (editTarget.recipient_address ?? "")) {
-        body.recipient_address = editForm.recipient_address || null;
-      }
+      if (editForm.recipient_address  !== (editTarget.recipient_address  ?? "")) body.recipient_address  = editForm.recipient_address  || null;
+      if (editForm.recipient_username !== (editTarget.recipient_username ?? "")) body.recipient_username = editForm.recipient_username || null;
+      if (editForm.recipient_email    !== (editTarget.recipient_email    ?? "")) body.recipient_email    = editForm.recipient_email    || null;
+      if (editForm.recipient_user_id  !== (editTarget.recipient_user_id  ?? "")) body.recipient_user_id  = editForm.recipient_user_id  || null;
+      if (editForm.created_by         !== (editTarget.created_by         ?? "")) body.created_by         = editForm.created_by         || null;
+      if (editForm.burner_address     !== (editTarget.burner_address     ?? "")) body.burner_address     = editForm.burner_address     || null;
+      if (editForm.sender_tx_hash     !== (editTarget.sender_tx_hash     ?? "")) body.sender_tx_hash     = editForm.sender_tx_hash     || null;
+      if (editForm.sweep_tx_hash      !== (editTarget.sweep_tx_hash      ?? "")) body.sweep_tx_hash      = editForm.sweep_tx_hash      || null;
+      if (editForm.direction          !== (editTarget.direction          ?? "")) body.direction          = editForm.direction          || null;
+      if (editForm.from_chain         !== (editTarget.from_chain         ?? "")) body.from_chain         = editForm.from_chain         || null;
+      if (editForm.from_token         !== (editTarget.from_token         ?? "")) body.from_token         = editForm.from_token         || null;
+      if (editForm.to_chain           !== (editTarget.to_chain           ?? "")) body.to_chain           = editForm.to_chain           || null;
+      if (editForm.to_token           !== (editTarget.to_token           ?? "")) body.to_token           = editForm.to_token           || null;
+      if (editForm.is_devnet !== editTarget.is_devnet) body.is_devnet = editForm.is_devnet;
+      const newAmount = parseFloat(editForm.amount);
+      if (!isNaN(newAmount) && newAmount !== Number(editTarget.amount)) body.amount = newAmount;
       if (Object.keys(body).length === 0) {
         toast({ title: "No changes" });
         setEditTarget(null);
@@ -1325,22 +1393,24 @@ export default function AdminDashboard() {
 
       {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-gray-800">
-        <table className="w-full text-sm md:text-xs border-collapse">
+        <table className="text-sm md:text-xs border-collapse" style={{ tableLayout: "fixed", minWidth: 900 }}>
           <thead>
             <tr className="bg-gray-900 text-gray-500 text-[10px] uppercase tracking-wider border-b border-gray-800">
-              <th className="w-5 px-2 py-2" />
-              <th className="px-3 py-2 text-left">Created</th>
-              <th className="px-3 py-2 text-left">ID</th>
-              <th className="px-3 py-2 text-left">Sender</th>
-              <th className="px-3 py-2 text-left">Recipient</th>
-              <th className="px-3 py-2 text-left">Amount</th>
-              <th className="px-3 py-2 text-left">Chain</th>
-              <th className="px-3 py-2 text-left">Status</th>
-              <th className="px-3 py-2 text-left">Net</th>
-              <th className="px-3 py-2 text-left">Expires</th>
-              <th className="px-3 py-2 text-left">Sender TX</th>
-              <th className="px-3 py-2 text-left">Sweep TX</th>
-              <th className="px-3 py-2 w-8" />
+              <th style={{ width: 24 }} className="px-2 py-2" />
+              {(["Created","ID","Sender","Recipient","Amount","Chain","Status","Net","Expires","Sender TX","Sweep TX"] as const).map((label, i) => (
+                <th
+                  key={label}
+                  className="px-3 py-2 text-left"
+                  style={{ width: colWidths[i], position: "relative", userSelect: "none" }}
+                >
+                  {label}
+                  <div
+                    className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-500 transition-colors"
+                    onMouseDown={(e) => { e.preventDefault(); resizeRef.current = { colIdx: i, startX: e.clientX, startW: colWidths[i] }; }}
+                  />
+                </th>
+              ))}
+              <th style={{ width: 32 }} className="py-2" />
             </tr>
           </thead>
           <tbody>
@@ -1504,7 +1574,7 @@ export default function AdminDashboard() {
 
       {/* Edit Modal */}
       <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
-        <DialogContent className="bg-gray-900 border-gray-700 text-gray-100 max-w-md">
+        <DialogContent className="bg-gray-900 border-gray-700 text-gray-100 max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Pencil className="w-4 h-4 text-blue-400" />
@@ -1513,79 +1583,173 @@ export default function AdminDashboard() {
             <p className="font-mono text-[10px] text-gray-500 break-all">{editTarget?.id}</p>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
-            <div>
-              <Label className="text-gray-400 text-sm md:text-xs mb-1.5 block">Status</Label>
-              <Select
-                value={editForm.status}
-                onValueChange={(v) => setEditForm((f) => ({ ...f, status: v }))}
-              >
-                <SelectTrigger className="bg-gray-800 border-gray-600 text-gray-100">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-gray-900 border-gray-700 text-gray-100">
-                  {STATUSES.map((s) => (
-                    <SelectItem key={s} value={s}>{s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <div className="max-h-[70vh] overflow-y-auto pr-1 space-y-5 py-2">
+
+            {/* ── Status & timing ── */}
+            <div className="space-y-3">
+              <p className="text-[10px] uppercase tracking-widest text-gray-600">Status &amp; timing</p>
+              <div>
+                <Label className="text-gray-400 text-xs mb-1.5 block">Status</Label>
+                <Select value={editForm.status} onValueChange={(v) => setEditForm((f) => ({ ...f, status: v }))}>
+                  <SelectTrigger className="bg-gray-800 border-gray-600 text-gray-100">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-gray-900 border-gray-700 text-gray-100">
+                    {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-gray-400 text-xs mb-1.5 block">Expires at</Label>
+                  <Input type="datetime-local" value={editForm.expires_at}
+                    onChange={(e) => setEditForm((f) => ({ ...f, expires_at: e.target.value }))}
+                    className="bg-gray-800 border-gray-600 text-gray-100" />
+                </div>
+                <div>
+                  <Label className="text-gray-400 text-xs mb-1.5 block">Paid at</Label>
+                  <Input type="datetime-local" value={editForm.paid_at}
+                    onChange={(e) => setEditForm((f) => ({ ...f, paid_at: e.target.value }))}
+                    className="bg-gray-800 border-gray-600 text-gray-100" />
+                </div>
+              </div>
             </div>
 
-            <div>
-              <Label className="text-gray-400 text-sm md:text-xs mb-1.5 block">Expires at</Label>
-              <Input
-                type="datetime-local"
-                value={editForm.expires_at}
-                onChange={(e) => setEditForm((f) => ({ ...f, expires_at: e.target.value }))}
-                className="bg-gray-800 border-gray-600 text-gray-100"
-              />
+            {/* ── Amount & chain ── */}
+            <div className="space-y-3">
+              <p className="text-[10px] uppercase tracking-widest text-gray-600">Amount &amp; chain</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-gray-400 text-xs mb-1.5 block">Amount</Label>
+                  <Input type="number" step="any" value={editForm.amount}
+                    onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))}
+                    className="bg-gray-800 border-gray-600 text-gray-100 font-mono" />
+                </div>
+                <div>
+                  <Label className="text-gray-400 text-xs mb-1.5 block">Direction</Label>
+                  <Input value={editForm.direction}
+                    onChange={(e) => setEditForm((f) => ({ ...f, direction: e.target.value }))}
+                    className="bg-gray-800 border-gray-600 text-gray-100 font-mono" placeholder="e.g. OUT" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-gray-400 text-xs mb-1.5 block">From chain</Label>
+                  <Input value={editForm.from_chain}
+                    onChange={(e) => setEditForm((f) => ({ ...f, from_chain: e.target.value }))}
+                    className="bg-gray-800 border-gray-600 text-gray-100 font-mono" placeholder="e.g. sol" />
+                </div>
+                <div>
+                  <Label className="text-gray-400 text-xs mb-1.5 block">From token</Label>
+                  <Input value={editForm.from_token}
+                    onChange={(e) => setEditForm((f) => ({ ...f, from_token: e.target.value }))}
+                    className="bg-gray-800 border-gray-600 text-gray-100 font-mono" placeholder="e.g. USDC" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-gray-400 text-xs mb-1.5 block">To chain</Label>
+                  <Input value={editForm.to_chain}
+                    onChange={(e) => setEditForm((f) => ({ ...f, to_chain: e.target.value }))}
+                    className="bg-gray-800 border-gray-600 text-gray-100 font-mono" placeholder="e.g. sol" />
+                </div>
+                <div>
+                  <Label className="text-gray-400 text-xs mb-1.5 block">To token</Label>
+                  <Input value={editForm.to_token}
+                    onChange={(e) => setEditForm((f) => ({ ...f, to_token: e.target.value }))}
+                    className="bg-gray-800 border-gray-600 text-gray-100 font-mono" placeholder="e.g. USDC" />
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  id="is_devnet"
+                  type="checkbox"
+                  checked={editForm.is_devnet}
+                  onChange={(e) => setEditForm((f) => ({ ...f, is_devnet: e.target.checked }))}
+                  className="w-4 h-4 rounded border-gray-600 bg-gray-800 accent-blue-500"
+                />
+                <Label htmlFor="is_devnet" className="text-gray-400 text-xs cursor-pointer">Devnet</Label>
+              </div>
             </div>
 
-            <div>
-              <Label className="text-gray-400 text-sm md:text-xs mb-1.5 block">Paid at</Label>
-              <Input
-                type="datetime-local"
-                value={editForm.paid_at}
-                onChange={(e) => setEditForm((f) => ({ ...f, paid_at: e.target.value }))}
-                className="bg-gray-800 border-gray-600 text-gray-100"
-              />
+            {/* ── Parties ── */}
+            <div className="space-y-3">
+              <p className="text-[10px] uppercase tracking-widest text-gray-600">Parties</p>
+              <div>
+                <Label className="text-gray-400 text-xs mb-1.5 block">Sender privy ID (created_by)</Label>
+                <Input value={editForm.created_by}
+                  onChange={(e) => setEditForm((f) => ({ ...f, created_by: e.target.value }))}
+                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" placeholder="did:privy:…" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-gray-400 text-xs mb-1.5 block">Recipient username</Label>
+                  <Input value={editForm.recipient_username}
+                    onChange={(e) => setEditForm((f) => ({ ...f, recipient_username: e.target.value }))}
+                    className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" placeholder="@handle" />
+                </div>
+                <div>
+                  <Label className="text-gray-400 text-xs mb-1.5 block">Recipient email</Label>
+                  <Input type="email" value={editForm.recipient_email}
+                    onChange={(e) => setEditForm((f) => ({ ...f, recipient_email: e.target.value }))}
+                    className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" placeholder="user@example.com" />
+                </div>
+              </div>
+              <div>
+                <Label className="text-gray-400 text-xs mb-1.5 block">Recipient privy ID</Label>
+                <Input value={editForm.recipient_user_id}
+                  onChange={(e) => setEditForm((f) => ({ ...f, recipient_user_id: e.target.value }))}
+                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" placeholder="did:privy:…" />
+              </div>
+              <div>
+                <Label className="text-gray-400 text-xs mb-1.5 block">Recipient address (Solana)</Label>
+                <Input value={editForm.recipient_address}
+                  onChange={(e) => setEditForm((f) => ({ ...f, recipient_address: e.target.value }))}
+                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" placeholder="Solana wallet address" />
+              </div>
             </div>
 
+            {/* ── Blockchain ── */}
+            <div className="space-y-3">
+              <p className="text-[10px] uppercase tracking-widest text-gray-600">Blockchain</p>
+              <div>
+                <Label className="text-gray-400 text-xs mb-1.5 block">Burner address</Label>
+                <Input value={editForm.burner_address}
+                  onChange={(e) => setEditForm((f) => ({ ...f, burner_address: e.target.value }))}
+                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" placeholder="Escrow wallet" />
+              </div>
+              <div>
+                <Label className="text-gray-400 text-xs mb-1.5 block">Sender TX hash</Label>
+                <Input value={editForm.sender_tx_hash}
+                  onChange={(e) => setEditForm((f) => ({ ...f, sender_tx_hash: e.target.value }))}
+                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" />
+              </div>
+              <div>
+                <Label className="text-gray-400 text-xs mb-1.5 block">Sweep TX hash</Label>
+                <Input value={editForm.sweep_tx_hash}
+                  onChange={(e) => setEditForm((f) => ({ ...f, sweep_tx_hash: e.target.value }))}
+                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" />
+              </div>
+            </div>
+
+            {/* ── Notes ── */}
             <div>
-              <Label className="text-gray-400 text-sm md:text-xs mb-1.5 block">Description</Label>
-              <Textarea
-                value={editForm.description}
+              <p className="text-[10px] uppercase tracking-widest text-gray-600 mb-3">Notes</p>
+              <Label className="text-gray-400 text-xs mb-1.5 block">Description</Label>
+              <Textarea value={editForm.description}
                 onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
-                className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm md:text-xs"
-                rows={2}
-                placeholder="Optional message"
-              />
+                className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs"
+                rows={2} placeholder="Optional message" />
             </div>
 
-            <div>
-              <Label className="text-gray-400 text-sm md:text-xs mb-1.5 block">Recipient address (Solana)</Label>
-              <Input
-                value={editForm.recipient_address}
-                onChange={(e) => setEditForm((f) => ({ ...f, recipient_address: e.target.value }))}
-                className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm md:text-xs"
-                placeholder="Solana wallet address"
-              />
-            </div>
           </div>
 
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setEditTarget(null)}
-              className="border-gray-600 text-gray-300 hover:bg-gray-800"
-            >
+            <Button variant="outline" onClick={() => setEditTarget(null)}
+              className="border-gray-600 text-gray-300 hover:bg-gray-800">
               Cancel
             </Button>
-            <Button
-              onClick={saveEdit}
-              disabled={saving}
-              className="bg-blue-700 hover:bg-blue-600 text-white"
-            >
+            <Button onClick={saveEdit} disabled={saving} className="bg-blue-700 hover:bg-blue-600 text-white">
               {saving && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
               Save changes
             </Button>
