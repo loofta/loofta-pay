@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 
 type ProspectType   = "creator" | "freelancer" | "web3_project";
 type ProspectStatus = "new" | "drafting" | "drafted" | "approved" | "rejected" | "sent" | "follow_pending";
-type Filter         = "all" | "pending" | "approved" | "rejected";
+type Filter         = "all" | "approved" | "sent" | "rejected";
 
 type Prospect = {
   id: string;
@@ -648,15 +648,16 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
   }
 
   const stats = {
-    queue:    prospects.filter((p) => ["new","drafting","drafted","follow_pending"].includes(p.status)).length,
+    queue:    prospects.filter((p) => ["new","drafting","drafted"].includes(p.status)).length,
     approved: prospects.filter((p) => p.status === "approved").length,
     rejected: prospects.filter((p) => p.status === "rejected").length,
     sent:     prospects.filter((p) => p.status === "sent").length,
   };
 
   const filtered = prospects.filter((p) => {
-    if (filter === "pending")  { if (!["new","drafting","drafted","follow_pending"].includes(p.status)) return false; }
-    else if (filter === "approved") { if (p.status !== "approved") return false; }
+    if      (filter === "all")      { if (!["new","drafting","drafted"].includes(p.status)) return false; }
+    else if (filter === "approved") { if (!["approved","follow_pending"].includes(p.status)) return false; }
+    else if (filter === "sent")     { if (p.status !== "sent") return false; }
     else if (filter === "rejected") { if (p.status !== "rejected") return false; }
     if (typeFilter.size > 0 && !typeFilter.has(p.type)) return false;
     return true;
@@ -1003,7 +1004,7 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
           </div>
           <div className="flex flex-wrap items-center gap-3 mb-5">
             <div className="flex gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-              {(["all","pending","approved","rejected"] as Filter[]).map((f) => (
+              {(["all","approved","sent","rejected"] as Filter[]).map((f) => (
                 <button key={f} onClick={() => setFilter(f)}
                   className={cn(
                     "px-4 h-8 rounded-lg text-sm font-mono font-medium uppercase tracking-wide transition-all",
@@ -1091,7 +1092,7 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
             <div className="flex flex-col items-center justify-center h-40 gap-3 text-gray-600">
               <Target className="h-6 w-6" />
               <span className="text-sm font-mono font-medium">
-                {filter === "all" ? "click 'discover on X' to find prospects" : `no ${filter} prospects`}
+                {filter === "all" ? "click 'discover on X' to find new leads" : `no ${filter} prospects`}
               </span>
             </div>
           ) : (
