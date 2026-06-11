@@ -55,7 +55,7 @@ function SparksBadge({ amount, size = "md" }: { amount: number; size?: "sm" | "m
       ? "text-2xl font-bold"
       : size === "sm"
         ? "text-sm font-semibold"
-        : "text-base font-semibold";
+        : "text-lg font-semibold";
   return (
     <span className={`inline-flex items-center gap-1 ${sizeClass} text-amber-300`}>
       <span>⚡</span>
@@ -124,10 +124,10 @@ function TaskCard({ task }: { task: TaskStatus }) {
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <p className={`text-base font-semibold leading-tight ${task.completed ? "text-white" : "text-slate-200"}`}>
+            <p className={`text-lg font-semibold leading-tight ${task.completed ? "text-white" : "text-slate-200"}`}>
               {task.label}
             </p>
-            <p className="text-sm text-slate-400 mt-0.5 leading-snug">
+            <p className="text-base text-slate-400 mt-0.5 leading-snug">
               {task.description}
             </p>
             {showProgress && (
@@ -138,7 +138,7 @@ function TaskCard({ task }: { task: TaskStatus }) {
         <div className="shrink-0 text-right">
           <SparksBadge amount={task.sparks} size="md" />
           {task.completed && (
-            <p className="text-[10px] text-amber-400/70 mt-0.5">Earned</p>
+            <p className="text-sm text-amber-400/70 mt-0.5">Earned</p>
           )}
         </div>
       </div>
@@ -184,9 +184,10 @@ function SparksSkeleton() {
   );
 }
 
-function MagicBlockQuestCard({ totalSparks, getAccessToken }: {
+function MagicBlockQuestCard({ totalSparks, getAccessToken, questValidated }: {
   totalSparks: number;
   getAccessToken: () => Promise<string | null>;
+  questValidated: boolean;
 }) {
   const unlocked = totalSparks >= MAGICBLOCK_SPARKS_THRESHOLD;
   const [showForm, setShowForm] = useState(false);
@@ -223,42 +224,30 @@ function MagicBlockQuestCard({ totalSparks, getAccessToken }: {
     }
   }
 
-  if (result === "success") {
-    return (
-      <div className="rounded-2xl border border-white/20 bg-white/5 p-5">
-        <div className="flex items-start gap-3">
-          <div className="shrink-0 w-10 h-10 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-          </div>
-          <div>
-            <p className="text-base font-semibold text-white">Quest validated!</p>
-            <p className="text-sm text-slate-400 mt-0.5">
-              You're now in the MagicBlock 50,000 points pool. Check your rewards on{" "}
-              <a href="https://magicblock.xyz" target="_blank" rel="noopener noreferrer" className="text-white underline hover:text-slate-300">
-                magicblock.xyz
-              </a>
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const isValidated = result === "success" || result === "already" || questValidated;
 
-  if (result === "already") {
+  if (isValidated) {
+    const isAlready = result === "already" || (questValidated && !result);
     return (
-      <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5">
+      <div className={`rounded-2xl border p-5 ${isAlready ? "border-amber-500/30 bg-amber-500/10" : "border-white/20 bg-white/5"}`}>
         <div className="flex items-start gap-3">
-          <div className="shrink-0 w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-lg">
-            ✓
+          <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${isAlready ? "bg-amber-500/20 border border-amber-500/30 text-amber-400" : "bg-white/10 border border-white/20"}`}>
+            {isAlready ? (
+              <span className="font-bold text-lg">✓</span>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            )}
           </div>
           <div>
-            <p className="text-base font-semibold text-amber-300">Already validated</p>
+            <p className={`text-base font-semibold ${isAlready ? "text-amber-300" : "text-white"}`}>
+              {isAlready ? "Quest already validated" : "Quest validated!"}
+            </p>
             <p className="text-sm text-slate-400 mt-0.5">
-              This quest was already validated for your wallet. See your rewards on{" "}
-              <a href="https://magicblock.xyz" target="_blank" rel="noopener noreferrer" className="text-amber-400 underline hover:text-amber-300">
-                magicblock.xyz
+              You're in the MagicBlock 50,000 points pool. Check your rewards on{" "}
+              <a href="https://quests.magicblock.app/projects/loofta-pay" target="_blank" rel="noopener noreferrer" className={`underline ${isAlready ? "text-amber-400 hover:text-amber-300" : "text-white hover:text-slate-300"}`}>
+                quests.magicblock.app
               </a>
             </p>
           </div>
@@ -284,7 +273,7 @@ function MagicBlockQuestCard({ totalSparks, getAccessToken }: {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className={`text-base font-semibold ${unlocked ? "text-white" : "text-slate-300"}`}>
+            <p className={`text-lg font-semibold ${unlocked ? "text-white" : "text-slate-300"}`}>
               MagicBlock Quest
             </p>
             <span className={[
@@ -294,7 +283,7 @@ function MagicBlockQuestCard({ totalSparks, getAccessToken }: {
               {unlocked ? "Unlocked ✓" : `${MAGICBLOCK_SPARKS_THRESHOLD.toLocaleString()} Sparks required`}
             </span>
           </div>
-          <p className="text-sm text-slate-400 mt-0.5 leading-snug">
+          <p className="text-base text-slate-400 mt-0.5 leading-snug">
             Validate your Loofta Sparks on MagicBlock and earn from the{" "}
             <span className="text-slate-200">50,000 points pool</span> — unlock prizes, event tickets, merch & more.
           </p>
@@ -333,18 +322,10 @@ function MagicBlockQuestCard({ totalSparks, getAccessToken }: {
               Your MagicBlock wallet address
             </p>
             <p className="text-sm text-slate-500 mb-2">
-              Paste the Solana wallet you used to sign in on{" "}
-              <a
-                href="https://magicblock.xyz"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-white underline hover:text-slate-300"
-              >
-                magicblock.xyz
-              </a>
+              Paste the Solana wallet you used to sign in on Magicblock Questline.
               . Don't have an account?{" "}
               <a
-                href="https://magicblock.xyz"
+                href="https://quests.magicblock.app/projects/loofta-pay"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-white underline hover:text-slate-300"
@@ -357,7 +338,7 @@ function MagicBlockQuestCard({ totalSparks, getAccessToken }: {
               value={wallet}
               onChange={(e) => { setWallet(e.target.value); setError(null); }}
               placeholder="e.g. 9CYi7RV2MmRvit6FA44V1yH58mn7GbRpoRny8ZK8Y57Z"
-              className="w-full rounded-xl bg-white/8 border border-white/15 px-3.5 py-2.5 text-base text-white placeholder:text-slate-600 focus:outline-none focus:border-white/40 transition-colors font-mono"
+              className="w-full rounded-xl bg-[#1a1a22] border border-white/15 px-3.5 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-white/40 transition-colors font-mono"
             />
           </div>
 
@@ -410,6 +391,21 @@ export default function SparksPage() {
     gcTime: 5 * 60_000,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
+  });
+
+  // Runs in parallel with sparks — card renders immediately, validated state arrives async
+  const { data: questStatus } = useQuery({
+    queryKey: ["mb-quest-status", userId],
+    queryFn: async () => {
+      const token = await getAccessToken().catch(() => null);
+      const res = await fetch("/api/magicblock/validate-quest", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      return res.ok ? res.json() : { validated: false };
+    },
+    enabled: Boolean(authenticated && userId),
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
 
   const maxSparks = 250 + 250 + 500 + 2000 + 2000 + 5000; // 10000
@@ -500,7 +496,7 @@ export default function SparksPage() {
               <p className="text-base md:text-sm font-medium text-slate-400 uppercase tracking-wider mb-3">
                 Partner Quest
               </p>
-              <MagicBlockQuestCard totalSparks={data.totalSparks} getAccessToken={getAccessToken} />
+              <MagicBlockQuestCard totalSparks={data.totalSparks} getAccessToken={getAccessToken} questValidated={questStatus?.validated ?? false} />
             </div>
 
             <div className="mb-3 flex items-center justify-between">
