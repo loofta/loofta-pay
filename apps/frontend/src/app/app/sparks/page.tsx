@@ -4,8 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
+import { useState } from "react";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const MAGICBLOCK_SPARKS_THRESHOLD = 3000;
 
 type TaskKey =
   | "connect_email"
@@ -25,7 +27,7 @@ interface TaskStatus {
   total?: number;
 }
 
-interface RewardsData {
+interface SparksData {
   totalSparks: number;
   tasks: TaskStatus[];
 }
@@ -39,11 +41,11 @@ const TASK_ICONS: Record<TaskKey, string> = {
   ten_payments: "🔥",
 };
 
-async function fetchRewards(token: string | null, network: "mainnet" | "devnet"): Promise<RewardsData> {
+async function fetchRewards(token: string | null, network: "mainnet" | "devnet"): Promise<SparksData> {
   const res = await fetch(`${BACKEND_URL}/rewards/me?network=${network}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  if (!res.ok) throw new Error("Failed to load rewards");
+  if (!res.ok) throw new Error("Failed to load sparks");
   return res.json();
 }
 
@@ -52,12 +54,10 @@ function SparksBadge({ amount, size = "md" }: { amount: number; size?: "sm" | "m
     size === "lg"
       ? "text-2xl font-bold"
       : size === "sm"
-        ? "text-sm md:text-xs font-semibold"
-        : "text-base md:text-sm font-semibold";
+        ? "text-sm font-semibold"
+        : "text-base font-semibold";
   return (
-    <span
-      className={`inline-flex items-center gap-1 ${sizeClass} text-amber-300`}
-    >
+    <span className={`inline-flex items-center gap-1 ${sizeClass} text-amber-300`}>
       <span>⚡</span>
       <span>+{amount.toLocaleString()}</span>
     </span>
@@ -69,8 +69,8 @@ function ProgressBar({ value, max }: { value: number; max: number }) {
   return (
     <div className="mt-2.5">
       <div className="flex justify-between items-center mb-1">
-        <span className="text-base md:text-sm text-slate-400">{value}/{max}</span>
-        <span className="text-base md:text-sm text-slate-400">{pct}%</span>
+        <span className="text-sm text-slate-400">{value}/{max}</span>
+        <span className="text-sm text-slate-400">{pct}%</span>
       </div>
       <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
         <div
@@ -124,13 +124,10 @@ function TaskCard({ task }: { task: TaskStatus }) {
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <p
-              className={`text-base font-semibold leading-tight ${task.completed ? "text-white" : "text-slate-200"
-                }`}
-            >
+            <p className={`text-base font-semibold leading-tight ${task.completed ? "text-white" : "text-slate-200"}`}>
               {task.label}
             </p>
-            <p className="text-base md:text-sm text-slate-400 mt-0.5 leading-snug">
+            <p className="text-sm text-slate-400 mt-0.5 leading-snug">
               {task.description}
             </p>
             {showProgress && (
@@ -176,7 +173,7 @@ function SparksTotal({ total, max }: { total: number; max: number }) {
   );
 }
 
-function RewardsSkeleton() {
+function SparksSkeleton() {
   return (
     <div className="animate-pulse space-y-4">
       <div className="rounded-2xl border border-white/10 bg-white/5 p-6 mb-6 h-36" />
@@ -187,7 +184,211 @@ function RewardsSkeleton() {
   );
 }
 
-export default function RewardsPage() {
+function MagicBlockQuestCard({ totalSparks, getAccessToken }: {
+  totalSparks: number;
+  getAccessToken: () => Promise<string | null>;
+}) {
+  const unlocked = totalSparks >= MAGICBLOCK_SPARKS_THRESHOLD;
+  const [showForm, setShowForm] = useState(false);
+  const [wallet, setWallet] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<"success" | "already" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleValidate() {
+    setError(null);
+    setSubmitting(true);
+    try {
+      const token = await getAccessToken().catch(() => null);
+      const res = await fetch("/api/magicblock/validate-quest", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ wallet: wallet.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Validation failed. Please try again.");
+      } else if (data.alreadyCompleted) {
+        setResult("already");
+      } else {
+        setResult("success");
+      }
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (result === "success") {
+    return (
+      <div className="rounded-2xl border border-white/20 bg-white/5 p-5">
+        <div className="flex items-start gap-3">
+          <div className="shrink-0 w-10 h-10 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-base font-semibold text-white">Quest validated!</p>
+            <p className="text-sm text-slate-400 mt-0.5">
+              You're now in the MagicBlock 50,000 points pool. Check your rewards on{" "}
+              <a href="https://magicblock.xyz" target="_blank" rel="noopener noreferrer" className="text-white underline hover:text-slate-300">
+                magicblock.xyz
+              </a>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (result === "already") {
+    return (
+      <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5">
+        <div className="flex items-start gap-3">
+          <div className="shrink-0 w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-lg">
+            ✓
+          </div>
+          <div>
+            <p className="text-base font-semibold text-amber-300">Already validated</p>
+            <p className="text-sm text-slate-400 mt-0.5">
+              This quest was already validated for your wallet. See your rewards on{" "}
+              <a href="https://magicblock.xyz" target="_blank" rel="noopener noreferrer" className="text-amber-400 underline hover:text-amber-300">
+                magicblock.xyz
+              </a>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={[
+      "rounded-2xl border p-5 transition-all",
+      unlocked ? "border-white/25 bg-white/8" : "border-white/10 bg-white/5",
+    ].join(" ")}>
+      {/* Header */}
+      <div className="flex items-start gap-3 mb-4">
+        {/* MagicBlock logo mark */}
+        <div className={[
+          "shrink-0 w-11 h-11 rounded-xl flex items-center justify-center p-2",
+          unlocked ? "bg-white/15 border border-white/25" : "bg-white/8 border border-white/10",
+        ].join(" ")}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/images/logo/magicblock-mark.svg" alt="MagicBlock" className="w-full h-full object-contain" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className={`text-base font-semibold ${unlocked ? "text-white" : "text-slate-300"}`}>
+              MagicBlock Quest
+            </p>
+            <span className={[
+              "text-[11px] font-semibold px-2 py-0.5 rounded-full",
+              unlocked ? "bg-white/15 text-white" : "bg-white/10 text-slate-400",
+            ].join(" ")}>
+              {unlocked ? "Unlocked ✓" : `${MAGICBLOCK_SPARKS_THRESHOLD.toLocaleString()} Sparks required`}
+            </span>
+          </div>
+          <p className="text-sm text-slate-400 mt-0.5 leading-snug">
+            Validate your Loofta Sparks on MagicBlock and earn from the{" "}
+            <span className="text-slate-200">50,000 points pool</span> — unlock prizes, event tickets, merch & more.
+          </p>
+        </div>
+      </div>
+
+      {!unlocked && (
+        <div className="mt-2">
+          <div className="flex justify-between items-center mb-1.5">
+            <span className="text-sm text-slate-400">{totalSparks.toLocaleString()} / {MAGICBLOCK_SPARKS_THRESHOLD.toLocaleString()} Sparks</span>
+            <span className="text-sm text-slate-500">{Math.round((totalSparks / MAGICBLOCK_SPARKS_THRESHOLD) * 100)}%</span>
+          </div>
+          <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-white/40 transition-all duration-500"
+              style={{ width: `${Math.min(100, Math.round((totalSparks / MAGICBLOCK_SPARKS_THRESHOLD) * 100))}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {unlocked && !showForm && (
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          className="mt-1 w-full rounded-xl px-4 py-2.5 text-base font-semibold bg-white text-[#0f0f12] hover:bg-white/90 transition-opacity"
+        >
+          Validate quest on MagicBlock →
+        </button>
+      )}
+
+      {unlocked && showForm && (
+        <div className="mt-1 space-y-3">
+          <div>
+            <p className="text-sm text-slate-300 font-medium mb-1.5">
+              Your MagicBlock wallet address
+            </p>
+            <p className="text-sm text-slate-500 mb-2">
+              Paste the Solana wallet you used to sign in on{" "}
+              <a
+                href="https://magicblock.xyz"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-white underline hover:text-slate-300"
+              >
+                magicblock.xyz
+              </a>
+              . Don't have an account?{" "}
+              <a
+                href="https://magicblock.xyz"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-white underline hover:text-slate-300"
+              >
+                Sign in first →
+              </a>
+            </p>
+            <input
+              type="text"
+              value={wallet}
+              onChange={(e) => { setWallet(e.target.value); setError(null); }}
+              placeholder="e.g. 9CYi7RV2MmRvit6FA44V1yH58mn7GbRpoRny8ZK8Y57Z"
+              className="w-full rounded-xl bg-white/8 border border-white/15 px-3.5 py-2.5 text-base text-white placeholder:text-slate-600 focus:outline-none focus:border-white/40 transition-colors font-mono"
+            />
+          </div>
+
+          {error && (
+            <p className="text-sm text-red-400">{error}</p>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => { setShowForm(false); setWallet(""); setError(null); }}
+              className="flex-1 rounded-xl px-4 py-2.5 text-base font-medium text-slate-400 bg-white/5 hover:bg-white/10 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleValidate}
+              disabled={submitting || wallet.trim().length < 32}
+              className="flex-[2] rounded-xl px-4 py-2.5 text-base font-semibold bg-white text-[#0f0f12] hover:bg-white/90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {submitting ? "Validating…" : "Validate"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function SparksPage() {
   const { authenticated, userId } = useAuth();
   const { login: privyLogin, getAccessToken } = usePrivy();
   const networkMode = useAuthStore((s) => s.networkMode);
@@ -276,11 +477,11 @@ export default function RewardsPage() {
         </div>
 
         {isLoading ? (
-          <RewardsSkeleton />
+          <SparksSkeleton />
         ) : queryError ? (
           <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 text-center">
             <p className="text-red-400 text-base md:text-sm">
-              {(queryError as Error)?.message ?? "Failed to load rewards"}
+              {(queryError as Error)?.message ?? "Failed to load sparks"}
             </p>
             <button
               type="button"
@@ -293,6 +494,14 @@ export default function RewardsPage() {
         ) : data ? (
           <>
             <SparksTotal total={data.totalSparks} max={maxSparks} />
+
+            {/* MagicBlock quest — always visible, locked/unlocked based on sparks */}
+            <div className="mb-6">
+              <p className="text-base md:text-sm font-medium text-slate-400 uppercase tracking-wider mb-3">
+                Partner Quest
+              </p>
+              <MagicBlockQuestCard totalSparks={data.totalSparks} getAccessToken={getAccessToken} />
+            </div>
 
             <div className="mb-3 flex items-center justify-between">
               <p className="text-base md:text-sm font-medium text-slate-400 uppercase tracking-wider">

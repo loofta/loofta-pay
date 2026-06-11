@@ -50,7 +50,7 @@ function MobileMenu({
   if (!open) return null;
 
   const navLinks = [
-    { href: "/rewards", label: "Sparks ⚡", description: t('earnSparks') },
+    { href: "/sparks", label: "Sparks ⚡", description: t('earnSparks') },
     { href: "/app/waitlist", label: t('waitlist'), description: t('requestAccess') },
     { href: "/app/settings", label: t('profile'), description: null },
   ];
@@ -238,7 +238,7 @@ export function MinimalHeader() {
     setMobileMenuOpen(false);
   }, [pathname]);
 
-  const isRewardsActive = pathname === "/rewards";
+  const isSparksActive = pathname === "/sparks";
 
   return (
     <>
@@ -257,10 +257,10 @@ export function MinimalHeader() {
               <>
                 {/* Desktop: Rewards link */}
                 <Link
-                  href="/rewards"
+                  href="/sparks"
                   className={[
                     "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    isRewardsActive
+                    isSparksActive
                       ? "text-amber-300 bg-amber-500/10"
                       : "text-slate-300 hover:text-white hover:bg-white/10",
                   ].join(" ")}

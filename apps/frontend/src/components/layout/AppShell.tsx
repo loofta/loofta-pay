@@ -25,7 +25,7 @@ function ShellContent({ children }: { children: ReactNode }) {
     pathname === '/history' || pathname === '/app/history' ||
     pathname === '/settings' || pathname === '/app/settings' ||
     pathname?.startsWith('/c/') || pathname?.startsWith('/app/c/') ||
-    pathname === '/rewards' || pathname === '/app/rewards' ||
+    pathname === '/sparks' || pathname === '/app/sparks' ||
     pathname === '/waitlist' || pathname === '/app/waitlist'
   );
   const showMinimalHeader = !isCheckoutPage;
