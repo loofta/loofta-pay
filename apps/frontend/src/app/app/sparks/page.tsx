@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import confetti from "canvas-confetti";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 const MAGICBLOCK_SPARKS_THRESHOLD = 3000;
@@ -195,6 +196,17 @@ function MagicBlockQuestCard({ totalSparks, getAccessToken, questValidated }: {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<"success" | "already" | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (result !== "success") return;
+    const end = Date.now() + 3000;
+    const frame = () => {
+      confetti({ particleCount: 6, angle: 60, spread: 55, origin: { x: 0 }, colors: ["#FF1301", "#EAB308", "#ffffff"] });
+      confetti({ particleCount: 6, angle: 120, spread: 55, origin: { x: 1 }, colors: ["#FF1301", "#EAB308", "#ffffff"] });
+      if (Date.now() < end) requestAnimationFrame(frame);
+    };
+    frame();
+  }, [result]);
 
   async function handleValidate() {
     setError(null);
