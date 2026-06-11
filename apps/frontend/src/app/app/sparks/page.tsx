@@ -244,7 +244,7 @@ function MagicBlockQuestCard({ totalSparks, getAccessToken, questValidated }: {
             <p className={`text-base font-semibold ${isAlready ? "text-amber-300" : "text-white"}`}>
               {isAlready ? "Quest already validated" : "Quest validated!"}
             </p>
-            <p className="text-sm text-slate-400 mt-0.5">
+            <p className="text-base text-slate-400 mt-0.5">
               You're in the MagicBlock 50,000 points pool. Check your rewards on{" "}
               <a href="https://quests.magicblock.app/projects/loofta-pay" target="_blank" rel="noopener noreferrer" className={`underline ${isAlready ? "text-amber-400 hover:text-amber-300" : "text-white hover:text-slate-300"}`}>
                 quests.magicblock.app
