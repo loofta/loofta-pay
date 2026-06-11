@@ -67,8 +67,10 @@ export async function GET(request: NextRequest) {
       `sender_tx_hash.ilike.%${search}%`,
       `sweep_tx_hash.ilike.%${search}%`,
       `description.ilike.%${search}%`,
-      `id.ilike.%${search}%`,
     ];
+    // UUID columns can't use ilike — only add exact match when search looks like a UUID
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (UUID_RE.test(search)) orParts.push(`id.eq.${search}`);
     for (const uid of extraSenderIds) {
       orParts.push(`created_by.eq.${uid}`, `recipient_user_id.eq.${uid}`);
     }
