@@ -3209,7 +3209,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       {/* Hero */}
                       <div className="mt-4 text-center py-8 space-y-3">
                         <div className="text-5xl mb-2">🎉</div>
-                        <h3 className="text-3xl font-bold text-gray-900">
+                        <h3 className="text-3xl font-semibold text-gray-900">
                           ${parseFloat(claim.amount || "0").toFixed(2)} sent!
                         </h3>
                         {recipientLabel ? (
