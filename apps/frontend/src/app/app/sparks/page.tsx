@@ -3,7 +3,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
-import { useAuthStore } from "@/store/auth";
 import { useState, useEffect } from "react";
 import confetti from "canvas-confetti";
 
@@ -384,7 +383,6 @@ function MagicBlockQuestCard({ totalSparks, getAccessToken, questValidated }: {
 export default function SparksPage() {
   const { authenticated, userId } = useAuth();
   const { login: privyLogin, getAccessToken } = usePrivy();
-  const networkMode = useAuthStore((s) => s.networkMode);
 
   const {
     data,
@@ -393,10 +391,10 @@ export default function SparksPage() {
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ["rewards", userId ?? "", networkMode],
+    queryKey: ["rewards", userId ?? "", "devnet"],
     queryFn: async () => {
       const token = await getAccessToken().catch(() => null);
-      return fetchRewards(token, networkMode);
+      return fetchRewards(token, "devnet");
     },
     enabled: Boolean(authenticated && userId),
     staleTime: 60_000,
@@ -453,9 +451,14 @@ export default function SparksPage() {
         {/* Page header */}
         <div className="flex items-center justify-between mb-5">
           <div>
-            <h1 className="text-xl font-semibold text-white">Sparks ⚡</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold text-white">Sparks ⚡</h1>
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/25">
+                Devnet
+              </span>
+            </div>
             <p className="text-base text-slate-400 mt-0.5">
-              Complete missions, earn Sparks
+              Complete missions on devnet, earn Sparks
             </p>
           </div>
           <button
