@@ -43,7 +43,7 @@ import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
-const EVM_CHAIN_SET = new Set(["eth","ethereum","arb","arbitrum","base","op","optimism","bsc","avax","avalanche","polygon","matic","fantom","ftm","gnosis","linea","scroll","zksync","zk","blast","pol"]);
+const EVM_CHAIN_SET = new Set(["eth", "ethereum", "arb", "arbitrum", "base", "op", "optimism", "bsc", "avax", "avalanche", "polygon", "matic", "fantom", "ftm", "gnosis", "linea", "scroll", "zksync", "zk", "blast", "pol"]);
 function isEvmChainId(chain?: string): boolean { return EVM_CHAIN_SET.has(String(chain || "").toLowerCase()); }
 import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
 import {
@@ -122,7 +122,7 @@ function ClaimPayLayout({
     );
   }
   return (
-    <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
+    <div className="min-h-screen bg-[#0f0f12] text-white mobile-first">
       <div className="max-w-lg mx-auto px-4 py-6 pb-24">
         <div className="hidden md:block">
           <SendReceiveTabs activeTab="send" visualOnly />
@@ -409,7 +409,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
     isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
-    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null },
+    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -849,7 +849,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         fetch(`${backendUrl}/claims/${id}/claim-retry-sweep`, {
           method: "POST",
           headers: retrySweepHeaders,
-        }).then(r => r.json()).then(d => console.info("[Claim] retry-sweep (bg):", d)).catch(() => {});
+        }).then(r => r.json()).then(d => console.info("[Claim] retry-sweep (bg):", d)).catch(() => { });
         return { claimed: true, sweepTxHash: claimData?.sweepTxHash, sweptAmount: claimData?.sweptAmount };
       }
       // If already claimed/not pending, fire a background retry-sweep for recovery.
@@ -863,7 +863,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         fetch(`${backendUrl}/claims/${id}/claim-retry-sweep`, {
           method: "POST",
           headers: retrySweepHeaders,
-        }).then(r => r.json()).then(d => console.info("[Claim] retry-sweep (already-claimed bg):", d)).catch(() => {});
+        }).then(r => r.json()).then(d => console.info("[Claim] retry-sweep (already-claimed bg):", d)).catch(() => { });
         return { claimed: true, sweepTxHash: undefined, sweptAmount: undefined };
       }
       throw new Error(err?.message || `Claim failed: ${claimResp.status}`);
@@ -1139,6 +1139,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [perTransferPhase, setPerTransferPhase] = useState<PerTransferProgress | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [paymentCompleteCopied, setPaymentCompleteCopied] = useState(false);
   const { wallets: solanaStandardWallets } = useSolanaWallets();
   const { signTransaction: privySolanaSignTransaction } = usePrivySolanaSignTransaction();
   const solanaPayment = useSolanaPayment({ enabled: authenticated });
@@ -2556,33 +2557,33 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           ) : null
         }
       >
-      <AlertDialog open={showNetworkSwitchPrompt} onOpenChange={setShowNetworkSwitchPrompt}>
-        <AlertDialogContent className="[&_.text-gray-900]:!text-white [&_.text-muted-foreground]:!text-slate-300 [&_.border]:!border-white/10 bg-[#0f0f12] border-white/10">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-white">
-              Switch to {claimExpectedNetwork}?
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-slate-300">
-              This payment link was created on <strong className="text-white">{claimExpectedNetwork}</strong>.
-              Switch to view it. You can change your network again anytime in the user menu.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="bg-white/10 text-white border-white/20 hover:bg-white/20">
-              Stay on {networkMode}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (claimExpectedNetwork) setNetworkMode(claimExpectedNetwork);
-                setShowNetworkSwitchPrompt(false);
-              }}
-              className="bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-            >
-              Switch to {claimExpectedNetwork}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        <AlertDialog open={showNetworkSwitchPrompt} onOpenChange={setShowNetworkSwitchPrompt}>
+          <AlertDialogContent className="[&_.text-gray-900]:!text-white [&_.text-muted-foreground]:!text-slate-300 [&_.border]:!border-white/10 bg-[#0f0f12] border-white/10">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="text-white">
+                Switch to {claimExpectedNetwork}?
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-slate-300">
+                This payment link was created on <strong className="text-white">{claimExpectedNetwork}</strong>.
+                Switch to view it. You can change your network again anytime in the user menu.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="bg-white/10 text-white border-white/20 hover:bg-white/20">
+                Stay on {networkMode}
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  if (claimExpectedNetwork) setNetworkMode(claimExpectedNetwork);
+                  setShowNetworkSwitchPrompt(false);
+                }}
+                className="bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+              >
+                Switch to {claimExpectedNetwork}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         {/* Demo Mode Banner */}
         {DEMO_MODE && (
           <div className="mb-4 -mx-6 -mt-6 px-4 py-3 bg-amber-50 border-b border-amber-200 rounded-t-2xl">
@@ -3165,190 +3166,160 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               </div>
             ) : ["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <>
-                {/* Payment Complete Message (payer view) */}
-                <div className="mt-6 text-center py-12">
-                  <div className="mb-4 text-6xl">✅</div>
-                  <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                    Payment Complete
-                  </h3>
-                  <p className="text-gray-600 text-base mb-4">
-                    Your payment has been successfully processed and sent to the recipient.
-                  </p>
-                </div>
-                {/* Display description/message if available — hidden when embedded in send flow */}
-                {!embedInApp && claim?.description && (
-                  <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                    <div className="text-base md:text-sm text-gray-600 mb-1">Message</div>
-                    <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
-                      {(() => {
-                        const desc = claim.description || '';
-                        // Check if description contains GIF URLs (common patterns including Giphy)
-                        const gifUrlPattern = /(https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\/[^\s]*)/gi;
-                        const parts: string[] = [];
-                        let lastIndex = 0;
-                        let match;
-
-                        // Reset regex lastIndex
-                        gifUrlPattern.lastIndex = 0;
-
-                        while ((match = gifUrlPattern.exec(desc)) !== null) {
-                          // Add text before match
-                          if (match.index > lastIndex) {
-                            parts.push(desc.slice(lastIndex, match.index));
-                          }
-                          // Add GIF URL
-                          parts.push(match[0]);
-                          lastIndex = match.index + match[0].length;
-                        }
-
-                        // Add remaining text
-                        if (lastIndex < desc.length) {
-                          parts.push(desc.slice(lastIndex));
-                        }
-
-                        // If no matches, return original text
-                        if (parts.length === 0) {
-                          return desc;
-                        }
-
-                        return parts.map((part, idx) => {
-                          // Check if this part is a GIF URL
-                          if (gifUrlPattern.test(part) || part.match(/https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\//i)) {
-                            // Convert Giphy URL to direct image URL if needed
-                            let imageUrl = part;
-                            if (part.includes('giphy.com') && !part.endsWith('.gif')) {
-                              // Extract Giphy ID and use direct GIF URL
-                              const giphyIdMatch = part.match(/giphy\.com\/media\/([^\/]+)/);
-                              if (giphyIdMatch) {
-                                imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
-                              } else {
-                                // Try to get the original URL
-                                imageUrl = part.replace(/\/$/, '') + '.gif';
-                              }
-                            }
-                            return (
-                              <img
-                                key={idx}
-                                src={imageUrl}
-                                alt="GIF"
-                                className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
-                                style={{ maxHeight: '200px', maxWidth: '100%' }}
-                              />
-                            );
-                          }
-                          return <span key={idx}>{part}</span>;
-                        });
-                      })()}
-                    </div>
-                  </div>
-                )}
-                <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
-                  <div className="text-base font-medium text-slate-200 mb-2">Payment summary</div>
-                  <div className="text-base text-gray-700 space-y-1">
-                    {!requiresPrivate ? (
-                      /* Non-private: no fees, sender pays = recipient receives */
-                      <>
-                        <div className="flex items-center justify-between">
-                          <span className="text-gray-600 font-medium">You paid</span>
-                          <span className="text-lg font-semibold text-gray-900">
-                            ${parseFloat(claim.amount || "0").toFixed(2)}
-                          </span>
+                {/* Payment Complete — hero + share + summary */}
+                {(() => {
+                  const recipientLabel =
+                    (claim as any)?.recipient_pending_username_value
+                      ? `@${(claim as any).recipient_pending_username_value}`
+                      : claim?.recipient_username
+                        ? `@${claim.recipient_username}`
+                        : (claim as any)?.recipient_pending_email_value
+                          ? (claim as any).recipient_pending_email_value
+                          : claim?.recipient_email
+                            ? claim.recipient_email
+                            : null;
+                  const shareId = (claim as any)?.short_id || claim?.id;
+                  const claimLink = typeof window !== "undefined"
+                    ? `${window.location.origin}/c/${shareId}`
+                    : `https://pay.loofta.xyz/c/${shareId}`;
+                  const handleCopyLink = async () => {
+                    try {
+                      await navigator.clipboard.writeText(claimLink);
+                      setPaymentCompleteCopied(true);
+                      toast({ title: "Link copied" });
+                      setTimeout(() => setPaymentCompleteCopied(false), 2000);
+                    } catch {
+                      toast({ variant: "destructive", title: "Copy failed" });
+                    }
+                  };
+                  const handleShare = () => {
+                    const who = recipientLabel ? ` to ${recipientLabel}` : "";
+                    if (navigator.share) {
+                      navigator.share({
+                        title: "Payment sent",
+                        text: `$${parseFloat(claim.amount || "0").toFixed(2)} sent${who} via Loofta.`,
+                        url: claimLink,
+                      }).catch(() => handleCopyLink());
+                    } else {
+                      handleCopyLink();
+                    }
+                  };
+                  return (
+                    <>
+                      {/* Hero */}
+                      <div className="mt-4 text-center py-8 space-y-3">
+                        <div className="text-5xl mb-2">🎉</div>
+                        <h3 className="text-3xl font-bold text-gray-900">
+                          ${parseFloat(claim.amount || "0").toFixed(2)} sent!
+                        </h3>
+                        {recipientLabel ? (
+                          <p className="text-lg text-gray-500">
+                            To <span className="font-medium text-gray-900">{recipientLabel}</span>
+                          </p>
+                        ) : (
+                          <p className="text-lg text-gray-500">Payment sent successfully.</p>
+                        )}
+                        {/* Description / GIF */}
+                        {!embedInApp && claim?.description && (
+                          <div className="mt-3">
+                            <ClaimDescriptionMessageBox description={claim.description} />
+                          </div>
+                        )}
+                        {/* Share row — right under the recipient */}
+                        <div className="flex gap-2 pt-2">
+                          <div className="flex gap-2 flex-1">
+                            <Input
+                              readOnly
+                              value={claimLink}
+                              className="font-mono text-sm flex-1 bg-gray-50"
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              onClick={handleCopyLink}
+                              className="shrink-0 !text-slate-900 border-gray-400 hover:bg-gray-100"
+                            >
+                              {paymentCompleteCopied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                            </Button>
+                          </div>
+                          <Button
+                            type="button"
+                            onClick={handleShare}
+                            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-5 py-2 text-white font-semibold hover:opacity-90 shrink-0"
+                          >
+                            <Share2 className="h-4 w-4" />
+                            Share
+                          </Button>
                         </div>
-                        <div className="flex items-center justify-between border-t border-gray-200 pt-1 mt-1">
-                          <span className="text-gray-600">Recipient receives</span>
-                          <span className="text-lg font-semibold text-gray-900">
-                            <span className="inline-flex items-center gap-1">
-                              <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={18} />
+                      </div>
+                      {/* Summary */}
+                      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-2">
+                        {!requiresPrivate ? (
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-gray-500">Recipient receives</span>
+                            <span className="text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
+                              <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
                               ${parseFloat(claim.amount || "0").toFixed(2)}
                             </span>
-                          </span>
-                        </div>
-                      </>
-                    ) : isFeeOnSender ? (
-                      <>
-                        <div className="flex items-center justify-between">
-                          <span className="text-gray-600">Recipient receives</span>
-                          <span className="text-lg font-semibold text-gray-900">
-                            <span className="inline-flex items-center gap-1">
-                              <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={18} />
-                              ${parseFloat(claim.amount || "0").toFixed(2)}
-                            </span>
-                          </span>
-                        </div>
-                        {paidFeeUsdc != null && paidFeeUsdc > 0 && (
+                          </div>
+                        ) : isFeeOnSender ? (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-gray-500">Recipient receives</span>
+                              <span className="text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
+                                <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
+                                ${parseFloat(claim.amount || "0").toFixed(2)}
+                              </span>
+                            </div>
+                            {paidFeeUsdc != null && paidFeeUsdc > 0 && (
+                              <div className="flex items-center justify-between">
+                                <span className="text-sm text-gray-500">Platform fee</span>
+                                <span className="text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
+                              </div>
+                            )}
+                            {paidFeeUsdc != null && (
+                              <div className="flex items-center justify-between border-t border-gray-200 pt-2">
+                                <span className="text-sm font-medium text-gray-500">You paid</span>
+                                <span className="text-sm font-semibold text-gray-900">
+                                  ${(parseFloat(claim.amount || "0") + paidFeeUsdc).toFixed(4)}
+                                </span>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            {paidFeeUsdc != null && paidFeeUsdc > 0 && (
+                              <div className="flex items-center justify-between">
+                                <span className="text-sm text-gray-500">Platform fee (deducted)</span>
+                                <span className="text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
+                              </div>
+                            )}
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-gray-500">Recipient receives</span>
+                              <span className="text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
+                                <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
+                                ${(parseFloat(claim.amount || "0") - (paidFeeUsdc ?? 0)).toFixed(2)}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                        {recipientLabel && (
+                          <div className="flex items-center justify-between border-t border-gray-200 pt-2">
+                            <span className="text-sm text-gray-500">Sent to</span>
+                            <span className="text-sm font-medium text-gray-900">{recipientLabel}</span>
+                          </div>
+                        )}
+                        {claim.paid_at && (
                           <div className="flex items-center justify-between">
-                            <span className="text-gray-600 text-base md:text-sm">Platform fee</span>
-                            <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
+                            <span className="text-sm text-gray-500">Paid</span>
+                            <span className="text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
                           </div>
                         )}
-                        {paidFeeUsdc != null && (
-                          <div className="flex items-center justify-between border-t border-gray-200 pt-1 mt-1">
-                            <span className="text-gray-600 font-medium">You paid</span>
-                            <span className="text-base font-semibold text-gray-900">
-                              ${(parseFloat(claim.amount || "0") + paidFeeUsdc).toFixed(4)}
-                            </span>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex items-center justify-between">
-                          <span className="text-gray-600 font-medium">You paid</span>
-                          <span className="text-lg font-semibold text-gray-900">
-                            ${parseFloat(claim.amount || "0").toFixed(2)}
-                          </span>
-                        </div>
-                        {paidFeeUsdc != null && paidFeeUsdc > 0 && (
-                          <div className="flex items-center justify-between">
-                            <span className="text-gray-600 text-base md:text-sm">Platform fee (deducted)</span>
-                            <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
-                          </div>
-                        )}
-                        <div className="flex items-center justify-between border-t border-gray-200 pt-1 mt-1">
-                          <span className="text-gray-600">Recipient receives</span>
-                          <span className="text-lg font-semibold text-gray-900">
-                            <span className="inline-flex items-center gap-1">
-                              <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={18} />
-                              ${(parseFloat(claim.amount || "0") - (paidFeeUsdc ?? 0)).toFixed(2)}
-                            </span>
-                          </span>
-                        </div>
-                      </>
-                    )}
-                    {user?.id && claim?.created_by === user.id && (() => {
-                      const recipientLabel =
-                        (claim as { recipient_pending_username_value?: string } | null)?.recipient_pending_username_value
-                          ? `@${(claim as { recipient_pending_username_value?: string }).recipient_pending_username_value}`
-                          : (claim as { recipient_pending_email_value?: string } | null)?.recipient_pending_email_value
-                            ? (claim as { recipient_pending_email_value?: string }).recipient_pending_email_value
-                            : claim?.recipient_username
-                              ? `@${claim.recipient_username}`
-                              : null;
-                      return recipientLabel ? (
-                        <div className="flex items-center justify-between">
-                          <span className="text-gray-600">Sent to</span>
-                          <span className="text-base font-medium text-gray-900">{recipientLabel}</span>
-                        </div>
-                      ) : null;
-                    })()}
-                    {claim.created_at && (
-                      <div className="flex items-center justify-between pt-2 border-t border-gray-200 mt-2">
-                        <span className="text-gray-600">Created</span>
-                        <span className="text-base md:text-sm text-gray-700">
-                          {formatUTCTimestamp(claim.created_at)}
-                        </span>
                       </div>
-                    )}
-                    {claim.paid_at && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-600">Paid</span>
-                        <span className="text-base md:text-sm text-gray-700">
-                          {formatUTCTimestamp(claim.paid_at)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                    </>
+                  );
+                })()}
                 {isClaimPageLocalhost &&
                   !!(claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.claim_burner_address) && (
                     <div className="mt-4 rounded-xl border border-amber-300/60 bg-amber-50/40 p-4">
@@ -3462,11 +3433,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           {"Payment to "}
                           {(claim as { recipient_pending_username_value?: string } | null)?.recipient_pending_username_value
                             ? `@${(claim as { recipient_pending_username_value?: string }).recipient_pending_username_value}`
-                            : (claim as { recipient_pending_email_value?: string } | null)?.recipient_pending_email_value
-                              ? (claim as { recipient_pending_email_value?: string }).recipient_pending_email_value
-                              : claim?.recipient_username
-                                ? `@${claim.recipient_username}`
-                                : null}
+                            : claim?.recipient_username
+                              ? `@${claim.recipient_username}`
+                              : (claim as { recipient_pending_email_value?: string } | null)?.recipient_pending_email_value
+                                ? (claim as { recipient_pending_email_value?: string }).recipient_pending_email_value
+                                : claim?.recipient_email
+                                  ? claim.recipient_email
+                                  : null}
                         </>
                       ) : (
                         <>
@@ -3575,7 +3548,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 {/* Minimum amount notice */}
                 {claimAmountUSD > 0 && claimAmountUSD < 5 && (
                   <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-base md:text-sm text-amber-700">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
                     <span>Minimum payment amount is <strong>$5.00 USDC</strong>. This payment link cannot be paid.</span>
                   </div>
                 )}
@@ -3654,44 +3627,44 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         Demo Mode - Payments Disabled
                       </Button>
                     ) : (
-                          <GradientActionButton
-                            onClick={async () => {
-                              if (!authenticated) { login(); return; }
-                              setPayWithLooftaError(null);
-                              setPayWithWalletError(null);
-                              setConfirmingTxSignature(null);
-                              setConfirmingTxSource(null);
-                              setPerTransferPhase(null);
-                              setPendingFeeUsdc(null);
-                              setPreBuilding(true);
-                              try {
-                                const fee = await preBuildFee();
-                                if (fee != null) setPendingFeeUsdc(fee);
-                              } finally {
-                                setPreBuilding(false);
-                              }
-                              setShowPayNowModal(true);
-                            }}
-                            disabled={
-                              preBuilding
+                      <GradientActionButton
+                        onClick={async () => {
+                          if (!authenticated) { login(); return; }
+                          setPayWithLooftaError(null);
+                          setPayWithWalletError(null);
+                          setConfirmingTxSignature(null);
+                          setConfirmingTxSource(null);
+                          setPerTransferPhase(null);
+                          setPendingFeeUsdc(null);
+                          setPreBuilding(true);
+                          try {
+                            const fee = await preBuildFee();
+                            if (fee != null) setPendingFeeUsdc(fee);
+                          } finally {
+                            setPreBuilding(false);
+                          }
+                          setShowPayNowModal(true);
+                        }}
+                        disabled={
+                          preBuilding
+                            ? true
+                            : mainnetViewOnly
+                              ? true
+                              : isWrongNetwork
                                 ? true
-                                : mainnetViewOnly
+                                : claimAmountUSD < 5
                                   ? true
-                                  : isWrongNetwork
+                                  : requiresPrivate && !isPrivateMode
                                     ? true
-                                    : claimAmountUSD < 5
-                                      ? true
-                                      : requiresPrivate && !isPrivateMode
-                                        ? true
-                                        : !authenticated
-                                          ? false
-                                          : !isPayerWalletReady || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS"
-                            }
-                            loading={preBuilding || preparing || (authenticated && !isPayerWalletReady)}
-                            loadingText={preBuilding ? "Calculating fees…" : "Wallet loading…"}
-                          >
-                            {isWrongNetwork && claimExpectedNetwork ? `Switch to ${claimExpectedNetwork}` : !authenticated ? "Sign in to pay" : "Pay now"}
-                          </GradientActionButton>
+                                    : !authenticated
+                                      ? false
+                                      : !isPayerWalletReady || preparing || String(status || claim?.status || "").toUpperCase() === "SUCCESS"
+                        }
+                        loading={preBuilding || preparing || (authenticated && !isPayerWalletReady)}
+                        loadingText={preBuilding ? "Calculating fees…" : "Wallet loading…"}
+                      >
+                        {isWrongNetwork && claimExpectedNetwork ? `Switch to ${claimExpectedNetwork}` : !authenticated ? "Sign in to pay" : "Pay now"}
+                      </GradientActionButton>
                     )}
                   </div>
                 </div>
@@ -4334,10 +4307,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <p className="pt-0.5 text-base md:text-sm text-center text-muted-foreground">
                   {isFeeOnSender ? (
                     <>${claimAmountUSD.toFixed(2)} + {pendingFeeUsdc != null ? "" : "~"}$
-                    {pendingFeeUsdc != null
-                      ? pendingFeeUsdc.toFixed(3)
-                      : (privatePayProtocolFee + privatePayGasFee).toFixed(3)}{" "}
-                    fee</>
+                      {pendingFeeUsdc != null
+                        ? pendingFeeUsdc.toFixed(3)
+                        : (privatePayProtocolFee + privatePayGasFee).toFixed(3)}{" "}
+                      fee</>
                   ) : (
                     <>fees deducted from recipient</>
                   )}
