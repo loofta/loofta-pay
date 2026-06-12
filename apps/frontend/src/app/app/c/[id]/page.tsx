@@ -4266,13 +4266,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   <Loader2 className="h-5 w-5 shrink-0 animate-spin text-orange-500" />
                 </div>
                 <a
-                  href={getExplorerTxUrl(selectedFrom?.chain ?? undefined, confirmingTxSignature)}
+                  href={getExplorerTxUrl("solana", confirmingTxSignature)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 py-2.5 text-base md:text-sm font-medium text-orange-600 hover:bg-orange-50 hover:border-orange-200 transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
                   tabIndex={0}
                 >
-                  View transaction on {getExplorerName(selectedFrom?.chain ?? undefined)}
+                  View transaction on {getExplorerName("solana")}
                 </a>
               </div>
             </>
