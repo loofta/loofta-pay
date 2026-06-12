@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getVerifiedUserId } from "@/lib/serverAuth";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 const MAGICBLOCK_API_KEY = process.env.MAGICBLOCK_QUEST_API_KEY;
 const QUEST_ID = Number(process.env.MAGICBLOCK_QUEST_ID ?? "21");
-const SPARKS_THRESHOLD = 3000;
 
 function isValidBase58Pubkey(s: string): boolean {
   return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s);
@@ -64,23 +62,6 @@ export async function POST(request: NextRequest) {
 
   if (!isValidBase58Pubkey(walletPubkey)) {
     return NextResponse.json({ error: "Invalid Solana wallet address" }, { status: 400 });
-  }
-
-  // Verify the user has reached the threshold on our backend
-  const authHeader = request.headers.get("authorization") ?? "";
-  const sparksRes = await fetch(
-    `${BACKEND_URL}/rewards/me?network=mainnet`,
-    { headers: { Authorization: authHeader } },
-  );
-  if (!sparksRes.ok) {
-    return NextResponse.json({ error: "Could not verify sparks balance" }, { status: 502 });
-  }
-  const sparksData = await sparksRes.json();
-  if ((sparksData.totalSparks ?? 0) < SPARKS_THRESHOLD) {
-    return NextResponse.json(
-      { error: `You need at least ${SPARKS_THRESHOLD} Sparks to validate this quest` },
-      { status: 403 },
-    );
   }
 
   // Push validation to MagicBlock
