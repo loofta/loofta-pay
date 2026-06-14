@@ -184,10 +184,11 @@ function SparksSkeleton() {
   );
 }
 
-function MagicBlockQuestCard({ totalSparks, getAccessToken, questValidated }: {
+function MagicBlockQuestCard({ totalSparks, getAccessToken, questValidated, questLoading }: {
   totalSparks: number;
   getAccessToken: () => Promise<string | null>;
   questValidated: boolean;
+  questLoading: boolean;
 }) {
   const unlocked = totalSparks >= MAGICBLOCK_SPARKS_THRESHOLD;
   const [showForm, setShowForm] = useState(false);
@@ -320,9 +321,10 @@ function MagicBlockQuestCard({ totalSparks, getAccessToken, questValidated }: {
         <button
           type="button"
           onClick={() => setShowForm(true)}
-          className="mt-1 w-full rounded-xl px-4 py-2.5 text-base font-semibold bg-white text-[#0f0f12] hover:bg-white/90 transition-opacity"
+          disabled={questLoading}
+          className="mt-1 w-full rounded-xl px-4 py-2.5 text-base font-semibold bg-white text-[#0f0f12] hover:bg-white/90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Validate quest on MagicBlock →
+          {questLoading ? "Loading…" : "Validate quest on MagicBlock →"}
         </button>
       )}
 
@@ -404,7 +406,7 @@ export default function SparksPage() {
   });
 
   // Runs in parallel with sparks — card renders immediately, validated state arrives async
-  const { data: questStatus } = useQuery({
+  const { data: questStatus, isLoading: isQuestLoading } = useQuery({
     queryKey: ["mb-quest-status", userId],
     queryFn: async () => {
       const token = await getAccessToken().catch(() => null);
@@ -511,7 +513,7 @@ export default function SparksPage() {
               <p className="text-base md:text-sm font-medium text-slate-400 uppercase tracking-wider mb-3">
                 Partner Quest
               </p>
-              <MagicBlockQuestCard totalSparks={data.totalSparks} getAccessToken={getAccessToken} questValidated={questStatus?.validated ?? false} />
+              <MagicBlockQuestCard totalSparks={data.totalSparks} getAccessToken={getAccessToken} questValidated={questStatus?.validated ?? false} questLoading={isQuestLoading} />
             </div>
 
             <div className="mb-3 flex items-center justify-between">
