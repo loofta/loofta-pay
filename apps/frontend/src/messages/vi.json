@@ -5,14 +5,12 @@
     "history": "Lịch sử",
     "profile": "Hồ sơ"
   },
-
   "AppShell": {
     "bannerMainnet": "Mainnet beta — gửi và nhận thanh toán riêng tư với USDC thực. Thanh toán cho bất kỳ ai qua email, tên người dùng X, hoặc tên người dùng Loofta.",
     "bannerDevnet": "Gửi và nhận thanh toán riêng tư với MagicBlock PER — devnet. Thanh toán cho bất kỳ ai qua email, tên người dùng X, hoặc tên người dùng Loofta.",
     "bannerContact": "Có câu hỏi? Liên hệ chúng tôi trên Telegram",
     "dismissBanner": "Đóng banner"
   },
-
   "MinimalHeader": {
     "balance": "Số dư",
     "sparks": "Sparks",
@@ -29,7 +27,6 @@
     "earnSparks": "Kiếm Sparks từ hoạt động của bạn",
     "requestAccess": "Yêu cầu truy cập sớm mainnet"
   },
-
   "SettingsPage": {
     "title": "Hồ sơ",
     "username": "Tên người dùng",
@@ -41,7 +38,6 @@
     "signInPrompt": "Đăng nhập để xem hồ sơ của bạn.",
     "goToHome": "Về trang chủ"
   },
-
   "HistoryPage": {
     "title": "Lịch sử thanh toán",
     "amountSent": "Số tiền đã gửi",
@@ -72,7 +68,6 @@
       "EXPIRED": "Đã hết hạn"
     }
   },
-
   "HomePage": {
     "send": "Gửi",
     "to": "Đến",
@@ -147,7 +142,6 @@
       }
     }
   },
-
   "MarketingPage": {
     "nav": {
       "payReceive": "Thanh toán & Nhận",
@@ -301,7 +295,6 @@
       "brand": "Thương hiệu"
     }
   },
-
   "UserMenu": {
     "username": "Tên người dùng",
     "email": "Email",
@@ -349,7 +342,6 @@
     "loadingWallet": "Đang tải ví...",
     "walletAutoCreated": "Ví sẽ được tạo tự động khi cần."
   },
-
   "Footer": {
     "forYou": "Cho bạn",
     "forBusiness": "Cho doanh nghiệp",
@@ -365,5 +357,144 @@
     "copyright": "© {year} Loofta. Tất cả quyền được bảo lưu.",
     "language": "Ngôn ngữ",
     "currency": "Tiền tệ"
+  },
+  "WaitlistPage": {
+    "eyebrow": "Mainnet Early Access",
+    "headline1": "Most people will wait.",
+    "headlineGradient": "You don't have to.",
+    "body": "A hand-picked group gets access before anyone else — real cashback, direct founder support, and features shaped around how you work. Spots are assigned manually.",
+    "requestAccess": "Request access →",
+    "verifying": "Verifying…",
+    "watchDemo": "Watch demo",
+    "whyApplyEarly": "Why apply early",
+    "dragToFlick": "drag to flick →",
+    "stats": {
+      "waitlistCount": "On the waitlist",
+      "cashback": "Cashback for early users",
+      "fees": "Fees during early access",
+      "reviewTime": "Avg. review time"
+    },
+    "cards": {
+      "cashbackTitle": "Up to $100 cashback",
+      "cashbackDesc": "Not a voucher — real money deposited after your first payments on mainnet.",
+      "founderTitle": "Direct founder access",
+      "founderDesc": "Skip the queue. Message the team building this and shape what ships next.",
+      "shapeTitle": "Shape what gets built",
+      "shapeDesc": "Your workflow becomes the product roadmap. Early users decide priorities."
+    },
+    "steps": {
+      "name": {
+        "question": "What's your name, or how do you want to be called?",
+        "hint": "A nickname is totally fine."
+      },
+      "email": {
+        "question": "What's your email address?",
+        "hint": "We'll send your early access details here."
+      },
+      "telegram": {
+        "question": "What's your Telegram handle?",
+        "hint": "e.g. @yourhandle — leave blank to skip."
+      },
+      "twitter": {
+        "question": "What's your Twitter / X username?",
+        "hint": "e.g. @yourname — leave blank to skip."
+      },
+      "comms": {
+        "question": "How do you prefer we reach out?"
+      },
+      "age": {
+        "question": "What's your age range?"
+      },
+      "occupation": {
+        "question": "How would you describe yourself?",
+        "hint": "Pick the one that fits best."
+      },
+      "volume": {
+        "question": "How much in payments do you plan to receive monthly?"
+      },
+      "paymentType": {
+        "question": "Which payment style interests you most?",
+        "hint": "Loofta supports both standard and fully private (shielded) payments."
+      },
+      "fiatToCrypto": {
+        "question": "Interested in letting people pay you in fiat and receiving in crypto?",
+        "hint": "e.g. someone pays in USD via card, you receive USDC on-chain."
+      },
+      "withdrawalRails": {
+        "question": "Which withdrawal rails will you use?",
+        "hint": "e.g. USDC, Revolut, Venmo, SEPA, BTC — be as specific as you like."
+      },
+      "earn": {
+        "question": "Are you interested in our Earn product?",
+        "hint": "Earn yield on your balance while it sits in Loofta."
+      }
+    },
+    "options": {
+      "comms": {
+        "twitterDm": "Twitter / X DM",
+        "telegram": "Telegram",
+        "email": "Email"
+      },
+      "age": {
+        "under18": "Under 18",
+        "age18_24": "18 – 24",
+        "age25_34": "25 – 34",
+        "age35_44": "35 – 44",
+        "age45_54": "45 – 54",
+        "age55plus": "55 +"
+      },
+      "occupation": {
+        "freelancer": "Freelancer",
+        "creator": "Content Creator",
+        "web3Business": "Web3 Business Owner",
+        "remoteWorker": "Remote Worker / Employee",
+        "developer": "Developer",
+        "student": "Student",
+        "trader": "Crypto Trader / Investor",
+        "other": "Other"
+      },
+      "volume": {
+        "less1k": "Less than $1,000 / mo",
+        "from1kTo5k": "$1,000 – $5,000 / mo",
+        "from5kTo25k": "$5,000 – $25,000 / mo",
+        "from25kTo100k": "$25,000 – $100,000 / mo",
+        "over100k": "$100,000 + / mo"
+      },
+      "paymentType": {
+        "nonPrivate": "Non-private (standard on-chain)",
+        "private": "Private (shielded / confidential)",
+        "both": "Both — I'll use whatever fits"
+      },
+      "yesno": {
+        "yes": "Yes, definitely",
+        "no": "Not right now"
+      }
+    },
+    "placeholders": {
+      "name": "Your name or nickname",
+      "email": "you@example.com",
+      "telegram": "@yourhandle",
+      "twitter": "@yourname",
+      "withdrawalRails": "e.g. USDC, Revolut, BTC…"
+    },
+    "form": {
+      "optional": "Optional — press Enter or Continue to skip.",
+      "back": "← Back",
+      "pressEnter": "or press Enter ↵",
+      "submitting": "Submitting…",
+      "submit": "Submit →",
+      "continue": "Continue →"
+    },
+    "submitted": {
+      "title": "Request received.",
+      "titleWithName": "Request received, {name}.",
+      "body": "You'll be notified as soon as you get access — spots are assigned manually and we'll reach out directly when yours is ready.",
+      "cashbackNote": "Early members get up to <b>$100 cashback</b> when they start using Loofta on mainnet.",
+      "whatsIncluded": "What's included",
+      "perk1": "Direct notification when your access is granted",
+      "perk2": "Up to $100 cashback once you're active",
+      "perk3": "Private beta features before public launch",
+      "perk4": "Direct line to the founding team"
+    }
   }
 }

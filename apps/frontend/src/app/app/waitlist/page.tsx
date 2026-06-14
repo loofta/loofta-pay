@@ -6,6 +6,7 @@ import { ArrowLeft, Check, Play, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { Turnstile } from "@marsidev/react-turnstile";
+import { useTranslations } from "next-intl";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,49 +40,6 @@ const EMPTY_FORM: FormData = {
   earn_interest: null,
 };
 
-// ─── Options ──────────────────────────────────────────────────────────────────
-
-const COMMS_OPTIONS = [
-  { value: "twitter_dm", label: "Twitter / X DM" },
-  { value: "telegram", label: "Telegram" },
-  { value: "email", label: "Email" },
-];
-
-const AGE_OPTIONS = [
-  { value: "under_18", label: "Under 18" },
-  { value: "18_24", label: "18 – 24" },
-  { value: "25_34", label: "25 – 34" },
-  { value: "35_44", label: "35 – 44" },
-  { value: "45_54", label: "45 – 54" },
-  { value: "55_plus", label: "55 +" },
-];
-
-const OCCUPATION_OPTIONS = [
-  { value: "freelancer", label: "Freelancer" },
-  { value: "creator", label: "Content Creator" },
-  { value: "web3_business", label: "Web3 Business Owner" },
-  { value: "remote_worker", label: "Remote Worker / Employee" },
-  { value: "developer", label: "Developer" },
-  { value: "student", label: "Student" },
-  { value: "trader", label: "Crypto Trader / Investor" },
-  { value: "other", label: "Other" },
-];
-
-const VOLUME_OPTIONS = [
-  { value: "less_1k", label: "Less than $1,000 / mo" },
-  { value: "1k_5k", label: "$1,000 – $5,000 / mo" },
-  { value: "5k_25k", label: "$5,000 – $25,000 / mo" },
-  { value: "25k_100k", label: "$25,000 – $100,000 / mo" },
-  { value: "100k_plus", label: "$100,000 + / mo" },
-];
-
-const PAYMENT_TYPE_OPTIONS = [
-  { value: "non_private", label: "Non-private (standard on-chain)" },
-  { value: "private", label: "Private (shielded / confidential)" },
-  { value: "both", label: "Both — I'll use whatever fits" },
-];
-
-
 // ─── Steps ────────────────────────────────────────────────────────────────────
 
 type StepId =
@@ -95,21 +53,6 @@ interface Step {
   hint?: string;
   type: "text" | "single" | "multi" | "yesno";
 }
-
-const STEPS: Step[] = [
-  { id: "name", question: "What's your name, or how do you want to be called?", hint: "A nickname is totally fine.", type: "text" },
-  { id: "email", question: "What's your email address?", hint: "We'll send your early access details here.", type: "text" },
-  { id: "telegram", question: "What's your Telegram handle?", hint: "e.g. @yourhandle — leave blank to skip.", type: "text" },
-  { id: "twitter", question: "What's your Twitter / X username?", hint: "e.g. @yourname — leave blank to skip.", type: "text" },
-  { id: "comms", question: "How do you prefer we reach out?", type: "single" },
-  { id: "age", question: "What's your age range?", type: "single" },
-  { id: "occupation", question: "How would you describe yourself?", hint: "Pick the one that fits best.", type: "single" },
-  { id: "volume", question: "How much in payments do you plan to receive monthly?", type: "single" },
-  { id: "payment_type", question: "Which payment style interests you most?", hint: "Loofta supports both standard and fully private (shielded) payments.", type: "single" },
-  { id: "fiat_to_crypto", question: "Interested in letting people pay you in fiat and receiving in crypto?", hint: "e.g. someone pays in USD via card, you receive USDC on-chain.", type: "yesno" },
-  { id: "withdrawal_rails", question: "Which withdrawal rails will you use?", hint: "e.g. USDC, Revolut, Venmo, SEPA, BTC — be as specific as you like.", type: "text" },
-  { id: "earn", question: "Are you interested in our Earn product?", hint: "Earn yield on your balance while it sits in Loofta.", type: "yesno" },
-];
 
 // ─── Video Modal ──────────────────────────────────────────────────────────────
 
@@ -238,6 +181,7 @@ function WReceiptCard({ card, pose, z, dragHandlers, isDragged, isFront }: {
 }
 
 function WCardStack() {
+  const t = useTranslations("WaitlistPage");
   const [front, setFront] = useState(0);
   const [drag, setDrag] = useState<{ x: number; y: number; startX: number; startY: number } | null>(null);
   const [throwing, setThrowing] = useState<{ x: number; y: number; rot: number } | null>(null);
@@ -303,7 +247,7 @@ function WCardStack() {
       })}
       {!drag && !throwing && (
         <div className="pointer-events-none absolute left-1/2 top-6 inline-flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
-          drag to flick →
+          {t("dragToFlick")}
         </div>
       )}
       <div className="absolute bottom-8 left-1/2 flex -translate-x-1/2 gap-1.5">
@@ -317,44 +261,46 @@ function WCardStack() {
 
 // ─── Landing screen ───────────────────────────────────────────────────────────
 
-const STATS = [
-  { value: "500+", label: "On the waitlist" },
-  { value: "$100", label: "Cashback for early users" },
-  { value: "0%", label: "Fees during early access" },
-  { value: "24h", label: "Avg. review time" },
-];
-
-const CARDS = [
-  {
-    icon: (
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[#FF4A26]">
-        <circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" />
-      </svg>
-    ),
-    title: "Up to $100 cashback",
-    desc: "Not a voucher — real money deposited after your first payments on mainnet.",
-  },
-  {
-    icon: (
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[#FF4A26]">
-        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
-      </svg>
-    ),
-    title: "Direct founder access",
-    desc: "Skip the queue. Message the team building this and shape what ships next.",
-  },
-  {
-    icon: (
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[#FF4A26]">
-        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-      </svg>
-    ),
-    title: "Shape what gets built",
-    desc: "Your workflow becomes the product roadmap. Early users decide priorities.",
-  },
-];
-
 function LandingScreen({ onStart, onVideo, turnstileReady }: { onStart: () => void; onVideo: () => void; turnstileReady: boolean }) {
+  const t = useTranslations("WaitlistPage");
+
+  const STATS = [
+    { value: "500+", label: t("stats.waitlistCount") },
+    { value: "$100", label: t("stats.cashback") },
+    { value: "0%",   label: t("stats.fees") },
+    { value: "24h",  label: t("stats.reviewTime") },
+  ];
+
+  const CARDS = [
+    {
+      icon: (
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[#FF4A26]">
+          <circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" />
+        </svg>
+      ),
+      title: t("cards.cashbackTitle"),
+      desc: t("cards.cashbackDesc"),
+    },
+    {
+      icon: (
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[#FF4A26]">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      ),
+      title: t("cards.founderTitle"),
+      desc: t("cards.founderDesc"),
+    },
+    {
+      icon: (
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[#FF4A26]">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+        </svg>
+      ),
+      title: t("cards.shapeTitle"),
+      desc: t("cards.shapeDesc"),
+    },
+  ];
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -375,23 +321,21 @@ function LandingScreen({ onStart, onVideo, turnstileReady }: { onStart: () => vo
           <div className="flex items-center gap-3 mb-8">
             <span className="h-px w-6 bg-[#FF4A26]" />
             <span className="text-[11px] font-semibold uppercase tracking-widest text-[#FF4A26]">
-              Mainnet Early Access
+              {t("eyebrow")}
             </span>
           </div>
 
           {/* Headline */}
           <h1 className="text-4xl sm:text-5xl lg:text-[3.25rem] font-semibold leading-[1.12] mb-6 max-w-lg">
-            Most people will wait.<br />
+            {t("headline1")}<br />
             <span className="bg-gradient-to-r from-[#FF4A26] to-[#EAB308] bg-clip-text text-transparent italic">
-              You don&apos;t have to.
+              {t("headlineGradient")}
             </span>
           </h1>
 
           {/* Body */}
           <p className="text-base text-slate-400 leading-relaxed mb-10 max-w-sm">
-            A hand-picked group gets access before anyone else — real cashback,
-            direct founder support, and features shaped around how you work.
-            Spots are assigned manually.
+            {t("body")}
           </p>
 
           {/* CTAs */}
@@ -402,7 +346,7 @@ function LandingScreen({ onStart, onVideo, turnstileReady }: { onStart: () => vo
               disabled={!turnstileReady}
               className="flex-1 py-3.5 rounded-xl font-semibold text-base md:text-sm text-white bg-gradient-to-r from-[#FF4A26] to-[#EAB308] hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_8px_24px_rgba(255,74,38,0.25)] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {turnstileReady ? "Request access →" : "Verifying…"}
+              {turnstileReady ? t("requestAccess") : t("verifying")}
             </button>
             <button
               type="button"
@@ -412,7 +356,7 @@ function LandingScreen({ onStart, onVideo, turnstileReady }: { onStart: () => vo
               <span className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center shrink-0">
                 <Play className="w-3 h-3 text-white fill-white ml-0.5" />
               </span>
-              Watch demo
+              {t("watchDemo")}
             </button>
           </div>
         </div>
@@ -431,7 +375,7 @@ function LandingScreen({ onStart, onVideo, turnstileReady }: { onStart: () => vo
       {/* ── Feature cards ── */}
       <div className="px-6 sm:px-10 py-20">
         <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 text-center mb-12">
-          Why apply early
+          {t("whyApplyEarly")}
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-white/8 rounded-2xl overflow-hidden max-w-5xl mx-auto">
           {CARDS.map((c) => (
@@ -484,6 +428,62 @@ const slideVariants = {
 export default function MainnetPage() {
   const { userId } = useAuth();
   const { user: privyUser } = usePrivy();
+  const t = useTranslations("WaitlistPage");
+
+  const COMMS_OPTIONS = [
+    { value: "twitter_dm", label: t("options.comms.twitterDm") },
+    { value: "telegram",   label: t("options.comms.telegram") },
+    { value: "email",      label: t("options.comms.email") },
+  ];
+
+  const AGE_OPTIONS = [
+    { value: "under_18", label: t("options.age.under18") },
+    { value: "18_24",    label: t("options.age.age18_24") },
+    { value: "25_34",    label: t("options.age.age25_34") },
+    { value: "35_44",    label: t("options.age.age35_44") },
+    { value: "45_54",    label: t("options.age.age45_54") },
+    { value: "55_plus",  label: t("options.age.age55plus") },
+  ];
+
+  const OCCUPATION_OPTIONS = [
+    { value: "freelancer",    label: t("options.occupation.freelancer") },
+    { value: "creator",       label: t("options.occupation.creator") },
+    { value: "web3_business", label: t("options.occupation.web3Business") },
+    { value: "remote_worker", label: t("options.occupation.remoteWorker") },
+    { value: "developer",     label: t("options.occupation.developer") },
+    { value: "student",       label: t("options.occupation.student") },
+    { value: "trader",        label: t("options.occupation.trader") },
+    { value: "other",         label: t("options.occupation.other") },
+  ];
+
+  const VOLUME_OPTIONS = [
+    { value: "less_1k",    label: t("options.volume.less1k") },
+    { value: "1k_5k",      label: t("options.volume.from1kTo5k") },
+    { value: "5k_25k",     label: t("options.volume.from5kTo25k") },
+    { value: "25k_100k",   label: t("options.volume.from25kTo100k") },
+    { value: "100k_plus",  label: t("options.volume.over100k") },
+  ];
+
+  const PAYMENT_TYPE_OPTIONS = [
+    { value: "non_private", label: t("options.paymentType.nonPrivate") },
+    { value: "private",     label: t("options.paymentType.private") },
+    { value: "both",        label: t("options.paymentType.both") },
+  ];
+
+  const STEPS: Step[] = [
+    { id: "name",            question: t("steps.name.question"),            hint: t("steps.name.hint"),            type: "text" },
+    { id: "email",           question: t("steps.email.question"),           hint: t("steps.email.hint"),           type: "text" },
+    { id: "telegram",        question: t("steps.telegram.question"),        hint: t("steps.telegram.hint"),        type: "text" },
+    { id: "twitter",         question: t("steps.twitter.question"),         hint: t("steps.twitter.hint"),         type: "text" },
+    { id: "comms",           question: t("steps.comms.question"),                                                  type: "single" },
+    { id: "age",             question: t("steps.age.question"),                                                    type: "single" },
+    { id: "occupation",      question: t("steps.occupation.question"),      hint: t("steps.occupation.hint"),      type: "single" },
+    { id: "volume",          question: t("steps.volume.question"),                                                 type: "single" },
+    { id: "payment_type",    question: t("steps.paymentType.question"),     hint: t("steps.paymentType.hint"),     type: "single" },
+    { id: "fiat_to_crypto",  question: t("steps.fiatToCrypto.question"),    hint: t("steps.fiatToCrypto.hint"),    type: "yesno" },
+    { id: "withdrawal_rails",question: t("steps.withdrawalRails.question"), hint: t("steps.withdrawalRails.hint"), type: "text" },
+    { id: "earn",            question: t("steps.earn.question"),            hint: t("steps.earn.hint"),            type: "yesno" },
+  ];
 
   const [started, setStarted] = useState(false);
   const [videoOpen, setVideoOpen] = useState(false);
@@ -510,8 +510,8 @@ export default function MainnetPage() {
 
   useEffect(() => {
     if (started && currentStep?.type === "text") {
-      const t = setTimeout(() => inputRef.current?.focus(), 400);
-      return () => clearTimeout(t);
+      const timer = setTimeout(() => inputRef.current?.focus(), 400);
+      return () => clearTimeout(timer);
     }
   }, [step, started, currentStep?.type]);
 
@@ -604,11 +604,11 @@ export default function MainnetPage() {
 
     if (currentStep.type === "text") {
       const textMap: Record<string, { field: keyof FormData; placeholder: string; inputType?: string }> = {
-        name: { field: "display_name", placeholder: "Your name or nickname" },
-        email: { field: "email", placeholder: "you@example.com", inputType: "email" },
-        telegram: { field: "telegram_handle", placeholder: "@yourhandle" },
-        twitter: { field: "twitter_username", placeholder: "@yourname" },
-        withdrawal_rails: { field: "withdrawal_rails", placeholder: "e.g. USDC, Revolut, BTC…" },
+        name:             { field: "display_name",    placeholder: t("placeholders.name") },
+        email:            { field: "email",           placeholder: t("placeholders.email"), inputType: "email" },
+        telegram:         { field: "telegram_handle", placeholder: t("placeholders.telegram") },
+        twitter:          { field: "twitter_username",placeholder: t("placeholders.twitter") },
+        withdrawal_rails: { field: "withdrawal_rails",placeholder: t("placeholders.withdrawalRails") },
       };
       const cfg = textMap[id];
       return (
@@ -627,9 +627,13 @@ export default function MainnetPage() {
 
     if (currentStep.type === "yesno") {
       const currentVal = getValue(id);
+      const yesNoOptions = [
+        { value: "yes", label: t("options.yesno.yes") },
+        { value: "no",  label: t("options.yesno.no") },
+      ];
       return (
         <div className="space-y-3">
-          {[{ value: "yes", label: "Yes, definitely" }, { value: "no", label: "Not right now" }].map((opt) => (
+          {yesNoOptions.map((opt) => (
             <OptionButton
               key={opt.value}
               selected={currentVal === opt.value}
@@ -675,6 +679,12 @@ export default function MainnetPage() {
 
   // ── Submitted ──────────────────────────────────────────────────────────────
   if (submitted) {
+    const perks = [
+      t("submitted.perk1"),
+      t("submitted.perk2"),
+      t("submitted.perk3"),
+      t("submitted.perk4"),
+    ];
     return (
       <>
         <VideoModal open={videoOpen} onClose={() => setVideoOpen(false)} />
@@ -688,23 +698,24 @@ export default function MainnetPage() {
             <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#FF4A26] to-[#EAB308] flex items-center justify-center mx-auto mb-6 shadow-[0_16px_40px_rgba(255,74,38,0.4)]">
               <Check className="w-10 h-10 text-white" strokeWidth={2.5} />
             </div>
-            <h1 className="text-3xl font-medium text-white mb-3">Request received{form.display_name ? `, ${form.display_name}` : ""}.</h1>
+            <h1 className="text-3xl font-medium text-white mb-3">
+              {form.display_name
+                ? t("submitted.titleWithName", { name: form.display_name })
+                : t("submitted.title")}
+            </h1>
             <p className="text-slate-400 text-lg leading-relaxed mb-2">
-              You'll be notified as soon as you get access — spots are assigned manually
-              and we'll reach out directly when yours is ready.
+              {t("submitted.body")}
             </p>
             <p className="text-slate-500 text-base leading-relaxed">
-              Early members get up to{" "}
-              <span className="text-amber-400 font-semibold">$100 cashback</span> when they start using Loofta on mainnet.
+              {t.rich("submitted.cashbackNote", {
+                b: (chunks) => <span className="text-amber-400 font-semibold">{chunks}</span>,
+              })}
             </p>
             <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-5 text-left space-y-3">
-              <p className="text-sm md:text-xs font-semibold uppercase tracking-wider text-slate-500">What's included</p>
-              {[
-                "Direct notification when your access is granted",
-                "Up to $100 cashback once you're active",
-                "Private beta features before public launch",
-                "Direct line to the founding team",
-              ].map((perk) => (
+              <p className="text-sm md:text-xs font-semibold uppercase tracking-wider text-slate-500">
+                {t("submitted.whatsIncluded")}
+              </p>
+              {perks.map((perk) => (
                 <div key={perk} className="flex items-center gap-3">
                   <span className="shrink-0 w-5 h-5 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center">
                     <Check className="w-3 h-3 text-amber-400" strokeWidth={3} />
@@ -758,7 +769,7 @@ export default function MainnetPage() {
               type="button"
               onClick={back}
               className="p-2 -ml-2 rounded-xl text-slate-500 hover:text-white hover:bg-white/10 transition-colors shrink-0"
-              aria-label="Back"
+              aria-label={t("form.back")}
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
@@ -799,7 +810,7 @@ export default function MainnetPage() {
               {renderInput()}
 
               {isOptional && (
-                <p className="mt-4 text-base md:text-sm text-slate-600">Optional — press Enter or Continue to skip.</p>
+                <p className="mt-4 text-base md:text-sm text-slate-600">{t("form.optional")}</p>
               )}
 
               {error && (
@@ -816,11 +827,11 @@ export default function MainnetPage() {
                     onClick={back}
                     className="px-6 py-3.5 rounded-2xl font-semibold text-base text-slate-400 border border-white/10 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
                   >
-                    ← Back
+                    {t("form.back")}
                   </button>
                   <div className="flex items-center gap-3">
                     {currentStep.type === "text" && (
-                      <span className="text-base md:text-sm text-slate-600">or press Enter ↵</span>
+                      <span className="text-base md:text-sm text-slate-600">{t("form.pressEnter")}</span>
                     )}
                     <button
                       type="button"
@@ -828,7 +839,7 @@ export default function MainnetPage() {
                       disabled={!canAdvance() || submitting}
                       className="px-8 py-3.5 rounded-2xl font-semibold text-base text-white bg-gradient-to-r from-[#FF4A26] to-[#EAB308] hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_8px_24px_rgba(255,74,38,0.25)]"
                     >
-                      {submitting ? "Submitting…" : isLast ? "Submit →" : "Continue →"}
+                      {submitting ? t("form.submitting") : isLast ? t("form.submit") : t("form.continue")}
                     </button>
                   </div>
                 </div>
@@ -840,7 +851,7 @@ export default function MainnetPage() {
                     onClick={back}
                     className="px-6 py-3.5 rounded-2xl font-semibold text-base text-slate-400 border border-white/10 bg-white/5 hover:bg-white/10 hover:text-white transition-all"
                   >
-                    ← Back
+                    {t("form.back")}
                   </button>
                 </div>
               )}

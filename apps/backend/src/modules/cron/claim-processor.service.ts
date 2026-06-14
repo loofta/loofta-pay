@@ -17,6 +17,7 @@ export interface ProcessingResult {
 export class ClaimProcessorService {
   private readonly logger = new Logger(ClaimProcessorService.name);
   private isProcessing = false;
+  private isSweeping = false;
 
   constructor(
     private readonly claimsService: ClaimsService,
@@ -50,10 +51,17 @@ export class ClaimProcessorService {
    */
   @Cron(CronExpression.EVERY_MINUTE)
   async handleBurnerSweepRetries() {
+    if (this.isSweeping) {
+      this.logger.debug('[handleBurnerSweepRetries] Previous sweep still running, skipping');
+      return;
+    }
+    this.isSweeping = true;
     try {
       await this.claimsService.cronSweepPendingBurners();
     } catch (e: any) {
       this.logger.error('[handleBurnerSweepRetries] Error:', e?.message);
+    } finally {
+      this.isSweeping = false;
     }
   }
 
