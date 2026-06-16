@@ -18,7 +18,8 @@ import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X } from "lucide-react";
-import { PEER_PLATFORMS, getPlatform, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, clearPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
+import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, clearPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
 import { usePrivy, useWallets as useEvmWallets, useCreateWallet, useSendTransaction as useEvmSendTransaction } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
@@ -318,6 +319,9 @@ export function BalanceModal({
   const [peerBridgeBackStatus, setPeerBridgeBackStatus] = useState<string | null>(null);
   const peerBridgeBackPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [platformCooldowns, setPlatformCooldowns] = useState<Record<string, number>>({});
+  const [peerFxRates, setPeerFxRates] = useState<Record<string, number>>({});
+  const [peerFxLoading, setPeerFxLoading] = useState(false);
+  const [peerUsdcUsdPrice, setPeerUsdcUsdPrice] = useState<number>(1); // USDC/USD, defaults to 1
 
   // Near Intents top-up deposit
   const [topUpView, setTopUpView] = useState<"near-intents-deposit" | null>(null);
@@ -911,6 +915,45 @@ export function BalanceModal({
     }
     setPlatformCooldowns(cooldowns);
   }, [withdrawMethod, peerStep]);
+
+  // Fetch USDC/USD price + full FX table whenever a non-USD currency is selected
+  useEffect(() => {
+    if (peerCurrency === "USD") return;
+    if (peerFxRates[peerCurrency]) return; // already fetched this currency
+    setPeerFxLoading(true);
+    Promise.all([
+      // USD → all fiat rates
+      fetch("https://open.er-api.com/v6/latest/USD").then(r => r.json()),
+      // USDC/USD price from CoinGecko (no key needed for simple queries)
+      fetch("https://api.coingecko.com/api/v3/simple/price?ids=usd-coin&vs_currencies=usd")
+        .then(r => r.json())
+        .catch(() => null),
+    ])
+      .then(([fxData, cgData]) => {
+        if (fxData?.rates) setPeerFxRates(prev => ({ ...prev, ...fxData.rates }));
+        const usdcPrice = cgData?.["usd-coin"]?.usd;
+        if (usdcPrice) setPeerUsdcUsdPrice(usdcPrice);
+      })
+      .catch(() => {})
+      .finally(() => setPeerFxLoading(false));
+  }, [peerCurrency]);
+
+  const getPeerEstimate = (amountUsdc: number, currency: string): { formatted: string; spreadPct: number } | null => {
+    if (!amountUsdc || amountUsdc <= 0) return null;
+    const cur = getPeerCurrency(currency);
+    if (!cur) return null;
+    // USD: USDC ≈ USD at live peg price
+    if (currency === "USD") {
+      const usd = amountUsdc * peerUsdcUsdPrice;
+      return { formatted: `$${usd.toFixed(2)} USD`, spreadPct: 0 };
+    }
+    const usdToTarget = peerFxRates[currency];
+    if (!usdToTarget) return null; // still loading
+    const receive = amountUsdc * peerUsdcUsdPrice * usdToTarget * (1 - cur.spreadPercent / 100);
+    const decimals = currency === "EUR" ? 2 : 0;
+    const formatted = `${cur.symbol}${receive.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals })} ${currency}`;
+    return { formatted, spreadPct: cur.spreadPercent };
+  };
 
   // Clear Blink error and reset states when modal closes
   useEffect(() => {
@@ -1761,8 +1804,9 @@ export function BalanceModal({
     : "sm:max-w-xl";
 
   return (
-    <Dialog modal={false} open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent
+        onInteractOutside={(e) => e.preventDefault()}
         className={cn(
           contentCls,
           "left-0 right-0 top-0 translate-x-0 translate-y-0 h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col",
@@ -2249,7 +2293,7 @@ export function BalanceModal({
               <button
                 type="button"
                 disabled={!solanaAddress}
-                onClick={() => { setWithdrawMethod("peer-offramp"); setPeerStep("platform"); }}
+                onClick={() => { setWithdrawMethod("peer-offramp"); setPeerStep("platform"); setPeerCurrency("USD"); }}
                 className={cn(
                   "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
                   dark
@@ -2481,15 +2525,54 @@ export function BalanceModal({
                 className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
                 <ChevronLeft className="h-4 w-4" />Back
               </button>
+
+              {/* Currency selector */}
+              <div>
+                <p className={`text-base font-semibold mb-2 ${dark ? "text-white" : "text-gray-900"}`}>Receive currency</p>
+                <Select value={peerCurrency} onValueChange={(v) => setPeerCurrency(v)}>
+                  <SelectTrigger className={cn(
+                    "w-full text-sm",
+                    dark ? "bg-white/10 border-white/20 text-white" : "bg-white border-gray-200 text-gray-900"
+                  )}>
+                    <SelectValue>
+                      {(() => {
+                        const cur = getPeerCurrency(peerCurrency);
+                        return cur ? `${cur.flag}  ${cur.code} — ${cur.label}` : peerCurrency;
+                      })()}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent className={dark ? "bg-zinc-900 border-white/10 text-white" : ""}>
+                    {PEER_CURRENCIES.map((c) => (
+                      <SelectItem key={c.code} value={c.code} className={cn(
+                        "text-sm cursor-pointer",
+                        dark ? "text-white focus:bg-white/10 focus:text-white" : ""
+                      )}>
+                        {c.flag}{"  "}{c.code} — {c.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {peerCurrency !== "USD" && (() => {
+                  const platforms = PEER_PLATFORMS.filter(p => p.currencies.includes(peerCurrency));
+                  if (!platforms.length) return null;
+                  const names = platforms.map(p => p.name).join(" & ");
+                  return (
+                    <p className={`text-sm mt-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      {peerCurrency} payouts available via {names}.
+                    </p>
+                  );
+                })()}
+              </div>
+
               <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Choose a platform</p>
               <div className="grid grid-cols-3 gap-2">
-                {PEER_PLATFORMS.map((p) => {
+                {PEER_PLATFORMS.filter((p) => p.currencies.includes(peerCurrency)).map((p) => {
                   const cooldownMins = platformCooldowns[p.id] ?? 0;
                   const inCooldown = cooldownMins > 0;
                   return (
                     <button key={p.id} type="button"
                       disabled={inCooldown}
-                      onClick={() => { setPeerPlatformId(p.id); setPeerCurrency(p.currencies[0]); setPeerStep("form"); }}
+                      onClick={() => { setPeerPlatformId(p.id); setPeerStep("form"); }}
                       className={cn(
                         "flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition-all text-center",
                         inCooldown
@@ -2513,7 +2596,6 @@ export function BalanceModal({
           {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "form" && (() => {
             const platform = getPlatform(peerPlatformId ?? "");
             if (!platform) return null;
-            const supportedCurrencies = platform.currencies;
             return (
               <div className="space-y-4 py-2">
                 <button type="button" onClick={() => setPeerStep("platform")}
@@ -2527,7 +2609,7 @@ export function BalanceModal({
                   <div>
                     <p className={`text-base font-bold ${dark ? "text-white" : "text-gray-900"}`}>{platform.name}</p>
                     <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                      1:1 · USDC → {peerCurrency} · max ${platform.maxUSDC}
+                      {getPeerCurrency(peerCurrency)?.spreadPercent === 0 ? "1:1 · " : ""}USDC → {peerCurrency} · max ${platform.maxUSDC}
                       {platform.cooldownHours ? ` · ${platform.cooldownHours}h cooldown` : ""}
                     </p>
                   </div>
@@ -2544,26 +2626,6 @@ export function BalanceModal({
                   />
                 </div>
 
-                {/* Currency */}
-                {supportedCurrencies.length > 1 && (
-                  <div>
-                    <Label className={dark ? "text-slate-300" : undefined}>Receive currency</Label>
-                    <div className="mt-1 flex flex-wrap gap-2">
-                      {supportedCurrencies.map((c) => (
-                        <button key={c} type="button"
-                          onClick={() => setPeerCurrency(c)}
-                          className={cn(
-                            "px-3 py-1.5 rounded-lg text-sm font-medium border transition-all",
-                            peerCurrency === c
-                              ? "bg-orange-500 border-orange-500 text-white"
-                              : dark ? "border-white/20 text-slate-300 hover:bg-white/10" : "border-gray-200 text-gray-600 hover:bg-gray-50"
-                          )}>
-                          {c}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 {/* Amount */}
                 <div>
@@ -2590,6 +2652,32 @@ export function BalanceModal({
                     <p className="text-sm text-red-400 mt-1">Exceeds your balance.</p>
                   )}
                 </div>
+
+                {/* Estimated receive */}
+                {withdrawAmountNum >= 1 && (
+                  <div className={`rounded-xl border px-4 py-3 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-orange-100 bg-orange-50/50"}`}>
+                    <div>
+                      <span className={`text-sm ${dark ? "text-slate-400" : "text-gray-500"}`}>You'll receive</span>
+                      {(() => {
+                        const est = getPeerEstimate(withdrawAmountNum, peerCurrency);
+                        if (est?.spreadPct && est.spreadPct > 0) {
+                          return <p className={`text-xs mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>live rate · {est.spreadPct}% LP spread</p>;
+                        }
+                        return null;
+                      })()}
+                    </div>
+                    {peerFxLoading && peerCurrency !== "USD" ? (
+                      <span className={`text-sm flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-400"}`}>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />Fetching rate…
+                      </span>
+                    ) : (() => {
+                      const est = getPeerEstimate(withdrawAmountNum, peerCurrency);
+                      return est
+                        ? <span className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>≈ {est.formatted}</span>
+                        : <span className={`text-sm ${dark ? "text-slate-500" : "text-gray-400"}`}>—</span>;
+                    })()}
+                  </div>
+                )}
 
                 <div className={`rounded-xl border p-3 ${dark ? "border-white/10 bg-white/5" : "border-blue-100 bg-blue-50/60"}`}>
                   <p className={`text-sm ${dark ? "text-slate-400" : "text-blue-700"}`}>
