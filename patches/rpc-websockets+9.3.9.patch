@@ -1,0 +1,13 @@
+diff --git a/node_modules/rpc-websockets/dist/index.cjs b/node_modules/rpc-websockets/dist/index.cjs
+index fe29b26..8888e20 100644
+--- a/node_modules/rpc-websockets/dist/index.cjs
++++ b/node_modules/rpc-websockets/dist/index.cjs
+@@ -3,7 +3,7 @@
+ var WebSocketImpl = require('ws');
+ var eventemitter3 = require('eventemitter3');
+ var url = require('url');
+-var uuid = require('uuid');
++var uuid = { v1: () => require('crypto').randomUUID() };
+ 
+ function _interopDefault (e) { return e && e.__esModule ? e : { default: e }; }
+ 
