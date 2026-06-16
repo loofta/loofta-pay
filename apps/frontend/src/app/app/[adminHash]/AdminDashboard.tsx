@@ -487,6 +487,7 @@ export default function AdminDashboard() {
   const [sparksData, setSparksData] = useState<any[]>([]);
   const [sparksLoading, setSparksLoading] = useState(false);
   const [sparksLoaded, setSparksLoaded] = useState(false);
+  const [sparksSearch, setSparksSearch] = useState("");
 
   // Waitlist
   const [waitlistData, setWaitlistData] = useState<any[]>([]);
@@ -1278,53 +1279,86 @@ export default function AdminDashboard() {
             </div>
           )}
           {!sparksLoading && sparksLoaded && (
-            <div className="overflow-x-auto rounded-xl border border-gray-800">
-              <table className="w-full text-base md:text-sm">
-                <thead>
-                  <tr className="border-b border-gray-800 text-gray-400 text-sm md:text-xs uppercase tracking-wide">
-                    <th className="text-left px-4 py-2.5">#</th>
-                    <th className="text-left px-4 py-2.5">User</th>
-                    <th className="text-right px-4 py-2.5">⚡ Sparks</th>
-                    <th className="text-center px-3 py-2.5">Email</th>
-                    <th className="text-center px-3 py-2.5">X</th>
-                    <th className="text-center px-3 py-2.5">1st pay</th>
-                    <th className="text-center px-3 py-2.5">Unreg.</th>
-                    <th className="text-center px-3 py-2.5">Link paid</th>
-                    <th className="text-center px-3 py-2.5">10 pays</th>
-                    <th className="text-right px-4 py-2.5">Sent</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sparksData.map((u: any, i: number) => {
-                    const byKey = Object.fromEntries(u.tasks.map((t: any) => [t.key, t]));
-                    return (
-                      <tr key={u.privyUserId} className="border-b border-gray-800/60 hover:bg-gray-900/50">
-                        <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
-                        <td className="px-4 py-2.5">
-                          <div className="font-medium text-white">{u.username ? `@${u.username}` : "—"}</div>
-                          <div className="text-sm md:text-xs text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-bold text-amber-400 tabular-nums">{u.totalSparks.toLocaleString()}</td>
-                        {["connect_email","connect_twitter","first_payment","payment_to_unregistered","payment_link_paid","ten_payments"].map((key) => (
-                          <td key={key} className="px-3 py-2.5 text-center">
-                            {byKey[key]?.completed
-                              ? <span className="text-green-400">✓</span>
-                              : key === "ten_payments" && byKey[key]?.progress > 0
-                                ? <span className="text-amber-400 text-sm md:text-xs">{byKey[key].progress}/10</span>
-                                : <span className="text-gray-700">–</span>}
-                          </td>
-                        ))}
-                        <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-sm md:text-xs">
-                          {byKey["ten_payments"]?.progress ?? 0}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {sparksData.length === 0 && (
-                    <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-600">No data</td></tr>
-                  )}
-                </tbody>
-              </table>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="relative flex-1 max-w-sm">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+                  <Input
+                    placeholder="Search by username or email…"
+                    value={sparksSearch}
+                    onChange={(e) => setSparksSearch(e.target.value)}
+                    className="pl-9 bg-gray-900 border-gray-700 text-sm"
+                  />
+                </div>
+                <span className="text-sm md:text-xs text-gray-500 whitespace-nowrap">
+                  {sparksSearch
+                    ? `${sparksData.filter((u: any) => {
+                        const q = sparksSearch.toLowerCase();
+                        return (u.username ?? "").toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q);
+                      }).length} / ${sparksData.length}`
+                    : `${sparksData.length} users`}
+                </span>
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-gray-800">
+                <table className="w-full text-base md:text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-800 text-gray-400 text-sm md:text-xs uppercase tracking-wide">
+                      <th className="text-left px-4 py-2.5">#</th>
+                      <th className="text-left px-4 py-2.5">User</th>
+                      <th className="text-right px-4 py-2.5">⚡ Sparks</th>
+                      <th className="text-center px-3 py-2.5">Email</th>
+                      <th className="text-center px-3 py-2.5">X</th>
+                      <th className="text-center px-3 py-2.5">1st pay</th>
+                      <th className="text-center px-3 py-2.5">Unreg.</th>
+                      <th className="text-center px-3 py-2.5">Link paid</th>
+                      <th className="text-center px-3 py-2.5">10 pays</th>
+                      <th className="text-right px-4 py-2.5">Sent</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sparksData
+                      .filter((u: any) => {
+                        if (!sparksSearch) return true;
+                        const q = sparksSearch.toLowerCase();
+                        return (u.username ?? "").toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q);
+                      })
+                      .map((u: any, i: number) => {
+                        const byKey = Object.fromEntries(u.tasks.map((t: any) => [t.key, t]));
+                        return (
+                          <tr key={u.privyUserId} className="border-b border-gray-800/60 hover:bg-gray-900/50">
+                            <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
+                            <td className="px-4 py-2.5">
+                              <div className="font-medium text-white">{u.username ? `@${u.username}` : "—"}</div>
+                              <div className="text-sm md:text-xs text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
+                            </td>
+                            <td className="px-4 py-2.5 text-right font-bold text-amber-400 tabular-nums">{u.totalSparks.toLocaleString()}</td>
+                            {["connect_email","connect_twitter","first_payment","payment_to_unregistered","payment_link_paid","ten_payments"].map((key) => (
+                              <td key={key} className="px-3 py-2.5 text-center">
+                                {byKey[key]?.completed
+                                  ? <span className="text-green-400">✓</span>
+                                  : key === "ten_payments" && byKey[key]?.progress > 0
+                                    ? <span className="text-amber-400 text-sm md:text-xs">{byKey[key].progress}/10</span>
+                                    : <span className="text-gray-700">–</span>}
+                              </td>
+                            ))}
+                            <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-sm md:text-xs">
+                              {byKey["ten_payments"]?.progress ?? 0}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    {sparksData.filter((u: any) => {
+                      if (!sparksSearch) return true;
+                      const q = sparksSearch.toLowerCase();
+                      return (u.username ?? "").toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q);
+                    }).length === 0 && (
+                      <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-600">
+                        {sparksSearch ? `No users matching "${sparksSearch}"` : "No data"}
+                      </td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
           {!sparksLoading && !sparksLoaded && (
