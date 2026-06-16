@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID, createSign } from "node:crypto";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 const MERCHANT_ID = process.env.BLINK_MERCHANT_ID ?? "";
 const SOLANA_CHAIN_ID = 792703809;
@@ -16,6 +17,11 @@ function isValidSolanaAddress(address: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  const userId = await getVerifiedUserId(req);
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   if (!MERCHANT_ID) {
     return NextResponse.json({ error: "Merchant not configured" }, { status: 500 });
   }
