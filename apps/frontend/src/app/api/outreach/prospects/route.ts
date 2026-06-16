@@ -3,7 +3,8 @@ import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
 function checkSecret(req: NextRequest) {
   const secret = req.headers.get("x-admin-secret");
-  return secret && secret === process.env.ADMIN_SECRET_PATH;
+  const expected = process.env.OUTREACH_API_SECRET || process.env.ADMIN_SECRET_PATH;
+  return !!secret && !!expected && secret === expected;
 }
 
 export async function GET(req: NextRequest) {

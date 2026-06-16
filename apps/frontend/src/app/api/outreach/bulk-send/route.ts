@@ -6,7 +6,8 @@ const randomDelayMs = () => Math.floor(Math.random() * (60_000 - 15_000 + 1)) + 
 
 function checkSecret(req: NextRequest) {
   const secret = req.headers.get("x-admin-secret");
-  return secret && secret === process.env.ADMIN_SECRET_PATH;
+  const expected = process.env.OUTREACH_API_SECRET || process.env.ADMIN_SECRET_PATH;
+  return !!secret && !!expected && secret === expected;
 }
 
 async function runBulkSend(jobId: string, prospectIds: string[]) {

@@ -354,7 +354,10 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       if (status === 'SUCCESS' || status === 'PRIVATE_TRANSFER_PENDING') {
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
         console.log(`[payments/PATCH] Triggering email notification for ${paymentId}`);
-        fetch(`${backendUrl}/claims/${paymentId}/notify`, { method: 'POST' })
+        fetch(`${backendUrl}/claims/${paymentId}/notify`, {
+          method: 'POST',
+          headers: process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {},
+        })
           .then(r => console.log(`[payments/PATCH] Notify response: ${r.status}`))
           .catch(e => console.error('[payments/PATCH] Notify call failed:', e));
       }
