@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { ArrowDown, ArrowUp, Clock, Settings } from "lucide-react";
+import { ArrowDown, ArrowUp, Clock, Settings, Ticket, Trophy } from "lucide-react";
 import { useTranslations } from "next-intl";
 
-type NavKey = 'send' | 'receive' | 'history' | 'settings';
+type NavKey = 'send' | 'receive' | 'history' | 'settings' | 'megapot-buy' | 'megapot-redeem' | 'megapot-history';
 
 function IconBubble({
     active,
@@ -69,9 +69,28 @@ export function BottomNav() {
     const searchParams = useSearchParams();
 
     const tab = searchParams.get("tab");
+    const isMegapot = pathname === "/app/megapot" || pathname === "/megapot";
+    const isAppPath = pathname?.startsWith('/app');
+
+    if (isMegapot) {
+        let activeKey: NavKey = 'megapot-buy';
+        if (tab === 'redeem') activeKey = 'megapot-redeem';
+        else if (tab === 'history') activeKey = 'megapot-history';
+
+        return (
+            <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-pb bg-[#0f0f12]/70 backdrop-blur-xl border-t border-white/10 shadow-[0_-10px_30px_rgba(0,0,0,0.35)]">
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+                <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-1 mt-1">
+                    <NavItem href="/app/megapot" label="Buy" active={activeKey === 'megapot-buy'} icon={<Ticket />} />
+                    <NavItem href="/app/megapot?tab=redeem" label="Redeem" active={activeKey === 'megapot-redeem'} icon={<Trophy />} />
+                    <NavItem href="/app/megapot?tab=history" label="History" active={activeKey === 'megapot-history'} icon={<Clock />} />
+                    <NavItem href="/app/settings" label="Profile" active={false} icon={<Settings />} />
+                </div>
+            </nav>
+        );
+    }
 
     let activeKey: NavKey;
-
     if (pathname === "/history" || pathname === "/app/history") {
         activeKey = "history";
     } else if (pathname === "/settings" || pathname === "/app/settings") {
@@ -82,7 +101,6 @@ export function BottomNav() {
         activeKey = "send";
     }
 
-    const isAppPath = pathname?.startsWith('/app');
     const sendHref = isAppPath ? '/app' : '/';
     const receiveHref = isAppPath ? '/app?tab=receive' : '/?tab=receive';
     const historyHref = isAppPath ? '/app/history' : '/history';
@@ -91,32 +109,11 @@ export function BottomNav() {
     return (
         <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-pb bg-[#0f0f12]/70 backdrop-blur-xl border-t border-white/10 shadow-[0_-10px_30px_rgba(0,0,0,0.35)]">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
-
             <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-1 mt-1">
-                <NavItem
-                    href={sendHref}
-                    label={t('send')}
-                    active={activeKey === 'send'}
-                    icon={<ArrowUp />}
-                />
-                <NavItem
-                    href={receiveHref}
-                    label={t('receive')}
-                    active={activeKey === 'receive'}
-                    icon={<ArrowDown />}
-                />
-                <NavItem
-                    href={historyHref}
-                    label={t('history')}
-                    active={activeKey === 'history'}
-                    icon={<Clock />}
-                />
-                <NavItem
-                    href={settingsHref}
-                    label={t('profile')}
-                    active={activeKey === 'settings'}
-                    icon={<Settings />}
-                />
+                <NavItem href={sendHref} label={t('send')} active={activeKey === 'send'} icon={<ArrowUp />} />
+                <NavItem href={receiveHref} label={t('receive')} active={activeKey === 'receive'} icon={<ArrowDown />} />
+                <NavItem href={historyHref} label={t('history')} active={activeKey === 'history'} icon={<Clock />} />
+                <NavItem href={settingsHref} label={t('profile')} active={activeKey === 'settings'} icon={<Settings />} />
             </div>
         </nav>
     );

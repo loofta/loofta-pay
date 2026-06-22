@@ -50,6 +50,8 @@ function MobileMenu({
   if (!open) return null;
 
   const navLinks = [
+    { href: "/", label: "Send & Receive 💸", description: "Send and receive payments" },
+    { href: "/app/megapot", label: "Megapot 🎰", description: "Daily $1M lottery · private" },
     { href: "/sparks", label: "Sparks ⚡", description: t('earnSparks') },
     { href: "/app/waitlist", label: t('waitlist'), description: t('requestAccess') },
     { href: "/app/settings", label: t('profile'), description: null },
@@ -255,6 +257,34 @@ export function MinimalHeader() {
           <div className="flex items-center shrink-0 gap-2">
             {authenticated ? (
               <>
+                {/* Desktop: Send & Receive link */}
+                <Link
+                  href="/"
+                  className={[
+                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    pathname === "/"
+                      ? "text-orange-300 bg-orange-500/10"
+                      : "text-slate-300 hover:text-white hover:bg-white/10",
+                  ].join(" ")}
+                >
+                  <span>💸</span>
+                  <span>Send & Receive</span>
+                </Link>
+
+                {/* Desktop: Megapot link */}
+                <Link
+                  href="/app/megapot"
+                  className={[
+                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    pathname === "/app/megapot"
+                      ? "text-orange-300 bg-orange-500/10"
+                      : "text-slate-300 hover:text-white hover:bg-white/10",
+                  ].join(" ")}
+                >
+                  <span>🎰</span>
+                  <span>Megapot</span>
+                </Link>
+
                 {/* Desktop: Rewards link */}
                 <Link
                   href="/sparks"
