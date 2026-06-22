@@ -319,6 +319,7 @@ export class NearIntentsService implements OnModuleInit {
     useIntentsMode?: boolean;
     referral?: string;
     useExactOutput?: boolean;
+    deadlineMs?: number;
   }): Promise<QuoteResult> {
     const {
       fromToken,
@@ -330,6 +331,7 @@ export class NearIntentsService implements OnModuleInit {
       useIntentsMode = false,
       referral,
       useExactOutput = false,
+      deadlineMs = 5 * 60 * 1000,
     } = params;
 
     const toAtomic = (val: string, decimals: number): string => {
@@ -367,7 +369,7 @@ export class NearIntentsService implements OnModuleInit {
         recipientType: sameChain 
           ? (QuoteRequest.recipientType as any).ORIGIN_CHAIN 
           : QuoteRequest.recipientType.DESTINATION_CHAIN,
-        deadline: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        deadline: new Date(Date.now() + deadlineMs).toISOString(),
         quoteWaitingTimeMs: 3000,
         referral: referral || this.referralCode,
         virtualChainRecipient: null,
