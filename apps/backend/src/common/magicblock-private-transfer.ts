@@ -163,8 +163,8 @@ export async function requestMagicblockPrivateTransfer(params: {
     initIfMissing: true,
     initAtasIfMissing: true,
     initVaultIfMissing: false,
-    minDelayMs,
-    maxDelayMs,
+    minDelayMs: 0,
+    maxDelayMs: 30000,
     ...(params.gasless ? { gasless: true } : {}),
   };
   log.log(`POST https://payments.magicblock.app/v1/spl/transfer payload=${JSON.stringify(body)}`);
