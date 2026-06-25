@@ -320,6 +320,7 @@ export class NearIntentsService implements OnModuleInit {
     referral?: string;
     useExactOutput?: boolean;
     deadlineMs?: number;
+    skipAppFees?: boolean;
   }): Promise<QuoteResult> {
     const {
       fromToken,
@@ -332,6 +333,7 @@ export class NearIntentsService implements OnModuleInit {
       referral,
       useExactOutput = false,
       deadlineMs = 5 * 60 * 1000,
+      skipAppFees = false,
     } = params;
 
     const toAtomic = (val: string, decimals: number): string => {
@@ -354,7 +356,7 @@ export class NearIntentsService implements OnModuleInit {
     let req: any;
     
     try {
-      req = this.attachAppFees({
+      const baseReq = {
         dry: false,
         swapType: swapType === 'EXACT_OUTPUT' ? QuoteRequest.swapType.EXACT_OUTPUT : QuoteRequest.swapType.EXACT_INPUT,
         depositMode: 'SIMPLE',
@@ -374,10 +376,11 @@ export class NearIntentsService implements OnModuleInit {
         referral: referral || this.referralCode,
         virtualChainRecipient: null,
         virtualChainRefundRecipient: null,
-      });
+      };
+      req = skipAppFees ? baseReq : this.attachAppFees(baseReq);
 
       this.logger.log(`[getDepositQuote] Request:`, JSON.stringify(req, null, 2));
-      
+
       const raw = await OneClickService.getQuote(req);
       const q = (raw as any)?.quote || raw || {};
 
