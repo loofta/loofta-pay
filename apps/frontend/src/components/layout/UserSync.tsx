@@ -20,6 +20,7 @@ export function UserSync() {
   const username = useAuthStore((s) => s.username ?? null);
   const setUsername = useAuthStore((s) => s.setUsername);
   const setAuth = useAuthStore((s) => s.setAuth);
+  const setAtaMigrated = useAuthStore((s) => s.setAtaMigrated);
   const setIsOnboardingOpen = useAuthStore((s) => s.setIsOnboardingOpen);
   const walletCreatedRef = useRef(false);
   const [showUsernameModal, setShowUsernameModal] = useState(false);
@@ -63,6 +64,8 @@ export function UserSync() {
         if (userData.user) {
           const usernameValue = userData.user.username || null;
           setUsername(usernameValue);
+          setAtaMigrated("mainnet", userData.user.ataMigratedMainnet ?? false);
+          setAtaMigrated("devnet", userData.user.ataMigratedDevnet ?? false);
           if (userData.user.email) {
             setAuth({
               authenticated: true,
