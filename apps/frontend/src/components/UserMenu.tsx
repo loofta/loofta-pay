@@ -83,6 +83,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   // Get email and username from store as fallback (always persistent)
   const storeEmail = useAuthStore((s) => s.email);
   const storeUsername = useAuthStore((s) => s.username ?? null);
+  const usernameResolved = useAuthStore((s) => s.username !== undefined);
   const setAuth = useAuthStore((s) => s.setAuth);
   const setUsername = useAuthStore((s) => s.setUsername);
 
@@ -142,6 +143,10 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showRotateConfirm, setShowRotateConfirm] = useState(false);
+  const [rotateState, setRotateState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [rotateError, setRotateError] = useState("");
+  const [newWalletAddress, setNewWalletAddress] = useState("");
   const [isLocalhost, setIsLocalhost] = useState(false);
   useEffect(() => {
     setIsLocalhost(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
@@ -188,6 +193,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     },
   });
   const { exportWallet } = useExportWallet();
+
   const { wallets } = useWallets();
   const { toast } = useToast();
   const { balanceUSD } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated === true });
@@ -201,7 +207,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     const acc = linkedAccounts.find((a) => a.type === "email");
     return acc && "address" in acc ? (acc as { address: string }).address : null;
   }, [linkedAccounts]);
-  const canUpdateToTwitter = hasTwitterLinked && twitterHandle && username !== twitterHandle;
+  const canUpdateToTwitter = usernameResolved && hasTwitterLinked && twitterHandle && username?.toLowerCase() !== twitterHandle;
 
   // Get Solana wallet address from Privy
   // Use linkedAccounts - these are wallets tied to user (what shows in Privy dashboard)
@@ -989,203 +995,329 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             >
               {/* Scrollable content */}
               <div className="flex-1 overflow-y-auto p-6 text-white">
-                {/* Header */}
-                <div className="text-center mb-6">
-                  <div className="mb-3 flex justify-center">
-                    <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center">
-                      <Settings className="w-6 h-6 text-white" />
-                    </div>
+
+                {/* Rotate wallet confirmation view — replaces main content */}
+                {showRotateConfirm ? (
+                  <div className="flex flex-col items-center justify-center min-h-[300px] text-center">
+                    {rotateState === "done" ? (
+                      <>
+                        <div className="w-14 h-14 rounded-full bg-emerald-500/15 flex items-center justify-center mb-5">
+                          <svg className="w-7 h-7 text-emerald-400" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                        <p className="text-white font-semibold text-lg mb-1">New wallet ready</p>
+                        {newWalletAddress && (
+                          <p className="text-slate-400 text-xs mb-3 font-mono">{newWalletAddress.slice(0, 8)}…{newWalletAddress.slice(-6)}</p>
+                        )}
+                        <p className="text-slate-400 text-sm mb-6">Your new wallet is now active. The previous address is no longer used by Loofta.</p>
+                        <button
+                          type="button"
+                          onClick={() => { setShowRotateConfirm(false); setRotateState("idle"); setNewWalletAddress(""); }}
+                          className="w-full py-3 rounded-xl text-sm font-semibold bg-white/10 hover:bg-white/15 text-white transition-colors"
+                        >
+                          Done
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="w-14 h-14 rounded-full bg-white/8 flex items-center justify-center mb-5">
+                          <svg className="w-7 h-7 text-slate-300" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                        </div>
+                        <p className="text-white font-semibold text-lg mb-2">Generate new wallet?</p>
+                        <p className="text-slate-400 text-sm mb-1">A new Solana wallet will be created and used for all future payments on Loofta.</p>
+                        <p className="text-slate-500 text-xs mb-6">Your previous wallet stays in Privy but won&apos;t be used by Loofta anymore.</p>
+                        {rotateState === "error" && (
+                          <p className="text-red-400 text-xs mb-3">{rotateError}</p>
+                        )}
+                        <div className="flex gap-3 w-full">
+                          <button
+                            type="button"
+                            disabled={rotateState === "loading"}
+                            onClick={() => { setShowRotateConfirm(false); setRotateState("idle"); setRotateError(""); }}
+                            className="flex-1 py-3 rounded-xl text-sm font-semibold bg-white/10 hover:bg-white/15 text-white transition-colors disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            disabled={rotateState === "loading"}
+                            onClick={async () => {
+                              setRotateState("loading");
+                              setRotateError("");
+                              try {
+                                if (!privyUser?.id) throw new Error("Not authenticated");
+                                // Best-effort: archive the current wallet.
+                                // Fails silently if there's no wallet to archive.
+                                if (walletAddress) {
+                                  await fetch("/api/users/archive-wallet", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ privyUserId: privyUser.id, walletAddress }),
+                                  }).catch(() => { /* ignore */ });
+                                }
+                                // Create new wallet server-side (bypasses Privy's one-wallet-per-user
+                                // client limit which counts archived wallets).
+                                const createRes = await fetch("/api/users/create-solana-wallet", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ privyUserId: privyUser.id }),
+                                });
+                                if (!createRes.ok) {
+                                  const body = await createRes.json().catch(() => ({}));
+                                  throw new Error(body?.error ?? "Failed to create wallet");
+                                }
+                                const { address } = await createRes.json();
+                                setNewWalletAddress(address ?? "");
+                                await refreshUser();
+                                setRotateState("done");
+                              } catch (e: any) {
+                                setRotateError(e?.message ?? "Failed to create wallet");
+                                setRotateState("error");
+                              }
+                            }}
+                            className="flex-1 py-3 rounded-xl text-sm font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+                          >
+                            {rotateState === "loading" ? (
+                              <span className="flex items-center justify-center gap-2">
+                                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                                </svg>
+                                Creating…
+                              </span>
+                            ) : "Generate"}
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
-                  <h2 className="text-2xl font-bold text-white mb-1">{t('settingsTitle')}</h2>
-                  <p className="text-base md:text-sm text-gray-400">{t('settingsSubtitle')}</p>
-                </div>
+                ) : (
+                  <>
 
-                <div className="space-y-4">
-            {/* Network toggle — visible to all */}
-            <div>
-              <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">{t('network')}</Label>
-              <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
-                <div className="flex flex-col min-w-0">
-                  <span className="text-base md:text-sm text-white/90">
-                    {networkMode === "mainnet"
-                      ? (mainnetAccess ? t('mainnetBeta') : t('mainnetViewOnly'))
-                      : t('devnet')}
-                  </span>
-                  {networkMode === "mainnet" && !mainnetAccess && (
-                    <span className="text-base md:text-sm text-amber-400/80 mt-0.5">{t('balanceWithdrawOnly')}</span>
-                  )}
-                </div>
-                <Switch
-                  checked={networkMode === "mainnet"}
-                  onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
-                />
-              </div>
-            </div>
-
-            {/* Sign-in methods - show connected first, then Add buttons */}
-            <div>
-              <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">{t('signInMethods')}</Label>
-              {/* Always show what's already connected */}
-              {(hasEmail || hasTwitterLinked) && (
-                <div className="mb-3 p-3 rounded-xl bg-white/5 border border-white/10 space-y-2">
-                  <p className="text-base md:text-sm font-medium text-gray-400 mb-1.5">{t('connected')}</p>
-                  {hasEmail && linkedEmailAddress && (
-                    <div className="flex items-center gap-2 text-base md:text-sm text-white/90">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-gray-400">
-                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
-                        <polyline points="22,6 12,13 2,6"></polyline>
-                      </svg>
-                      <span className="truncate">{linkedEmailAddress}</span>
+                    {/* Header */}
+                    <div className="text-center mb-6">
+                      <div className="mb-3 flex justify-center">
+                        <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center">
+                          <Settings className="w-6 h-6 text-white" />
+                        </div>
+                      </div>
+                      <h2 className="text-2xl font-bold text-white mb-1">{t('settingsTitle')}</h2>
+                      <p className="text-base md:text-sm text-gray-400">{t('settingsSubtitle')}</p>
                     </div>
-                  )}
-                  {hasTwitterLinked && twitterHandle && (
-                    <div className="flex items-center gap-2 text-base md:text-sm text-white/90">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="shrink-0 text-gray-400">
-                        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                      </svg>
-                      <span>@{twitterHandle}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-              <p className="text-base md:text-sm text-gray-400 mb-3">
-                {t('addSecondMethod')}
-              </p>
-              <div className="space-y-1">
-                {!hasTwitterLinked && (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setShowSettingsModal(false);
-                      setLinkingMethod("twitter");
-                      try {
-                        await linkTwitter();
-                      } catch {
-                        // Errors are surfaced via useLinkAccount onError.
-                      }
-                    }}
-                    title="You'll be redirected to Twitter to login"
-                    className="w-full text-left px-3 py-2.5 rounded-xl text-base md:text-sm font-medium transition-colors flex items-center gap-3 text-orange-400 hover:bg-orange-400/10"
-                  >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
-                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                    </svg>
-                    {t('addTwitter')}
-                  </button>
-                )}
-                {!hasEmail && (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setLinkingMethod("email");
-                      try {
-                        await linkEmail();
-                      } catch {
-                        // Errors are surfaced via useLinkAccount onError.
-                      }
-                    }}
-                    className="w-full text-left px-3 py-2.5 rounded-xl text-base md:text-sm font-medium transition-colors flex items-center gap-3 text-gray-300 hover:bg-white/10 hover:text-white"
-                  >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
-                      <polyline points="22,6 12,13 2,6"></polyline>
-                    </svg>
-                    {t('addEmail')}
-                  </button>
-                )}
-              </div>
-              {canUpdateToTwitter && twitterHandle && (
-                <div className="mt-3 p-3 rounded-xl bg-white/5 border border-white/10">
-                  <p className="text-base md:text-sm font-medium text-gray-300 mb-1">{t('paymentLink')}</p>
-                  <p className="text-base md:text-sm text-gray-400 mb-2">
-                    {t('useTwitterAsLink', { handle: twitterHandle })}
-                  </p>
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="rounded-xl bg-white/10 text-white border-0 hover:bg-white/20"
-                    disabled={updatingToTwitter || !privyUser?.id}
-                    onClick={async () => {
-                      if (!privyUser?.id || !twitterHandle) return;
-                      setUpdatingToTwitter(true);
-                      try {
-                        const res = await fetch("/api/users/setup-username", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ privyUserId: privyUser.id, username: twitterHandle }),
-                        });
-                        const data = await res.json();
-                        if (!res.ok) {
-                          toast({ variant: "destructive", title: "Update failed", description: data.error || "Try again." });
-                          return;
-                        }
-                        const newUsername = data.user?.username ?? twitterHandle;
-                        setUsername(newUsername);
-                        setAuth({ authenticated: true, email: storeEmail, username: newUsername });
-                        toast({ title: "Payment link updated", description: `Your link is now @${newUsername}` });
-                      } catch (e) {
-                        toast({ variant: "destructive", title: "Update failed", description: "Try again." });
-                      } finally {
-                        setUpdatingToTwitter(false);
-                      }
-                    }}
-                  >
-                    {updatingToTwitter ? t('updating') : t('useHandle', { handle: twitterHandle })}
-                  </Button>
-                </div>
-              )}
-            </div>
-            {walletAddress ? (
-              <>
-                <div>
-                  <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">{t('walletAddress')}</Label>
-                  <div className="flex items-center gap-2 p-3 rounded-xl bg-white/5 border border-white/10">
-                    <p
-                      className="flex-1 text-base md:text-sm font-mono break-all cursor-pointer text-white/90 hover:opacity-80"
-                      onClick={() => {
-                        setShowFullAddress(!showFullAddress);
-                        if (!showFullAddress) copyToClipboard(walletAddress, false);
-                      }}
-                      title="Click to toggle full address"
-                    >
-                      {showFullAddress ? walletAddress : formatAddress(walletAddress)}
-                    </p>
-                    <button
-                      onClick={() => copyToClipboard(walletAddress, false)}
-                      className="p-2 rounded-lg hover:bg-white/10 shrink-0 text-gray-400 hover:text-white"
-                      title={copied ? t('copied') : t('copyLink')}
-                    >
-                      {copied ? (
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-400">
-                          <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
-                      ) : (
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                        </svg>
-                      )}
-                    </button>
-                  </div>
-                  <p className="text-base md:text-sm text-gray-500 mt-1">{showFullAddress ? t('clickToHide') : t('clickToCopy')}</p>
-                </div>
 
-                <div className="space-y-1">
-                  <button
-                    onClick={() => {
-                      setShowSettingsModal(false);
-                      window.open(`https://solscan.io/account/${walletAddress}`, '_blank');
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-base md:text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                      <polyline points="15 3 21 3 21 9"></polyline>
-                      <line x1="10" y1="14" x2="21" y2="3"></line>
-                    </svg>
-                    {t('viewOnSolscan')}
-                  </button>
-                  {/* Export Private Key button — temporarily hidden
+                    <div className="space-y-4">
+                      {/* Network toggle — visible to all */}
+                      <div>
+                        <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">{t('network')}</Label>
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-base md:text-sm text-white/90">
+                              {networkMode === "mainnet"
+                                ? (mainnetAccess ? t('mainnetBeta') : t('mainnetViewOnly'))
+                                : t('devnet')}
+                            </span>
+                            {networkMode === "mainnet" && !mainnetAccess && (
+                              <span className="text-base md:text-sm text-amber-400/80 mt-0.5">{t('balanceWithdrawOnly')}</span>
+                            )}
+                          </div>
+                          <Switch
+                            checked={networkMode === "mainnet"}
+                            onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Sign-in methods - show connected first, then Add buttons */}
+                      <div>
+                        <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">{t('signInMethods')}</Label>
+                        {/* Always show what's already connected */}
+                        {(hasEmail || hasTwitterLinked) && (
+                          <div className="mb-3 p-3 rounded-xl bg-white/5 border border-white/10 space-y-2">
+                            <p className="text-base md:text-sm font-medium text-gray-400 mb-1.5">{t('connected')}</p>
+                            {hasEmail && linkedEmailAddress && (
+                              <div className="flex items-center gap-2 text-base md:text-sm text-white/90">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-gray-400">
+                                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                                  <polyline points="22,6 12,13 2,6"></polyline>
+                                </svg>
+                                <span className="truncate">{linkedEmailAddress}</span>
+                              </div>
+                            )}
+                            {hasTwitterLinked && twitterHandle && (
+                              <div className="flex items-center gap-2 text-base md:text-sm text-white/90">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="shrink-0 text-gray-400">
+                                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                                </svg>
+                                <span>@{twitterHandle}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <p className="text-base md:text-sm text-gray-400 mb-3">
+                          {t('addSecondMethod')}
+                        </p>
+                        <div className="space-y-1">
+                          {!hasTwitterLinked && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                setShowSettingsModal(false);
+                                setLinkingMethod("twitter");
+                                try {
+                                  await linkTwitter();
+                                } catch {
+                                  // Errors are surfaced via useLinkAccount onError.
+                                }
+                              }}
+                              title="You'll be redirected to Twitter to login"
+                              className="w-full text-left px-3 py-2.5 rounded-xl text-base md:text-sm font-medium transition-colors flex items-center gap-3 text-orange-400 hover:bg-orange-400/10"
+                            >
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+                                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                              </svg>
+                              {t('addTwitter')}
+                            </button>
+                          )}
+                          {!hasEmail && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                setLinkingMethod("email");
+                                try {
+                                  await linkEmail();
+                                } catch {
+                                  // Errors are surfaced via useLinkAccount onError.
+                                }
+                              }}
+                              className="w-full text-left px-3 py-2.5 rounded-xl text-base md:text-sm font-medium transition-colors flex items-center gap-3 text-gray-300 hover:bg-white/10 hover:text-white"
+                            >
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                                <polyline points="22,6 12,13 2,6"></polyline>
+                              </svg>
+                              {t('addEmail')}
+                            </button>
+                          )}
+                        </div>
+                        {canUpdateToTwitter && twitterHandle && (
+                          <div className="mt-3 p-3 rounded-xl bg-white/5 border border-white/10">
+                            <p className="text-base md:text-sm font-medium text-gray-300 mb-1">{t('paymentLink')}</p>
+                            <p className="text-base md:text-sm text-gray-400 mb-2">
+                              {t('useTwitterAsLink', { handle: twitterHandle })}
+                            </p>
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="rounded-xl bg-white/10 text-white border-0 hover:bg-white/20"
+                              disabled={updatingToTwitter || !privyUser?.id}
+                              onClick={async () => {
+                                if (!privyUser?.id || !twitterHandle) return;
+                                setUpdatingToTwitter(true);
+                                try {
+                                  const res = await fetch("/api/users/setup-username", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ privyUserId: privyUser.id, username: twitterHandle }),
+                                  });
+                                  const data = await res.json();
+                                  if (!res.ok) {
+                                    toast({ variant: "destructive", title: "Update failed", description: data.error || "Try again." });
+                                    return;
+                                  }
+                                  const newUsername = data.user?.username ?? twitterHandle;
+                                  setUsername(newUsername);
+                                  setAuth({ authenticated: true, email: storeEmail, username: newUsername });
+                                  toast({ title: "Payment link updated", description: `Your link is now @${newUsername}` });
+                                } catch (e) {
+                                  toast({ variant: "destructive", title: "Update failed", description: "Try again." });
+                                } finally {
+                                  setUpdatingToTwitter(false);
+                                }
+                              }}
+                            >
+                              {updatingToTwitter ? t('updating') : t('useHandle', { handle: twitterHandle })}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                      {walletAddress ? (
+                        <>
+                          <div>
+                            <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">{t('walletAddress')}</Label>
+                            <div className="flex items-center gap-2 p-3 rounded-xl bg-white/5 border border-white/10">
+                              <p
+                                className="flex-1 text-base md:text-sm font-mono break-all cursor-pointer text-white/90 hover:opacity-80"
+                                onClick={() => {
+                                  setShowFullAddress(!showFullAddress);
+                                  if (!showFullAddress) copyToClipboard(walletAddress, false);
+                                }}
+                                title="Click to toggle full address"
+                              >
+                                {showFullAddress ? walletAddress : formatAddress(walletAddress)}
+                              </p>
+                              <button
+                                onClick={() => copyToClipboard(walletAddress, false)}
+                                className="p-2 rounded-lg hover:bg-white/10 shrink-0 text-gray-400 hover:text-white"
+                                title={copied ? t('copied') : t('copyLink')}
+                              >
+                                {copied ? (
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-400">
+                                    <polyline points="20 6 9 17 4 12"></polyline>
+                                  </svg>
+                                ) : (
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                  </svg>
+                                )}
+                              </button>
+                            </div>
+                            <p className="text-base md:text-sm text-gray-500 mt-1">{showFullAddress ? t('clickToHide') : t('clickToCopy')}</p>
+                          </div>
+
+                          <div className="space-y-1">
+
+                            {/* Rotate embedded wallet — dev only */}
+                            {walletAddress && isLocalhost && (
+                              <div className="pt-2 border-t border-white/10">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div>
+                                    <p className="text-base md:text-sm font-medium text-gray-300">New wallet address</p>
+                                    {balanceUSD >= 0.1 && (
+                                      <p className="text-xs text-amber-400/80 mt-0.5">Withdraw below $0.10 first</p>
+                                    )}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={balanceUSD >= 0.1}
+                                    onClick={() => setShowRotateConfirm(true)}
+                                    className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-white/10 hover:bg-white/15 text-white"
+                                  >
+                                    Generate new
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <button
+                              onClick={() => {
+                                setShowSettingsModal(false);
+                                window.open(`https://solscan.io/account/${walletAddress}`, '_blank');
+                              }}
+                              className="w-full text-left px-3 py-2 rounded-xl text-base md:text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                <polyline points="15 3 21 3 21 9"></polyline>
+                                <line x1="10" y1="14" x2="21" y2="3"></line>
+                              </svg>
+                              {t('viewOnSolscan')}
+                            </button>
+                            {/* Export Private Key button — temporarily hidden
                   <button
                     onClick={async () => {
                       setShowSettingsModal(false);
@@ -1226,18 +1358,21 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                     Export Private Key
                   </button>
                   */}
-                </div>
-              </>
-            ) : (
-              <div className="py-4 text-center">
-                {!privyReady ? (
-                  <p className="text-base md:text-sm text-gray-400">{t('loadingWallet')}</p>
-                ) : (
-                  <p className="text-base md:text-sm text-gray-400">{t('walletAutoCreated')}</p>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="py-4 text-center">
+                          {!privyReady ? (
+                            <p className="text-base md:text-sm text-gray-400">{t('loadingWallet')}</p>
+                          ) : (
+                            <p className="text-base md:text-sm text-gray-400">{t('walletAutoCreated')}</p>
+                          )}
+                        </div>
+                      )}
+
+                    </div>
+                  </>
                 )}
-              </div>
-            )}
-                </div>
               </div>
 
               {/* Sticky close footer */}

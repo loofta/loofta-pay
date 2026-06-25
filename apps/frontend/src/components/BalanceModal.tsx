@@ -1809,11 +1809,13 @@ export function BalanceModal({
         onInteractOutside={(e) => e.preventDefault()}
         className={cn(
           contentCls,
+          blinkDepositing && "pointer-events-none",
           "left-0 right-0 top-0 translate-x-0 translate-y-0 h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col",
           "sm:left-1/2 sm:right-auto sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-xl sm:rounded-2xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block",
           "[&>button]:h-12 [&>button]:w-12 [&>button]:rounded-full [&>button_svg]:h-5 [&>button_svg]:w-5"
         )}
       >
+
         {/* Drag handle — mobile only */}
         <div className="sm:hidden flex justify-center pt-5 pb-2 shrink-0">
           <div className={`w-10 h-1 rounded-full ${dark ? "bg-white/20" : "bg-gray-300"}`} />
