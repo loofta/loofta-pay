@@ -230,20 +230,28 @@ export class UsersController {
     return this.usersService.listAllUsernames();
   }
 
-  @Get('me/update-jun26')
+  @Get('me/force-update')
   @UseGuards(PrivyAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get update-jun26 completion status' })
-  async getUpdateJun26Status(@PrivyUser() user: { id: string }) {
-    return this.usersService.getUpdateJun26Status(user.id);
+  @ApiOperation({ summary: 'Get force-update completion status for a given update_id' })
+  async getForceUpdateStatus(
+    @PrivyUser() user: { id: string },
+    @Query('update_id') updateId: string,
+  ) {
+    if (!updateId) throw new BadRequestException('update_id is required');
+    return this.usersService.getForceUpdateStatus(user.id, updateId);
   }
 
-  @Post('me/update-jun26/complete')
+  @Post('me/force-update/complete')
   @UseGuards(PrivyAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Mark update-jun26 as complete' })
-  async markUpdateJun26Complete(@PrivyUser() user: { id: string }) {
-    await this.usersService.markUpdateJun26Complete(user.id);
+  @ApiOperation({ summary: 'Mark a force-update as complete' })
+  async markForceUpdateComplete(
+    @PrivyUser() user: { id: string },
+    @Body() body: { update_id: string },
+  ) {
+    if (!body?.update_id) throw new BadRequestException('update_id is required');
+    await this.usersService.markForceUpdateComplete(user.id, body.update_id);
     return { ok: true };
   }
 }

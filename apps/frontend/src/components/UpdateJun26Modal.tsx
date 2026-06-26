@@ -6,7 +6,7 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 import { fetchEmbeddedSolanaUsdcBalance } from "@/services/solanaBalance";
-import { useUpdateJun26, markLocallyDone } from "@/hooks/useUpdateJun26";
+import { useUpdateJun26, markLocallyDone, UPDATE_ID } from "@/hooks/useUpdateJun26";
 import {
   Dialog,
   DialogContent,
@@ -104,8 +104,12 @@ export function UpdateJun26Modal() {
       }
 
       setStep("completing");
-      await fetch("/api/users/update-jun26/complete", { method: "POST", headers });
-      markLocallyDone();
+      await fetch("/api/users/update-jun26/complete", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ update_id: UPDATE_ID }),
+      });
+      if (user?.id) markLocallyDone(user.id);
 
       setStep("done");
       setTimeout(() => window.location.reload(), 1800);

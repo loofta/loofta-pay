@@ -5,11 +5,13 @@ const backendUrl = () =>
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization") ?? "";
+  const updateId = request.nextUrl.searchParams.get("update_id") ?? "1";
 
   try {
-    const res = await fetch(`${backendUrl()}/users/me/update-jun26`, {
-      headers: { authorization: authHeader },
-    });
+    const res = await fetch(
+      `${backendUrl()}/users/me/force-update?update_id=${encodeURIComponent(updateId)}`,
+      { headers: { authorization: authHeader } },
+    );
     const data = await res.json().catch(() => null);
     return NextResponse.json(data, { status: res.status });
   } catch (err: any) {

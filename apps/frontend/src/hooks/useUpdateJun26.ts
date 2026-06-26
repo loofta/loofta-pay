@@ -3,22 +3,27 @@
 import { useState, useEffect } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 
-const LOCAL_KEY = "loofta_update_jun26_done";
+// Increment this when a new mandatory update is deployed.
+export const UPDATE_ID = "1";
 
 // Users created at or after this date already have a fresh wallet — no upgrade needed.
 const CUTOFF = new Date("2026-06-26T00:00:00Z");
+
+function localKey(userId: string) {
+  return `loofta_update_1_${userId}`;
+}
 
 function isNewUser(createdAt: Date | null | undefined): boolean {
   if (!createdAt) return false;
   return createdAt >= CUTOFF;
 }
 
-export function isUpdateDone(): boolean {
-  try { return localStorage.getItem(LOCAL_KEY) === "1"; } catch { return false; }
+export function isUpdateDone(userId: string): boolean {
+  try { return localStorage.getItem(localKey(userId)) === "1"; } catch { return false; }
 }
 
-export function markLocallyDone() {
-  try { localStorage.setItem(LOCAL_KEY, "1"); } catch { /* */ }
+export function markLocallyDone(userId: string) {
+  try { localStorage.setItem(localKey(userId), "1"); } catch { /* */ }
 }
 
 export function useUpdateJun26() {
@@ -26,40 +31,36 @@ export function useUpdateJun26() {
   const [show, setShow] = useState(false);
   const privyUserId = user?.id;
 
-  // Show modal as soon as Privy is ready and user is logged in — unless already done
   useEffect(() => {
     if (!ready || !authenticated || !privyUserId) return;
 
-    if (isUpdateDone()) return;
+    if (isUpdateDone(privyUserId)) return;
 
-    // New users signed up after the deployment already have a fresh wallet — skip.
     if (isNewUser(user?.createdAt)) {
-      markLocallyDone();
+      markLocallyDone(privyUserId);
       return;
     }
 
-    // Not done locally: show modal immediately, then check backend in background
-    // to sync cross-device (if done on another device, hide without forcing the flow again)
     setShow(true);
 
     (async () => {
       try {
         const token = await getAccessToken();
         if (!token) return;
-        const res = await fetch("/api/users/update-jun26", {
+        const res = await fetch(`/api/users/update-jun26?update_id=${UPDATE_ID}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {
           const data = await res.json();
           if (data.completed) {
-            markLocallyDone();
+            markLocallyDone(privyUserId);
             setShow(false);
-          } else if (isUpdateDone()) {
-            // localStorage says done but DB doesn't have the record — backfill it.
-            // Happens when the /complete endpoint was missing during the upgrade.
+          } else if (isUpdateDone(privyUserId)) {
+            // localStorage says done but DB doesn't — backfill.
             fetch("/api/users/update-jun26/complete", {
               method: "POST",
-              headers: { Authorization: `Bearer ${token}` },
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ update_id: UPDATE_ID }),
             }).catch(() => {});
             setShow(false);
           }
@@ -71,19 +72,19 @@ export function useUpdateJun26() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated, privyUserId]);
 
-  // On tab return: hide if done on another tab, re-show if not done and logged in
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      if (isUpdateDone() || isNewUser(user?.createdAt)) {
+      if (!privyUserId) return;
+      if (isUpdateDone(privyUserId) || isNewUser(user?.createdAt)) {
         setShow(false);
-      } else if (authenticated && privyUserId) {
+      } else if (authenticated) {
         setShow(true);
       }
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [authenticated, privyUserId]);
+  }, [authenticated, privyUserId, user?.createdAt]);
 
   return { show };
 }
