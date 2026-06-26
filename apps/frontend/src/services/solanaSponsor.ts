@@ -110,6 +110,7 @@ export async function signAndBroadcastSponsoredTx(
   privyUserId: string,
   stepLabel?: string,
   accessToken?: string | null,
+  network?: "mainnet" | "devnet",
 ): Promise<string> {
   const label = stepLabel ?? "sign-and-broadcast";
   const t0 =
@@ -125,6 +126,7 @@ export async function signAndBroadcastSponsoredTx(
     },
     body: JSON.stringify({
       transaction: uint8ArrayToBase64(signedTransactionBytes),
+      ...(network ? { network } : {}),
     }),
   });
   if (!r.ok) {

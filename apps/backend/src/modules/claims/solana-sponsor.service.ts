@@ -410,16 +410,20 @@ export class SolanaSponsorService {
   /**
    * Validate that the transaction uses our fee payer and does not transfer SOL from the fee payer.
    * Then sign with fee payer and broadcast with skipPreflight.
+   *
+   * Pass network: "devnet" to route the broadcast to the devnet RPC with skipPreflight.
    */
-  async signAndBroadcast(serializedTransactionBase64: string): Promise<{ signature: string }> {
+  async signAndBroadcast(serializedTransactionBase64: string, network?: string): Promise<{ signature: string }> {
     if (!this.feePayerKeypair || !this.feePayerAddress) {
       throw new Error('Solana fee sponsorship is not configured');
     }
 
     const transactionBuffer = Buffer.from(serializedTransactionBase64, 'base64');
     const reqStart = Date.now();
+    const isDevnet = network === 'devnet';
+    const broadcastConn = isDevnet ? this.getConnectionForCluster('devnet') : this.connection;
     this.logger.log(
-      `SolanaSponsor[sign-and-broadcast]: incoming bytes=${transactionBuffer.length} rpc=${this.connection.rpcEndpoint}`,
+      `SolanaSponsor[sign-and-broadcast]: incoming bytes=${transactionBuffer.length} network=${network ?? 'mainnet'} rpc=${broadcastConn.rpcEndpoint}`,
     );
 
     let legacy: Transaction | null = null;
@@ -461,10 +465,10 @@ export class SolanaSponsorService {
         );
       }
       const sendT0 = Date.now();
-      const sig = await this.connection.sendRawTransaction(
+      const sig = await broadcastConn.sendRawTransaction(
         legacy.serialize({ requireAllSignatures: false, verifySignatures: false }),
         {
-          skipPreflight: false,
+          skipPreflight: isDevnet,
           maxRetries: 3,
           preflightCommitment: 'confirmed',
         },
@@ -472,7 +476,7 @@ export class SolanaSponsorService {
       this.logger.log(
         `SolanaSponsor[sign-and-broadcast]: legacy sendRawTransaction done in ${Date.now() - sendT0}ms sig=${sig.slice(0, 12)}...`,
       );
-      await this.waitUntilSignatureVisible(sig, 12_000, 400, 'sign-and-broadcast:legacy').catch((e) => {
+      await this.waitUntilSignatureVisible(sig, 12_000, 400, 'sign-and-broadcast:legacy', broadcastConn).catch((e) => {
         this.logger.warn(
           `SolanaSponsor: signature ${sig.slice(0, 12)}... not yet visible after short wait (${String(
             (e as Error)?.message ?? e,
@@ -514,15 +518,15 @@ export class SolanaSponsorService {
     // VersionedTransaction does not expose verifySignatures() in @solana/web3.js v1.95+.
     // The missing-signer check above is sufficient; skip redundant call to avoid TS error.
     const sendT0 = Date.now();
-    const sig = await this.connection.sendRawTransaction(versioned.serialize(), {
-      skipPreflight: false,
+    const sig = await broadcastConn.sendRawTransaction(versioned.serialize(), {
+      skipPreflight: isDevnet,
       maxRetries: 3,
       preflightCommitment: 'confirmed',
     });
     this.logger.log(
       `SolanaSponsor[sign-and-broadcast]: v0 sendRawTransaction done in ${Date.now() - sendT0}ms sig=${sig.slice(0, 12)}...`,
     );
-    await this.waitUntilSignatureVisible(sig, 12_000, 400, 'sign-and-broadcast:v0').catch((e) => {
+    await this.waitUntilSignatureVisible(sig, 12_000, 400, 'sign-and-broadcast:v0', broadcastConn).catch((e) => {
       this.logger.warn(
         `SolanaSponsor: signature ${sig.slice(0, 12)}... not yet visible after short wait (${String(
           (e as Error)?.message ?? e,

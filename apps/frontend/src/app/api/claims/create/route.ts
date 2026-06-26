@@ -4,16 +4,20 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { isNonMainnetCluster } from "@/lib/solanaCluster";
 import { generateShortId } from "@/lib/shortId";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 export async function POST(request: Request) {
+  const uid = await getVerifiedUserId(request);
+  if (!uid) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
-    const { amount, toSel, recipient, userId, description, direction, cluster, feeOnSender, isPrivate } = await request.json();
+    const { amount, toSel, recipient, description, direction, cluster, feeOnSender, isPrivate } = await request.json();
     if (!amount || !recipient) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
     const supabase = getSupabaseAdmin();
     const isFromRecipient = direction === 'from_recipient';
-    const uid = userId ? String(userId) : null;
     const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isNonMainnetCluster();
     const shortId = generateShortId();
     const { data, error } = await supabase

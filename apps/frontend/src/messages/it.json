@@ -14,6 +14,7 @@
   "MinimalHeader": {
     "balance": "Saldo",
     "sparks": "Sparks",
+    "rewards": "Premi",
     "waitlist": "Lista d'attesa",
     "profile": "Profilo",
     "signIn": "Accedi",
@@ -301,6 +302,7 @@
     "copyUsername": "Copia nome utente",
     "shareYourLink": "Condividi il tuo link",
     "sparks": "Sparks",
+    "rewards": "Premi",
     "settings": "Impostazioni",
     "mainnetBeta": "Mainnet Beta",
     "mainnetViewOnly": "Mainnet (sola lettura)",
@@ -496,5 +498,20 @@
       "perk3": "Private beta features before public launch",
       "perk4": "Direct line to the founding team"
     }
+  }
+,
+
+  "RewardsPage": {
+    "title": "Premi",
+    "subtitle": "Guadagna completando le campagne",
+    "activeCampaigns": "Campagne Attive",
+    "comingSoon": "Prossimamente",
+    "sparksTitle": "Sparks",
+    "sparksDescription": "Completa missioni su devnet, guadagna Sparks",
+    "nextCampaign": "Prossima Campagna",
+    "nextCampaignSubtitle": "Altri premi in arrivo",
+    "endsToday": "Termina oggi",
+    "daysLeft": "{days}g rimanenti",
+    "backToRewards": "Premi"
   }
 }

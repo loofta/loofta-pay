@@ -14,6 +14,7 @@
   "MinimalHeader": {
     "balance": "Guthaben",
     "sparks": "Sparks",
+    "rewards": "Prämien",
     "waitlist": "Warteliste",
     "profile": "Profil",
     "signIn": "Anmelden",
@@ -301,6 +302,7 @@
     "copyUsername": "Benutzername kopieren",
     "shareYourLink": "Teilen Sie Ihren Link",
     "sparks": "Sparks",
+    "rewards": "Prämien",
     "settings": "Einstellungen",
     "mainnetBeta": "Mainnet Beta",
     "mainnetViewOnly": "Mainnet (nur Ansicht)",
@@ -496,5 +498,20 @@
       "perk3": "Private beta features before public launch",
       "perk4": "Direct line to the founding team"
     }
+  }
+,
+
+  "RewardsPage": {
+    "title": "Prämien",
+    "subtitle": "Verdiene durch das Abschließen von Kampagnen",
+    "activeCampaigns": "Aktive Kampagnen",
+    "comingSoon": "Demnächst",
+    "sparksTitle": "Sparks",
+    "sparksDescription": "Schließe Missionen im Devnet ab, verdiene Sparks",
+    "nextCampaign": "Nächste Kampagne",
+    "nextCampaignSubtitle": "Weitere Prämien kommen",
+    "endsToday": "Endet heute",
+    "daysLeft": "Noch {days}T",
+    "backToRewards": "Prämien"
   }
 }

@@ -121,6 +121,12 @@ export default async function RootLayout({
         />
         {/* Preload critical logo for LCP */}
         <link rel="preload" href="/loofta.svg" as="image" />
+        {/* Preload balance modal tab icons so they're cached before the modal opens */}
+        <link rel="preload" href="/images/icons/deposit-bridge.svg" as="image" type="image/svg+xml" />
+        <link rel="preload" href="/images/icons/deposit-receive.svg" as="image" type="image/svg+xml" />
+        <link rel="preload" href="/images/icons/deposit-bank.svg" as="image" type="image/svg+xml" />
+        <link rel="preload" href="/images/icons/withdraw-usdc.svg" as="image" type="image/svg+xml" />
+        <link rel="preload" href="/images/icons/withdraw-peer.svg" as="image" type="image/svg+xml" />
         {/* DNS prefetch for external resources */}
         <link rel="dns-prefetch" href="https://cdn.fontshare.com" />
         <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
