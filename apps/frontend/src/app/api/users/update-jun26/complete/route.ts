@@ -5,11 +5,14 @@ const backendUrl = () =>
 
 export async function POST(request: NextRequest) {
   const authHeader = request.headers.get("authorization") ?? "";
+  const body = await request.json().catch(() => ({})) as { update_id?: string };
+  const updateId = body.update_id ?? "1";
 
   try {
-    const res = await fetch(`${backendUrl()}/users/me/update-jun26/complete`, {
+    const res = await fetch(`${backendUrl()}/users/me/force-update/complete`, {
       method: "POST",
       headers: { authorization: authHeader, "Content-Type": "application/json" },
+      body: JSON.stringify({ update_id: updateId }),
     });
     const data = await res.json().catch(() => null);
     return NextResponse.json(data, { status: res.status });

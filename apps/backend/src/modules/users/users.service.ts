@@ -20,7 +20,7 @@ function computeTierKey(volumeUsd: number): string {
   return 'noob';
 }
 
-const WALLET_CACHE_TTL = 120; // 2 min — wallet address rarely changes
+const _WALLET_CACHE_TTL = 120; // 2 min — wallet address rarely changes
 
 @Injectable()
 export class UsersService {
@@ -465,19 +465,20 @@ export class UsersService {
     }
   }
 
-  async getUpdateJun26Status(privyUserId: string): Promise<{ completed: boolean }> {
-    const { data } = await this.supabaseService.updateJun26
+  async getForceUpdateStatus(privyUserId: string, updateId: string): Promise<{ completed: boolean }> {
+    const { data } = await this.supabaseService.forceUpdate
       .select('user_id')
       .eq('user_id', privyUserId)
+      .eq('update_id', updateId)
       .maybeSingle();
     return { completed: !!data };
   }
 
-  async markUpdateJun26Complete(privyUserId: string): Promise<void> {
-    const { error } = await this.supabaseService.updateJun26
-      .upsert({ user_id: privyUserId }, { onConflict: 'user_id' });
+  async markForceUpdateComplete(privyUserId: string, updateId: string): Promise<void> {
+    const { error } = await this.supabaseService.forceUpdate
+      .upsert({ user_id: privyUserId, update_id: updateId }, { onConflict: 'user_id,update_id' });
     if (error) {
-      this.logger.error('markUpdateJun26Complete error:', error);
+      this.logger.error('markForceUpdateComplete error:', error);
       throw new Error('Failed to mark update complete');
     }
   }
