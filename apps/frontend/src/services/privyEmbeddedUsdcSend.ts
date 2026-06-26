@@ -34,7 +34,8 @@ type SignTransactionFn = (input: {
   transaction: Uint8Array;
   wallet: ConnectedStandardSolanaWallet;
   chain?: PrivySolanaChain;
-  options?: unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  options?: any;
 }) => Promise<{ signedTransaction: Uint8Array }>;
 
 /** Mainnet path — Privy handles gas sponsorship. */
