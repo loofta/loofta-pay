@@ -114,6 +114,7 @@
     "typescript": "^5.8.3"
   },
   "optionalDependencies": {
-    "@next/swc-darwin-arm64": "^16.0.7"
+    "@next/swc-darwin-arm64": "^16.0.7",
+    "@parcel/watcher-linux-x64-glibc": "^2.4.1"
   }
 }
