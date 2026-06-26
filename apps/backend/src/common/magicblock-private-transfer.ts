@@ -159,7 +159,7 @@ export async function requestMagicblockPrivateTransfer(params: {
     visibility: 'private',
     fromBalance: 'base',
     toBalance: 'base',
-    cluster: params.cluster === 'mainnet' ? 'mainnet-private' : 'devnet-private',
+    cluster: params.cluster === 'mainnet' ? 'mainnet-private' : 'devnet',
     initIfMissing: true,
     initAtasIfMissing: true,
     initVaultIfMissing: false,
