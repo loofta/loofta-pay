@@ -96,6 +96,13 @@ export class LotteryController {
     return this.lottery.getTicketStatus(ticketId, req.user.id);
   }
 
+  @Post('tickets/:ticketId/sync-numbers')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Fetch NFT ball numbers for a ticket from Megapot and store them' })
+  async syncNumbers(@Param('ticketId') ticketId: string, @Request() req: any): Promise<{ ok: boolean; count: number }> {
+    return this.lottery.syncTicketNumbers(ticketId, req.user.id);
+  }
+
   @Get('dashboard')
   @ApiOperation({ summary: 'Get full lottery dashboard for current user' })
   async dashboard(@Request() req: any): Promise<LotteryDashboard> {

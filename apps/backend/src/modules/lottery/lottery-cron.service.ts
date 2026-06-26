@@ -8,8 +8,8 @@ export class LotteryCronService {
 
   constructor(private readonly lottery: LotteryService) {}
 
-  /** Every 2 minutes: check sent tickets for USDC + start bridge */
-  @Cron('*/2 * * * *')
+  /** Every 30 seconds: check sent tickets for USDC + start bridge */
+  @Cron('*/15 * * * * *')
   async processSent(): Promise<void> {
     this.logger.log('Cron: processing sent tickets');
     await this.lottery.processSentTickets().catch(e =>
@@ -17,8 +17,8 @@ export class LotteryCronService {
     );
   }
 
-  /** Every minute: check bridging tickets + buy on Megapot */
-  @Cron('* * * * *')
+  /** Every 30 seconds: check bridging tickets + buy on Megapot */
+  @Cron('*/15 * * * * *')
   async processBridging(): Promise<void> {
     this.logger.log('Cron: processing bridging tickets');
     await this.lottery.processBridgingTickets().catch(e =>
@@ -40,6 +40,14 @@ export class LotteryCronService {
     this.logger.log('Cron: checking daily Megapot draw results');
     await this.lottery.checkDailyResults().catch(e =>
       this.logger.error(`checkDailyResults: ${e.message}`),
+    );
+  }
+
+  /** Every 5 minutes: backfill NFT ball numbers for active tickets that don't have them yet */
+  @Cron('0 */5 * * * *')
+  async backfillNumbers(): Promise<void> {
+    await this.lottery.backfillTicketNumbers().catch(e =>
+      this.logger.error(`backfillTicketNumbers: ${e.message}`),
     );
   }
 }
