@@ -497,4 +497,19 @@
       "perk4": "Direct line to the founding team"
     }
   }
+,
+
+  "RewardsPage": {
+    "title": "पुरस्कार",
+    "subtitle": "अभियान पूरा करके कमाएं",
+    "activeCampaigns": "सक्रिय अभियान",
+    "comingSoon": "जल्द आ रहा है",
+    "sparksTitle": "Sparks",
+    "sparksDescription": "devnet पर मिशन पूरे करें, Sparks कमाएं",
+    "nextCampaign": "अगला अभियान",
+    "nextCampaignSubtitle": "और पुरस्कार आ रहे हैं",
+    "endsToday": "आज समाप्त",
+    "daysLeft": "{days} दिन बचे",
+    "backToRewards": "पुरस्कार"
+  }
 }

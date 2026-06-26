@@ -14,6 +14,7 @@
   "MinimalHeader": {
     "balance": "잔액",
     "sparks": "Sparks",
+    "rewards": "리워드",
     "waitlist": "대기자 명단",
     "profile": "프로필",
     "signIn": "로그인",
@@ -301,6 +302,7 @@
     "copyUsername": "사용자명 복사",
     "shareYourLink": "링크 공유하기",
     "sparks": "Sparks",
+    "rewards": "리워드",
     "settings": "설정",
     "mainnetBeta": "메인넷 베타",
     "mainnetViewOnly": "메인넷 (보기 전용)",
@@ -496,5 +498,20 @@
       "perk3": "Private beta features before public launch",
       "perk4": "Direct line to the founding team"
     }
+  }
+,
+
+  "RewardsPage": {
+    "title": "리워드",
+    "subtitle": "캠페인을 완료하여 획득하세요",
+    "activeCampaigns": "활성 캠페인",
+    "comingSoon": "곧 출시",
+    "sparksTitle": "Sparks",
+    "sparksDescription": "devnet에서 미션을 완료하고 Sparks를 획득하세요",
+    "nextCampaign": "다음 캠페인",
+    "nextCampaignSubtitle": "더 많은 리워드가 옵니다",
+    "endsToday": "오늘 종료",
+    "daysLeft": "{days}일 남음",
+    "backToRewards": "리워드"
   }
 }

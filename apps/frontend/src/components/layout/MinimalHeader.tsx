@@ -50,8 +50,8 @@ function MobileMenu({
   if (!open) return null;
 
   const navLinks = [
-    { href: "/", label: "Send & Receive 💸", description: "Send and receive payments" },
-    { href: "/sparks", label: "Sparks ⚡", description: t('earnSparks') },
+    { href: "/", label: "Send & Receive", description: "Send and receive payments" },
+    { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
     { href: "/app/waitlist", label: t('waitlist'), description: t('requestAccess') },
     { href: "/app/settings", label: t('profile'), description: null },
   ];
@@ -186,6 +186,7 @@ export function MinimalHeader() {
   const { login: privyLogin } = usePrivy();
   const username = useAuthStore((s) => s.username ?? null);
   const networkMode = useAuthStore((s) => s.networkMode);
+  const networkReady = useAuthStore((s) => !!s.userId); // true once setAuth ran and per-user networkMode is loaded
   const mainnetAccess = useAuthStore((s) => s.mainnetAccess);
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
   const tier = useAuthStore((s) => s.tier);
@@ -239,7 +240,7 @@ export function MinimalHeader() {
     setMobileMenuOpen(false);
   }, [pathname]);
 
-  const isSparksActive = pathname === "/sparks";
+  const isRewardsActive = pathname?.startsWith("/rewards");
 
   return (
     <>
@@ -266,23 +267,21 @@ export function MinimalHeader() {
                       : "text-slate-300 hover:text-white hover:bg-white/10",
                   ].join(" ")}
                 >
-                  <span>💸</span>
                   <span>Send & Receive</span>
                 </Link>
 
 
                 {/* Desktop: Rewards link */}
                 <Link
-                  href="/sparks"
+                  href="/rewards"
                   className={[
                     "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    isSparksActive
+                    isRewardsActive
                       ? "text-amber-300 bg-amber-500/10"
                       : "text-slate-300 hover:text-white hover:bg-white/10",
                   ].join(" ")}
                 >
-                  <span>⚡</span>
-                  <span>{t('sparks')}</span>
+                  <span>{t('rewards')}</span>
                 </Link>
 
                 {/* Desktop: Waitlist link */}
