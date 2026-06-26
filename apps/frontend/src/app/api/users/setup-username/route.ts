@@ -1,17 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 /**
  * Set username for user
  * POST /api/users/setup-username
  */
 export async function POST(request: NextRequest) {
+  const privyUserId = await getVerifiedUserId(request);
+  if (!privyUserId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
-    const { privyUserId, username } = await request.json();
+    const { username } = await request.json();
 
-    if (!privyUserId || !username) {
+    if (!username) {
       return NextResponse.json(
-        { error: "privyUserId and username are required" },
+        { error: "username is required" },
         { status: 400 }
       );
     }

@@ -221,8 +221,12 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const paymentId = params.id;
-  const userId = await getVerifiedUserId(request) ?? undefined;
-  console.log("[payments/PATCH] Updating payment:", paymentId, "verifiedUser:", userId ?? "anonymous");
+  const verifiedId = await getVerifiedUserId(request);
+  if (!verifiedId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const userId: string = verifiedId;
+  console.log("[payments/PATCH] Updating payment:", paymentId, "verifiedUser:", userId);
 
   try {
     const body = await request.json();
