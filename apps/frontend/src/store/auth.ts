@@ -18,6 +18,9 @@ type AuthState = {
 	isOnboardingOpen: boolean;
 	tier: string;
 	totalVolumeUsd: number;
+	ataMigratedMainnet: boolean | null; // null = not yet loaded from DB
+	ataMigratedDevnet: boolean | null;
+	setAtaMigrated: (network: "mainnet" | "devnet", value: boolean) => void;
 	setAuth: (v: { authenticated: boolean; userId?: string; email?: string; username?: string | null }) => void;
 	setUsername: (username: string | null) => void;
 	setMainnetAccess: (access: boolean) => void;
@@ -60,6 +63,12 @@ export const useAuthStore = create<AuthState>()(
 			isOnboardingOpen: false,
 			tier: 'noob',
 			totalVolumeUsd: 0,
+			ataMigratedMainnet: null,
+			ataMigratedDevnet: null,
+			setAtaMigrated: (network, value) =>
+				set(network === "mainnet"
+					? { ataMigratedMainnet: value }
+					: { ataMigratedDevnet: value }),
 			setTier: (tier, totalVolumeUsd) => set({ tier, totalVolumeUsd }),
 			setAuth: (v) =>
 				set((state) => {
@@ -74,6 +83,8 @@ export const useAuthStore = create<AuthState>()(
 							networkMode: CLUSTER_DEFAULT_NETWORK_MODE,
 							tier: 'noob',
 							totalVolumeUsd: 0,
+							ataMigratedMainnet: null,
+							ataMigratedDevnet: null,
 						};
 					}
 					const newUserId = v.userId ?? state.userId;
@@ -109,9 +120,17 @@ export const useAuthStore = create<AuthState>()(
 				email: state.email,
 				username: state.username,
 				mainnetAccess: state.mainnetAccess,
-				// networkMode is NOT persisted here — unauthenticated default is derived from
-				// CLUSTER_DEFAULT_NETWORK_MODE, and per-user preference lives in loofta.net.${userId}.
+				// networkMode is NOT persisted here — per-user preference lives in loofta.net.${userId}.
 			}),
+			// On rehydration, userId is restored synchronously. Use it to immediately load the
+			// per-user networkMode so the first render shows the correct network (no flash).
+			onRehydrateStorage: () => (state) => {
+				if (!state?.userId || typeof window === "undefined") return;
+				const saved = localStorage.getItem(`loofta.net.${state.userId}`);
+				if (saved === "mainnet" || saved === "devnet") {
+					state.networkMode = saved;
+				}
+			},
 		}
 	)
 );

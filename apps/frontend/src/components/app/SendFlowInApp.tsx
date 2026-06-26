@@ -121,8 +121,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           cluster: apiCluster,
         });
         await new Promise((r) => setTimeout(r, 300));
-        const navId = result.short_id || result.id;
-        if (onClaimCreated) onClaimCreated(navId); else router.push(`/c/${navId}`);
+        if (onClaimCreated) onClaimCreated(result.id); else router.push(`/c/${result.id}`);
       } else {
         const cleanUsername = recipientUsername.replace(/^@/, "").toLowerCase();
         const result = await createClaimFromUsername({
@@ -135,8 +134,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           cluster: apiCluster,
         });
         await new Promise((r) => setTimeout(r, 300));
-        const navId = result.short_id || result.id;
-        if (onClaimCreated) onClaimCreated(navId); else router.push(`/c/${navId}`);
+        if (onClaimCreated) onClaimCreated(result.id); else router.push(`/c/${result.id}`);
       }
     } catch (e: unknown) {
       toast({

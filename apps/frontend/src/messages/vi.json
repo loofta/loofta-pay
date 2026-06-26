@@ -14,6 +14,7 @@
   "MinimalHeader": {
     "balance": "Số dư",
     "sparks": "Sparks",
+    "rewards": "Phần thưởng",
     "waitlist": "Danh sách chờ",
     "profile": "Hồ sơ",
     "signIn": "Đăng nhập",
@@ -301,6 +302,7 @@
     "copyUsername": "Sao chép tên người dùng",
     "shareYourLink": "Chia sẻ liên kết của bạn",
     "sparks": "Sparks",
+    "rewards": "Phần thưởng",
     "settings": "Cài đặt",
     "mainnetBeta": "Mainnet Beta",
     "mainnetViewOnly": "Mainnet (chỉ xem)",
@@ -496,5 +498,20 @@
       "perk3": "Private beta features before public launch",
       "perk4": "Direct line to the founding team"
     }
+  }
+,
+
+  "RewardsPage": {
+    "title": "Phần thưởng",
+    "subtitle": "Kiếm tiền bằng cách hoàn thành các chiến dịch",
+    "activeCampaigns": "Chiến dịch đang hoạt động",
+    "comingSoon": "Sắp ra mắt",
+    "sparksTitle": "Sparks",
+    "sparksDescription": "Hoàn thành nhiệm vụ trên devnet, kiếm Sparks",
+    "nextCampaign": "Chiến dịch tiếp theo",
+    "nextCampaignSubtitle": "Thêm phần thưởng sắp đến",
+    "endsToday": "Kết thúc hôm nay",
+    "daysLeft": "Còn {days} ngày",
+    "backToRewards": "Phần thưởng"
   }
 }

@@ -1,26 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 /**
  * Check if user exists and return user data
  * POST /api/users/check
  */
 export async function POST(request: NextRequest) {
+  const privyUserId = await getVerifiedUserId(request);
+  if (!privyUserId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
-    const { privyUserId, email } = await request.json();
-
-    if (!privyUserId) {
-      return NextResponse.json(
-        { error: "privyUserId is required" },
-        { status: 400 }
-      );
-    }
+    const { email } = await request.json();
 
     const supabase = getSupabaseAdmin();
 
     const { data: user, error } = await supabase
       .from("app_users")
-      .select("id, privy_user_id, email, username, skip_onboarding, created_at")
+      .select("id, privy_user_id, email, username, skip_onboarding, ata_migrated_mainnet, ata_migrated_devnet, created_at")
       .eq("privy_user_id", privyUserId)
       .single();
 
@@ -41,6 +39,8 @@ export async function POST(request: NextRequest) {
           email: user.email,
           username: user.username ?? null,
           skipOnboarding: user.skip_onboarding ?? false,
+          ataMigratedMainnet: user.ata_migrated_mainnet ?? false,
+          ataMigratedDevnet: user.ata_migrated_devnet ?? false,
           createdAt: user.created_at,
         },
         needsUsername: !user.username,
@@ -75,6 +75,8 @@ export async function POST(request: NextRequest) {
         email: newUser.email,
         username: newUser.username ?? autoUsername,
         skipOnboarding: false,
+        ataMigratedMainnet: false,
+        ataMigratedDevnet: false,
         createdAt: newUser.created_at,
       },
       needsUsername: false,
