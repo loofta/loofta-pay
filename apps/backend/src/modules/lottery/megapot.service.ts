@@ -17,7 +17,18 @@ import { base } from 'viem/chains';
 export const MEGAPOT_USDC: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 export const MEGAPOT_RANDOM_BUYER: Address = '0xb9560b43b91dE2c1DaF5dfbb76b2CFcDaFc13aBd';
 export const MEGAPOT_JACKPOT: Address = '0x3bAe643002069dBCbcd62B1A4eb4C4A397d042a2';
+export const MEGAPOT_TICKET_NFT: Address = '0x48ffe35abb9f4780a4f1775c2ce1c46185b366e4';
 export const MEGAPOT_TICKET_PRICE_USDC = 1; // $1 per ticket
+
+const TICKET_NFT_ABI = [
+  {
+    name: 'tokenURI',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [{ name: '', type: 'string' }],
+  },
+] as const;
 
 const DEFAULT_BASE_RPC = 'https://mainnet.base.org';
 const MEGAPOT_API = 'https://api.megapot.io/v1';
@@ -152,6 +163,152 @@ export class MegapotService {
 
   async getRound(roundId: string): Promise<MegapotRound> {
     return this.apiGet<MegapotRound>(`/rounds/${roundId}`);
+  }
+
+  /**
+   * Fetch actual ticket ball numbers for a companion wallet by scanning on-chain Transfer mint
+   * events on the Megapot NFT contract, then reading each token's metadata via tokenURI.
+   * The Megapot REST API does not index smart-account wallets (Rhinestone), so we go on-chain.
+   */
+  async getTicketNumbersFromNft(
+    companionAddress: Address,
+    roundId?: string | null,
+  ): Promise<{ tokenIds: string[]; ticketNumbers: { main: number[]; bonus: number }[] }> {
+    const client = this.getPublicClient();
+
+    // Scan Transfer(from=0x0, to=companion) mint events in the last ~28 hours on Base
+    const latest = await client.getBlockNumber();
+    const fromBlock = latest > 50_000n ? latest - 50_000n : 0n;
+
+    const logs = await client.getLogs({
+      address: MEGAPOT_TICKET_NFT,
+      event: {
+        type: 'event',
+        name: 'Transfer',
+        inputs: [
+          { name: 'from', type: 'address', indexed: true },
+          { name: 'to', type: 'address', indexed: true },
+          { name: 'tokenId', type: 'uint256', indexed: true },
+        ],
+      } as const,
+      args: {
+        from: '0x0000000000000000000000000000000000000000' as Address,
+        to: companionAddress,
+      },
+      fromBlock,
+      toBlock: 'latest',
+    });
+
+    this.logger.log(`getTicketNumbersFromNft: companion=${companionAddress} roundId=${roundId} → ${logs.length} mint events`);
+
+    if (logs.length === 0) return { tokenIds: [], ticketNumbers: [] };
+
+    const tokenIds: string[] = [];
+    const ticketNumbers: { main: number[]; bonus: number }[] = [];
+
+    for (const log of logs) {
+      const tokenId = log.args.tokenId?.toString();
+      if (!tokenId) continue;
+
+      try {
+        const rawUri = await client.readContract({
+          address: MEGAPOT_TICKET_NFT,
+          abi: TICKET_NFT_ABI,
+          functionName: 'tokenURI',
+          args: [BigInt(tokenId)],
+        }) as string;
+
+        let metadata: { attributes?: Array<{ trait_type: string; value: unknown }> };
+        if (rawUri.startsWith('data:application/json;base64,')) {
+          metadata = JSON.parse(Buffer.from(rawUri.slice(29), 'base64').toString('utf-8'));
+        } else if (rawUri.startsWith('data:application/json,')) {
+          metadata = JSON.parse(decodeURIComponent(rawUri.slice(22)));
+        } else {
+          const res = await fetch(rawUri, { signal: AbortSignal.timeout(5_000) });
+          metadata = await res.json() as typeof metadata;
+        }
+
+        const attrs = metadata?.attributes ?? [];
+        const get = (name: string) => attrs.find(a => a.trait_type === name)?.value;
+
+        const drawingId = String(get('Drawing ID') ?? '');
+        if (roundId && drawingId && drawingId !== String(roundId)) {
+          this.logger.log(`Token ${tokenId} is round ${drawingId}, skipping (want ${roundId})`);
+          continue;
+        }
+
+        const main = [1, 2, 3, 4, 5]
+          .map(i => Number(get(`Normal Ball ${i}`)))
+          .filter(n => Number.isFinite(n) && n > 0);
+        const bonus = Number(get('Bonus Ball'));
+
+        if (main.length === 5 && Number.isFinite(bonus) && bonus > 0) {
+          tokenIds.push(tokenId);
+          ticketNumbers.push({ main, bonus });
+        }
+      } catch (e: any) {
+        this.logger.warn(`getTicketNumbersFromNft: failed for token ${tokenId}: ${e.message}`);
+      }
+    }
+
+    return { tokenIds, ticketNumbers };
+  }
+
+  /**
+   * Read Tier + Win Amount from on-chain NFT metadata for a set of token IDs.
+   * After Megapot runs the draw, these attributes are populated in the tokenURI.
+   * Returns winAmountUsdc = 0 for losing tickets or tickets not yet drawn.
+   */
+  async checkTicketResultsFromNft(
+    tokenIds: string[],
+  ): Promise<{ tokenId: string; tier: number | null; winAmountUsdc: number }[]> {
+    if (!tokenIds.length) return [];
+    const client = this.getPublicClient();
+    const results: { tokenId: string; tier: number | null; winAmountUsdc: number }[] = [];
+
+    for (const tokenId of tokenIds) {
+      try {
+        const rawUri = await client.readContract({
+          address: MEGAPOT_TICKET_NFT,
+          abi: TICKET_NFT_ABI,
+          functionName: 'tokenURI',
+          args: [BigInt(tokenId)],
+        }) as string;
+
+        let metadata: { attributes?: Array<{ trait_type: string; value: unknown }> };
+        if (rawUri.startsWith('data:application/json;base64,')) {
+          metadata = JSON.parse(Buffer.from(rawUri.slice(29), 'base64').toString('utf-8'));
+        } else if (rawUri.startsWith('data:application/json,')) {
+          metadata = JSON.parse(decodeURIComponent(rawUri.slice(22)));
+        } else {
+          const res = await fetch(rawUri, { signal: AbortSignal.timeout(5_000) });
+          metadata = await res.json() as typeof metadata;
+        }
+
+        const attrs = metadata?.attributes ?? [];
+        const get = (name: string) => attrs.find(a => a.trait_type === name)?.value;
+
+        const tier = get('Tier') != null ? Number(get('Tier')) : null;
+        const rawWin = get('Win Amount');
+
+        let winAmountUsdc = 0;
+        if (rawWin != null && rawWin !== '' && String(rawWin) !== '0') {
+          const n = parseFloat(String(rawWin));
+          if (Number.isFinite(n) && n > 0) {
+            // Megapot stores amounts as raw USDC (6 decimals) on-chain but may
+            // display as USD string in metadata — detect by magnitude
+            winAmountUsdc = n > 1_000 ? n / 1_000_000 : n;
+          }
+        }
+
+        this.logger.log(`NFT ${tokenId}: tier=${tier} rawWin=${rawWin} → $${winAmountUsdc}`);
+        results.push({ tokenId, tier, winAmountUsdc });
+      } catch (e: any) {
+        this.logger.warn(`checkTicketResultsFromNft failed for token ${tokenId}: ${e.message}`);
+      }
+    }
+
+    return results;
   }
 
   // ─── Contract reads ────────────────────────────────────────────────────────

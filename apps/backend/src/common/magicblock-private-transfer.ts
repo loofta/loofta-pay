@@ -149,8 +149,14 @@ export async function requestMagicblockPrivateTransfer(params: {
   /** When true, MagicBlock uses the configured sponsor as fee payer and prepends a fixed
    *  relay-fee USDC transfer (sender → sponsor ATA) to cover SOL gas. No SOL needed from sender. */
   gasless?: boolean;
+  /** Override cluster-default min delay (ms). Pass 0 for instant. */
+  minDelayMs?: number;
+  /** Override cluster-default max delay (ms). Pass 0 for instant. */
+  maxDelayMs?: number;
 }): Promise<MagicblockPrivateTransferTxResponse> {
-  const { minDelayMs, maxDelayMs } = magicblockPrivateDelayForCluster(params.cluster);
+  const defaults = magicblockPrivateDelayForCluster(params.cluster);
+  const minDelayMs = params.minDelayMs !== undefined ? String(params.minDelayMs) : defaults.minDelayMs;
+  const maxDelayMs = params.maxDelayMs !== undefined ? String(params.maxDelayMs) : defaults.maxDelayMs;
   const body: Record<string, unknown> = {
     from: params.from,
     to: params.to,
@@ -163,8 +169,8 @@ export async function requestMagicblockPrivateTransfer(params: {
     initIfMissing: true,
     initAtasIfMissing: true,
     initVaultIfMissing: false,
-    minDelayMs: 0,
-    maxDelayMs: 30000,
+    minDelayMs,
+    maxDelayMs,
     ...(params.gasless ? { gasless: true } : {}),
   };
   log.log(`POST https://payments.magicblock.app/v1/spl/transfer payload=${JSON.stringify(body)}`);

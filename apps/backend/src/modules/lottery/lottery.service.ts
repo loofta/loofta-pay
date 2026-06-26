@@ -86,6 +86,7 @@ export interface InitiatePurchaseResult {
   feeBreakdown: {
     ticketCostUsdc: number;
     magicblockFeeUsdc: number;
+    nearIntentsFeeUsdc: number;
     totalUsdc: number;
   };
 }
@@ -117,6 +118,7 @@ export interface LotteryTicketSummary {
   depositAddress: string | null;
   bridgeStatus: string | null;
   bridgeExpiresAt: string | null;
+  ticketNumbers: { main: number[]; bonus: number }[] | null;
 }
 
 export interface LotteryWithdrawalSummary {
@@ -165,9 +167,14 @@ export class LotteryService {
     const burnerKeyEnc = this.enc.encrypt(Buffer.from(burnerKeypair.secretKey), burnerAddress);
 
     const costUsdc = numTickets * TICKET_PRICE_USDC;
-    const grossAmount = grossUpForMagicblockFee(costUsdc * 1_000_000); // in USDC units
-    const magicblockFeeUsdc = parseFloat(((grossAmount - costUsdc * 1_000_000) / 1_000_000 + MAGICBLOCK_GAS_USDC).toFixed(6));
-    const totalUsdc = costUsdc + magicblockFeeUsdc;
+    // Gross up for NEAR Intents bridge fee (~0.2%) so companion receives full cost_usdc after bridging.
+    // Then gross up the bridged amount for MagicBlock's 10 BPS + gas so the burner receives the bridged amount.
+    const NEAR_INTENTS_FEE_BPS = 20; // 0.2% buffer — observed fee is ~0.16%
+    const bridgeUnits = Math.ceil(costUsdc * 1_000_000 * 10_000 / (10_000 - NEAR_INTENTS_FEE_BPS));
+    const grossAmount = grossUpForMagicblockFee(bridgeUnits); // user sends this; burner receives bridgeUnits
+    const magicblockFeeUsdc = parseFloat(((grossAmount - bridgeUnits) / 1_000_000 + MAGICBLOCK_GAS_USDC).toFixed(6));
+    const nearIntentsFeeUsdc = parseFloat(((bridgeUnits - costUsdc * 1_000_000) / 1_000_000).toFixed(6));
+    const totalUsdc = costUsdc + magicblockFeeUsdc + nearIntentsFeeUsdc;
 
     // 4. Build MagicBlock private transfer: user → burner
     const cluster = this.getSolanaCluster();
@@ -180,8 +187,8 @@ export class LotteryService {
         amount: grossAmount,
         cluster,
         gasless: true,
-        minDelayMs: 30_000,   // 30s min — enough to break timing analysis
-        maxDelayMs: 120_000,  // 2 min max — keeps the lottery flow snappy
+        minDelayMs: 3_000,
+        maxDelayMs: 30_000,
       });
     } catch (err: any) {
       if (String(err?.message).includes('delegated to another validator')) {
@@ -215,7 +222,7 @@ export class LotteryService {
       ticketId: ticket.id,
       txBase64: txResponse.transactionBase64,
       requiredSigners: txResponse.requiredSigners,
-      feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, totalUsdc },
+      feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, nearIntentsFeeUsdc, totalUsdc },
     };
   }
 
@@ -340,10 +347,12 @@ export class LotteryService {
       this.nearIntents.getDefuseAssetId('USDC', 'base'),
     ]);
 
+    // Quote for the full burner balance (includes NEAR Intents fee buffer), not just cost_usdc.
+    const amountIn = (Number(burnerBalance) / 1_000_000).toString();
     const quote = await this.nearIntents.getDepositQuote({
       fromToken: { tokenId: solUsdcId, chain: 'solana', symbol: 'USDC', decimals: 6 },
       toToken: { tokenId: baseUsdcId, chain: 'base', symbol: 'USDC', decimals: 6 },
-      amountIn: ticket.cost_usdc.toString(),
+      amountIn,
       skipAppFees: true,
       recipient: ticket.companion_address,
       refundAddress: ticket.burner_sol_address,
@@ -380,7 +389,7 @@ export class LotteryService {
     const { data: tickets } = await db
       .from('lottery_tickets')
       .select('*')
-      .or(`status.eq.bridging,and(status.eq.pending_send,burner_sol_address.is.null,bridge_deposit_address.not.is.null),and(status.eq.buying,burner_sol_address.is.null)`)
+      .or(`status.eq.bridging,status.eq.buying,and(status.eq.pending_send,burner_sol_address.is.null,bridge_deposit_address.not.is.null)`)
       .order('created_at', { ascending: true })
       .limit(20);
 
@@ -507,7 +516,8 @@ export class LotteryService {
     this.logger.log(`Ticket ${ticket.id}: private companion ${ticket.companion_address} USDC=${usdcBalance ?? '?'}`);
 
     const usdcNeeded = ticket.num_tickets * TICKET_PRICE_USDC;
-    if (usdcBalance === null || usdcBalance < usdcNeeded) {
+    // Allow up to 0.01 USDC shortfall from NEAR Intents bridge protocol fees
+    if (usdcBalance === null || usdcBalance < usdcNeeded - 0.01) {
       this.logger.warn(`Ticket ${ticket.id}: companion has ${usdcBalance} USDC, need ${usdcNeeded} — waiting for bridge to settle`);
       return;
     }
@@ -529,10 +539,99 @@ export class LotteryService {
         status: 'active', round_id: roundId, draw_time: drawTime, updated_at: new Date().toISOString(),
       }).eq('id', ticket.id);
       this.logger.log(`Ticket ${ticket.id}: active! ${ticket.num_tickets} private ticket(s) bought`);
+
+      // Non-blocking: fetch actual ball numbers from Megapot NFT metadata
+      this.megapot.getTicketNumbersFromNft(ticket.companion_address as Address, roundId ?? undefined)
+        .then(async ({ tokenIds, ticketNumbers }) => {
+          if (ticketNumbers.length === 0) {
+            this.logger.warn(`Ticket ${ticket.id}: no NFT numbers yet for companion ${ticket.companion_address}`);
+            return;
+          }
+          await db.from('lottery_tickets').update({
+            ticket_numbers: ticketNumbers,
+            ticket_nft_ids: tokenIds,
+            updated_at: new Date().toISOString(),
+          }).eq('id', ticket.id);
+          this.logger.log(`Ticket ${ticket.id}: stored ${ticketNumbers.length} NFT ball numbers`);
+        })
+        .catch(e => this.logger.warn(`Ticket ${ticket.id}: NFT number fetch: ${e.message}`));
+
+      // Sweep any leftover USDC (fee buffer remainder) back to Loofta wallet
+      const leftover = await this.getCompanionUsdcBalance(ticket.companion_address).catch(() => 0);
+      if (leftover >= 0.001) {
+        this.logger.log(`Ticket ${ticket.id}: sweeping leftover ${leftover} USDC from companion → Loofta`);
+        await this.rhinestone.rescueUsdc({
+          companionPrivateKey: companionPrivHex as `0x${string}`,
+          rescueWallet: LOOFTA_WALLET,
+          amountUsdc: leftover,
+        }).catch(e => this.logger.warn(`Ticket ${ticket.id}: leftover sweep failed: ${e.message}`));
+      }
     } catch (err: any) {
       await db.from('lottery_tickets').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', ticket.id);
       this.logger.error(`Ticket ${ticket.id}: private buyTickets failed: ${err.message}`);
     }
+  }
+
+  /** Backfill ball numbers for active tickets that don't have them yet (existing tickets). */
+  async backfillTicketNumbers(): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: tickets } = await db
+      .from('lottery_tickets')
+      .select('id, companion_address, round_id')
+      .eq('status', 'active')
+      .is('ticket_numbers', null)
+      .not('companion_address', 'is', null)
+      .limit(10);
+
+    if (!tickets?.length) return;
+
+    for (const ticket of tickets) {
+      try {
+        const { tokenIds, ticketNumbers } = await this.megapot.getTicketNumbersFromNft(
+          ticket.companion_address as Address,
+          ticket.round_id ?? undefined,
+        );
+        if (ticketNumbers.length > 0) {
+          await db.from('lottery_tickets').update({
+            ticket_numbers: ticketNumbers,
+            ticket_nft_ids: tokenIds,
+            updated_at: new Date().toISOString(),
+          }).eq('id', ticket.id);
+          this.logger.log(`Backfill: stored ${ticketNumbers.length} numbers for ticket ${ticket.id}`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`Backfill failed for ticket ${ticket.id}: ${e.message}`);
+      }
+    }
+  }
+
+  async syncTicketNumbers(ticketId: string, userId: string): Promise<{ ok: boolean; count: number }> {
+    const db = this.supabase.getClient();
+    const { data: ticket } = await db
+      .from('lottery_tickets')
+      .select('id, companion_address, round_id, status')
+      .eq('id', ticketId)
+      .eq('user_id', userId)
+      .single();
+
+    if (!ticket?.companion_address) return { ok: false, count: 0 };
+
+    const { tokenIds, ticketNumbers } = await this.megapot.getTicketNumbersFromNft(
+      ticket.companion_address as Address,
+      ticket.round_id ?? undefined,
+    );
+
+    this.logger.log(`syncTicketNumbers ${ticketId}: found ${ticketNumbers.length} NFT numbers, tokenIds=${tokenIds.slice(0, 3).join(',')}`);
+
+    if (ticketNumbers.length > 0) {
+      await db.from('lottery_tickets').update({
+        ticket_numbers: ticketNumbers,
+        ticket_nft_ids: tokenIds,
+        updated_at: new Date().toISOString(),
+      }).eq('id', ticketId);
+    }
+
+    return { ok: true, count: ticketNumbers.length };
   }
 
   async rescueCompanionFunds(ticketId: string, userId: string): Promise<{ ok: boolean }> {
@@ -845,47 +944,77 @@ export class LotteryService {
   /** After daily draw: check all active tickets for wins */
   async checkDailyResults(): Promise<void> {
     const db = this.supabase.getClient();
+
+    // Only process tickets that are past their draw time
+    // (cron runs at 00:30 UTC, draw is at ~17:10 UTC the previous day)
     const { data: tickets } = await db
       .from('lottery_tickets')
       .select('*')
       .eq('status', 'active')
-      .order('created_at', { ascending: true });
-
-    const companionAddresses = [...new Set((tickets ?? []).map((t: any) => t.companion_address))];
-
-    for (const address of companionAddresses) {
-      try {
-        const wins = await this.megapot.getWalletWins(address);
-        if (!wins.length) continue;
-
-        for (const win of wins) {
-          const ticket = (tickets ?? []).find((t: any) => t.companion_address === address);
-          if (!ticket) continue;
-
-          const amountUsdc = parseFloat(win.amount ?? '0') / 1_000_000;
-          await db.from('lottery_tickets').update({
-            status: 'won',
-            win_amount_usdc: amountUsdc,
-            win_tier: win.tier,
-            updated_at: new Date().toISOString(),
-          }).eq('id', ticket.id);
-
-          this.logger.log(`Ticket ${ticket.id}: WON $${amountUsdc} (tier ${win.tier})`);
-        }
-      } catch (err: any) {
-        this.logger.warn(`checkDailyResults ${address}: ${err.message}`);
-      }
-    }
-
-    // Mark remaining active tickets with past draw_time as lost
-    const { data: expired } = await db
-      .from('lottery_tickets')
-      .select('id')
-      .eq('status', 'active')
       .lt('draw_time', new Date().toISOString());
 
-    for (const t of expired ?? []) {
-      await db.from('lottery_tickets').update({ status: 'lost', updated_at: new Date().toISOString() }).eq('id', t.id);
+    if (!tickets?.length) {
+      this.logger.log('checkDailyResults: no expired active tickets');
+      return;
+    }
+
+    this.logger.log(`checkDailyResults: checking ${tickets.length} expired tickets`);
+
+    for (const ticket of tickets) {
+      try {
+        // Get stored NFT IDs, falling back to on-chain Transfer event scan
+        let tokenIds: string[] = Array.isArray(ticket.ticket_nft_ids) && ticket.ticket_nft_ids.length > 0
+          ? ticket.ticket_nft_ids
+          : [];
+
+        if (!tokenIds.length && ticket.companion_address) {
+          this.logger.log(`checkDailyResults: scanning Transfer events for ticket ${ticket.id}`);
+          const { tokenIds: found, ticketNumbers } = await this.megapot.getTicketNumbersFromNft(
+            ticket.companion_address as Address,
+            ticket.round_id,
+          );
+          tokenIds = found;
+          if (tokenIds.length) {
+            await db.from('lottery_tickets').update({
+              ticket_nft_ids: tokenIds,
+              ...(ticketNumbers.length ? { ticket_numbers: ticketNumbers } : {}),
+              updated_at: new Date().toISOString(),
+            }).eq('id', ticket.id);
+          }
+        }
+
+        if (!tokenIds.length) {
+          this.logger.warn(`checkDailyResults: no NFT IDs found for ticket ${ticket.id} — marking lost`);
+          await db.from('lottery_tickets').update({
+            status: 'lost',
+            updated_at: new Date().toISOString(),
+          }).eq('id', ticket.id);
+          continue;
+        }
+
+        // Read on-chain NFT metadata to check Tier + Win Amount post-draw
+        const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
+        const totalWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
+        const topWin = results.find(r => r.winAmountUsdc > 0);
+
+        if (totalWinUsdc > 0) {
+          await db.from('lottery_tickets').update({
+            status: 'won',
+            win_amount_usdc: totalWinUsdc,
+            win_tier: topWin?.tier ?? null,
+            updated_at: new Date().toISOString(),
+          }).eq('id', ticket.id);
+          this.logger.log(`Ticket ${ticket.id}: WON $${totalWinUsdc} (tier ${topWin?.tier})`);
+        } else {
+          await db.from('lottery_tickets').update({
+            status: 'lost',
+            updated_at: new Date().toISOString(),
+          }).eq('id', ticket.id);
+          this.logger.log(`Ticket ${ticket.id}: LOST`);
+        }
+      } catch (err: any) {
+        this.logger.warn(`checkDailyResults ticket ${ticket.id}: ${err.message}`);
+      }
     }
   }
 
@@ -1115,6 +1244,7 @@ export class LotteryService {
       depositAddress: ['pending_send', 'sent', 'bridging'].includes(t.status) ? (t.bridge_deposit_address ?? null) : null,
       bridgeStatus: t.bridge_status ?? null,
       bridgeExpiresAt: t.bridge_expires_at ?? null,
+      ticketNumbers: t.ticket_numbers ?? null,
     }));
 
     const withdrawals: LotteryWithdrawalSummary[] = (withdrawalsRes.data ?? []).map((w: any) => ({
@@ -1165,6 +1295,7 @@ export class LotteryService {
       depositAddress: ['pending_send', 'sent', 'bridging'].includes(data.status) ? (data.bridge_deposit_address ?? null) : null,
       bridgeStatus: data.bridge_status ?? null,
       bridgeExpiresAt: data.bridge_expires_at ?? null,
+      ticketNumbers: data.ticket_numbers ?? null,
     };
   }
 

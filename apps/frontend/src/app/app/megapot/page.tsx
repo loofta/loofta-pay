@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
@@ -43,6 +43,7 @@ interface TicketSummary {
   roundId: string | null; drawTime: string | null; winAmountUsdc: number | null;
   winTier: number | null; createdAt: string; depositAddress: string | null;
   bridgeStatus: string | null; bridgeExpiresAt: string | null;
+  ticketNumbers: TicketNumbers[] | null;
   deletedAt?: string | null;
 }
 interface WithdrawalSummary {
@@ -492,42 +493,133 @@ function ChooseNumbers({ tickets, setTickets }: {
 
 // ─── Buy stepper ──────────────────────────────────────────────────────────────
 
-function BuyStepper({ step, error }: { step: BuyStep; error?: string }) {
-  const steps = [
-    { key: "signing", label: "Send USDC via MagicBlock · up to 2 min privacy delay" },
-    { key: "bridging", label: "Bridge USDC to Base via NEAR Intents" },
-    { key: "buying", label: "Buy tickets on Megapot" },
-    { key: "done", label: "Tickets active — good luck!" },
-  ];
-  const order: BuyStep[] = ["signing", "sent", "bridging", "buying", "done"];
-  const ci = order.indexOf(step);
+const STEALTH_PHRASES = [
+  "nobody will know about your gambling addiction 🤫",
+  "shh, it's between us 🤐",
+  "ninjas are moving your money to megapot 🥷",
+  "printing tickets in the basement... 🎟️",
+  "taking the scenic route so no one follows 🕵️",
+];
+
+function BuyStepper({ error }: { step?: BuyStep; error?: string }) {
+  const [phraseIdx, setPhraseIdx] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setPhraseIdx(i => (i + 1) % STEALTH_PHRASES.length), 3500);
+    return () => clearInterval(id);
+  }, []);
   return (
-    <div className="mt-5 space-y-3">
-      {steps.map((s, i) => {
-        const idx = order.indexOf(s.key as BuyStep);
-        const done = ci > idx || step === "done";
-        const active = ci === idx && step !== "done";
-        return (
-          <div key={s.key} className="flex items-center gap-3">
-            <div className={["w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold shrink-0 transition-all duration-300",
-              done ? "bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] text-white"
-                : active ? "bg-[#FF7A2A]/20 text-[#FF7A2A] ring-2 ring-[#FF7A2A]/50"
-                : "bg-white/[0.05] text-slate-600"].join(" ")}>
-              {done ? "✓" : i + 1}
-            </div>
-            <span className={["text-base transition-colors duration-300",
-              done ? "text-slate-300" : active ? "text-white font-medium" : "text-slate-600"].join(" ")}>
-              {s.label}
-            </span>
+    <div className="py-6 space-y-4">
+      <div className="flex flex-col items-center gap-4 text-center">
+        <div className="relative w-12 h-12">
+          <div className="absolute inset-0 rounded-full border-2 border-white/10" />
+          <div className="absolute inset-0 rounded-full border-2 border-t-[#FF7A2A] border-r-transparent border-b-transparent border-l-transparent animate-spin" />
+        </div>
+        <div className="space-y-1.5">
+          <p className="text-white font-semibold text-lg">Purchasing your tickets privately</p>
+          <AnimatePresence mode="wait">
+            <motion.p
+              key={phraseIdx}
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -5 }}
+              transition={{ duration: 0.35 }}
+              className="text-sm text-slate-500 italic"
+            >
+              {STEALTH_PHRASES[phraseIdx]}
+            </motion.p>
+          </AnimatePresence>
+        </div>
+      </div>
+      {error && <p className="text-base text-red-400 text-center">{error}</p>}
+    </div>
+  );
+}
+
+// ─── Draw success modal ────────────────────────────────────────────────────────
+
+function DrawSuccessModal({ tickets, drawTime, prizePool, onBuyMore }: {
+  tickets: TicketNumbers[];
+  numTickets: number;
+  drawTime: string | null;
+  prizePool: string | null;
+  onBuyMore: () => void;
+}) {
+  const [msLeft, setMsLeft] = useState(() => drawTime ? new Date(drawTime).getTime() - Date.now() : 0);
+  useEffect(() => {
+    if (!drawTime) return;
+    const tick = () => setMsLeft(new Date(drawTime).getTime() - Date.now());
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [drawTime]);
+
+  const totalSecs = Math.max(0, Math.floor(msLeft / 1000));
+  const hours = Math.floor(totalSecs / 3600);
+  const minutes = Math.floor((totalSecs % 3600) / 60);
+  const seconds = totalSecs % 60;
+  const drawLocal = drawTime
+    ? new Date(drawTime).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : null;
+  const showPicks = tickets.length > 0 && (tickets[0]?.main?.length ?? 0) > 0;
+
+  return (
+    <div className="space-y-5 py-1">
+      {/* Checkmark + headline */}
+      <div className="flex flex-col items-center text-center gap-3 pt-1">
+        <div className="w-16 h-16 rounded-full border-2 border-emerald-400/40 bg-emerald-500/10 flex items-center justify-center">
+          <svg className="w-8 h-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">Confirmed</p>
+          <h2 className="text-2xl font-bold text-white tracking-tight">Good luck!</h2>
+          {prizePool && (
+            <p className="text-sm text-amber-400 mt-1 font-medium">${Math.round(parseFloat(prizePool)).toLocaleString()} prize pool</p>
+          )}
+        </div>
+      </div>
+
+      {/* Countdown */}
+      {drawTime && totalSecs > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs text-slate-500 uppercase tracking-wider text-center font-semibold">Draw in</p>
+          <div className="flex justify-center items-start gap-2">
+            {[{ v: hours, label: "HRS" }, { v: minutes, label: "MIN" }, { v: seconds, label: "SEC" }].map(({ v, label }, i) => (
+              <div key={label} className="flex items-start gap-2">
+                <div className="flex flex-col items-center">
+                  <div className="w-[66px] h-[66px] rounded-xl bg-white/[0.06] border border-white/10 flex items-center justify-center">
+                    <span className="text-3xl font-bold tabular-nums text-white">{String(v).padStart(2, "0")}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-600 mt-1.5 font-semibold tracking-widest">{label}</span>
+                </div>
+                {i < 2 && <span className="text-2xl font-bold text-slate-600 mt-3 select-none">:</span>}
+              </div>
+            ))}
           </div>
-        );
-      })}
-      {(step === "signing" || step === "sent") && (
-        <p className="text-sm text-slate-500 pt-1">
-          Your USDC is being routed privately through MagicBlock. This can take up to 2 minutes — the page will update automatically.
-        </p>
+          {drawLocal && <p className="text-center text-sm text-slate-500 mt-1">Draw {drawLocal}</p>}
+        </div>
       )}
-      {error && <p className="text-base text-red-400 pt-1">{error}</p>}
+
+      {/* Ticket picks */}
+      {showPicks && (
+        <div className="space-y-2">
+          <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Your tickets</p>
+          {tickets.slice(0, 4).map((t, i) => (
+            <TicketNumberCard key={i} tn={t} />
+          ))}
+          {tickets.length > 4 && (
+            <p className="text-sm text-slate-500">+{tickets.length - 4} more tickets</p>
+          )}
+        </div>
+      )}
+
+      <p className="text-center text-sm text-slate-500">Check back soon to see if you&apos;ve won 🤞</p>
+
+      <button onClick={onBuyMore}
+        className="w-full h-11 rounded-xl text-sm font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] hover:text-white transition-all">
+        Buy more tickets
+      </button>
     </div>
   );
 }
@@ -641,18 +733,21 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd }: {
 const PRESETS = [5, 10, 50, 100] as const;
 const PRIVATE_MIN = 5;
 
-function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboardLoading }: {
+function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboardLoading, nextDraw }: {
   accessToken: string | null;
   solPriceUsd: number;
   onPurchased: () => void;
   activeTickets: TicketSummary[];
   dashboardLoading?: boolean;
+  nextDraw?: { drawTime: string | null; prizePool: string | null };
 }) {
   const [numTickets, setNumTickets] = useState(PRIVATE_MIN);
   const [tickets, setTickets] = useState<TicketNumbers[]>(() => Array.from({ length: PRIVATE_MIN }, randomTicket));
   const [chooseOpen, setChooseOpen] = useState(false);
   const [step, setStep] = useState<BuyStep>("idle");
   const [stepError, setStepError] = useState("");
+  const [lastTickets, setLastTickets] = useState<TicketNumbers[]>([]);
+  const [lastNumTickets, setLastNumTickets] = useState(0);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingStartedRef = useRef(false);
@@ -746,6 +841,8 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
       setStepError("Wallet not ready — please wait a moment and try again.");
       return;
     }
+    setLastTickets([...tickets]);
+    setLastNumTickets(numTickets);
     setStep("signing");
     setStepError("");
     try {
@@ -810,24 +907,28 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-5">
       {isRunning || step === "done" ? (
         <>
-          <div className="flex items-center justify-between">
-            <p className="text-slate-300 text-xl font-medium font-sans">
-              {step === "done" ? "You're in the draw! 🎰" : "Processing..."}
-            </p>
-            {IS_LOCALHOST && isRunning && (
-              <button
-                onClick={startNewPayment}
-                className="text-xs text-slate-500 hover:text-slate-300 border border-white/10 rounded-lg px-2 py-1 transition-colors"
-              >
-                New payment
-              </button>
-            )}
-          </div>
-          <BuyStepper step={step} error={stepError} />
+          {isRunning && (
+            <div className="flex items-center justify-between">
+              <p className="text-slate-300 text-xl font-medium font-sans">Processing...</p>
+              {IS_LOCALHOST && (
+                <button
+                  onClick={startNewPayment}
+                  className="text-xs text-slate-500 hover:text-slate-300 border border-white/10 rounded-lg px-2 py-1 transition-colors"
+                >
+                  New payment
+                </button>
+              )}
+            </div>
+          )}
+          {isRunning && <BuyStepper step={step} error={stepError} />}
           {step === "done" && (
-            <button onClick={resetBuy} className="text-sm text-slate-400 hover:text-white underline underline-offset-2 transition-colors">
-              Buy more tickets
-            </button>
+            <DrawSuccessModal
+              tickets={lastTickets}
+              numTickets={lastNumTickets}
+              drawTime={nextDraw?.drawTime ?? null}
+              prizePool={nextDraw?.prizePool ?? null}
+              onBuyMore={resetBuy}
+            />
           )}
         </>
       ) : (
@@ -1062,12 +1163,155 @@ function ticketStatusBadgeClass(s: TicketStatus, bridgeStatus?: string | null): 
 
 const IS_LOCALHOST = typeof window !== "undefined" && window.location.hostname === "localhost";
 
-function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRefresh, refetch, userSolanaAddress }: {
+/** Returns the next UTC timestamp for 19:10:00 Europe/Paris, handling CET/CEST automatically. */
+function nextParisDrawDate(after = new Date()): Date {
+  for (let ahead = 0; ahead <= 2; ahead++) {
+    const ref = new Date(after.getTime() + ahead * 86_400_000);
+    const parisDate = new Intl.DateTimeFormat("sv", {
+      timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(ref); // "YYYY-MM-DD"
+    // Try UTC+2 (CEST) then UTC+1 (CET)
+    for (const offset of [2, 1]) {
+      const utcH = String(19 - offset).padStart(2, "0");
+      const candidate = new Date(`${parisDate}T${utcH}:10:00Z`);
+      const parisH = parseInt(
+        new Intl.DateTimeFormat("en", { timeZone: "Europe/Paris", hour: "numeric", hour12: false }).format(candidate),
+      ) % 24;
+      if (parisH === 19 && candidate.getTime() > after.getTime()) return candidate;
+    }
+  }
+  return new Date(after.getTime() + 86_400_000);
+}
+
+function PrizePoolHero({ prizePool, drawTime, onHowToPlay, onPrizeTiers }: {
+  prizePool: string | null;
+  drawTime: string | null;
+  onHowToPlay: () => void;
+  onPrizeTiers: () => void;
+}) {
+  // Prefer API draw time; fall back to computing next 19:10 Paris ourselves
+  const target = useMemo(() => {
+    if (drawTime) {
+      const d = new Date(drawTime);
+      if (d.getTime() > Date.now()) return d;
+    }
+    return nextParisDrawDate();
+  }, [drawTime]);
+
+  const [cd, setCd] = useState({ h: 0, m: 0, s: 0, done: false });
+  useEffect(() => {
+    const tick = () => {
+      const diff = target.getTime() - Date.now();
+      if (diff <= 0) { setCd({ h: 0, m: 0, s: 0, done: true }); return; }
+      setCd({ h: Math.floor(diff / 3_600_000), m: Math.floor((diff % 3_600_000) / 60_000), s: Math.floor((diff % 60_000) / 1000), done: false });
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [target]);
+
+  const amount = prizePool ? Math.round(parseFloat(prizePool)) : 1_100_000;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const segs = [
+    { v: cd.done ? "00" : pad(cd.h), l: "HRS" },
+    { v: cd.done ? "00" : pad(cd.m), l: "MIN" },
+    { v: cd.done ? "00" : pad(cd.s), l: "SEC" },
+  ];
+
+  return (
+    <div className="text-center pt-2 pb-7">
+      <p className="text-xs font-bold tracking-[0.22em] text-slate-500 uppercase mb-4">Prize Pool</p>
+      <p
+        className="text-[72px] sm:text-[84px] font-black leading-none tracking-tight bg-gradient-to-b from-white via-slate-100 to-amber-200 bg-clip-text text-transparent select-none"
+        style={{ filter: "drop-shadow(0 3px 28px rgba(251,146,60,0.22))" }}
+      >
+        ${amount.toLocaleString("en-US")}
+      </p>
+
+      <div className="flex items-end justify-center gap-1.5 mt-6">
+        {segs.map((seg, i) => (
+          <div key={seg.l} className="flex items-end gap-1.5">
+            {i > 0 && <span className="text-slate-600 font-bold text-lg pb-4">:</span>}
+            <div className="flex flex-col items-center">
+              <div className="w-[52px] h-[52px] rounded-xl bg-white/[0.06] border border-white/[0.09] flex items-center justify-center">
+                <span className="text-[26px] font-bold text-white tabular-nums leading-none">{seg.v}</span>
+              </div>
+              <span className="text-[10px] text-slate-600 font-bold tracking-[0.18em] mt-1.5 uppercase">{seg.l}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      {cd.done && <p className="text-sm text-amber-400 mt-2 font-medium">Draw in progress 🎯</p>}
+
+      <div className="flex items-center justify-center gap-3 mt-6">
+        <button onClick={onHowToPlay} className="px-5 py-2 rounded-full border border-white/[0.15] text-slate-300 font-medium text-sm hover:bg-white/[0.06] transition-colors">
+          How to Play
+        </button>
+        <button onClick={onPrizeTiers} className="px-5 py-2 rounded-full border border-white/[0.15] text-slate-300 font-medium text-sm hover:bg-white/[0.06] transition-colors">
+          Prize Tiers
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TicketNumberCard({ tn }: { tn: { main: number[]; bonus: number } }) {
+  return (
+    <div className="flex items-center rounded-xl border border-white/[0.08] bg-white/[0.04] h-[58px] px-3 gap-3 relative overflow-hidden">
+      {/* Numbers */}
+      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+        <span className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase">Numbers</span>
+        <div className="flex gap-2.5">
+          {tn.main.map(n => (
+            <span key={n} className="text-sm font-bold text-slate-200 tabular-nums">{n}</span>
+          ))}
+        </div>
+      </div>
+      {/* Dashed separator */}
+      <div className="self-stretch border-l border-dashed border-white/[0.12] mx-1" />
+      {/* Bonus */}
+      <div className="flex flex-col items-center gap-0.5 shrink-0">
+        <span className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase">Bonus</span>
+        <span className="w-7 h-7 rounded-full border border-amber-500/50 bg-amber-500/10 text-amber-400 text-xs font-bold flex items-center justify-center tabular-nums">
+          {tn.bonus}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRefresh, refetch, userSolanaAddress, loading }: {
   history: TicketSummary[]; withdrawals: WithdrawalSummary[]; activeTickets: TicketSummary[];
   getAccessToken: () => Promise<string | null>; onRefresh: () => void; refetch?: () => void;
-  userSolanaAddress: string;
+  userSolanaAddress: string; loading?: boolean;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const syncedIds = useRef<Set<string>>(new Set());
+
+  // Call sync-numbers API when expanding a card that has no numbers, then poll until they arrive
+  const toggleExpand = useCallback(async (ticketId: string, ticketHasNumbers: boolean) => {
+    const isOpening = !expandedIds.has(ticketId);
+    setExpandedIds(prev => { const next = new Set(prev); isOpening ? next.add(ticketId) : next.delete(ticketId); return next; });
+
+    if (isOpening && !ticketHasNumbers && !syncedIds.current.has(ticketId)) {
+      syncedIds.current.add(ticketId);
+      const token = await getAccessToken();
+      if (!token) return;
+      try {
+        await fetch(`/api/lottery/tickets/${ticketId}/sync-numbers`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch { /* non-fatal */ }
+      // Poll for updated numbers
+      refetch?.();
+      const iv = setInterval(() => refetch?.(), 4_000);
+      setTimeout(() => clearInterval(iv), 30_000); // stop after 30s
+    }
+  }, [expandedIds, getAccessToken, refetch]);
+
+  const allTickets = [...activeTickets, ...history];
+
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [rescuing, setRescuing] = useState<string | null>(null);
   const [rescueResult, setRescueResult] = useState<Record<string, string>>({});
@@ -1401,76 +1645,119 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
       )}
 
       {/* Completed draws */}
-      {completed.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? (
-        <p className="text-slate-500 text-base text-center pt-8">No tickets yet.</p>
-      ) : completed.length > 0 && (
+      {loading && completed.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? (
+        <div className="space-y-2 animate-pulse">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="rounded-xl border border-white/10 bg-white/5 p-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="h-4 w-20 rounded-lg bg-white/[0.08]" />
+                <div className="h-5 w-12 rounded-full bg-white/[0.06]" />
+              </div>
+              <div className="h-4 w-14 rounded-lg bg-white/[0.06]" />
+            </div>
+          ))}
+        </div>
+      ) : completed.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? null
+      : completed.length > 0 && (
         <div>
           <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Tickets</p>
           <div className="space-y-2">
             {completed.map(t => {
               const dateStr = (t.drawTime ? new Date(t.drawTime) : new Date(t.createdAt))
-                .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+                .toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+              const hasNumbers = t.ticketNumbers && t.ticketNumbers.length > 0 && t.ticketNumbers[0].main.length > 0;
+              const isFailed = t.status === "failed";
               return (
-                <details key={t.id} open={t.status === "failed"} className="rounded-xl border border-white/10 bg-white/5 group">
-                  <summary className="flex items-center justify-between p-3 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus)}`}>
-                        {statusLabel(t.status, t.bridgeStatus)}
-                      </span>
+                <div key={t.id} className={`rounded-xl border bg-white/5 overflow-hidden ${isFailed ? "border-red-500/20" : "border-white/10"}`}>
+                  {/* Main row — clickable to expand */}
+                  <button
+                    onClick={() => toggleExpand(t.id, !!hasNumbers)}
+                    className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.03] transition-colors"
+                  >
+                    <img src="/images/icons/ticket-icon.svg" alt="" className="w-9 h-9 shrink-0 opacity-90" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus)}`}>
+                          {statusLabel(t.status, t.bridgeStatus)}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-500 mt-0.5">
+                        {t.roundId ? `Round ${t.roundId} · ` : ""}{dateStr}
+                        {t.winTier ? ` · Tier ${t.winTier}` : ""}
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                       <span className="text-base font-semibold font-sans">
                         {t.status === "won"
                           ? <span className="text-emerald-400">+{fmt(t.winAmountUsdc ?? 0)}</span>
-                          : <span className="text-slate-400">−{fmt(t.costUsdc)}</span>}
+                          : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
                       </span>
-                      <ChevronDown className="w-4 h-4 text-slate-500 transition-transform duration-200 group-open:rotate-180" />
+                      <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${expandedIds.has(t.id) ? "rotate-180" : ""}`} />
                     </div>
-                  </summary>
-                  <div className="px-3 pb-3 pt-2 space-y-1 border-t border-white/10">
-                    <p className="text-base text-slate-500">{dateStr}</p>
-                    {(t.roundId || t.winTier) && (
-                      <p className="text-base text-slate-400">
-                        {t.roundId ? `Round ${t.roundId}` : ""}
-                        {t.winTier ? ` · Tier ${t.winTier}` : ""}
-                      </p>
-                    )}
-                    {t.status === "failed" && (
+                  </button>
+
+                  {/* Expanded details */}
+                  {expandedIds.has(t.id) && (
+                    <div className="border-t border-white/[0.06] px-3 pb-3 pt-3 space-y-3">
+                      {/* Draw info */}
+                      {t.drawTime && (
+                        <div>
+                          <p className="text-sm text-slate-500">
+                            Draw: {new Date(t.drawTime).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                          </p>
+                        </div>
+                      )}
+                      {/* Number balls */}
+                      {hasNumbers ? (
+                        <div className="space-y-2">
+                          <p className="text-sm text-slate-600 mb-2">Your tickets</p>
+                          {t.ticketNumbers!.map((tn, i) => (
+                            <TicketNumberCard key={i} tn={tn} />
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-slate-600 italic">Loading ticket numbers…</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Failed ticket actions */}
+                  {isFailed && (
+                    <div className="px-3 pb-3 space-y-2 border-t border-white/[0.06] pt-3">
                       <button
                         onClick={() => handleDelete(t.id)}
                         disabled={deleting === t.id}
-                        className="w-full mt-2 h-10 rounded-xl text-sm font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+                        className="w-full h-9 rounded-xl text-sm font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
                       >
                         {deleting === t.id ? "Removing…" : "Remove from history"}
                       </button>
-                    )}
-                    {t.status === "failed" && !["CANCELLED", "RESCUED"].includes(t.bridgeStatus ?? "") && (
-                      <div className="mt-2 p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-2">
-                        <p className="text-sm font-semibold text-slate-400">Troubleshoot</p>
-                        {(retryResult[t.id] || rescueResult[t.id]) && (
-                          <p className="text-sm text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
-                        )}
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleRetry(t.id)}
-                            disabled={retrying === t.id || rescuing === t.id}
-                            className="flex-1 h-10 rounded-xl text-sm font-semibold border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 transition-all disabled:opacity-40"
-                          >
-                            {retrying === t.id ? "Retrying..." : "Retry purchase"}
-                          </button>
-                          <button
-                            onClick={() => handleRescue(t.id)}
-                            disabled={rescuing === t.id || retrying === t.id}
-                            className="flex-1 h-10 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
-                          >
-                            {rescuing === t.id ? "Rescuing..." : "Rescue funds"}
-                          </button>
+                      {!["CANCELLED", "RESCUED"].includes(t.bridgeStatus ?? "") && (
+                        <div className="space-y-2">
+                          {(retryResult[t.id] || rescueResult[t.id]) && (
+                            <p className="text-sm text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
+                          )}
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleRetry(t.id)}
+                              disabled={retrying === t.id || rescuing === t.id}
+                              className="flex-1 h-9 rounded-xl text-sm font-semibold border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 transition-all disabled:opacity-40"
+                            >
+                              {retrying === t.id ? "Retrying..." : "Retry"}
+                            </button>
+                            <button
+                              onClick={() => handleRescue(t.id)}
+                              disabled={rescuing === t.id || retrying === t.id}
+                              className="flex-1 h-9 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
+                            >
+                              {rescuing === t.id ? "Rescuing..." : "Rescue funds"}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                </details>
+                      )}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -1628,46 +1915,14 @@ export default function MegapotPage() {
 
         {tab === "buy" && (
           <>
-            {/* Prize pool hero */}
-            <div className="text-center pt-2 pb-7">
-              <p className="text-xs font-bold tracking-[0.22em] text-slate-500 uppercase mb-3">Prize Pool</p>
-              <p
-                className="text-[76px] sm:text-[88px] font-black leading-none tracking-tight bg-gradient-to-b from-white via-slate-100 to-amber-200 bg-clip-text text-transparent select-none"
-                style={{ filter: "drop-shadow(0 3px 24px rgba(234,179,8,0.18))" }}
-              >
-                {dashboard?.nextDraw?.prizePool
-                  ? `$${Math.round(parseFloat(dashboard.nextDraw.prizePool)).toLocaleString("en-US")}`
-                  : "$1,100,000"}
-              </p>
-              {dashboard?.nextDraw?.drawTime && (
-                <p className="text-sm text-slate-500 mt-2">
-                  {(() => {
-                    const d = new Date(dashboard.nextDraw.drawTime);
-                    const diff = d.getTime() - Date.now();
-                    if (diff <= 0) return "Draw in progress";
-                    const h = Math.floor(diff / 3_600_000);
-                    const m = Math.floor((diff % 3_600_000) / 60_000);
-                    return `Next draw in ${h}h ${m}m`;
-                  })()}
-                </p>
-              )}
-              <div className="flex items-center justify-center gap-3 mt-5">
-                <button
-                  onClick={() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" })}
-                  className="px-5 py-2 rounded-full border border-white/20 text-white font-medium text-sm hover:bg-white/[0.06] transition-colors"
-                >
-                  How to Play
-                </button>
-                <button
-                  onClick={() => setPrizeTiersOpen(true)}
-                  className="px-5 py-2 rounded-full border border-white/20 text-white font-medium text-sm hover:bg-white/[0.06] transition-colors"
-                >
-                  Prize Tiers
-                </button>
-              </div>
-            </div>
+            <PrizePoolHero
+              prizePool={dashboard?.nextDraw?.prizePool ?? null}
+              drawTime={dashboard?.nextDraw?.drawTime ?? null}
+              onHowToPlay={() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" })}
+              onPrizeTiers={() => setPrizeTiersOpen(true)}
+            />
 
-            <BuyTab accessToken={accessToken.current} solPriceUsd={solPriceUsd} onPurchased={fetchDashboard} activeTickets={dashboard?.activeTickets ?? []} dashboardLoading={dashboardLoading} />
+            <BuyTab accessToken={accessToken.current} solPriceUsd={solPriceUsd} onPurchased={fetchDashboard} activeTickets={dashboard?.activeTickets ?? []} dashboardLoading={dashboardLoading} nextDraw={dashboard?.nextDraw} />
           </>
         )}
         {tab === "redeem" && (
@@ -1682,6 +1937,7 @@ export default function MegapotPage() {
             onRefresh={fetchDashboard}
             refetch={fetchDashboard}
             userSolanaAddress={userSolanaAddress}
+            loading={dashboardLoading}
           />
         )}
       </div>
