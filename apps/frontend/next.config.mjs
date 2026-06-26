@@ -21,6 +21,28 @@ const nextConfig = {
     '@supabase/supabase-js',
     '@lightprotocol/hasher.rs',
   ],
+  experimental: {
+    // Tree-shake large icon/UI packages so only used exports are bundled
+    optimizePackageImports: [
+      'lucide-react',
+      'framer-motion',
+      '@radix-ui/react-alert-dialog',
+      '@radix-ui/react-checkbox',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-label',
+      '@radix-ui/react-popover',
+      '@radix-ui/react-progress',
+      '@radix-ui/react-radio-group',
+      '@radix-ui/react-scroll-area',
+      '@radix-ui/react-select',
+      '@radix-ui/react-slider',
+      '@radix-ui/react-slot',
+      '@radix-ui/react-switch',
+      '@radix-ui/react-tabs',
+      '@radix-ui/react-toast',
+      '@radix-ui/react-tooltip',
+    ],
+  },
   // Use `npm run dev` (webpack) for WASM (e.g. @lightprotocol/hasher.rs); `npm run dev:turbo` for Turbopack only
   turbopack: {
     resolveAlias: {
@@ -58,6 +80,15 @@ const nextConfig = {
       net: false,
       tls: false,
     };
+    // Stub optional peer deps that @privy-io/react-auth tries to import but aren't installed
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      '@stripe/crypto': path.resolve(__dirname, 'empty-module.js'),
+      '@farcaster/mini-app-solana': path.resolve(__dirname, 'empty-module.js'),
+      // Stub the viem/ox tempo module that has a dynamic require(expression)
+      // which causes webpack to bundle every possible module it might load
+      'ox/_esm/tempo/internal/virtualMasterPool': path.resolve(__dirname, 'empty-module.js'),
+    };
     config.experiments = {
       ...config.experiments,
       asyncWebAssembly: true,
@@ -72,6 +103,7 @@ const nextConfig = {
       { module: /hasher_wasm_simd_bg\.wasm/ },
       { module: /light_wasm_hasher_bg\.wasm/ },
       { module: /@splinetool/ },
+      { module: /virtualMasterPool/ },
     ];
     if (!isServer) {
       try {

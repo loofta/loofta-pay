@@ -277,21 +277,17 @@ export function BalanceModal({
   const queryClient = useQueryClient();
   const { data: tokens = [] } = useTokensQuery();
 
-  // Optimistically subtract the withdrawn amount from the cached balance so the UI
-  // updates instantly, then refetch at 2 s and 6 s to sync with chain reality.
+  // Optimistically subtract the withdrawn amount so the UI updates instantly.
+  // The normal 5 s polling cycle will sync the real on-chain value once the TX is indexed.
   const optimisticWithdrawBalance = useCallback((amountUSDC: number) => {
     if (!solanaAddress) return;
     const mode = devnetMode ? "devnet" : "mainnet";
     const key = embeddedSolanaUsdcBalanceQueryKey(solanaAddress, mode);
-    queryClient.setQueryData(key, (prev: { balanceUSD?: number; balanceUsdc?: number } | undefined) => {
+    queryClient.setQueryData(key, (prev: { balanceUSD?: number; walletAddress?: string } | undefined) => {
       if (!prev) return prev;
-      const next = Math.max(0, (prev.balanceUSD ?? 0) - amountUSDC);
-      return { ...prev, balanceUSD: next, balanceUsdc: Math.max(0, (prev.balanceUsdc ?? 0) - amountUSDC) };
+      return { ...prev, balanceUSD: Math.max(0, (prev.balanceUSD ?? 0) - amountUSDC) };
     });
-    // Refetch twice — chain indexing can be slow
-    setTimeout(() => onRefresh(), 2_000);
-    setTimeout(() => onRefresh(), 6_000);
-  }, [queryClient, solanaAddress, devnetMode, onRefresh]);
+  }, [queryClient, solanaAddress, devnetMode]);
 
   const [tab, setTab] = useState<"topup" | "withdraw" | "history">(initialTab ?? "topup");
   const [withdrawAmount, setWithdrawAmount] = useState("");
