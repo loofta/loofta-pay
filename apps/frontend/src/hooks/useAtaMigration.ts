@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useRef } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { useWallets, useSignTransaction } from "@privy-io/react-auth/solana";
+import { useWallets } from "@privy-io/react-auth/solana";
 import { useAuthStore } from "@/store/auth";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 import { getPrivySolanaChainForMode, MAINNET_USDC_MINT, DEVNET_USDC_MINT } from "@/lib/solanaRpc";
+
 export type AtaMigrationStatus = "idle" | "migrating" | "done" | "error";
 type NetworkMode = "mainnet" | "devnet";
 
@@ -26,9 +27,7 @@ function setMigrationDone(userId: string, network: NetworkMode) {
 export function useAtaMigration() {
   const { authenticated, user, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { signTransaction: privySolanaSignTransaction } = useSignTransaction() as any;
-  const storeUserId = useAuthStore((s) => s.userId); // set after UserSync calls setAuth
+  const storeUserId = useAuthStore((s) => s.userId);
   const ataMigratedMainnet = useAuthStore((s) => s.ataMigratedMainnet);
   const ataMigratedDevnet = useAuthStore((s) => s.ataMigratedDevnet);
   const setAtaMigrated = useAuthStore((s) => s.setAtaMigrated);
@@ -36,12 +35,13 @@ export function useAtaMigration() {
   const runningRef = useRef(false);
   const ranRef = useRef(false);
 
+  // deriveSolanaEmbeddedAddress reads from the live Privy user object — always current, no DB staleness.
   const walletAddress = deriveSolanaEmbeddedAddress(user);
-  const wallet = wallets.find((w) => w.address === walletAddress) ?? wallets[0];
+  const wallet = walletAddress ? wallets.find((w) => w.address === walletAddress) : undefined;
   const userId = user?.id;
 
   useEffect(() => {
-    if (!authenticated || !userId || !walletAddress || !wallet || !storeUserId) return;
+    if (!authenticated || !userId || !storeUserId || !walletAddress || !wallet) return;
     if (runningRef.current || ranRef.current) return;
 
     runningRef.current = true;
@@ -51,63 +51,89 @@ export function useAtaMigration() {
       devnet: ataMigratedDevnet,
     };
 
-    const migrateNetwork = async (
-      network: NetworkMode,
-      token: string,
-    ): Promise<void> => {
+    const migrateNetwork = async (network: NetworkMode, token: string): Promise<void> => {
+      const authHeader: HeadersInit = { Authorization: `Bearer ${token}` };
+
+      const saveToDb = async (undelegated: boolean) => {
+        const res = await fetch("/api/users/set-ata-migrated", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeader },
+          body: JSON.stringify({ privyUserId: userId, network, walletAddress, undelegated }),
+        });
+        if (!res.ok) console.warn(`[AtaMigration] ${network}: set-ata-migrated failed`, res.status);
+        return res.ok;
+      };
+
+      // localStorage done but DB false → just sync DB, no need to re-undelegate
       if (isMigrationDone(userId, network)) {
-        console.log(`[AtaMigration] ${network}: localStorage done`);
+        if (dbMigrated[network] !== true) {
+          console.log(`[AtaMigration] ${network}: localStorage done, DB out of sync — fixing`);
+          await saveToDb(false);
+          setAtaMigrated(network, true);
+        } else {
+          console.log(`[AtaMigration] ${network}: done`);
+        }
         return;
       }
+
       if (dbMigrated[network] === true) {
         console.log(`[AtaMigration] ${network}: DB done — backfilling localStorage`);
         setMigrationDone(userId, network);
+        setAtaMigrated(network, true);
         return;
       }
 
       const mint = network === "mainnet" ? MAINNET_USDC_MINT : DEVNET_USDC_MINT;
       const chain = getPrivySolanaChainForMode(network);
-      const authHeader: HeadersInit = { Authorization: `Bearer ${token}` };
 
-      const markDone = async () => {
-        setMigrationDone(userId, network);
-        setAtaMigrated(network, true);
-        await fetch("/api/users/set-ata-migrated", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeader },
-          body: JSON.stringify({ privyUserId: userId, network }),
-        }).catch(() => { /* non-fatal */ });
-      };
+      console.log(`[AtaMigration] ${network}: checking delegation`, { payer: walletAddress, mint });
 
-      console.log(`[AtaMigration] ${network}: checking undelegate`, { payer: walletAddress, mint });
       const undelegateRes = await fetch("/api/payments/undelegate-ephemeral-ata", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeader },
         body: JSON.stringify({ payer: walletAddress, mint, cluster: network }),
       });
 
-      console.log(`[AtaMigration] ${network}: undelegate status`, undelegateRes.status);
+      console.log(`[AtaMigration] ${network}: status ${undelegateRes.status}`);
+
+      if (undelegateRes.status === 404) {
+        setMigrationDone(userId, network);
+        setAtaMigrated(network, true);
+        await saveToDb(false);
+        return;
+      }
+
       if (!undelegateRes.ok) {
-        await markDone();
+        console.warn(`[AtaMigration] ${network}: error ${undelegateRes.status} — retrying next session`);
         return;
       }
 
       const body = await undelegateRes.json().catch(() => null);
+
       if (!body?.transactionBase64) {
-        await markDone();
+        console.log(`[AtaMigration] ${network}: no active delegation`);
+        setMigrationDone(userId, network);
+        setAtaMigrated(network, true);
+        await saveToDb(false);
         return;
       }
 
-      console.log(`[AtaMigration] ${network}: active delegation — signing`);
+      console.log(`[AtaMigration] ${network}: signing with ${walletAddress}`);
       setStatus("migrating");
 
-      const signedOutput = await privySolanaSignTransaction({
-        transaction: Buffer.from(body.transactionBase64, "base64") as Uint8Array,
-        wallet,
-        chain,
-        options: { uiOptions: { showWalletUIs: false } },
-      });
-      const signedBase64 = Buffer.from(signedOutput.signedTransaction as Uint8Array).toString("base64");
+      let signedBase64: string;
+      try {
+        const result = await wallet.signTransaction({
+          transaction: Buffer.from(body.transactionBase64, "base64") as Uint8Array,
+          chain,
+        });
+        signedBase64 = Buffer.from(result.signedTransaction).toString("base64");
+      } catch (signErr) {
+        console.error(`[AtaMigration] ${network}: signing failed`, signErr);
+        setStatus("error");
+        setTimeout(() => setStatus("idle"), 5000);
+        return;
+      }
 
       const sendRes = await fetch("/api/payments/transaction/send", {
         method: "POST",
@@ -119,11 +145,16 @@ export function useAtaMigration() {
         }),
       });
 
-      await markDone();
       if (sendRes.ok) {
+        console.log(`[AtaMigration] ${network}: ✅ undelegated ${walletAddress}`);
+        setMigrationDone(userId, network);
+        setAtaMigrated(network, true);
+        await saveToDb(true);
         setStatus("done");
         setTimeout(() => setStatus("idle"), 3000);
       } else {
+        const errText = await sendRes.text().catch(() => "");
+        console.error(`[AtaMigration] ${network}: send failed ${sendRes.status}`, errText);
         setStatus("error");
         setTimeout(() => setStatus("idle"), 5000);
       }
@@ -133,11 +164,11 @@ export function useAtaMigration() {
       try {
         const token = await getAccessToken();
         if (!token) return;
-        // Run mainnet then devnet sequentially — each silently marks done if ATA not delegated.
         for (const network of NETWORKS) {
           await migrateNetwork(network, token);
         }
-      } catch {
+      } catch (err) {
+        console.error("[AtaMigration] unexpected error", err);
         setStatus("idle");
       } finally {
         runningRef.current = false;
@@ -145,7 +176,7 @@ export function useAtaMigration() {
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, userId, storeUserId, walletAddress, wallets.length]);
+  }, [authenticated, userId, storeUserId, walletAddress, wallet?.address]);
 
   return { status };
 }

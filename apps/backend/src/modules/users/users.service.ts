@@ -464,4 +464,21 @@ export class UsersService {
       return 0;
     }
   }
+
+  async getUpdateJun26Status(privyUserId: string): Promise<{ completed: boolean }> {
+    const { data } = await this.supabaseService.updateJun26
+      .select('user_id')
+      .eq('user_id', privyUserId)
+      .maybeSingle();
+    return { completed: !!data };
+  }
+
+  async markUpdateJun26Complete(privyUserId: string): Promise<void> {
+    const { error } = await this.supabaseService.updateJun26
+      .upsert({ user_id: privyUserId }, { onConflict: 'user_id' });
+    if (error) {
+      this.logger.error('markUpdateJun26Complete error:', error);
+      throw new Error('Failed to mark update complete');
+    }
+  }
 }

@@ -1,8 +1,25 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 const MAGICBLOCK_API = "https://payments.magicblock.app";
 
+function isAllowedRpcHost(url: string): boolean {
+  try {
+    const { hostname, protocol } = new URL(url);
+    return protocol === "https:" && (
+      hostname.endsWith(".magicblock.app") ||
+      hostname === "magicblock.app"
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
+  const userId = await getVerifiedUserId(request);
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const { transactionBase64, sendTo, sendRpcEndpoint } = await request.json() as {
       transactionBase64?: string;
@@ -21,6 +38,9 @@ export async function POST(request: NextRequest) {
     // When an ephemeral RPC endpoint is provided, submit via standard JSON-RPC sendTransaction.
     // MagicBlock's undelegate response always includes sendRpcEndpoint for ephemeral txs.
     if (sendTo === "ephemeral" && sendRpcEndpoint) {
+      if (!isAllowedRpcHost(sendRpcEndpoint)) {
+        return NextResponse.json({ error: "RPC endpoint not allowed" }, { status: 400 });
+      }
       const rpcRes = await fetch(sendRpcEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

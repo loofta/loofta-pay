@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 const MAGICBLOCK_API = "https://payments.magicblock.app";
 const USDC_MAINNET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -12,6 +13,10 @@ function resolveCluster(raw?: string): MagicblockCluster {
 }
 
 export async function POST(request: NextRequest) {
+  const userId = await getVerifiedUserId(request);
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const { payer, mint = USDC_MAINNET, cluster: clusterRaw } = await request.json() as {
       payer?: string;

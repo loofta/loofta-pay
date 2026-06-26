@@ -33,7 +33,7 @@ export function UsernameSetupModal({
   onSuccess,
   privyUserId,
 }: UsernameSetupModalProps) {
-  const { user: privyUser } = usePrivy();
+  const { user: privyUser, getAccessToken } = usePrivy();
   const twitterUsername = useMemo(
     () => getTwitterUsername(privyUser?.linkedAccounts as Array<{ type?: string; username?: string; name?: string; subject?: string }> | undefined),
     [privyUser?.linkedAccounts]
@@ -68,10 +68,14 @@ export function UsernameSetupModal({
 
     setLoading(true);
     try {
+      const token = await getAccessToken().catch(() => null);
       const response = await fetch("/api/users/setup-username", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ privyUserId, username }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ username }),
       });
 
       const data = await response.json();

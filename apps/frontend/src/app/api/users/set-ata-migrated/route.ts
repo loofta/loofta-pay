@@ -3,9 +3,11 @@ import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
 export async function POST(request: NextRequest) {
   try {
-    const { privyUserId, network } = await request.json() as {
+    const { privyUserId, network, walletAddress, undelegated } = await request.json() as {
       privyUserId?: string;
       network?: string;
+      walletAddress?: string;
+      undelegated?: boolean;
     };
 
     if (!privyUserId || (network !== "mainnet" && network !== "devnet")) {
@@ -26,6 +28,10 @@ export async function POST(request: NextRequest) {
     if (error) {
       console.error("[set-ata-migrated] Error:", error);
       return NextResponse.json({ error: "Failed to update migration status" }, { status: 500 });
+    }
+
+    if (undelegated && walletAddress) {
+      console.log(`[ata-migration] ✅ successfully undelegated ${network} ATA for wallet ${walletAddress} (user ${privyUserId})`);
     }
 
     return NextResponse.json({ ok: true });
