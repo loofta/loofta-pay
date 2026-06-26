@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
+import { embeddedSolanaUsdcBalanceQueryKey } from "@/services/solanaBalance";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
@@ -273,7 +274,24 @@ export function BalanceModal({
   initialTab,
 }: BalanceModalProps) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { data: tokens = [] } = useTokensQuery();
+
+  // Optimistically subtract the withdrawn amount from the cached balance so the UI
+  // updates instantly, then refetch at 2 s and 6 s to sync with chain reality.
+  const optimisticWithdrawBalance = useCallback((amountUSDC: number) => {
+    if (!solanaAddress) return;
+    const mode = devnetMode ? "devnet" : "mainnet";
+    const key = embeddedSolanaUsdcBalanceQueryKey(solanaAddress, mode);
+    queryClient.setQueryData(key, (prev: { balanceUSD?: number; balanceUsdc?: number } | undefined) => {
+      if (!prev) return prev;
+      const next = Math.max(0, (prev.balanceUSD ?? 0) - amountUSDC);
+      return { ...prev, balanceUSD: next, balanceUsdc: Math.max(0, (prev.balanceUsdc ?? 0) - amountUSDC) };
+    });
+    // Refetch twice — chain indexing can be slow
+    setTimeout(() => onRefresh(), 2_000);
+    setTimeout(() => onRefresh(), 6_000);
+  }, [queryClient, solanaAddress, devnetMode, onRefresh]);
 
   const [tab, setTab] = useState<"topup" | "withdraw" | "history">(initialTab ?? "topup");
   const [withdrawAmount, setWithdrawAmount] = useState("");
@@ -1561,7 +1579,7 @@ export function BalanceModal({
       console.log(PEER_LOG, "USDC sent to bridge", { sig });
       setPeerBridgeTxSig(sig);
       setPeerBridgeStatus("PENDING");
-      onRefresh();
+      optimisticWithdrawBalance(withdrawAmountNum);
 
       // Confirm bridge start on backend (fire-and-forget)
       fetch(`/api/offramp/${prep.id}?action=confirm-bridge`, {
@@ -1839,8 +1857,8 @@ export function BalanceModal({
       } else {
         setWithdrawStep("complete");
       }
-      // Refresh balance immediately — funds left the wallet when the tx was confirmed.
-      onRefresh();
+      // Optimistically subtract and schedule background refetches to sync with chain.
+      optimisticWithdrawBalance(amount);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`${LOG_PREFIX} Withdraw error`, { message: msg });
