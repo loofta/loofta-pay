@@ -14,6 +14,7 @@
   "MinimalHeader": {
     "balance": "余额",
     "sparks": "Sparks",
+    "rewards": "奖励",
     "waitlist": "等待列表",
     "profile": "个人资料",
     "signIn": "登录",
@@ -301,6 +302,7 @@
     "copyUsername": "复制用户名",
     "shareYourLink": "分享您的链接",
     "sparks": "Sparks",
+    "rewards": "奖励",
     "settings": "设置",
     "mainnetBeta": "主网测试版",
     "mainnetViewOnly": "主网（仅查看）",
@@ -496,5 +498,20 @@
       "perk3": "Private beta features before public launch",
       "perk4": "Direct line to the founding team"
     }
+  }
+,
+
+  "RewardsPage": {
+    "title": "奖励",
+    "subtitle": "完成活动即可获得奖励",
+    "activeCampaigns": "进行中的活动",
+    "comingSoon": "即将推出",
+    "sparksTitle": "Sparks",
+    "sparksDescription": "完成devnet任务，赚取Sparks",
+    "nextCampaign": "下一个活动",
+    "nextCampaignSubtitle": "更多奖励即将到来",
+    "endsToday": "今天结束",
+    "daysLeft": "剩余{days}天",
+    "backToRewards": "奖励"
   }
 }

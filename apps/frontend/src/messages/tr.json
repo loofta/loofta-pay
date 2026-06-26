@@ -14,6 +14,7 @@
   "MinimalHeader": {
     "balance": "Bakiye",
     "sparks": "Sparks",
+    "rewards": "Ödüller",
     "waitlist": "Bekleme listesi",
     "profile": "Profil",
     "signIn": "Giriş yap",
@@ -301,6 +302,7 @@
     "copyUsername": "Kullanıcı adını kopyala",
     "shareYourLink": "Linkinizi paylaşın",
     "sparks": "Sparks",
+    "rewards": "Ödüller",
     "settings": "Ayarlar",
     "mainnetBeta": "Mainnet Beta",
     "mainnetViewOnly": "Mainnet (yalnızca görüntüleme)",
@@ -496,5 +498,20 @@
       "perk3": "Private beta features before public launch",
       "perk4": "Direct line to the founding team"
     }
+  }
+,
+
+  "RewardsPage": {
+    "title": "Ödüller",
+    "subtitle": "Kampanyaları tamamlayarak kazan",
+    "activeCampaigns": "Aktif Kampanyalar",
+    "comingSoon": "Yakında",
+    "sparksTitle": "Sparks",
+    "sparksDescription": "devnet üzerinde görevleri tamamla, Sparks kazan",
+    "nextCampaign": "Sonraki Kampanya",
+    "nextCampaignSubtitle": "Daha fazla ödül geliyor",
+    "endsToday": "Bugün bitiyor",
+    "daysLeft": "{days}g kaldı",
+    "backToRewards": "Ödüller"
   }
 }

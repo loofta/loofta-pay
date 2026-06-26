@@ -120,9 +120,17 @@ export const useAuthStore = create<AuthState>()(
 				email: state.email,
 				username: state.username,
 				mainnetAccess: state.mainnetAccess,
-				// networkMode is NOT persisted here — unauthenticated default is derived from
-				// CLUSTER_DEFAULT_NETWORK_MODE, and per-user preference lives in loofta.net.${userId}.
+				// networkMode is NOT persisted here — per-user preference lives in loofta.net.${userId}.
 			}),
+			// On rehydration, userId is restored synchronously. Use it to immediately load the
+			// per-user networkMode so the first render shows the correct network (no flash).
+			onRehydrateStorage: () => (state) => {
+				if (!state?.userId || typeof window === "undefined") return;
+				const saved = localStorage.getItem(`loofta.net.${state.userId}`);
+				if (saved === "mainnet" || saved === "devnet") {
+					state.networkMode = saved;
+				}
+			},
 		}
 	)
 );

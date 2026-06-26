@@ -14,6 +14,7 @@
   "MinimalHeader": {
     "balance": "الرصيد",
     "sparks": "Sparks",
+    "rewards": "المكافآت",
     "waitlist": "قائمة الانتظار",
     "profile": "الملف الشخصي",
     "signIn": "تسجيل الدخول",
@@ -301,6 +302,7 @@
     "copyUsername": "نسخ اسم المستخدم",
     "shareYourLink": "شارك رابطك",
     "sparks": "Sparks",
+    "rewards": "المكافآت",
     "settings": "الإعدادات",
     "mainnetBeta": "بيتا الشبكة الرئيسية",
     "mainnetViewOnly": "الشبكة الرئيسية (عرض فقط)",
@@ -496,5 +498,20 @@
       "perk3": "Private beta features before public launch",
       "perk4": "Direct line to the founding team"
     }
+  }
+,
+
+  "RewardsPage": {
+    "title": "المكافآت",
+    "subtitle": "اكسب من خلال إكمال الحملات",
+    "activeCampaigns": "الحملات النشطة",
+    "comingSoon": "قريباً",
+    "sparksTitle": "Sparks",
+    "sparksDescription": "أكمل المهام على devnet، اكسب Sparks",
+    "nextCampaign": "الحملة القادمة",
+    "nextCampaignSubtitle": "المزيد من المكافآت قادمة",
+    "endsToday": "ينتهي اليوم",
+    "daysLeft": "متبقي {days} يوم",
+    "backToRewards": "المكافآت"
   }
 }
