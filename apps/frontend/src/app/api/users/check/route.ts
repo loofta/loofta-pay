@@ -1,20 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 /**
  * Check if user exists and return user data
  * POST /api/users/check
  */
 export async function POST(request: NextRequest) {
+  const privyUserId = await getVerifiedUserId(request);
+  if (!privyUserId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
-    const { privyUserId, email } = await request.json();
-
-    if (!privyUserId) {
-      return NextResponse.json(
-        { error: "privyUserId is required" },
-        { status: 400 }
-      );
-    }
+    const { email } = await request.json();
 
     const supabase = getSupabaseAdmin();
 

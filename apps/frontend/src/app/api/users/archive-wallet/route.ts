@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID!;
 const PRIVY_APP_SECRET = process.env.PRIVY_APP_SECRET!;
@@ -14,14 +15,15 @@ function privyAuth() {
 }
 
 export async function POST(request: NextRequest) {
+  const privyUserId = await getVerifiedUserId(request);
+  if (!privyUserId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
-    const { privyUserId, walletAddress } = await request.json() as {
-      privyUserId?: string;
-      walletAddress?: string;
-    };
+    const { walletAddress } = await request.json() as { walletAddress?: string };
 
-    if (!privyUserId || !walletAddress) {
-      return NextResponse.json({ error: "privyUserId and walletAddress are required" }, { status: 400 });
+    if (!walletAddress) {
+      return NextResponse.json({ error: "walletAddress is required" }, { status: 400 });
     }
 
     // Fetch the user from Privy to find the internal wallet ID
