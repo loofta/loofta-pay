@@ -88,6 +88,9 @@
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.5.0"
   },
+  "optionalDependencies": {
+    "@swc/core-linux-x64-gnu": "1.15.33"
+  },
   "jest": {
     "moduleFileExtensions": [
       "js",
