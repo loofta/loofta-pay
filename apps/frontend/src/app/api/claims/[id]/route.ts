@@ -300,8 +300,19 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     if (!useLegacy) {
       const ep = existingPayment as { created_by?: string | null; direction?: string; sender_user_id?: string | null; recipient_user_id?: string | null };
 
-      // Ownership check for CANCELLED
-      if (status === "CANCELLED" && userId) {
+      // Ownership check — private payments (from_sender) can only be updated by a payment party.
+      // from_recipient payment requests are public-facing: any authenticated payer may update them.
+      if (ep.direction !== "from_recipient") {
+        const isCreator   = !!ep.created_by && ep.created_by === userId;
+        const isSender    = !!ep.sender_user_id && ep.sender_user_id === userId;
+        const isRecipient = !!ep.recipient_user_id && ep.recipient_user_id === userId;
+        if (!isCreator && !isSender && !isRecipient) {
+          return NextResponse.json({ error: "Not authorized to update this payment" }, { status: 403 });
+        }
+      }
+
+      // For CANCELLED: only the creator can cancel
+      if (status === "CANCELLED") {
         if (ep.created_by && ep.created_by !== userId) {
           return NextResponse.json({ error: "Only the creator can cancel this payment" }, { status: 403 });
         }
@@ -380,11 +391,9 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       return NextResponse.json({ error: "Payment not found" }, { status: 404 });
     }
 
-    if (status === "CANCELLED" && userId) {
-      const creator = (existingClaim as { created_by?: string | null })?.created_by;
-      if (creator && creator !== userId) {
-        return NextResponse.json({ error: "Only the creator can cancel this payment" }, { status: 403 });
-      }
+    const legacyCreator = (existingClaim as { created_by?: string | null })?.created_by;
+    if (legacyCreator && legacyCreator !== userId) {
+      return NextResponse.json({ error: "Not authorized to update this payment" }, { status: 403 });
     }
 
     if (status === "SUCCESS" && userId && !(existingClaim as { created_by?: string | null }).created_by) {

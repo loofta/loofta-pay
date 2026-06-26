@@ -14,7 +14,7 @@ import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
  * Renders no UI; keeps auth state and username/onboarding modals working alongside MinimalHeader.
  */
 export function UserSync() {
-  const { authenticated, email, userId } = useAuth();
+  const { authenticated, email, userId, getAccessToken } = useAuth();
   const { user: privyUser, ready: privyReady } = usePrivy();
   const { createWallet } = useCreateWallet();
   const username = useAuthStore((s) => s.username ?? null);
@@ -54,10 +54,14 @@ export function UserSync() {
 
     const checkUser = async () => {
       try {
+        const token = await getAccessToken();
         const userResponse = await fetch("/api/users/check", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ privyUserId: userId, email }),
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ email }),
         });
         const userData = await userResponse.json();
 
@@ -111,13 +115,17 @@ export function UserSync() {
         }
         if (welcomeDismissedRef.current) return;
 
+        const token = await getAccessToken();
         const userResponse = await fetch("/api/users/check", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ privyUserId: userId, email }),
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ email }),
         });
         const userData = await userResponse.json();
-        if (cancelled || userData.user?.skipOnboarding) return;
+        if (cancelled || userData.exists !== false || userData.user?.skipOnboarding) return;
         if (welcomeDismissedRef.current) return;
 
         timer = setTimeout(() => {
@@ -141,10 +149,14 @@ export function UserSync() {
   const refreshUser = async () => {
     if (!authenticated || !userId) return;
     try {
+      const token = await getAccessToken();
       const r = await fetch("/api/users/check", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ privyUserId: userId, email }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ email }),
       });
       const data = await r.json();
       if (data.user?.username) setUsername(data.user.username);

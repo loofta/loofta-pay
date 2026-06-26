@@ -30,6 +30,10 @@ export async function POST(request: Request) {
     if (!organizationId || !fromToken?.tokenId || !fromToken?.decimals || !amount) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
+    const amountNum = Number(amount);
+    if (!Number.isFinite(amountNum) || amountNum <= 0 || amountNum > 1_000_000) {
+      return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
+    }
     const supabase = getSupabaseAdmin();
     const trimmedOrgId = String(organizationId || "").trim();
     console.log("[organizations/deposit] Looking up organization with organizationId:", trimmedOrgId);

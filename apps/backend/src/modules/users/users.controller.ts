@@ -229,4 +229,21 @@ export class UsersController {
   async listUsernames() {
     return this.usersService.listAllUsernames();
   }
+
+  @Get('me/update-jun26')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get update-jun26 completion status' })
+  async getUpdateJun26Status(@PrivyUser() user: { id: string }) {
+    return this.usersService.getUpdateJun26Status(user.id);
+  }
+
+  @Post('me/update-jun26/complete')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Mark update-jun26 as complete' })
+  async markUpdateJun26Complete(@PrivyUser() user: { id: string }) {
+    await this.usersService.markUpdateJun26Complete(user.id);
+    return { ok: true };
+  }
 }

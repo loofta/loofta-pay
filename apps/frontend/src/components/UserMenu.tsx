@@ -1051,19 +1051,20 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                 if (!privyUser?.id) throw new Error("Not authenticated");
                                 // Best-effort: archive the current wallet.
                                 // Fails silently if there's no wallet to archive.
+                                const token = await getAccessToken().catch(() => null);
+                                const authHeader: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
                                 if (walletAddress) {
                                   await fetch("/api/users/archive-wallet", {
                                     method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ privyUserId: privyUser.id, walletAddress }),
+                                    headers: { "Content-Type": "application/json", ...authHeader },
+                                    body: JSON.stringify({ walletAddress }),
                                   }).catch(() => { /* ignore */ });
                                 }
                                 // Create new wallet server-side (bypasses Privy's one-wallet-per-user
                                 // client limit which counts archived wallets).
                                 const createRes = await fetch("/api/users/create-solana-wallet", {
                                   method: "POST",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ privyUserId: privyUser.id }),
+                                  headers: { "Content-Type": "application/json", ...authHeader },
                                 });
                                 if (!createRes.ok) {
                                   const body = await createRes.json().catch(() => ({}));
@@ -1217,10 +1218,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                 if (!privyUser?.id || !twitterHandle) return;
                                 setUpdatingToTwitter(true);
                                 try {
+                                  const token = await getAccessToken().catch(() => null);
                                   const res = await fetch("/api/users/setup-username", {
                                     method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ privyUserId: privyUser.id, username: twitterHandle }),
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                                    },
+                                    body: JSON.stringify({ username: twitterHandle }),
                                   });
                                   const data = await res.json();
                                   if (!res.ok) {

@@ -195,6 +195,7 @@ export function MinimalHeader() {
   const headerRef = useRef<HTMLElement>(null);
 
   const [showBalanceModal, setShowBalanceModal] = useState(false);
+  const [balanceModalTab, setBalanceModalTab] = useState<"topup" | "withdraw" | "history">("topup");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const {
@@ -227,7 +228,10 @@ export function MinimalHeader() {
   }, [refetchEmbeddedBalance]);
 
   useEffect(() => {
-    const handler = () => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ tab?: string }>).detail;
+      const tab = detail?.tab === "withdraw" || detail?.tab === "history" ? detail.tab : "topup";
+      setBalanceModalTab(tab);
       setShowBalanceModal(true);
       refreshBalance();
     };
@@ -355,6 +359,7 @@ export function MinimalHeader() {
             solanaAddress={solanaAddress}
             onRefresh={refreshBalance}
             devnetMode={networkMode === "devnet"}
+            initialTab={balanceModalTab}
             dark
           />
         )}

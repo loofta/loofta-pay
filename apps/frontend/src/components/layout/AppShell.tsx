@@ -6,7 +6,7 @@ import { Footer } from "./Footer";
 import { BottomNav } from "./BottomNav";
 import { MinimalHeader } from "./MinimalHeader";
 import { UserSync } from "./UserSync";
-import { AtaMigrationBanner } from "@/components/AtaMigrationBanner";
+import { UpdateJun26Modal } from "@/components/UpdateJun26Modal";
 import { usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
 import { useTranslations } from "next-intl";
@@ -35,7 +35,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   return (
     <>
       <UserSync />
-      <AtaMigrationBanner />
+      <UpdateJun26Modal />
       {showBanner && (
         <div className="relative w-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-4 py-3 mb-3 flex items-center justify-center text-white">
           <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 min-w-0 text-center">

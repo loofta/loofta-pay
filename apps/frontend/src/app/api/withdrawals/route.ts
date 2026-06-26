@@ -48,8 +48,8 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const supabase = getSupabaseAdmin();
-    const { error } = await supabase.from("withdrawals").upsert({
-      id:                   body.id,
+
+    const record = {
       user_id:              userId,
       amount_usdc:          body.amountUSDC,
       tx_signature:         body.txSignature,
@@ -63,7 +63,20 @@ export async function POST(request: Request) {
       near_intents_status:  body.nearIntentsStatus ?? null,
       near_intents_complete: body.nearIntentsComplete ?? false,
       is_devnet:            body.isDevnet ?? false,
-    }, { onConflict: "id" });
+    };
+
+    let error;
+    if (body.id) {
+      // Update only if this record belongs to the caller
+      ({ error } = await supabase
+        .from("withdrawals")
+        .update(record)
+        .eq("id", body.id)
+        .eq("user_id", userId));
+    } else {
+      ({ error } = await supabase.from("withdrawals").insert(record));
+    }
+
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch (e: any) {
