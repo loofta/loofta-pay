@@ -128,7 +128,7 @@ export function UpdateJun26Modal() {
         onEscapeKeyDown={(e) => e.preventDefault()}
         className={cn(
           "left-0 right-0 top-0 translate-x-0 translate-y-0 h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col",
-          "sm:left-1/2 sm:right-auto sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-md sm:rounded-2xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block",
+          "sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-md sm:rounded-2xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block",
           "border-white/10 bg-[#0f0f12] text-white",
           "[&>button]:hidden",
         )}
