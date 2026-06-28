@@ -960,7 +960,7 @@ export function BalanceModal({
         const usdcPrice = cgData?.["usd-coin"]?.usd;
         if (usdcPrice) setPeerUsdcUsdPrice(usdcPrice);
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setPeerFxLoading(false));
   }, [peerCurrency]);
 
@@ -1081,7 +1081,7 @@ export function BalanceModal({
   useEffect(() => {
     if (!open) return;
     if (initialTab) setTab(initialTab);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // On open: load history and resume any in-progress Near Intents withdrawal
@@ -1549,31 +1549,31 @@ export function BalanceModal({
       const bridgeAccessToken = await getAccessToken();
       const sig = devnetMode
         ? await sendUsdcWithBackendFeePayer({
-            senderAddress: solanaAddress,
-            recipientAddress: prep.depositAddress,
-            amountUSDC: withdrawAmountNum,
-            connection,
-            wallet,
-            privyUserId: user!.id,
-            signTransaction,
-            memo: prep.memo ?? undefined,
-            usdcMint: getUsdcMintForMode(mode),
-            chain: getPrivySolanaChainForMode(mode),
-            accessToken: bridgeAccessToken,
-            network: "devnet",
-          })
+          senderAddress: solanaAddress,
+          recipientAddress: prep.depositAddress,
+          amountUSDC: withdrawAmountNum,
+          connection,
+          wallet,
+          privyUserId: user!.id,
+          signTransaction,
+          memo: prep.memo ?? undefined,
+          usdcMint: getUsdcMintForMode(mode),
+          chain: getPrivySolanaChainForMode(mode),
+          accessToken: bridgeAccessToken,
+          network: "devnet",
+        })
         : await sendUsdcWithPrivyEmbeddedWallet({
-            senderAddress: solanaAddress,
-            recipientAddress: prep.depositAddress,
-            amountUSDC: withdrawAmountNum,
-            connection,
-            wallet,
-            privyUserId: user?.id,
-            signAndSendTransaction,
-            memo: prep.memo ?? undefined,
-            usdcMint: getUsdcMintForMode(mode),
-            chain: getPrivySolanaChainForMode(mode),
-          });
+          senderAddress: solanaAddress,
+          recipientAddress: prep.depositAddress,
+          amountUSDC: withdrawAmountNum,
+          connection,
+          wallet,
+          privyUserId: user?.id,
+          signAndSendTransaction,
+          memo: prep.memo ?? undefined,
+          usdcMint: getUsdcMintForMode(mode),
+          chain: getPrivySolanaChainForMode(mode),
+        });
 
       console.log(PEER_LOG, "USDC sent to bridge", { sig });
       setPeerBridgeTxSig(sig);
@@ -1802,31 +1802,31 @@ export function BalanceModal({
       const accessToken = await getAccessToken();
       const sig = devnetMode
         ? await sendUsdcWithBackendFeePayer({
-            senderAddress: solanaAddress,
-            recipientAddress,
-            amountUSDC: amount,
-            connection,
-            wallet,
-            privyUserId: user!.id,
-            signTransaction,
-            memo: memo ?? undefined,
-            usdcMint: getUsdcMintForMode(mode),
-            chain: getPrivySolanaChainForMode(mode),
-            accessToken,
-            network: "devnet" as const,
-          })
+          senderAddress: solanaAddress,
+          recipientAddress,
+          amountUSDC: amount,
+          connection,
+          wallet,
+          privyUserId: user!.id,
+          signTransaction,
+          memo: memo ?? undefined,
+          usdcMint: getUsdcMintForMode(mode),
+          chain: getPrivySolanaChainForMode(mode),
+          accessToken,
+          network: "devnet" as const,
+        })
         : await sendUsdcWithPrivyEmbeddedWallet({
-            senderAddress: solanaAddress,
-            recipientAddress,
-            amountUSDC: amount,
-            connection,
-            wallet,
-            privyUserId: user?.id,
-            signAndSendTransaction,
-            memo: memo ?? undefined,
-            usdcMint: getUsdcMintForMode(mode),
-            chain: getPrivySolanaChainForMode(mode),
-          });
+          senderAddress: solanaAddress,
+          recipientAddress,
+          amountUSDC: amount,
+          connection,
+          wallet,
+          privyUserId: user?.id,
+          signAndSendTransaction,
+          memo: memo ?? undefined,
+          usdcMint: getUsdcMintForMode(mode),
+          chain: getPrivySolanaChainForMode(mode),
+        });
 
       // Save to localStorage and DB
       const item = addWithdrawal({
@@ -2017,7 +2017,7 @@ export function BalanceModal({
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
 
-                  {blinkError && <p className="text-sm text-red-500 text-center px-1">{blinkError}</p>}
+                  {blinkError && <p className="text-sm text-orange-500 text-center px-1">{blinkError}</p>}
 
                   {/* 2. Fiat / bank via Coinbase Onramp */}
                   <button type="button" disabled={!solanaAddress || blinkDepositing || coinbaseLoading} onClick={handleCoinbaseOnramp}
