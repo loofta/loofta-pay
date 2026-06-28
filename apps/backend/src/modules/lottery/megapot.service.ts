@@ -85,14 +85,27 @@ export interface MegapotRound {
   prizePool: string;
   ticketsSold: number;
   status: string;
+  // Populated after draw — field names vary by API version
+  winning_numbers?: number[] | null;
+  winning_bonus?: number | null;
 }
 
 export interface MegapotTicket {
   id: string;
-  roundId: string;
-  walletAddress: string;
-  ticketCount: number;
-  createdAt: string;
+  wallet: string;
+  buyer?: string;
+  round_id: string;
+  normals: number[];
+  bonusball: number;
+  matched_normals?: number;
+  bonusball_match?: boolean;
+  claimed?: boolean;
+  claimed_tx_hash?: string | null;
+  // legacy camelCase fields (older API versions)
+  roundId?: string;
+  walletAddress?: string;
+  ticketCount?: number;
+  createdAt?: string;
 }
 
 export interface MegapotWin {
@@ -165,6 +178,22 @@ export class MegapotService {
     return this.apiGet<MegapotRound>(`/rounds/${roundId}`);
   }
 
+  /** Fetch the winning numbers for a settled round. Returns null if not yet drawn or unknown format. */
+  async getWinningNumbersForRound(roundId: string): Promise<{ main: number[]; bonus: number } | null> {
+    try {
+      const round = await this.apiGet<any>(`/rounds/${roundId}`);
+      // API may return winning_numbers (5 normals) + winning_bonus, or all 6 combined
+      const normals: number[] = round.winning_numbers ?? round.winningNumbers ?? round.normal_numbers ?? [];
+      const bonus: number = round.winning_bonus ?? round.winningBonus ?? round.bonus_number ?? round.bonusball ?? 0;
+      if (normals.length === 5 && bonus > 0) return { main: normals, bonus };
+      if (normals.length === 6) return { main: normals.slice(0, 5), bonus: normals[5] };
+      return null;
+    } catch (e: any) {
+      this.logger.warn(`getWinningNumbersForRound ${roundId}: ${e.message}`);
+      return null;
+    }
+  }
+
   /**
    * Fetch actual ticket ball numbers for a companion wallet by scanning on-chain Transfer mint
    * events on the Megapot NFT contract, then reading each token's metadata via tokenURI.
@@ -176,28 +205,40 @@ export class MegapotService {
   ): Promise<{ tokenIds: string[]; ticketNumbers: { main: number[]; bonus: number }[] }> {
     const client = this.getPublicClient();
 
-    // Scan Transfer(from=0x0, to=companion) mint events in the last ~28 hours on Base
+    // Scan Transfer(from=0x0, to=companion) mint events in the last ~28 hours on Base.
+    // Base mainnet public RPC caps eth_getLogs at 10,000 blocks per call — paginate in 9,900-block chunks.
     const latest = await client.getBlockNumber();
     const fromBlock = latest > 50_000n ? latest - 50_000n : 0n;
+    const CHUNK = 9_900n;
 
-    const logs = await client.getLogs({
+    const transferEvent = {
+      type: 'event',
+      name: 'Transfer',
+      inputs: [
+        { name: 'from', type: 'address', indexed: true },
+        { name: 'to', type: 'address', indexed: true },
+        { name: 'tokenId', type: 'uint256', indexed: true },
+      ],
+    } as const;
+
+    // Helper keeps the event-typed overload so log.args is properly typed downstream
+    const fetchChunk = (from: bigint, to: bigint) => client.getLogs({
       address: MEGAPOT_TICKET_NFT,
-      event: {
-        type: 'event',
-        name: 'Transfer',
-        inputs: [
-          { name: 'from', type: 'address', indexed: true },
-          { name: 'to', type: 'address', indexed: true },
-          { name: 'tokenId', type: 'uint256', indexed: true },
-        ],
-      } as const,
+      event: transferEvent,
       args: {
         from: '0x0000000000000000000000000000000000000000' as Address,
         to: companionAddress,
       },
-      fromBlock,
-      toBlock: 'latest',
+      fromBlock: from,
+      toBlock: to,
     });
+
+    const logChunks: Awaited<ReturnType<typeof fetchChunk>>[] = [];
+    for (let from = fromBlock; from <= latest; from += CHUNK) {
+      const to = from + CHUNK - 1n < latest ? from + CHUNK - 1n : latest;
+      logChunks.push(await fetchChunk(from, to));
+    }
+    const logs = logChunks.flat();
 
     this.logger.log(`getTicketNumbersFromNft: companion=${companionAddress} roundId=${roundId} → ${logs.length} mint events`);
 
@@ -252,6 +293,41 @@ export class MegapotService {
     }
 
     return { tokenIds, ticketNumbers };
+  }
+
+  /**
+   * Fetch ticket ball numbers from the Megapot REST API.
+   * Faster than on-chain scanning — no RPC calls needed.
+   * Returns empty array if the wallet is not indexed (e.g. Rhinestone smart accounts)
+   * or if the round hasn't settled yet.
+   */
+  async getTicketNumbersFromApi(
+    companionAddress: Address,
+    roundId?: string | null,
+  ): Promise<{ ticketNumbers: { main: number[]; bonus: number }[] }> {
+    const path = roundId
+      ? `/wallets/${companionAddress}/tickets/rounds/${roundId}`
+      : `/wallets/${companionAddress}/tickets`;
+
+    try {
+      const data = await this.apiGet<{ tickets: MegapotTicket[] }>(path);
+      const tickets = data.tickets ?? [];
+      const ticketNumbers: { main: number[]; bonus: number }[] = [];
+
+      for (const t of tickets) {
+        if (Array.isArray(t.normals) && t.normals.length === 5 && t.bonusball != null) {
+          ticketNumbers.push({ main: t.normals, bonus: t.bonusball });
+        }
+      }
+
+      this.logger.log(
+        `getTicketNumbersFromApi: companion=${companionAddress} roundId=${roundId} → ${ticketNumbers.length} tickets`,
+      );
+      return { ticketNumbers };
+    } catch (e: any) {
+      this.logger.warn(`getTicketNumbersFromApi failed for ${companionAddress}: ${e.message}`);
+      return { ticketNumbers: [] };
+    }
   }
 
   /**
