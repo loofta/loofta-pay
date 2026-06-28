@@ -119,6 +119,7 @@ export interface LotteryTicketSummary {
   bridgeStatus: string | null;
   bridgeExpiresAt: string | null;
   ticketNumbers: { main: number[]; bonus: number }[] | null;
+  winningNumbers: { main: number[]; bonus: number } | null;
 }
 
 export interface LotteryWithdrawalSummary {
@@ -587,6 +588,21 @@ export class LotteryService {
 
     for (const ticket of tickets) {
       try {
+        // Try API first (no RPC needed), fall back to on-chain scan
+        const { ticketNumbers: apiNumbers } = await this.megapot.getTicketNumbersFromApi(
+          ticket.companion_address as Address,
+          ticket.round_id ?? undefined,
+        );
+
+        if (apiNumbers.length > 0) {
+          await db.from('lottery_tickets').update({
+            ticket_numbers: apiNumbers,
+            updated_at: new Date().toISOString(),
+          }).eq('id', ticket.id);
+          this.logger.log(`Backfill: stored ${apiNumbers.length} numbers via API for ticket ${ticket.id}`);
+          continue;
+        }
+
         const { tokenIds, ticketNumbers } = await this.megapot.getTicketNumbersFromNft(
           ticket.companion_address as Address,
           ticket.round_id ?? undefined,
@@ -597,7 +613,7 @@ export class LotteryService {
             ticket_nft_ids: tokenIds,
             updated_at: new Date().toISOString(),
           }).eq('id', ticket.id);
-          this.logger.log(`Backfill: stored ${ticketNumbers.length} numbers for ticket ${ticket.id}`);
+          this.logger.log(`Backfill: stored ${ticketNumbers.length} numbers on-chain for ticket ${ticket.id}`);
         }
       } catch (e: any) {
         this.logger.warn(`Backfill failed for ticket ${ticket.id}: ${e.message}`);
@@ -609,19 +625,40 @@ export class LotteryService {
     const db = this.supabase.getClient();
     const { data: ticket } = await db
       .from('lottery_tickets')
-      .select('id, companion_address, round_id, status')
+      .select('id, companion_address, round_id, status, ticket_numbers, ticket_nft_ids')
       .eq('id', ticketId)
       .eq('user_id', userId)
       .single();
 
     if (!ticket?.companion_address) return { ok: false, count: 0 };
 
+    // Return early if already stored
+    if (Array.isArray(ticket.ticket_numbers) && ticket.ticket_numbers.length > 0) {
+      return { ok: true, count: ticket.ticket_numbers.length };
+    }
+
+    // Try Megapot API first (no RPC, fastest path)
+    const { ticketNumbers: apiNumbers } = await this.megapot.getTicketNumbersFromApi(
+      ticket.companion_address as Address,
+      ticket.round_id ?? undefined,
+    );
+
+    if (apiNumbers.length > 0) {
+      await db.from('lottery_tickets').update({
+        ticket_numbers: apiNumbers,
+        updated_at: new Date().toISOString(),
+      }).eq('id', ticketId);
+      this.logger.log(`syncTicketNumbers ${ticketId}: stored ${apiNumbers.length} numbers via API`);
+      return { ok: true, count: apiNumbers.length };
+    }
+
+    // Fall back to on-chain NFT Transfer event scan (also retrieves NFT IDs for claimWinnings)
     const { tokenIds, ticketNumbers } = await this.megapot.getTicketNumbersFromNft(
       ticket.companion_address as Address,
       ticket.round_id ?? undefined,
     );
 
-    this.logger.log(`syncTicketNumbers ${ticketId}: found ${ticketNumbers.length} NFT numbers, tokenIds=${tokenIds.slice(0, 3).join(',')}`);
+    this.logger.log(`syncTicketNumbers ${ticketId}: found ${ticketNumbers.length} NFT numbers on-chain, tokenIds=${tokenIds.slice(0, 3).join(',')}`);
 
     if (ticketNumbers.length > 0) {
       await db.from('lottery_tickets').update({
@@ -992,6 +1029,11 @@ export class LotteryService {
           continue;
         }
 
+        // Fetch winning numbers for this round (non-fatal)
+        const winningNumbers = ticket.round_id
+          ? await this.megapot.getWinningNumbersForRound(ticket.round_id)
+          : null;
+
         // Read on-chain NFT metadata to check Tier + Win Amount post-draw
         const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
         const totalWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
@@ -1002,12 +1044,14 @@ export class LotteryService {
             status: 'won',
             win_amount_usdc: totalWinUsdc,
             win_tier: topWin?.tier ?? null,
+            ...(winningNumbers ? { winning_numbers: winningNumbers } : {}),
             updated_at: new Date().toISOString(),
           }).eq('id', ticket.id);
           this.logger.log(`Ticket ${ticket.id}: WON $${totalWinUsdc} (tier ${topWin?.tier})`);
         } else {
           await db.from('lottery_tickets').update({
             status: 'lost',
+            ...(winningNumbers ? { winning_numbers: winningNumbers } : {}),
             updated_at: new Date().toISOString(),
           }).eq('id', ticket.id);
           this.logger.log(`Ticket ${ticket.id}: LOST`);
@@ -1015,6 +1059,92 @@ export class LotteryService {
       } catch (err: any) {
         this.logger.warn(`checkDailyResults ticket ${ticket.id}: ${err.message}`);
       }
+    }
+  }
+
+  /** Manually check win/loss result for a single ticket. Useful after draw when cron is bypassed. */
+  async checkTicketResult(ticketId: string, userId: string): Promise<{
+    status: string;
+    winAmountUsdc: number | null;
+    winTier: number | null;
+    winningNumbers: { main: number[]; bonus: number } | null;
+    ticketNumbers: { main: number[]; bonus: number }[] | null;
+  }> {
+    const db = this.supabase.getClient();
+    const { data: ticket } = await db
+      .from('lottery_tickets')
+      .select('*')
+      .eq('id', ticketId)
+      .eq('user_id', userId)
+      .single();
+
+    if (!ticket) throw new BadRequestException('Ticket not found');
+    if (ticket.status === 'won' || ticket.status === 'lost') {
+      return {
+        status: ticket.status,
+        winAmountUsdc: ticket.win_amount_usdc,
+        winTier: ticket.win_tier,
+        winningNumbers: ticket.winning_numbers ?? null,
+        ticketNumbers: ticket.ticket_numbers ?? null,
+      };
+    }
+    if (ticket.status !== 'active') throw new BadRequestException('Ticket is not active');
+    if (!ticket.draw_time || new Date(ticket.draw_time) > new Date()) {
+      throw new BadRequestException('Draw has not happened yet');
+    }
+
+    // Get or fetch NFT IDs
+    let tokenIds: string[] = Array.isArray(ticket.ticket_nft_ids) && ticket.ticket_nft_ids.length > 0
+      ? ticket.ticket_nft_ids
+      : [];
+
+    if (!tokenIds.length && ticket.companion_address) {
+      const { tokenIds: found, ticketNumbers } = await this.megapot.getTicketNumbersFromNft(
+        ticket.companion_address as Address,
+        ticket.round_id,
+      );
+      tokenIds = found;
+      if (tokenIds.length) {
+        await db.from('lottery_tickets').update({
+          ticket_nft_ids: tokenIds,
+          ...(ticketNumbers.length ? { ticket_numbers: ticketNumbers } : {}),
+          updated_at: new Date().toISOString(),
+        }).eq('id', ticketId);
+      }
+    }
+
+    if (!tokenIds.length) {
+      await db.from('lottery_tickets').update({ status: 'lost', updated_at: new Date().toISOString() }).eq('id', ticketId);
+      return { status: 'lost', winAmountUsdc: null, winTier: null, winningNumbers: null, ticketNumbers: ticket.ticket_numbers ?? null };
+    }
+
+    // Fetch winning numbers for this round (non-fatal)
+    const winningNumbers = ticket.round_id
+      ? await this.megapot.getWinningNumbersForRound(ticket.round_id)
+      : null;
+
+    const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
+    const totalWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
+    const topWin = results.find(r => r.winAmountUsdc > 0);
+
+    if (totalWinUsdc > 0) {
+      await db.from('lottery_tickets').update({
+        status: 'won',
+        win_amount_usdc: totalWinUsdc,
+        win_tier: topWin?.tier ?? null,
+        ...(winningNumbers ? { winning_numbers: winningNumbers } : {}),
+        updated_at: new Date().toISOString(),
+      }).eq('id', ticketId);
+      this.logger.log(`checkTicketResult ${ticketId}: WON $${totalWinUsdc} (tier ${topWin?.tier})`);
+      return { status: 'won', winAmountUsdc: totalWinUsdc, winTier: topWin?.tier ?? null, winningNumbers: winningNumbers ?? null, ticketNumbers: ticket.ticket_numbers ?? null };
+    } else {
+      await db.from('lottery_tickets').update({
+        status: 'lost',
+        ...(winningNumbers ? { winning_numbers: winningNumbers } : {}),
+        updated_at: new Date().toISOString(),
+      }).eq('id', ticketId);
+      this.logger.log(`checkTicketResult ${ticketId}: LOST`);
+      return { status: 'lost', winAmountUsdc: null, winTier: null, winningNumbers: winningNumbers ?? null, ticketNumbers: ticket.ticket_numbers ?? null };
     }
   }
 
@@ -1245,6 +1375,7 @@ export class LotteryService {
       bridgeStatus: t.bridge_status ?? null,
       bridgeExpiresAt: t.bridge_expires_at ?? null,
       ticketNumbers: t.ticket_numbers ?? null,
+      winningNumbers: t.winning_numbers ?? null,
     }));
 
     const withdrawals: LotteryWithdrawalSummary[] = (withdrawalsRes.data ?? []).map((w: any) => ({
@@ -1296,6 +1427,7 @@ export class LotteryService {
       bridgeStatus: data.bridge_status ?? null,
       bridgeExpiresAt: data.bridge_expires_at ?? null,
       ticketNumbers: data.ticket_numbers ?? null,
+      winningNumbers: data.winning_numbers ?? null,
     };
   }
 

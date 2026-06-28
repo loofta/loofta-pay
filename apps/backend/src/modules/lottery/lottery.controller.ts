@@ -135,6 +135,16 @@ export class LotteryController {
     return this.lottery.rescueBurnerFunds(ticketId, req.user.id, dto.destinationSolAddress);
   }
 
+  @Post('tickets/:ticketId/check-results')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Manually check win/loss result after draw — updates ticket status immediately' })
+  async checkResults(
+    @Param('ticketId') ticketId: string,
+    @Request() req: any,
+  ): Promise<{ status: string; winAmountUsdc: number | null; winTier: number | null }> {
+    return this.lottery.checkTicketResult(ticketId, req.user.id);
+  }
+
   @Post('tickets/:ticketId/retry')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Retry a failed ticket purchase — requeues for the next cron run' })

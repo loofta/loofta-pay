@@ -44,6 +44,7 @@ interface TicketSummary {
   winTier: number | null; createdAt: string; depositAddress: string | null;
   bridgeStatus: string | null; bridgeExpiresAt: string | null;
   ticketNumbers: TicketNumbers[] | null;
+  winningNumbers: TicketNumbers | null;
   deletedAt?: string | null;
 }
 interface WithdrawalSummary {
@@ -64,12 +65,13 @@ function randomTicket(): TicketNumbers {
   return { main: [...s].sort((a, b) => a - b), bonus: Math.ceil(Math.random() * BONUS_MAX) };
 }
 
-function statusLabel(s: TicketStatus, bridgeStatus?: string | null): string {
+function statusLabel(s: TicketStatus, bridgeStatus?: string | null, drawTime?: string | null): string {
   if (s === "failed" && bridgeStatus) {
     const bs = bridgeStatus.toUpperCase();
     if (bs === "REFUNDED") return "Refunded";
     if (bs === "EXPIRED") return "Expired";
   }
+  if (s === "active" && drawTime && new Date(drawTime) < new Date()) return "Checking results…";
   const m: Record<TicketStatus, string> = {
     pending_send: "Awaiting deposit", sent: "Sent privately", bridging: "Bridging to Base",
     buying: "Buying tickets", active: "In draw", won: "Won!", lost: "No win", failed: "Failed",
@@ -1146,11 +1148,14 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
 
 // ─── History drawer ───────────────────────────────────────────────────────────
 
-function ticketStatusBadgeClass(s: TicketStatus, bridgeStatus?: string | null): string {
+function ticketStatusBadgeClass(s: TicketStatus, bridgeStatus?: string | null, drawTime?: string | null): string {
   if (s === "failed" && bridgeStatus) {
     const bs = bridgeStatus.toUpperCase();
     if (bs === "REFUNDED") return "bg-blue-500/20 text-blue-400 border-blue-500/30";
     if (bs === "EXPIRED") return "bg-slate-500/20 text-slate-400 border-slate-500/30";
+  }
+  if (s === "active" && drawTime && new Date(drawTime) < new Date()) {
+    return "bg-slate-500/20 text-slate-400 border-slate-500/30";
   }
   switch (s) {
     case "won": return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
@@ -1255,27 +1260,72 @@ function PrizePoolHero({ prizePool, drawTime, onHowToPlay, onPrizeTiers }: {
   );
 }
 
-function TicketNumberCard({ tn }: { tn: { main: number[]; bonus: number } }) {
+function ticketTierLabel(matchedNormals: number, bonusMatch: boolean): string | null {
+  const tier = PRIZE_TIERS.find(t => t.normal === matchedNormals && t.bonusMatch === bonusMatch);
+  return tier?.prize ?? null;
+}
+
+function TicketNumberCard({ tn, winningNumbers }: {
+  tn: { main: number[]; bonus: number };
+  winningNumbers?: { main: number[]; bonus: number } | null;
+}) {
+  const winSet = winningNumbers ? new Set(winningNumbers.main) : null;
+  const bonusHit = winningNumbers ? tn.bonus === winningNumbers.bonus : false;
+  const matchedCount = winSet ? tn.main.filter(n => winSet.has(n)).length : 0;
+  const prize = winningNumbers ? ticketTierLabel(matchedCount, bonusHit) : null;
+  const isWin = prize !== null && prize !== "Free ticket";
+  const isFreeTicket = prize === "Free ticket";
+
   return (
-    <div className="flex items-center rounded-xl border border-white/[0.08] bg-white/[0.04] h-[58px] px-3 gap-3 relative overflow-hidden">
+    <div className={`flex items-center rounded-xl border bg-white/[0.04] px-3 gap-3 relative overflow-hidden ${
+      isWin ? "border-emerald-500/30" : isFreeTicket ? "border-violet-500/20" : "border-white/[0.08]"
+    }`} style={{ minHeight: 58 }}>
       {/* Numbers */}
-      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+      <div className="flex flex-col gap-1 flex-1 min-w-0 py-3">
         <span className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase">Numbers</span>
         <div className="flex gap-2.5">
-          {tn.main.map(n => (
-            <span key={n} className="text-sm font-bold text-slate-200 tabular-nums">{n}</span>
-          ))}
+          {tn.main.map(n => {
+            const hit = winSet?.has(n);
+            return (
+              <span key={n} className={`text-sm font-bold tabular-nums ${hit ? "text-emerald-400" : "text-slate-400"}`}>
+                {n}
+              </span>
+            );
+          })}
         </div>
       </div>
       {/* Dashed separator */}
       <div className="self-stretch border-l border-dashed border-white/[0.12] mx-1" />
       {/* Bonus */}
-      <div className="flex flex-col items-center gap-0.5 shrink-0">
+      <div className="flex flex-col items-center gap-1 shrink-0 py-3">
         <span className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase">Bonus</span>
-        <span className="w-7 h-7 rounded-full border border-amber-500/50 bg-amber-500/10 text-amber-400 text-xs font-bold flex items-center justify-center tabular-nums">
+        <span className={`w-7 h-7 rounded-full border text-xs font-bold flex items-center justify-center tabular-nums ${
+          bonusHit
+            ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-400"
+            : "border-amber-500/50 bg-amber-500/10 text-amber-400"
+        }`}>
           {tn.bonus}
         </span>
       </div>
+      {/* WIN / NO WIN label — only shown when we have winning numbers */}
+      {winningNumbers && (
+        <>
+          <div className="self-stretch border-l border-dashed border-white/[0.12] mx-1" />
+          <div className="shrink-0 py-3">
+            {isWin ? (
+              <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold whitespace-nowrap">
+                WIN {prize}
+              </span>
+            ) : isFreeTicket ? (
+              <span className="px-2 py-1 rounded-lg bg-violet-500/15 border border-violet-500/20 text-violet-300 text-xs font-bold whitespace-nowrap">
+                FREE
+              </span>
+            ) : (
+              <span className="text-slate-600 text-xs font-bold uppercase tracking-wide">No win</span>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1320,6 +1370,8 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
   const [retrying, setRetrying] = useState<string | null>(null);
   const [retryResult, setRetryResult] = useState<Record<string, string>>({});
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [checkingResult, setCheckingResult] = useState<string | null>(null);
+  const [checkResultMsg, setCheckResultMsg] = useState<Record<string, string>>({});
 
   const awaitingDeposit = activeTickets.filter(t => t.status === "pending_send");
   const inFlight = activeTickets.filter(t => ["sent", "bridging", "buying"].includes(t.status));
@@ -1386,6 +1438,34 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
       setRetryResult(r => ({ ...r, [ticketId]: `Error: ${e.message}` }));
     } finally {
       setRetrying(null);
+    }
+  }
+
+  async function handleCheckResults(ticketId: string) {
+    setCheckingResult(ticketId);
+    setCheckResultMsg(r => ({ ...r, [ticketId]: "Checking results on-chain…" }));
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`/api/lottery/tickets/${ticketId}/check-results`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const msg = data.status === "won"
+          ? `Won $${data.winAmountUsdc?.toFixed(2)} (Tier ${data.winTier ?? "?"})! Go to Redeem tab.`
+          : data.status === "lost"
+            ? "No win this draw — better luck next time!"
+            : `Status: ${data.status}`;
+        setCheckResultMsg(r => ({ ...r, [ticketId]: msg }));
+        setTimeout(onRefresh, 1500);
+      } else {
+        setCheckResultMsg(r => ({ ...r, [ticketId]: `Error: ${data.message ?? "Unknown error"}` }));
+      }
+    } catch (e: any) {
+      setCheckResultMsg(r => ({ ...r, [ticketId]: `Error: ${e.message}` }));
+    } finally {
+      setCheckingResult(null);
     }
   }
 
@@ -1545,8 +1625,8 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                     <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus)}`}>
-                      {statusLabel(t.status, t.bridgeStatus)}
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime)}`}>
+                      {statusLabel(t.status, t.bridgeStatus, t.drawTime)}
                     </span>
                     <ChevronDown className="w-4 h-4 text-slate-500 transition-transform duration-200 group-open:rotate-180" />
                   </div>
@@ -1678,8 +1758,8 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus)}`}>
-                          {statusLabel(t.status, t.bridgeStatus)}
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime)}`}>
+                          {statusLabel(t.status, t.bridgeStatus, t.drawTime)}
                         </span>
                       </div>
                       <p className="text-sm text-slate-500 mt-0.5">
@@ -1708,12 +1788,40 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                           </p>
                         </div>
                       )}
+                      {/* Check results button for active tickets past draw time */}
+                      {t.status === "active" && t.drawTime && new Date(t.drawTime) < new Date() && (
+                        <div className="space-y-2">
+                          {checkResultMsg[t.id] && (
+                            <p className={`text-sm ${checkResultMsg[t.id].startsWith("Error") ? "text-red-400" : checkResultMsg[t.id].includes("Won") ? "text-emerald-400" : "text-slate-400"}`}>
+                              {checkResultMsg[t.id]}
+                            </p>
+                          )}
+                          <button
+                            onClick={() => handleCheckResults(t.id)}
+                            disabled={checkingResult === t.id}
+                            className="w-full h-9 rounded-xl text-sm font-semibold border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 transition-all disabled:opacity-40"
+                          >
+                            {checkingResult === t.id ? "Checking…" : "Check Results"}
+                          </button>
+                        </div>
+                      )}
                       {/* Number balls */}
                       {hasNumbers ? (
                         <div className="space-y-2">
-                          <p className="text-sm text-slate-600 mb-2">Your tickets</p>
+                          {t.winningNumbers && (
+                            <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] px-3 py-2">
+                              <p className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase mb-1.5">Winning numbers</p>
+                              <div className="flex items-center gap-2">
+                                {t.winningNumbers.main.map(n => (
+                                  <span key={n} className="w-7 h-7 rounded-full bg-white/10 border border-white/20 text-white text-xs font-bold flex items-center justify-center tabular-nums">{n}</span>
+                                ))}
+                                <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 text-slate-300 text-xs font-bold flex items-center justify-center tabular-nums">{t.winningNumbers.bonus}</span>
+                              </div>
+                            </div>
+                          )}
+                          <p className="text-sm text-slate-600">Your tickets</p>
                           {t.ticketNumbers!.map((tn, i) => (
-                            <TicketNumberCard key={i} tn={tn} />
+                            <TicketNumberCard key={i} tn={tn} winningNumbers={t.winningNumbers} />
                           ))}
                         </div>
                       ) : (
@@ -1870,6 +1978,101 @@ function useSolPrice(): number {
   return data ?? 150;
 }
 
+// ─── Draw result modal ────────────────────────────────────────────────────────
+
+type DrawResult = {
+  ticketId: string; status: string; winAmountUsdc: number | null; winTier: number | null;
+  winningNumbers?: { main: number[]; bonus: number } | null;
+  ticketNumbers?: { main: number[]; bonus: number }[] | null;
+};
+
+function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose }: {
+  results: DrawResult[];
+  winningNumbers?: { main: number[]; bonus: number } | null;
+  ticketNumbers?: { main: number[]; bonus: number }[] | null;
+  onClose: () => void;
+}) {
+  const anyWon = results.some(r => r.status === "won");
+  const totalWon = results.reduce((sum, r) => sum + (r.winAmountUsdc ?? 0), 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-sm rounded-2xl bg-[#1a1a24] border border-white/10 p-5 space-y-4 max-h-[90svh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex flex-col items-center text-center gap-2 pt-1">
+          {anyWon ? (
+            <div className="w-16 h-16 rounded-full bg-amber-500/10 border-2 border-amber-500/30 flex items-center justify-center">
+              <Trophy className="w-8 h-8 text-amber-400" />
+            </div>
+          ) : (
+            <div className="w-14 h-14 rounded-full bg-white/[0.04] border border-white/10 flex items-center justify-center">
+              <Ticket className="w-7 h-7 text-slate-500" />
+            </div>
+          )}
+          <div>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-0.5">Draw Result</p>
+            {anyWon ? (
+              <>
+                <h2 className="text-2xl font-bold text-white">You Won!</h2>
+                <p className="text-xl font-semibold text-emerald-400">+{fmt(totalWon)}</p>
+              </>
+            ) : (
+              <>
+                <h2 className="text-xl font-bold text-white">No win this time</h2>
+                <p className="text-sm text-slate-400">Better luck next draw!</p>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Winning numbers row */}
+        {winningNumbers && (
+          <div className="rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 py-2.5">
+            <p className="text-[10px] font-bold tracking-[0.16em] text-slate-500 uppercase mb-2">Winning numbers</p>
+            <div className="flex items-center gap-2.5">
+              {winningNumbers.main.map(n => (
+                <span key={n} className="w-8 h-8 rounded-full bg-white/10 border border-white/20 text-white text-sm font-bold flex items-center justify-center tabular-nums">
+                  {n}
+                </span>
+              ))}
+              <span className="w-8 h-8 rounded-full bg-slate-800 border border-slate-600 text-slate-200 text-sm font-bold flex items-center justify-center tabular-nums">
+                {winningNumbers.bonus}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Per-ticket breakdown */}
+        {ticketNumbers && ticketNumbers.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-bold tracking-[0.16em] text-slate-500 uppercase">Your tickets</p>
+            {ticketNumbers.map((tn, i) => (
+              <TicketNumberCard key={i} tn={tn} winningNumbers={winningNumbers} />
+            ))}
+          </div>
+        )}
+
+        {/* CTAs */}
+        {anyWon ? (
+          <a href="/app/megapot?tab=redeem" onClick={onClose}
+            className="flex items-center justify-center w-full h-11 rounded-xl font-semibold bg-emerald-500 hover:bg-emerald-400 text-white transition-all">
+            Redeem Winnings
+          </a>
+        ) : (
+          <a href="/app/megapot" onClick={onClose}
+            className="flex items-center justify-center w-full h-11 rounded-xl font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all">
+            Buy tickets for tomorrow
+          </a>
+        )}
+        <button onClick={onClose} className="w-full h-9 rounded-xl text-sm font-medium text-slate-500 hover:text-slate-300 transition-colors">
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function MegapotPage() {
@@ -1891,6 +2094,10 @@ export default function MegapotPage() {
       (a.walletClientType === "privy" || a.walletClientType === "privy-v2")) as any)?.address ?? "";
   const userSolanaAddress = megapotEmbeddedAddress || wallets[0]?.address || "";
 
+  const [drawResults, setDrawResults] = useState<DrawResult[]>([]);
+  const [showResultModal, setShowResultModal] = useState(false);
+  const autoCheckedIds = useRef<Set<string>>(new Set());
+
   const fetchDashboard = useCallback(async () => {
     const token = await getAccessToken();
     accessToken.current = token;
@@ -1904,6 +2111,49 @@ export default function MegapotPage() {
   }, [getAccessToken]);
 
   useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
+
+  // Auto-check results for active tickets whose draw time has passed
+  useEffect(() => {
+    if (!dashboard || !accessToken.current) return;
+    const expired = (dashboard.activeTickets ?? []).filter(
+      t => t.status === "active" && t.drawTime && new Date(t.drawTime) < new Date(),
+    );
+    const unchecked = expired.filter(t => !autoCheckedIds.current.has(t.id));
+    if (!unchecked.length) return;
+
+    unchecked.forEach(t => autoCheckedIds.current.add(t.id));
+    const token = accessToken.current;
+
+    Promise.all(
+      unchecked.map(async t => {
+        try {
+          const res = await fetch(`/api/lottery/tickets/${t.id}/check-results`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            return {
+              ticketId: t.id,
+              status: data.status,
+              winAmountUsdc: data.winAmountUsdc ?? null,
+              winTier: data.winTier ?? null,
+              winningNumbers: data.winningNumbers ?? null,
+              ticketNumbers: data.ticketNumbers ?? t.ticketNumbers ?? null,
+            } as DrawResult;
+          }
+        } catch { /* non-fatal */ }
+        return null;
+      }),
+    ).then(results => {
+      const valid = results.filter((r): r is DrawResult => r !== null);
+      if (valid.length) {
+        setDrawResults(valid);
+        setShowResultModal(true);
+        fetchDashboard();
+      }
+    });
+  }, [dashboard, fetchDashboard]);
 
   const wonTickets = [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])].filter(t => t.status === "won");
 
@@ -1944,6 +2194,14 @@ export default function MegapotPage() {
 
       {prizeTiersOpen && (
         <PrizeTiersModal onClose={() => setPrizeTiersOpen(false)} totalPool={dashboard?.nextDraw?.prizePool} />
+      )}
+      {showResultModal && drawResults.length > 0 && (
+        <DrawResultModal
+          results={drawResults}
+          winningNumbers={drawResults.find(r => r.winningNumbers)?.winningNumbers}
+          ticketNumbers={drawResults.flatMap(r => r.ticketNumbers ?? [])}
+          onClose={() => setShowResultModal(false)}
+        />
       )}
 
       {/* FAQ — same style as send/receive */}
