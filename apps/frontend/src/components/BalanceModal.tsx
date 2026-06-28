@@ -312,6 +312,7 @@ export function BalanceModal({
   const [blinkError, setBlinkError] = useState<string | null>(null);
   const blinkDepositRef = useRef<BlinkDeposit | null>(null);
   const dialogContentRef = useRef<HTMLDivElement>(null);
+
   const [coinbaseLoading, setCoinbaseLoading] = useState(false);
   const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | "peer-offramp" | null>(null);
   const [coinbaseOfframpLoading, setCoinbaseOfframpLoading] = useState(false);
@@ -417,6 +418,8 @@ export function BalanceModal({
       const msg = err instanceof DepositError ? getDisplayMessage(err) : "Deposit failed. Please try again.";
       setBlinkError(msg);
     } finally {
+      blinkDepositRef.current?.destroy();
+      blinkDepositRef.current = null;
       setBlinkDepositing(false);
     }
   };
@@ -1876,7 +1879,7 @@ export function BalanceModal({
     : "sm:max-w-xl";
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()} modal={false}>
       <DialogContent
         ref={dialogContentRef}
         onInteractOutside={(e) => e.preventDefault()}
