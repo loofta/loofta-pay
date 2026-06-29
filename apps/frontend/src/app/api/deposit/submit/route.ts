@@ -2,6 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { OpenAPI } from "@defuse-protocol/one-click-sdk-typescript";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 function getEnv(name: string, fallbacks: string[] = []) {
   const all = [name, ...fallbacks];
@@ -16,6 +17,10 @@ const ONECLICK_BASE = getEnv("ONECLICK_API_BASE", ["NEXT_PUBLIC_ONECLICK_API_BAS
 const ONECLICK_JWT = getEnv("ONECLICK_JWT", ["NEXT_PUBLIC_ONECLICK_JWT"]);
 
 export async function POST(request: Request) {
+  const userId = await getVerifiedUserId(request);
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const body = await request.json();
     const { txHash, depositAddress, nearSenderAccount, memo } = body || {};

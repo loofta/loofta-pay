@@ -16,6 +16,7 @@
   "MinimalHeader": {
     "balance": "Balance",
     "sparks": "Sparks",
+    "rewards": "Rewards",
     "waitlist": "Waitlist",
     "profile": "Profile",
     "signIn": "Sign in",
@@ -472,5 +473,19 @@
       "perk3": "Private beta features before public launch",
       "perk4": "Direct line to the founding team"
     }
+  },
+
+  "RewardsPage": {
+    "title": "Rewards",
+    "subtitle": "Earn by completing campaigns",
+    "activeCampaigns": "Active Campaigns",
+    "comingSoon": "Coming Soon",
+    "sparksTitle": "Sparks",
+    "sparksDescription": "Complete missions on devnet, earn Sparks",
+    "nextCampaign": "Next Campaign",
+    "nextCampaignSubtitle": "More rewards on the way",
+    "endsToday": "Ends today",
+    "daysLeft": "{days}d left",
+    "backToRewards": "Rewards"
   }
 }

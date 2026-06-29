@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
+import { useQueryClient } from "@tanstack/react-query";
+import { embeddedSolanaUsdcBalanceQueryKey } from "@/services/solanaBalance";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
@@ -22,9 +24,9 @@ import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, type Pee
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
 import { usePrivy, useWallets as useEvmWallets, useCreateWallet, useSendTransaction as useEvmSendTransaction } from "@privy-io/react-auth";
-import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
+import { useWallets, useSignAndSendTransaction, useSignTransaction } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
-import { sendUsdcWithPrivyEmbeddedWallet } from "@/services/privyEmbeddedUsdcSend";
+import { sendUsdcWithPrivyEmbeddedWallet, sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
 import type { NearToken } from "@/services/nearIntents";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
@@ -255,6 +257,8 @@ export interface BalanceModalProps {
   onRefresh: () => void;
   dark?: boolean;
   devnetMode?: boolean;
+  /** Tab to activate when the modal opens. Defaults to "topup". */
+  initialTab?: "topup" | "withdraw" | "history";
 }
 
 export function BalanceModal({
@@ -267,11 +271,25 @@ export function BalanceModal({
   onRefresh,
   dark = false,
   devnetMode = false,
+  initialTab,
 }: BalanceModalProps) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { data: tokens = [] } = useTokensQuery();
 
-  const [tab, setTab] = useState<"topup" | "withdraw" | "history">("topup");
+  // Optimistically subtract the withdrawn amount so the UI updates instantly.
+  // The normal 5 s polling cycle will sync the real on-chain value once the TX is indexed.
+  const optimisticWithdrawBalance = useCallback((amountUSDC: number) => {
+    if (!solanaAddress) return;
+    const mode = devnetMode ? "devnet" : "mainnet";
+    const key = embeddedSolanaUsdcBalanceQueryKey(solanaAddress, mode);
+    queryClient.setQueryData(key, (prev: { balanceUSD?: number; walletAddress?: string } | undefined) => {
+      if (!prev) return prev;
+      return { ...prev, balanceUSD: Math.max(0, (prev.balanceUSD ?? 0) - amountUSDC) };
+    });
+  }, [queryClient, solanaAddress, devnetMode]);
+
+  const [tab, setTab] = useState<"topup" | "withdraw" | "history">(initialTab ?? "topup");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
@@ -293,6 +311,8 @@ export function BalanceModal({
   const [blinkDepositing, setBlinkDepositing] = useState(false);
   const [blinkError, setBlinkError] = useState<string | null>(null);
   const blinkDepositRef = useRef<BlinkDeposit | null>(null);
+  const dialogContentRef = useRef<HTMLDivElement>(null);
+
   const [coinbaseLoading, setCoinbaseLoading] = useState(false);
   const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | "peer-offramp" | null>(null);
   const [coinbaseOfframpLoading, setCoinbaseOfframpLoading] = useState(false);
@@ -341,6 +361,7 @@ export function BalanceModal({
   const { user, getAccessToken } = usePrivy();
   const { wallets: solanaWallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
+  const { signTransaction } = useSignTransaction();
   const { wallets: evmWallets } = useEvmWallets();
   const { createWallet: createEvmWallet } = useCreateWallet();
   const { sendTransaction: privySendEvmTx } = useEvmSendTransaction();
@@ -377,10 +398,13 @@ export function BalanceModal({
     setBlinkDepositing(true);
     setBlinkError(null);
     try {
-      if (!blinkDepositRef.current) {
-        const { Deposit } = await import("@swype-org/deposit");
-        blinkDepositRef.current = new Deposit({ signer: getBlinkSigner, debug: true });
-      }
+      blinkDepositRef.current?.destroy();
+      const { Deposit } = await import("@swype-org/deposit");
+      blinkDepositRef.current = new Deposit({
+        signer: getBlinkSigner,
+        debug: true,
+        containerElement: document.body,
+      });
       await blinkDepositRef.current.requestDeposit({
         amount: null,
         chainId: 792703809,
@@ -394,6 +418,8 @@ export function BalanceModal({
       const msg = err instanceof DepositError ? getDisplayMessage(err) : "Deposit failed. Please try again.";
       setBlinkError(msg);
     } finally {
+      blinkDepositRef.current?.destroy();
+      blinkDepositRef.current = null;
       setBlinkDepositing(false);
     }
   };
@@ -934,7 +960,7 @@ export function BalanceModal({
         const usdcPrice = cgData?.["usd-coin"]?.usd;
         if (usdcPrice) setPeerUsdcUsdPrice(usdcPrice);
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setPeerFxLoading(false));
   }, [peerCurrency]);
 
@@ -1043,6 +1069,20 @@ export function BalanceModal({
     setWithdrawAddress("");
     setAddressRiskStatus("idle");
   }, [withdrawMethod]);
+
+  // On devnet, USDC on Solana is the only supported withdraw method — skip the picker.
+  useEffect(() => {
+    if (devnetMode && tab === "withdraw" && withdrawMethod === null) {
+      setWithdrawMethod("usdc-sol");
+    }
+  }, [devnetMode, tab, withdrawMethod]);
+
+  // On open: jump to requested tab (e.g. "withdraw" from UpdateJun26Modal)
+  useEffect(() => {
+    if (!open) return;
+    if (initialTab) setTab(initialTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // On open: load history and resume any in-progress Near Intents withdrawal
   useEffect(() => {
@@ -1506,22 +1546,39 @@ export function BalanceModal({
       const { Connection: SolanaConnection } = await import("@solana/web3.js");
       const connection = new SolanaConnection(getRpcForMode(mode), "confirmed");
 
-      const sig = await sendUsdcWithPrivyEmbeddedWallet({
-        senderAddress: solanaAddress,
-        recipientAddress: prep.depositAddress,
-        amountUSDC: withdrawAmountNum,
-        connection,
-        wallet,
-        privyUserId: user?.id,
-        signAndSendTransaction,
-        memo: prep.memo ?? undefined,
-        usdcMint: getUsdcMintForMode(mode),
-        chain: getPrivySolanaChainForMode(mode),
-      });
+      const bridgeAccessToken = await getAccessToken();
+      const sig = devnetMode
+        ? await sendUsdcWithBackendFeePayer({
+          senderAddress: solanaAddress,
+          recipientAddress: prep.depositAddress,
+          amountUSDC: withdrawAmountNum,
+          connection,
+          wallet,
+          privyUserId: user!.id,
+          signTransaction,
+          memo: prep.memo ?? undefined,
+          usdcMint: getUsdcMintForMode(mode),
+          chain: getPrivySolanaChainForMode(mode),
+          accessToken: bridgeAccessToken,
+          network: "devnet",
+        })
+        : await sendUsdcWithPrivyEmbeddedWallet({
+          senderAddress: solanaAddress,
+          recipientAddress: prep.depositAddress,
+          amountUSDC: withdrawAmountNum,
+          connection,
+          wallet,
+          privyUserId: user?.id,
+          signAndSendTransaction,
+          memo: prep.memo ?? undefined,
+          usdcMint: getUsdcMintForMode(mode),
+          chain: getPrivySolanaChainForMode(mode),
+        });
 
       console.log(PEER_LOG, "USDC sent to bridge", { sig });
       setPeerBridgeTxSig(sig);
       setPeerBridgeStatus("PENDING");
+      optimisticWithdrawBalance(withdrawAmountNum);
 
       // Confirm bridge start on backend (fire-and-forget)
       fetch(`/api/offramp/${prep.id}?action=confirm-bridge`, {
@@ -1676,8 +1733,8 @@ export function BalanceModal({
     const rawAddress = withdrawAddress.trim();
     const amount = withdrawAmountNum;
 
-    if (!(amount >= 1)) {
-      toast({ variant: "destructive", title: "Minimum $1", description: "Minimum withdrawal is $1.00 USDC." });
+    if (!(amount >= (devnetMode ? 0.01 : 1))) {
+      toast({ variant: "destructive", title: devnetMode ? "Minimum $0.01" : "Minimum $1", description: `Minimum withdrawal is ${devnetMode ? "$0.01" : "$1.00"} USDC.` });
       return;
     }
     if (amount > spendableBalance) {
@@ -1742,18 +1799,34 @@ export function BalanceModal({
 
       setWithdrawStep("sent");
 
-      const sig = await sendUsdcWithPrivyEmbeddedWallet({
-        senderAddress: solanaAddress,
-        recipientAddress,
-        amountUSDC: amount,
-        connection,
-        wallet,
-        privyUserId: user?.id,
-        signAndSendTransaction,
-        memo: memo ?? undefined,
-        usdcMint: getUsdcMintForMode(mode),
-        chain: getPrivySolanaChainForMode(mode),
-      });
+      const accessToken = await getAccessToken();
+      const sig = devnetMode
+        ? await sendUsdcWithBackendFeePayer({
+          senderAddress: solanaAddress,
+          recipientAddress,
+          amountUSDC: amount,
+          connection,
+          wallet,
+          privyUserId: user!.id,
+          signTransaction,
+          memo: memo ?? undefined,
+          usdcMint: getUsdcMintForMode(mode),
+          chain: getPrivySolanaChainForMode(mode),
+          accessToken,
+          network: "devnet" as const,
+        })
+        : await sendUsdcWithPrivyEmbeddedWallet({
+          senderAddress: solanaAddress,
+          recipientAddress,
+          amountUSDC: amount,
+          connection,
+          wallet,
+          privyUserId: user?.id,
+          signAndSendTransaction,
+          memo: memo ?? undefined,
+          usdcMint: getUsdcMintForMode(mode),
+          chain: getPrivySolanaChainForMode(mode),
+        });
 
       // Save to localStorage and DB
       const item = addWithdrawal({
@@ -1783,6 +1856,8 @@ export function BalanceModal({
       } else {
         setWithdrawStep("complete");
       }
+      // Optimistically subtract and schedule background refetches to sync with chain.
+      optimisticWithdrawBalance(amount);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`${LOG_PREFIX} Withdraw error`, { message: msg });
@@ -1804,16 +1879,18 @@ export function BalanceModal({
     : "sm:max-w-xl";
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()} modal={false}>
       <DialogContent
+        ref={dialogContentRef}
         onInteractOutside={(e) => e.preventDefault()}
         className={cn(
           contentCls,
           "left-0 right-0 top-0 translate-x-0 translate-y-0 h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col",
-          "sm:left-1/2 sm:right-auto sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-xl sm:rounded-2xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block",
+          "sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-xl sm:rounded-2xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block",
           "[&>button]:h-12 [&>button]:w-12 [&>button]:rounded-full [&>button_svg]:h-5 [&>button_svg]:w-5"
         )}
       >
+
         {/* Drag handle — mobile only */}
         <div className="sm:hidden flex justify-center pt-5 pb-2 shrink-0">
           <div className={`w-10 h-1 rounded-full ${dark ? "bg-white/20" : "bg-gray-300"}`} />
@@ -1940,23 +2017,9 @@ export function BalanceModal({
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
 
-                  {blinkError && <p className="text-sm text-red-500 text-center px-1">{blinkError}</p>}
+                  {blinkError && <p className="text-sm text-orange-500 text-center px-1">{blinkError}</p>}
 
-                  {/* 2. More crypto via Near Intents */}
-                  <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("near-intents-deposit")}
-                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
-                  >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      <img src="/images/icons/deposit-receive.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>More crypto deposit</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>ZEC · TON · BTC — cross-chain</p>
-                    </div>
-                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                  </button>
-
-                  {/* 3. Fiat / bank via Coinbase Onramp */}
+                  {/* 2. Fiat / bank via Coinbase Onramp */}
                   <button type="button" disabled={!solanaAddress || blinkDepositing || coinbaseLoading} onClick={handleCoinbaseOnramp}
                     className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
@@ -2347,8 +2410,8 @@ export function BalanceModal({
           {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "peer-offramp" && (
             <div className="space-y-4 py-2">
 
-              {/* Back button */}
-              <button
+              {/* Back button — hidden on devnet (only one method available, nothing to go back to) */}
+              {!devnetMode && <button
                 type="button"
                 onClick={() => setWithdrawMethod(null)}
                 className={cn(
@@ -2358,7 +2421,7 @@ export function BalanceModal({
               >
                 <ChevronLeft className="h-4 w-4" />
                 Back
-              </button>
+              </button>}
 
               {/* Balance + route summary */}
               {withdrawMethod === "near-intents" ? (
@@ -2441,8 +2504,8 @@ export function BalanceModal({
                     Max
                   </Button>
                 </div>
-                {withdrawAmountNum > 0 && withdrawAmountNum < 1 && (
-                  <p className="text-base md:text-sm text-red-400 mt-1">Minimum withdrawal is $1.00 USDC.</p>
+                {withdrawAmountNum > 0 && withdrawAmountNum < (devnetMode ? 0.01 : 1) && (
+                  <p className="text-base md:text-sm text-red-400 mt-1">Minimum withdrawal is {devnetMode ? "$0.01" : "$1.00"} USDC.</p>
                 )}
                 {withdrawAmountNum > spendableBalance && spendableBalance > 0 && (
                   <p className="text-base md:text-sm text-red-400 mt-1">Exceeds available balance of {spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC.</p>
@@ -2481,12 +2544,6 @@ export function BalanceModal({
                 )}
               </div>
 
-              {devnetMode && (
-                <p className={`text-base md:text-sm text-center ${dark ? "text-amber-400" : "text-amber-600"}`}>
-                  Withdrawals are not available on devnet.
-                </p>
-              )}
-
               <div className="flex gap-2 pt-2">
                 <Button variant="outline" onClick={() => setWithdrawMethod(null)} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
                   Back
@@ -2494,9 +2551,8 @@ export function BalanceModal({
                 <Button
                   onClick={handleWithdraw}
                   disabled={
-                    devnetMode ||
                     withdrawing ||
-                    withdrawAmountNum < 1 ||
+                    withdrawAmountNum < (devnetMode ? 0.01 : 1) ||
                     withdrawAmountNum > spendableBalance ||
                     !withdrawAddress.trim() ||
                     !wallet ||
@@ -2693,7 +2749,7 @@ export function BalanceModal({
                   </Button>
                   <Button
                     onClick={handlePeerSubmit}
-                    disabled={peerSubmitting || !peerIdentifier.trim() || withdrawAmountNum < 1 || withdrawAmountNum > Math.min(spendableBalance, platform.maxUSDC) || devnetMode}
+                    disabled={peerSubmitting || !peerIdentifier.trim() || withdrawAmountNum < (devnetMode ? 0.01 : 1) || withdrawAmountNum > Math.min(spendableBalance, platform.maxUSDC)}
                     className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50">
                     {peerSubmitting
                       ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Preparing…</span>
