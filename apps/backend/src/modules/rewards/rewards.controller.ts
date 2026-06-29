@@ -1,6 +1,7 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { RewardsService } from './rewards.service';
+import { BlinkCampaignService } from './blink-campaign.service';
 import { PrivyAuthGuard } from '@/auth/privy-auth.guard';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { AdminGuard } from '@/common/guards';
@@ -8,7 +9,10 @@ import { AdminGuard } from '@/common/guards';
 @ApiTags('rewards')
 @Controller('rewards')
 export class RewardsController {
-  constructor(private readonly rewardsService: RewardsService) {}
+  constructor(
+    private readonly rewardsService: RewardsService,
+    private readonly blinkCampaign: BlinkCampaignService,
+  ) {}
 
   @Get('me')
   @UseGuards(PrivyAuthGuard)
@@ -20,6 +24,14 @@ export class RewardsController {
   ) {
     const isDevnet = network !== 'mainnet';
     return this.rewardsService.getRewards(user.id, isDevnet);
+  }
+
+  @Get('blink/me')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get Blink campaign quest status for current user' })
+  async getMyBlinkCampaign(@PrivyUser() user: { id: string }) {
+    return this.blinkCampaign.getBlinkCampaign(user.id);
   }
 
   @Get('admin/all')
