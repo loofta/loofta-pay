@@ -14,6 +14,7 @@
   "MinimalHeader": {
     "balance": "Saldo",
     "sparks": "Sparks",
+    "rewards": "Hadiah",
     "waitlist": "Daftar tunggu",
     "profile": "Profil",
     "signIn": "Masuk",
@@ -301,6 +302,7 @@
     "copyUsername": "Salin username",
     "shareYourLink": "Bagikan tautan Anda",
     "sparks": "Sparks",
+    "rewards": "Hadiah",
     "settings": "Pengaturan",
     "mainnetBeta": "Mainnet Beta",
     "mainnetViewOnly": "Mainnet (hanya lihat)",
@@ -496,5 +498,20 @@
       "perk3": "Private beta features before public launch",
       "perk4": "Direct line to the founding team"
     }
+  }
+,
+
+  "RewardsPage": {
+    "title": "Hadiah",
+    "subtitle": "Dapatkan hadiah dengan menyelesaikan kampanye",
+    "activeCampaigns": "Kampanye Aktif",
+    "comingSoon": "Segera Hadir",
+    "sparksTitle": "Sparks",
+    "sparksDescription": "Selesaikan misi di devnet, dapatkan Sparks",
+    "nextCampaign": "Kampanye Berikutnya",
+    "nextCampaignSubtitle": "Lebih banyak hadiah akan datang",
+    "endsToday": "Berakhir hari ini",
+    "daysLeft": "{days}h tersisa",
+    "backToRewards": "Hadiah"
   }
 }

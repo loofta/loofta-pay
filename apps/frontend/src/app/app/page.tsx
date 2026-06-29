@@ -272,7 +272,10 @@ export default function Home() {
           setSuggestions(list);
           searchCacheRef.current.set(searchQuery, { usernames: list, ts: Date.now() });
         } else {
-          const r = await fetch(`/api/users/search-usernames?q=${encodeURIComponent(searchQuery)}`);
+          const token = await getAccessToken().catch(() => null);
+          const r = await fetch(`/api/users/search-usernames?q=${encodeURIComponent(searchQuery)}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          });
           const data = await r.json();
           const list = data.usernames || [];
           setSuggestions(list);

@@ -474,7 +474,7 @@ export class ClaimsController {
   @ApiResponse({ status: 400, description: 'Invalid transaction' })
   @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
   async signAndBroadcastSponsored(
-    @Body() body: { transaction: string },
+    @Body() body: { transaction: string; network?: string },
   ): Promise<{ signature: string }> {
     if (!body?.transaction || typeof body.transaction !== 'string') {
       throw new BadRequestException('Missing or invalid transaction');
@@ -483,7 +483,7 @@ export class ClaimsController {
       throw new ServiceUnavailableException('Solana fee sponsorship is not configured');
     }
     try {
-      return await this.solanaSponsor.signAndBroadcast(body.transaction);
+      return await this.solanaSponsor.signAndBroadcast(body.transaction, body.network);
     } catch (e: any) {
       if (e?.message?.includes('not configured')) {
         throw new ServiceUnavailableException('Solana sponsorship is not configured');

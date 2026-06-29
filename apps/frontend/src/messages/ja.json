@@ -14,6 +14,7 @@
   "MinimalHeader": {
     "balance": "残高",
     "sparks": "Sparks",
+    "rewards": "リワード",
     "waitlist": "ウェイトリスト",
     "profile": "プロフィール",
     "signIn": "ログイン",
@@ -301,6 +302,7 @@
     "copyUsername": "ユーザー名をコピー",
     "shareYourLink": "リンクを共有",
     "sparks": "Sparks",
+    "rewards": "リワード",
     "settings": "設定",
     "mainnetBeta": "メインネットベータ",
     "mainnetViewOnly": "メインネット（閲覧のみ）",
@@ -496,5 +498,20 @@
       "perk3": "Private beta features before public launch",
       "perk4": "Direct line to the founding team"
     }
+  }
+,
+
+  "RewardsPage": {
+    "title": "リワード",
+    "subtitle": "キャンペーンを完了して獲得",
+    "activeCampaigns": "アクティブキャンペーン",
+    "comingSoon": "近日公開",
+    "sparksTitle": "Sparks",
+    "sparksDescription": "devnetでミッションを完了し、Sparksを獲得",
+    "nextCampaign": "次のキャンペーン",
+    "nextCampaignSubtitle": "さらなるリワードが続々登場",
+    "endsToday": "本日終了",
+    "daysLeft": "残り{days}日",
+    "backToRewards": "リワード"
   }
 }

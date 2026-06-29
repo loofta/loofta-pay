@@ -78,4 +78,8 @@ export class SupabaseService implements OnModuleInit {
   get claimEvents() {
     return this.client.from('claim_events');
   }
+
+  get forceUpdate() {
+    return this.client.from('force_update');
+  }
 }

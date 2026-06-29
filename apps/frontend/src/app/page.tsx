@@ -6,7 +6,8 @@ import Link from "next/link";
 import { ArrowRight, Check, Sparkles, X, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { FooterControls } from "@/components/FooterControls";
+import { LocalePicker } from "@/components/FooterControls";
+import { Footer } from "@/components/layout/Footer";
 
 const BRAND_GRADIENT = "bg-gradient-to-r from-[#FF1301] to-[#EAB308]";
 const AT = String.fromCharCode(64);
@@ -134,6 +135,9 @@ function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
         </nav>
       </div>
       <div className="flex items-center gap-3">
+        <div className="hidden sm:block">
+          <LocalePicker dropDirection="down" />
+        </div>
         <Link
           href={APP_URL}
           className={`group inline-flex items-center gap-2.5 rounded-full px-5 py-3 font-display text-base md:text-sm font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] ${BRAND_GRADIENT}`}
@@ -1481,36 +1485,6 @@ function CTA() {
         </div>
       </motion.div>
     </section>
-  );
-}
-
-function Footer() {
-  const t = useTranslations('MarketingPage');
-  return (
-    <footer className="border-t border-white/[0.06] px-10 py-10">
-      <div className="flex flex-wrap items-center justify-between gap-5">
-        <div className="flex items-center gap-6">
-          <Image src="/loofta_white.svg" alt="Loofta" width={95} height={22} />
-          <span className="font-grotesk text-[13px] text-slate-600">{t('footer.tagline')}</span>
-        </div>
-        <div className="flex gap-6">
-          {[
-            { label: "Twitter", href: "https://x.com/looftaxyz" },
-            { label: "Telegram", href: "https://t.me/looftapay" },
-            { label: "Medium", href: "https://medium.com/@looftaxyz" },
-            { label: t('footer.privacy'), href: "#" },
-          ].map((l) => (
-            <a key={l.label} href={l.href} target="_blank" rel="noopener noreferrer" className="font-grotesk text-[13px] text-slate-400 hover:text-white">
-              {l.label}
-            </a>
-          ))}
-          <Link href="/brand" className="font-grotesk text-[13px] text-slate-400 hover:text-white">
-            {t('footer.brand')}
-          </Link>
-        </div>
-      </div>
-      <FooterControls />
-    </footer>
   );
 }
 

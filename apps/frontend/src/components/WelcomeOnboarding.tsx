@@ -42,7 +42,7 @@ interface WelcomeOnboardingProps {
 const TOTAL_STEPS = 5; // welcome, username, pay friend, top up, share
 
 export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEditUsername }: WelcomeOnboardingProps) {
-  const { user: privyUser } = usePrivy();
+  const { user: privyUser, getAccessToken } = usePrivy();
   const { refreshUser } = useUser();
   const [emailLinkError, setEmailLinkError] = useState<"already_linked" | null>(null);
   const { linkEmail } = useLinkAccount({
@@ -197,13 +197,14 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
       setUsernameError(null);
 
       try {
+        const token = await getAccessToken().catch(() => null);
         const response = await fetch("/api/users/check-username", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            username: trimmed,
-            privyUserId,
-          }),
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ username: trimmed }),
         });
 
         const data = await response.json();
@@ -269,13 +270,14 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
 
     // Save username
     try {
+      const token = await getAccessToken().catch(() => null);
       const response = await fetch("/api/users/setup-username", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          privyUserId,
-          username: trimmed,
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ username: trimmed }),
       });
 
       const data = await response.json();

@@ -20,7 +20,7 @@ function computeTierKey(volumeUsd: number): string {
   return 'noob';
 }
 
-const WALLET_CACHE_TTL = 120; // 2 min — wallet address rarely changes
+const _WALLET_CACHE_TTL = 120; // 2 min — wallet address rarely changes
 
 @Injectable()
 export class UsersService {
@@ -462,6 +462,24 @@ export class UsersService {
     } catch (error) {
       this.logger.error('Error fetching Solana balance:', error);
       return 0;
+    }
+  }
+
+  async getForceUpdateStatus(privyUserId: string, updateId: string): Promise<{ completed: boolean }> {
+    const { data } = await this.supabaseService.forceUpdate
+      .select('user_id')
+      .eq('user_id', privyUserId)
+      .eq('update_id', updateId)
+      .maybeSingle();
+    return { completed: !!data };
+  }
+
+  async markForceUpdateComplete(privyUserId: string, updateId: string): Promise<void> {
+    const { error } = await this.supabaseService.forceUpdate
+      .upsert({ user_id: privyUserId, update_id: updateId }, { onConflict: 'user_id,update_id' });
+    if (error) {
+      this.logger.error('markForceUpdateComplete error:', error);
+      throw new Error('Failed to mark update complete');
     }
   }
 }

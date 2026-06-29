@@ -7,7 +7,7 @@ const MAINNET_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 const DELAYS = {
   devnet: { minDelayMs: "30000", maxDelayMs: "300000" },
-  mainnet: { minDelayMs: "10000", maxDelayMs: "60000" },
+  mainnet: { minDelayMs: "60000", maxDelayMs: "600000" },
 };
 
 export async function POST(req: NextRequest) {
@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
   const mint = cluster === "mainnet" ? MAINNET_USDC_MINT : DEVNET_USDC_MINT;
   const amountBaseUnits = Math.round(amountUsdc * 1_000_000);
   const { minDelayMs, maxDelayMs } = DELAYS[cluster];
+  const apiCluster = cluster === "mainnet" ? "mainnet" : "devnet-private";
 
   const body: Record<string, unknown> = {
     from,
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
     visibility: "private",
     fromBalance: "base",
     toBalance: "base",
-    cluster,
+    cluster: apiCluster,
     initIfMissing: true,
     initAtasIfMissing: true,
     initVaultIfMissing: false,
@@ -43,8 +44,7 @@ export async function POST(req: NextRequest) {
     ...(cluster === "mainnet" ? { gasless: true } : {}),
   };
 
-  console.log('body', body)
-
+  console.log('body', body);
   console.log(`[test-transfer/build] POST ${MAGICBLOCK_PAYMENTS_BASE}/v1/spl/transfer`, JSON.stringify(body));
 
   const res = await fetch(`${MAGICBLOCK_PAYMENTS_BASE}/v1/spl/transfer`, {

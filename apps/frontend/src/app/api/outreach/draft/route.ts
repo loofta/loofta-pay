@@ -8,6 +8,9 @@ function checkSecret(req: NextRequest) {
   return !!secret && !!expected && secret === expected;
 }
 
+if (!process.env.ANTHROPIC_API_KEY) {
+  console.error("[outreach/draft] ANTHROPIC_API_KEY is not set — all draft requests will fail");
+} 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 type ProspectType = "creator" | "freelancer" | "web3_project";
@@ -164,6 +167,14 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     await supabase.from("outreach_prospects").update({ status: "new" }).eq("id", prospectId);
     const msg = err?.message ?? String(err);
+    const status = err?.status ?? 500;
+    const isAuthError = status === 401 || msg.includes("authentication_error") || msg.includes("invalid x-api-key");
+    if (isAuthError) {
+      const keyPrefix = process.env.ANTHROPIC_API_KEY?.slice(0, 20) ?? "(not set)";
+      console.error("[outreach/draft] Anthropic auth failed — key prefix in use:", keyPrefix + "...");
+      console.error("[outreach/draft] Full error:", msg);
+      return NextResponse.json({ error: "Anthropic API key is invalid. Update ANTHROPIC_API_KEY in env and restart." }, { status: 500 });
+    }
     console.error("[outreach/draft] error:", msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }

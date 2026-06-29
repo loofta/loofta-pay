@@ -22,7 +22,7 @@ const LOCALE_OPTIONS = [
   { value: 'hi', label: 'हिन्दी', flag: '🇮🇳' },
 ] as const;
 
-function LocalePicker() {
+export function LocalePicker({ dropDirection = 'up' }: { dropDirection?: 'up' | 'down' } = {}) {
   const locale = useLocale();
   const t = useTranslations('Footer');
   const [open, setOpen] = useState(false);
@@ -148,7 +148,6 @@ function LocalePicker() {
         />
       </button>
 
-      {/* Dropdown list — opens upward since this lives in the footer */}
       {open && (
         <ul
           ref={listRef}
@@ -161,7 +160,7 @@ function LocalePicker() {
           // eslint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role
           autoFocus
           className={[
-            'absolute bottom-full left-0 mb-2 z-50',
+            dropDirection === 'down' ? 'absolute top-full left-0 mt-2 z-50' : 'absolute bottom-full left-0 mb-2 z-50',
             'w-52 max-h-64 overflow-y-auto overscroll-contain',
             'rounded-xl border border-white/[0.1]',
             'bg-[#0d0f16] shadow-[0_-4px_32px_rgba(0,0,0,0.7),0_0_0_1px_rgba(255,255,255,0.04)]',

@@ -14,12 +14,13 @@ import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
  * Renders no UI; keeps auth state and username/onboarding modals working alongside MinimalHeader.
  */
 export function UserSync() {
-  const { authenticated, email, userId } = useAuth();
+  const { authenticated, email, userId, getAccessToken } = useAuth();
   const { user: privyUser, ready: privyReady } = usePrivy();
   const { createWallet } = useCreateWallet();
   const username = useAuthStore((s) => s.username ?? null);
   const setUsername = useAuthStore((s) => s.setUsername);
   const setAuth = useAuthStore((s) => s.setAuth);
+  const setAtaMigrated = useAuthStore((s) => s.setAtaMigrated);
   const setIsOnboardingOpen = useAuthStore((s) => s.setIsOnboardingOpen);
   const walletCreatedRef = useRef(false);
   const [showUsernameModal, setShowUsernameModal] = useState(false);
@@ -53,16 +54,22 @@ export function UserSync() {
 
     const checkUser = async () => {
       try {
+        const token = await getAccessToken();
         const userResponse = await fetch("/api/users/check", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ privyUserId: userId, email }),
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ email }),
         });
         const userData = await userResponse.json();
 
         if (userData.user) {
           const usernameValue = userData.user.username || null;
           setUsername(usernameValue);
+          setAtaMigrated("mainnet", userData.user.ataMigratedMainnet ?? false);
+          setAtaMigrated("devnet", userData.user.ataMigratedDevnet ?? false);
           if (userData.user.email) {
             setAuth({
               authenticated: true,
@@ -108,13 +115,17 @@ export function UserSync() {
         }
         if (welcomeDismissedRef.current) return;
 
+        const token = await getAccessToken();
         const userResponse = await fetch("/api/users/check", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ privyUserId: userId, email }),
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ email }),
         });
         const userData = await userResponse.json();
-        if (cancelled || userData.user?.skipOnboarding) return;
+        if (cancelled || userData.exists !== false || userData.user?.skipOnboarding) return;
         if (welcomeDismissedRef.current) return;
 
         timer = setTimeout(() => {
@@ -138,10 +149,14 @@ export function UserSync() {
   const refreshUser = async () => {
     if (!authenticated || !userId) return;
     try {
+      const token = await getAccessToken();
       const r = await fetch("/api/users/check", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ privyUserId: userId, email }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ email }),
       });
       const data = await r.json();
       if (data.user?.username) setUsername(data.user.username);

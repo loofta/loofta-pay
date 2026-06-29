@@ -26,25 +26,48 @@ const INTENTS_ONLY_CHAINS = new Set(['zec', 'zcash', 'btc', 'bitcoin', 'xrp', 'x
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { claimId, claim: claimData, fromToken, amount, userAddress, refundAddress, orgReferral, isPrivate } = body || {};
+    const { claimId, fromToken, amount, userAddress, refundAddress, orgReferral } = body || {};
     if (!claimId || !fromToken?.tokenId || !fromToken?.decimals || !amount) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
-    
-    // Use claim data passed from the page (already fetched from backend)
-    // No need to query Supabase again - we have the data!
-    if (!claimData) {
-      return NextResponse.json({ error: "Claim data is required" }, { status: 400 });
+
+    // Fetch claim from DB server-side — never trust caller-supplied claim data
+    const supabaseForClaim = getSupabaseAdmin();
+    const { data: paymentRow } = await supabaseForClaim
+      .from("payments")
+      .select("id, amount, to_token, to_chain, recipient_address, burner_address, is_private")
+      .eq("id", claimId)
+      .maybeSingle();
+
+    let claim: Record<string, unknown>;
+    if (paymentRow) {
+      claim = {
+        id: paymentRow.id,
+        amount: paymentRow.amount,
+        to_symbol: paymentRow.to_token,
+        to_chain: paymentRow.to_chain,
+        recipient_address: paymentRow.recipient_address,
+        claim_burner_address: paymentRow.burner_address,
+        is_private: paymentRow.is_private,
+      };
+    } else {
+      const { data: claimRow } = await supabaseForClaim
+        .from("claims")
+        .select("id, amount, to_symbol, to_chain, recipient_address, claim_burner_address, is_private")
+        .eq("id", claimId)
+        .maybeSingle();
+      if (!claimRow) {
+        return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+      }
+      claim = claimRow as Record<string, unknown>;
     }
-    
-    const claim = claimData;
-    console.log('[claims/deposit] Using claim data from request:', claim.id);
+    console.log('[claims/deposit] Loaded claim from DB:', claim.id);
 
     // For private cross-chain payments, forward to backend to create Privy wallet
     const originChain = String(fromToken.chain || '').toLowerCase();
     const destChain = String(claim.to_chain || '').toLowerCase();
     const isCrossChain = originChain !== destChain;
-    const isPrivateCrossChain = isPrivate && isCrossChain && destChain === 'solana' && claim.to_symbol === 'USDC';
+    const isPrivateCrossChain = claim.is_private && isCrossChain && destChain === 'solana' && claim.to_symbol === 'USDC';
     
     if (isPrivateCrossChain) {
       // Forward to backend API to create Privy wallet
@@ -90,8 +113,8 @@ export async function POST(request: Request) {
     }
     const finalRefundAddress = refundAddress;
 
-    // Still need Supabase for storing claim_intents (result of 1Click API call)
-    const supabase = getSupabaseAdmin();
+    // Reuse the supabase client already opened for the claim lookup
+    const supabase = supabaseForClaim;
 
     const toAtomic = (val: string, decimals: number): string => {
       const [i, f = ""] = String(val).split(".");
@@ -128,8 +151,8 @@ export async function POST(request: Request) {
       return `nep141:${ch}.omft.near`;
     };
 
-    const destinationAsset = claim.to_symbol && claim.to_chain 
-      ? getDestinationAsset(claim.to_symbol, claim.to_chain) 
+    const destinationAsset = claim.to_symbol && claim.to_chain
+      ? getDestinationAsset(String(claim.to_symbol), String(claim.to_chain))
       : "";
     
     // Check if origin chain requires INTENTS mode
@@ -292,10 +315,10 @@ export async function POST(request: Request) {
     console.log("[claims/deposit]   Same chain:", sameChain);
     
     // Validate recipient address format based on destination chain
-    let recipientAddress = (claim.recipient_address || "").trim();
+    let recipientAddress = String(claim.recipient_address || "").trim();
     // For cross-chain to Solana: use unique claim burner (same pattern as send-payment)
     const isDestSolana = destChain === "sol" || destChain === "solana";
-    let claimBurner = (claim.claim_burner_address || "").trim();
+    let claimBurner = String(claim.claim_burner_address || "").trim();
     if (isDestSolana && (!recipientAddress || recipientAddress.startsWith("PENDING_"))) {
       if (claimBurner) {
         recipientAddress = claimBurner;
