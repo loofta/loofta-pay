@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
@@ -12,7 +13,7 @@ import { motion, AnimatePresence } from "framer-motion";
 const MEGAPOT_REFERRAL = "https://megapot.io/r/Q3M637";
 const MAGICBLOCK_SOL_GAS = 0.002;
 const MAGICBLOCK_BPS = 10;
-const BRIDGE_FEE_USD_EST = 0.10;
+const BRIDGE_FEE_USD_EST = 0.04; // Li.Fi (cheaper than NEAR Intents)
 const MAIN_MAX = 30;
 const MAIN_COUNT = 5;
 const BONUS_MAX = 12;
@@ -34,7 +35,7 @@ const PRIZE_TIERS = [
 
 type Tab = "buy" | "redeem" | "history";
 type BuyStep = "idle" | "signing" | "sent" | "bridging" | "buying" | "done" | "error";
-type TicketStatus = "pending_send" | "sent" | "bridging" | "buying" | "active" | "won" | "lost" | "failed";
+type TicketStatus = "pending_send" | "sent" | "bridging" | "buying" | "active" | "won" | "lost" | "failed" | "withdrawn";
 
 interface TicketNumbers { main: number[]; bonus: number }
 
@@ -65,21 +66,26 @@ function randomTicket(): TicketNumbers {
   return { main: [...s].sort((a, b) => a - b), bonus: Math.ceil(Math.random() * BONUS_MAX) };
 }
 
-function statusLabel(s: TicketStatus, bridgeStatus?: string | null, drawTime?: string | null): string {
+function statusLabel(s: TicketStatus, bridgeStatus?: string | null, drawTime?: string | null, ticketRoundId?: string | null, currentRoundId?: string | null): string {
   if (s === "failed" && bridgeStatus) {
     const bs = bridgeStatus.toUpperCase();
     if (bs === "REFUNDED") return "Refunded";
     if (bs === "EXPIRED") return "Expired";
   }
-  if (s === "active" && drawTime && new Date(drawTime) < new Date()) return "Checking results…";
+  if (s === "active") {
+    const drawPassed = (drawTime && new Date(drawTime) < new Date()) ||
+      (ticketRoundId && currentRoundId && ticketRoundId !== currentRoundId);
+    if (drawPassed) return "Checking results…";
+  }
   const m: Record<TicketStatus, string> = {
     pending_send: "Awaiting deposit", sent: "Sent privately", bridging: "Bridging to Base",
     buying: "Buying tickets", active: "In draw", won: "Won!", lost: "No win", failed: "Failed",
+    withdrawn: "Paid out",
   };
   return m[s] ?? s;
 }
 function statusColor(s: TicketStatus): string {
-  if (s === "won") return "text-emerald-400";
+  if (s === "won" || s === "withdrawn") return "text-emerald-400";
   if (s === "lost") return "text-slate-500";
   if (s === "failed") return "text-red-400";
   if (s === "active") return "text-amber-300";
@@ -247,16 +253,16 @@ function MegapotTabs({ activeTab, wonCount }: { activeTab: Tab; wonCount: number
       <div className="relative grid grid-cols-2 rounded-2xl p-1 bg-white/[0.05] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] border border-white/[0.06] overflow-hidden">
         <div aria-hidden="true" className={["absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-xl transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] bg-gradient-to-b from-white/[0.08] to-white/[0.03] shadow-[0_8px_24px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.08)] border border-white/[0.08]", isHistory ? "opacity-0" : sliderPos].join(" ")} />
         <div aria-hidden="true" className={["pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-xl transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] opacity-40 bg-[radial-gradient(80%_140%_at_50%_0%,rgba(255,122,42,0.35),transparent_60%)]", isHistory ? "opacity-0" : sliderPos].join(" ")} />
-        <a href="/app/megapot" className={tabBase}>
+        <Link href="/app/megapot" className={tabBase}>
           <IconBubble active={activeTab === "buy"}><Ticket /></IconBubble>
           <span className={tabText("buy")}>Buy</span>
-        </a>
-        <a href="/app/megapot?tab=redeem" className={tabBase}>
+        </Link>
+        <Link href="/app/megapot?tab=redeem" className={tabBase}>
           <IconBubble active={activeTab === "redeem"}><Trophy /></IconBubble>
           <span className={tabText("redeem")}>Redeem{wonCount > 0 ? ` (${wonCount})` : ""}</span>
-        </a>
+        </Link>
       </div>
-      <a href="/app/megapot?tab=history"
+      <Link href="/app/megapot?tab=history"
         className={[
           "p-2.5 rounded-xl transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
           "border border-white/[0.06]",
@@ -270,7 +276,7 @@ function MegapotTabs({ activeTab, wonCount }: { activeTab: Tab; wonCount: number
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
         </svg>
-      </a>
+      </Link>
     </div>
   );
 }
@@ -547,6 +553,7 @@ function DrawSuccessModal({ tickets, drawTime, prizePool, onBuyMore }: {
   onBuyMore: () => void;
 }) {
   const [msLeft, setMsLeft] = useState(() => drawTime ? new Date(drawTime).getTime() - Date.now() : 0);
+  const [showAllTickets, setShowAllTickets] = useState(false);
   useEffect(() => {
     if (!drawTime) return;
     const tick = () => setMsLeft(new Date(drawTime).getTime() - Date.now());
@@ -607,11 +614,17 @@ function DrawSuccessModal({ tickets, drawTime, prizePool, onBuyMore }: {
       {showPicks && (
         <div className="space-y-2">
           <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Your tickets</p>
-          {tickets.slice(0, 4).map((t, i) => (
+          {(showAllTickets ? tickets : tickets.slice(0, 5)).map((t, i) => (
             <TicketNumberCard key={i} tn={t} />
           ))}
-          {tickets.length > 4 && (
-            <p className="text-sm text-slate-500">+{tickets.length - 4} more tickets</p>
+          {!showAllTickets && tickets.length > 5 && (
+            <button
+              type="button"
+              onClick={() => setShowAllTickets(true)}
+              className="w-full h-9 rounded-xl text-sm font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all"
+            >
+              +{tickets.length - 5} more tickets
+            </button>
           )}
         </div>
       )}
@@ -628,10 +641,12 @@ function DrawSuccessModal({ tickets, drawTime, prizePool, onBuyMore }: {
 
 // ─── Fee breakdown ────────────────────────────────────────────────────────────
 
-function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd }: {
+function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeReceiveUsdc }: {
   ticketCostUsd: number;
   mode: "buy" | "buy-public" | "base" | "solana_private";
   solPriceUsd: number;
+  bridgeFeeUsd?: number | null;      // actual Li.Fi fee; null = loading
+  bridgeReceiveUsdc?: number | null; // Li.Fi toAmountMin; null = loading
 }) {
   const bpsFee = (MAGICBLOCK_BPS / 10_000) * ticketCostUsd;
   const solFee = MAGICBLOCK_SOL_GAS * solPriceUsd;
@@ -652,11 +667,16 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd }: {
 
   if (mode === "solana_private") {
     const wMb = (MAGICBLOCK_BPS / 10_000) * ticketCostUsd + solFee;
+    const bridgeFeeLabel = bridgeFeeUsd != null ? fmt(bridgeFeeUsd) : `~${fmt(BRIDGE_FEE_USD_EST)}`;
+    // Use actual Li.Fi toAmountMin if available, then subtract MagicBlock fee
+    const youReceive = bridgeReceiveUsdc != null ? Math.max(0, bridgeReceiveUsdc - wMb) : null;
     return (
       <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
         <div className="flex justify-between px-4 py-3.5">
-          <span className="text-base text-slate-400">Bridge (Base → SOL)</span>
-          <span className="text-base text-slate-400 tabular-nums">~{fmt(BRIDGE_FEE_USD_EST)}</span>
+          <span className="text-base text-slate-400">Li.Fi bridge (Base → SOL)</span>
+          <span className="text-base text-slate-400 tabular-nums">
+            {bridgeFeeUsd === null ? <span className="opacity-40">estimating…</span> : bridgeFeeLabel}
+          </span>
         </div>
         <div className="px-4 py-3.5 space-y-1.5">
           <div className="flex justify-between">
@@ -669,8 +689,12 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd }: {
           </div>
         </div>
         <div className="flex justify-between px-4 py-3.5">
-          <span className="text-base font-semibold text-white">You receive (~)</span>
-          <span className="text-base font-semibold text-white tabular-nums">{fmt(Math.max(0, ticketCostUsd - BRIDGE_FEE_USD_EST - wMb))}</span>
+          <span className="text-base font-semibold text-white">You receive</span>
+          <span className="text-base font-semibold text-white tabular-nums">
+            {youReceive === null
+              ? <span className="opacity-40 font-normal text-slate-400">estimating…</span>
+              : fmt(youReceive)}
+          </span>
         </div>
       </div>
     );
@@ -1021,144 +1045,153 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
 
 // ─── Withdraw tab ─────────────────────────────────────────────────────────────
 
-function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn }: {
+function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn, dashboardLoading }: {
   wonTickets: TicketSummary[]; accessToken: string | null;
   userSolanaAddress: string; solPriceUsd: number; onWithdrawn: () => void;
+  dashboardLoading?: boolean;
 }) {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [route, setRoute] = useState<"base" | "solana_private">("solana_private");
-  const [destination, setDestination] = useState("");
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const [doneAmount, setDoneAmount] = useState(0);
   const [error, setError] = useState("");
-  const ticket = wonTickets.find(t => t.id === selected);
+  const [bridgeFeeUsd, setBridgeFeeUsd] = useState<number | null>(null);
+  const [bridgeReceiveUsdc, setBridgeReceiveUsdc] = useState<number | null>(null);
+
+  const totalAmount = wonTickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
+  const isBatch = wonTickets.length > 1;
+
+  useEffect(() => {
+    if (!totalAmount) return;
+    setBridgeFeeUsd(null);
+    setBridgeReceiveUsdc(null);
+    const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+    fetch(`/api/lottery/bridge-fee?amountUsdc=${totalAmount}`, { headers })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.feeUsd != null) setBridgeFeeUsd(data.feeUsd);
+        if (data?.receiveUsdc != null) setBridgeReceiveUsdc(data.receiveUsdc);
+      })
+      .catch(() => {
+        setBridgeFeeUsd(BRIDGE_FEE_USD_EST);
+        setBridgeReceiveUsdc(totalAmount - BRIDGE_FEE_USD_EST);
+      });
+  }, [totalAmount, accessToken]);
 
   async function handleWithdraw() {
-    if (!selected || !destination) return;
+    if (!userSolanaAddress || !wonTickets.length) return;
     setLoading(true); setError("");
     try {
-      const res = await fetch("/api/lottery/withdraw", {
+      const res = await fetch("/api/lottery/withdraw-batch", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-        body: JSON.stringify({ ticketId: selected, route, destinationAddress: destination }),
+        body: JSON.stringify({ ticketIds: wonTickets.map(t => t.id), destinationAddress: userSolanaAddress }),
       });
       if (!res.ok) throw new Error((await res.json()).message ?? "Failed");
+      setDoneAmount(totalAmount);
       setDone(true); onWithdrawn();
     } catch (err: any) { setError(err.message ?? "Unknown error"); }
     finally { setLoading(false); }
   }
 
+  if (dashboardLoading) return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4 animate-pulse">
+      <div className="h-5 w-36 rounded-lg bg-white/10" />
+      <div className="h-16 rounded-xl bg-white/5" />
+      <div className="h-16 rounded-xl bg-white/5" />
+      <div className="h-12 rounded-xl bg-white/10" />
+    </div>
+  );
+
   if (!wonTickets.length) return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
       <Trophy className="w-8 h-8 text-slate-700 mx-auto mb-3" />
-      <p className="text-slate-400 text-base">No winnings to withdraw yet.</p>
-      <p className="text-slate-500 text-base mt-1">Buy tickets and come back after the daily draw.</p>
+      <p className="text-slate-400 text-base">No winnings to redeem yet.</p>
+      <p className="text-slate-500 text-base mt-1">Win tickets in the daily draw to redeem here.</p>
     </div>
   );
 
-  if (done) return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center space-y-3">
-      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_8px_24px_rgba(255,122,42,0.25)] flex items-center justify-center mx-auto">
-        <ArrowDown className="w-5 h-5 text-white" />
+  if (done) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center space-y-4">
+        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_8px_24px_rgba(255,122,42,0.25)] flex items-center justify-center mx-auto">
+          <ShieldCheck className="w-5 h-5 text-white" />
+        </div>
+        <div>
+          <p className="text-white font-semibold">Withdrawal initiated</p>
+          <p className="text-base text-slate-400 mt-1">Routing privately to your Loofta balance — arrives in ~5 min.</p>
+        </div>
+        <button onClick={() => { setDone(false); setDoneAmount(0); }}
+          className="text-base text-slate-500 hover:text-white underline underline-offset-2 transition-colors">
+          Withdraw another
+        </button>
       </div>
-      <p className="text-white font-semibold">Withdrawal initiated</p>
-      <p className="text-base text-slate-400">
-        {route === "base" ? "USDC is being sent to your Base wallet." : "Routing privately to your Loofta balance — takes ~5 min."}
-      </p>
-      <button onClick={() => { setDone(false); setSelected(null); setDestination(""); }}
-        className="text-base text-slate-400 hover:text-white underline underline-offset-2 transition-colors">
-        Withdraw another
-      </button>
-    </div>
-  );
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-5">
-      <p className="text-slate-300 text-xl font-medium font-sans">Withdraw winnings</p>
+      <p className="text-slate-300 text-xl font-medium font-sans">Redeem winnings</p>
 
-      <div>
-        <p className="text-slate-300 text-xl font-sans font-medium mb-3">Select winning ticket</p>
-        <div className="space-y-2">
-          {wonTickets.map(t => (
-            <button key={t.id} onClick={() => setSelected(t.id)}
-              className={["w-full flex items-center justify-between px-4 py-3.5 rounded-xl border transition-all duration-200 text-left",
-                selected === t.id ? "bg-[#FF7A2A]/10 border-[#FF7A2A]/30 shadow-[0_0_0_1px_rgba(255,122,42,0.2)]"
-                  : "bg-white/[0.03] border-white/10 hover:bg-white/[0.06]"].join(" ")}>
-              <div>
-                <p className="text-white text-base font-medium">{t.numTickets} ticket{t.numTickets > 1 ? "s" : ""}</p>
-                <p className="text-slate-500 text-sm mt-0.5">
-                  {t.drawTime ? new Date(t.drawTime).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
-                  {t.winTier ? ` · Tier ${t.winTier}` : ""}
-                </p>
-              </div>
-              <span className="text-emerald-400 font-semibold tabular-nums">{fmt(t.winAmountUsdc ?? 0)}</span>
-            </button>
-          ))}
+      {/* Winning ticket(s) summary */}
+      <div className="space-y-2">
+        {wonTickets.map(t => (
+          <div key={t.id} className="flex items-center justify-between px-4 py-3.5 rounded-xl border border-emerald-500/20 bg-emerald-500/5">
+            <div>
+              <p className="text-white text-base font-medium">Winning ticket{t.winTier ? ` · Tier ${t.winTier}` : ""}</p>
+              <p className="text-slate-500 text-sm mt-0.5">
+                {t.drawTime ? new Date(t.drawTime).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+                {t.numTickets > 1 ? ` · from batch of ${t.numTickets}` : ""}
+              </p>
+            </div>
+            <span className="text-emerald-400 font-bold text-lg tabular-nums">{fmt(t.winAmountUsdc ?? 0)}</span>
+          </div>
+        ))}
+      </div>
+
+      {isBatch && (
+        <div className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.06]">
+          <span className="text-base text-slate-400">Total from {wonTickets.length} wins</span>
+          <span className="text-white font-semibold tabular-nums">{fmt(totalAmount)}</span>
+        </div>
+      )}
+
+      <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 flex items-start gap-3">
+        <ShieldCheck className="w-4 h-4 text-[#FF7A2A] mt-0.5 shrink-0" />
+        <div>
+          <p className="text-base text-slate-300 font-medium">
+            {isBatch ? "All wins bridge to one shared burner → single private transfer" : "Private withdrawal to Loofta balance"}
+          </p>
+          <p className="text-sm text-slate-500 mt-0.5">Li.Fi bridge → shared burner → MagicBlock relay</p>
         </div>
       </div>
 
-      {selected && (
-        <>
-          <div>
-            <p className="text-slate-300 text-xl font-sans font-medium mb-3">How to receive</p>
-            <div className="grid grid-cols-2 gap-2">
-              {([
-                { key: "solana_private" as const, title: "Loofta balance", sub: "Private · ~$0.50 fee", icon: <ShieldCheck className="w-4 h-4" /> },
-                { key: "base" as const, title: "Base wallet", sub: "Free · on-chain link", icon: <ArrowUpRight className="w-4 h-4" /> },
-              ]).map(opt => (
-                <button key={opt.key} onClick={() => { setRoute(opt.key); setDestination(opt.key === "solana_private" ? userSolanaAddress : ""); }}
-                  className={["px-3.5 py-3.5 rounded-xl border text-left transition-all duration-200",
-                    route === opt.key ? "bg-[#FF7A2A]/10 border-[#FF7A2A]/30 shadow-[0_0_0_1px_rgba(255,122,42,0.2)]"
-                      : "bg-white/[0.03] border-white/10 hover:bg-white/[0.06]"].join(" ")}>
-                  <div className={["mb-1.5", route === opt.key ? "text-[#FF7A2A]" : "text-slate-500"].join(" ")}>{opt.icon}</div>
-                  <p className="text-base font-semibold text-white">{opt.title}</p>
-                  <p className="text-sm text-slate-500 mt-0.5">{opt.sub}</p>
-                </button>
-              ))}
-            </div>
-          </div>
+      <FeeBreakdown ticketCostUsd={totalAmount} mode="solana_private" solPriceUsd={solPriceUsd} bridgeFeeUsd={bridgeFeeUsd} bridgeReceiveUsdc={bridgeReceiveUsdc} />
+      {error && <p className="text-base text-red-400">{error}</p>}
 
-          {route === "base" ? (
-            <div>
-              <p className="text-slate-300 text-xl font-sans font-medium mb-3">Your Base wallet address</p>
-              <input value={destination} onChange={e => setDestination(e.target.value)} placeholder="0x..."
-                className="w-full h-12 px-4 rounded-xl text-base text-white placeholder-slate-600 bg-white/5 border border-white/10 focus:outline-none focus:border-white/20 transition-all" />
-              <p className="text-base text-amber-400/70 mt-1.5">Creates a visible on-chain link to this address.</p>
-            </div>
-          ) : (
-            <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 space-y-1">
-              <p className="text-base text-slate-300 font-medium">Sending to your Loofta balance</p>
-              <p className="text-sm font-mono text-slate-600 truncate">{userSolanaAddress}</p>
-              <p className="text-base text-emerald-400/70">NEAR Intents bridge → fresh burner → MagicBlock private → your balance</p>
-            </div>
-          )}
-
-          <FeeBreakdown ticketCostUsd={ticket?.winAmountUsdc ?? 0} mode={route} solPriceUsd={solPriceUsd} />
-          {error && <p className="text-base text-red-400">{error}</p>}
-
-          <button onClick={handleWithdraw} disabled={loading || !destination}
-            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-            {loading ? "Processing..." : `Withdraw ${fmt(ticket?.winAmountUsdc ?? 0)}`}
-          </button>
-        </>
-      )}
+      <button onClick={handleWithdraw} disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
+        className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+        {loading ? "Processing..." : bridgeFeeUsd === null ? "Estimating fees…" : "Withdraw privately"}
+      </button>
     </div>
   );
 }
 
 // ─── History drawer ───────────────────────────────────────────────────────────
 
-function ticketStatusBadgeClass(s: TicketStatus, bridgeStatus?: string | null, drawTime?: string | null): string {
+function ticketStatusBadgeClass(s: TicketStatus, bridgeStatus?: string | null, drawTime?: string | null, ticketRoundId?: string | null, currentRoundId?: string | null): string {
   if (s === "failed" && bridgeStatus) {
     const bs = bridgeStatus.toUpperCase();
     if (bs === "REFUNDED") return "bg-blue-500/20 text-blue-400 border-blue-500/30";
     if (bs === "EXPIRED") return "bg-slate-500/20 text-slate-400 border-slate-500/30";
   }
-  if (s === "active" && drawTime && new Date(drawTime) < new Date()) {
-    return "bg-slate-500/20 text-slate-400 border-slate-500/30";
+  if (s === "active") {
+    const drawPassed = (drawTime && new Date(drawTime) < new Date()) ||
+      (ticketRoundId && currentRoundId && ticketRoundId !== currentRoundId);
+    if (drawPassed) return "bg-slate-500/20 text-slate-400 border-slate-500/30";
   }
   switch (s) {
     case "won": return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
+    case "withdrawn": return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
     case "lost": return "bg-slate-500/20 text-slate-400 border-slate-500/30";
     case "failed": return "bg-red-500/20 text-red-400 border-red-500/30";
     case "active": return "bg-amber-500/20 text-amber-400 border-amber-500/30";
@@ -1278,7 +1311,7 @@ function TicketNumberCard({ tn, winningNumbers }: {
 
   return (
     <div className={`flex items-center rounded-xl border bg-white/[0.04] px-3 gap-3 relative overflow-hidden ${
-      isWin ? "border-emerald-500/30" : isFreeTicket ? "border-violet-500/20" : "border-white/[0.08]"
+      isWin ? "border-emerald-500/30" : isFreeTicket ? "border-emerald-500/20" : "border-white/[0.08]"
     }`} style={{ minHeight: 58 }}>
       {/* Numbers */}
       <div className="flex flex-col gap-1 flex-1 min-w-0 py-3">
@@ -1317,7 +1350,7 @@ function TicketNumberCard({ tn, winningNumbers }: {
                 WIN {prize}
               </span>
             ) : isFreeTicket ? (
-              <span className="px-2 py-1 rounded-lg bg-violet-500/15 border border-violet-500/20 text-violet-300 text-xs font-bold whitespace-nowrap">
+              <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/20 text-emerald-300 text-xs font-bold whitespace-nowrap">
                 FREE
               </span>
             ) : (
@@ -1330,10 +1363,10 @@ function TicketNumberCard({ tn, winningNumbers }: {
   );
 }
 
-function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRefresh, refetch, userSolanaAddress, loading }: {
+function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRefresh, refetch, userSolanaAddress, loading, nextDrawRoundId }: {
   history: TicketSummary[]; withdrawals: WithdrawalSummary[]; activeTickets: TicketSummary[];
   getAccessToken: () => Promise<string | null>; onRefresh: () => void; refetch?: () => void;
-  userSolanaAddress: string; loading?: boolean;
+  userSolanaAddress: string; loading?: boolean; nextDrawRoundId?: string | null;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -1372,6 +1405,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
   const [deleting, setDeleting] = useState<string | null>(null);
   const [checkingResult, setCheckingResult] = useState<string | null>(null);
   const [checkResultMsg, setCheckResultMsg] = useState<Record<string, string>>({});
+  const [ticketShowAll, setTicketShowAll] = useState<Record<string, boolean>>({});
 
   const awaitingDeposit = activeTickets.filter(t => t.status === "pending_send");
   const inFlight = activeTickets.filter(t => ["sent", "bridging", "buying"].includes(t.status));
@@ -1386,7 +1420,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
 
   const allForStats = [...activeTickets, ...history];
   const totalSpent = allForStats.filter(t => t.status !== "failed").reduce((s, t) => s + t.costUsdc, 0);
-  const totalWon = allForStats.filter(t => t.status === "won").reduce((s, t) => s + (t.winAmountUsdc ?? 0), 0);
+  const totalWon = allForStats.filter(t => t.status === "won" || t.status === "withdrawn").reduce((s, t) => s + (t.winAmountUsdc ?? 0), 0);
 
   async function handleCancel(ticketId: string) {
     setCancelling(ticketId);
@@ -1625,8 +1659,8 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                     <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime)}`}>
-                      {statusLabel(t.status, t.bridgeStatus, t.drawTime)}
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
+                      {statusLabel(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}
                     </span>
                     <ChevronDown className="w-4 h-4 text-slate-500 transition-transform duration-200 group-open:rotate-180" />
                   </div>
@@ -1705,7 +1739,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                         <button type="button"
                           onClick={() => handleRetry(t.id)}
                           disabled={retrying === t.id || rescuing === t.id}
-                          className="flex-1 h-10 rounded-xl text-sm font-semibold border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 transition-all disabled:opacity-40">
+                          className="flex-1 h-10 rounded-xl text-sm font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40">
                           {retrying === t.id ? "Retrying..." : "Retry purchase"}
                         </button>
                         <button type="button"
@@ -1746,20 +1780,21 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
               const dateStr = (t.drawTime ? new Date(t.drawTime) : new Date(t.createdAt))
                 .toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
               const hasNumbers = t.ticketNumbers && t.ticketNumbers.length > 0 && t.ticketNumbers[0].main.length > 0;
+              const hasAllNumbers = hasNumbers && t.ticketNumbers!.length >= t.numTickets;
               const isFailed = t.status === "failed";
               return (
                 <div key={t.id} className={`rounded-xl border bg-white/5 overflow-hidden ${isFailed ? "border-red-500/20" : "border-white/10"}`}>
                   {/* Main row — clickable to expand */}
                   <button
-                    onClick={() => toggleExpand(t.id, !!hasNumbers)}
+                    onClick={() => toggleExpand(t.id, !!hasAllNumbers)}
                     className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.03] transition-colors"
                   >
                     <img src="/images/icons/ticket-icon.svg" alt="" className="w-9 h-9 shrink-0 opacity-90" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime)}`}>
-                          {statusLabel(t.status, t.bridgeStatus, t.drawTime)}
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
+                          {statusLabel(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}
                         </span>
                       </div>
                       <p className="text-sm text-slate-500 mt-0.5">
@@ -1769,7 +1804,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="text-base font-semibold font-sans">
-                        {t.status === "won"
+                        {(t.status === "won" || t.status === "withdrawn")
                           ? <span className="text-emerald-400">+{fmt(t.winAmountUsdc ?? 0)}</span>
                           : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
                       </span>
@@ -1789,7 +1824,10 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                         </div>
                       )}
                       {/* Check results button for active tickets past draw time */}
-                      {t.status === "active" && t.drawTime && new Date(t.drawTime) < new Date() && (
+                      {t.status === "active" && (
+                        (t.drawTime && new Date(t.drawTime) < new Date()) ||
+                        (t.roundId && nextDrawRoundId && t.roundId !== nextDrawRoundId)
+                      ) && (
                         <div className="space-y-2">
                           {checkResultMsg[t.id] && (
                             <p className={`text-sm ${checkResultMsg[t.id].startsWith("Error") ? "text-red-400" : checkResultMsg[t.id].includes("Won") ? "text-emerald-400" : "text-slate-400"}`}>
@@ -1799,7 +1837,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                           <button
                             onClick={() => handleCheckResults(t.id)}
                             disabled={checkingResult === t.id}
-                            className="w-full h-9 rounded-xl text-sm font-semibold border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 transition-all disabled:opacity-40"
+                            className="w-full h-9 rounded-xl text-sm font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
                           >
                             {checkingResult === t.id ? "Checking…" : "Check Results"}
                           </button>
@@ -1808,6 +1846,9 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                       {/* Number balls */}
                       {hasNumbers ? (
                         <div className="space-y-2">
+                          {!hasAllNumbers && (
+                            <p className="text-sm text-slate-500 italic">Loading {t.numTickets - t.ticketNumbers!.length} more ticket numbers…</p>
+                          )}
                           {t.winningNumbers && (
                             <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] px-3 py-2">
                               <p className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase mb-1.5">Winning numbers</p>
@@ -1820,9 +1861,33 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                             </div>
                           )}
                           <p className="text-sm text-slate-600">Your tickets</p>
-                          {t.ticketNumbers!.map((tn, i) => (
-                            <TicketNumberCard key={i} tn={tn} winningNumbers={t.winningNumbers} />
-                          ))}
+                          {(() => {
+                            const matchCount = (tn: TicketNumbers) => {
+                              if (!t.winningNumbers) return 0;
+                              const m = tn.main.filter(n => t.winningNumbers!.main.includes(n)).length;
+                              const b = tn.bonus === t.winningNumbers.bonus ? 1 : 0;
+                              return m * 2 + b;
+                            };
+                            const sorted = [...t.ticketNumbers!].sort((a, b) => matchCount(b) - matchCount(a));
+                            const showAll = ticketShowAll[t.id];
+                            const visible = showAll ? sorted : sorted.slice(0, 5);
+                            return (
+                              <>
+                                {visible.map((tn, i) => (
+                                  <TicketNumberCard key={i} tn={tn} winningNumbers={t.winningNumbers} />
+                                ))}
+                                {!showAll && sorted.length > 5 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setTicketShowAll(prev => ({ ...prev, [t.id]: true }))}
+                                    className="w-full h-9 rounded-xl text-sm font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all"
+                                  >
+                                    +{sorted.length - 5} more tickets
+                                  </button>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       ) : (
                         <p className="text-sm text-slate-600 italic">Loading ticket numbers…</p>
@@ -1840,29 +1905,6 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                       >
                         {deleting === t.id ? "Removing…" : "Remove from history"}
                       </button>
-                      {!["CANCELLED", "RESCUED"].includes(t.bridgeStatus ?? "") && (
-                        <div className="space-y-2">
-                          {(retryResult[t.id] || rescueResult[t.id]) && (
-                            <p className="text-sm text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
-                          )}
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => handleRetry(t.id)}
-                              disabled={retrying === t.id || rescuing === t.id}
-                              className="flex-1 h-9 rounded-xl text-sm font-semibold border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 transition-all disabled:opacity-40"
-                            >
-                              {retrying === t.id ? "Retrying..." : "Retry"}
-                            </button>
-                            <button
-                              onClick={() => handleRescue(t.id)}
-                              disabled={rescuing === t.id || retrying === t.id}
-                              className="flex-1 h-9 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
-                            >
-                              {rescuing === t.id ? "Rescuing..." : "Rescue funds"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -1872,29 +1914,6 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
         </div>
       )}
 
-      {/* Redemptions */}
-      {withdrawals.length > 0 && (
-        <div>
-          <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Redemptions</p>
-          <ul className="space-y-2">
-            {withdrawals.map(w => (
-              <li key={w.id} className="rounded-xl border border-white/10 bg-white/5 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-base font-semibold text-emerald-400">{fmt(w.amountUsdc)}</span>
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${
-                    w.status === "complete" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                    : w.status === "failed" ? "bg-red-500/20 text-red-400 border-red-500/30"
-                    : "bg-violet-500/20 text-violet-400 border-violet-500/30"
-                  }`}>{w.status}</span>
-                </div>
-                <div className="mt-1 text-base text-slate-500">
-                  {w.route === "base" ? "Base wallet" : "Loofta balance"} · {new Date(w.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </div>
   );
 }
@@ -1986,14 +2005,27 @@ type DrawResult = {
   ticketNumbers?: { main: number[]; bonus: number }[] | null;
 };
 
-function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose }: {
+const WON_MODAL_KEY = "loofta_won_modal_v1";
+
+function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRedeem }: {
   results: DrawResult[];
   winningNumbers?: { main: number[]; bonus: number } | null;
   ticketNumbers?: { main: number[]; bonus: number }[] | null;
   onClose: () => void;
+  onRedeem: () => void;
 }) {
   const anyWon = results.some(r => r.status === "won");
   const totalWon = results.reduce((sum, r) => sum + (r.winAmountUsdc ?? 0), 0);
+  const [showAllTickets, setShowAllTickets] = useState(false);
+
+  const sortedTickets = ticketNumbers ? [...ticketNumbers].sort((a, b) => {
+    if (!winningNumbers) return 0;
+    const score = (tn: TicketNumbers) =>
+      tn.main.filter(n => winningNumbers.main.includes(n)).length * 2 +
+      (tn.bonus === winningNumbers.bonus ? 1 : 0);
+    return score(b) - score(a);
+  }) : [];
+  const visibleTickets = showAllTickets ? sortedTickets : sortedTickets.slice(0, 5);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
@@ -2044,26 +2076,35 @@ function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose }: {
         )}
 
         {/* Per-ticket breakdown */}
-        {ticketNumbers && ticketNumbers.length > 0 && (
+        {sortedTickets.length > 0 && (
           <div className="space-y-1.5">
             <p className="text-[10px] font-bold tracking-[0.16em] text-slate-500 uppercase">Your tickets</p>
-            {ticketNumbers.map((tn, i) => (
+            {visibleTickets.map((tn, i) => (
               <TicketNumberCard key={i} tn={tn} winningNumbers={winningNumbers} />
             ))}
+            {!showAllTickets && sortedTickets.length > 5 && (
+              <button
+                type="button"
+                onClick={() => setShowAllTickets(true)}
+                className="w-full h-9 rounded-xl text-sm font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all"
+              >
+                +{sortedTickets.length - 5} more tickets
+              </button>
+            )}
           </div>
         )}
 
         {/* CTAs */}
         {anyWon ? (
-          <a href="/app/megapot?tab=redeem" onClick={onClose}
+          <Link href="/app/megapot?tab=redeem" onClick={onRedeem}
             className="flex items-center justify-center w-full h-11 rounded-xl font-semibold bg-emerald-500 hover:bg-emerald-400 text-white transition-all">
             Redeem Winnings
-          </a>
+          </Link>
         ) : (
-          <a href="/app/megapot" onClick={onClose}
+          <Link href="/app/megapot" onClick={onClose}
             className="flex items-center justify-center w-full h-11 rounded-xl font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all">
             Buy tickets for tomorrow
-          </a>
+          </Link>
         )}
         <button onClick={onClose} className="w-full h-9 rounded-xl text-sm font-medium text-slate-500 hover:text-slate-300 transition-colors">
           Close
@@ -2098,6 +2139,20 @@ export default function MegapotPage() {
   const [showResultModal, setShowResultModal] = useState(false);
   const autoCheckedIds = useRef<Set<string>>(new Set());
 
+  // Restore won modal from localStorage on mount (persists until "Redeem" is clicked)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(WON_MODAL_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.results?.some((r: DrawResult) => r.status === "won")) {
+          setDrawResults(parsed.results);
+          setShowResultModal(true);
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   const fetchDashboard = useCallback(async () => {
     const token = await getAccessToken();
     accessToken.current = token;
@@ -2115,8 +2170,11 @@ export default function MegapotPage() {
   // Auto-check results for active tickets whose draw time has passed
   useEffect(() => {
     if (!dashboard || !accessToken.current) return;
-    const expired = (dashboard.activeTickets ?? []).filter(
-      t => t.status === "active" && t.drawTime && new Date(t.drawTime) < new Date(),
+    const expired = (dashboard.activeTickets ?? []).filter(t =>
+      t.status === "active" && (
+        (t.drawTime && new Date(t.drawTime) < new Date()) ||
+        (t.roundId && dashboard.nextDraw.roundId && t.roundId !== dashboard.nextDraw.roundId)
+      )
     );
     const unchecked = expired.filter(t => !autoCheckedIds.current.has(t.id));
     if (!unchecked.length) return;
@@ -2151,8 +2209,29 @@ export default function MegapotPage() {
         setDrawResults(valid);
         setShowResultModal(true);
         fetchDashboard();
+        // Persist won results so the modal re-appears on page reload until "Redeem" is clicked
+        if (valid.some(r => r.status === "won")) {
+          try { localStorage.setItem(WON_MODAL_KEY, JSON.stringify({ results: valid })); } catch { /* ignore */ }
+        }
       }
     });
+  }, [dashboard, fetchDashboard]);
+
+  // Retry every 45s for active tickets whose draw has passed but results aren't resolved yet
+  useEffect(() => {
+    if (!dashboard) return;
+    const stuckIds = (dashboard.activeTickets ?? [])
+      .filter(t => t.status === "active" && (
+        (t.drawTime && new Date(t.drawTime) < new Date()) ||
+        (t.roundId && dashboard.nextDraw.roundId && t.roundId !== dashboard.nextDraw.roundId)
+      ))
+      .map(t => t.id);
+    if (!stuckIds.length) return;
+    const id = setInterval(() => {
+      stuckIds.forEach(sid => autoCheckedIds.current.delete(sid));
+      fetchDashboard();
+    }, 45_000);
+    return () => clearInterval(id);
   }, [dashboard, fetchDashboard]);
 
   const wonTickets = [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])].filter(t => t.status === "won");
@@ -2176,7 +2255,7 @@ export default function MegapotPage() {
           </>
         )}
         {tab === "redeem" && (
-          <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} />
+          <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} dashboardLoading={dashboardLoading} />
         )}
         {tab === "history" && (
           <HistoryTab
@@ -2188,6 +2267,7 @@ export default function MegapotPage() {
             refetch={fetchDashboard}
             userSolanaAddress={userSolanaAddress}
             loading={dashboardLoading}
+            nextDrawRoundId={dashboard?.nextDraw?.roundId ?? null}
           />
         )}
       </div>
@@ -2201,6 +2281,10 @@ export default function MegapotPage() {
           winningNumbers={drawResults.find(r => r.winningNumbers)?.winningNumbers}
           ticketNumbers={drawResults.flatMap(r => r.ticketNumbers ?? [])}
           onClose={() => setShowResultModal(false)}
+          onRedeem={() => {
+            try { localStorage.removeItem(WON_MODAL_KEY); } catch { /* ignore */ }
+            setShowResultModal(false);
+          }}
         />
       )}
 

@@ -5,6 +5,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
   Request,
   HttpCode,
@@ -12,9 +13,10 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { IsNumber, IsString, IsIn, Min } from 'class-validator';
+import { IsNumber, IsString, IsIn, IsArray, Min } from 'class-validator';
 import { AuthGuard } from '@/common/guards';
 import { LotteryService, InitiatePurchaseResult, InitiatePublicPurchaseResult, LotteryDashboard, LotteryTicketSummary } from './lottery.service';
+import { LifiService } from './lifi.service';
 
 class BuyTicketsDto {
   @IsNumber()
@@ -49,12 +51,32 @@ class RescueBurnerDto {
   destinationSolAddress: string;
 }
 
+class WithdrawBatchDto {
+  @IsArray()
+  @IsString({ each: true })
+  ticketIds: string[];
+
+  @IsString()
+  destinationAddress: string;
+}
+
 @ApiTags('lottery')
 @Controller('lottery')
 @UseGuards(AuthGuard)
 @ApiBearerAuth()
 export class LotteryController {
-  constructor(private readonly lottery: LotteryService) {}
+  constructor(
+    private readonly lottery: LotteryService,
+    private readonly lifi: LifiService,
+  ) {}
+
+  @Get('bridge-fee')
+  @ApiOperation({ summary: 'Get actual Li.Fi bridge fee for withdrawal amount (Base→Solana)' })
+  async bridgeFee(@Query('amountUsdc') amountUsdc: string): Promise<{ feeUsd: number; receiveUsdc: number }> {
+    const amount = parseFloat(amountUsdc);
+    if (!amount || amount <= 0) throw new BadRequestException('amountUsdc required');
+    return this.lifi.getWithdrawalFeeEstimate(amount);
+  }
 
   @Post('buy')
   @HttpCode(HttpStatus.OK)
@@ -157,6 +179,19 @@ export class LotteryController {
   @ApiOperation({ summary: 'Fast Solana RPC check for USDC deposit — triggers immediate bridging if found' })
   async checkDeposit(@Param('ticketId') ticketId: string, @Request() req: any): Promise<{ status: string }> {
     return this.lottery.checkDepositFast(ticketId, req.user.id);
+  }
+
+  @Post('withdraw-batch')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Batch private withdrawal — all companion wallets converge to one shared burner → single MagicBlock transfer' })
+  async withdrawBatch(@Body() dto: WithdrawBatchDto, @Request() req: any): Promise<{ withdrawalIds: string[]; batchId: string }> {
+    if (!dto.ticketIds?.length) throw new BadRequestException('ticketIds required');
+    if (!dto.destinationAddress) throw new BadRequestException('destinationAddress required');
+    return this.lottery.initiateWithdrawalBatch({
+      ticketIds: dto.ticketIds,
+      userId: req.user.id,
+      destinationAddress: dto.destinationAddress,
+    });
   }
 
   @Post('withdraw')
