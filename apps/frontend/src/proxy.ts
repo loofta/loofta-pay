@@ -35,6 +35,12 @@ export function proxy(request: NextRequest) {
     !marketingPaths.has(pathname) &&
     !pathname.startsWith("/app");
 
+  // On app domain, redirect /app/* → /* so URLs are always clean
+  if (isAppDomain && pathname.startsWith("/app/")) {
+    const cleanPath = pathname.slice(4) || "/";
+    return NextResponse.redirect(new URL(cleanPath, request.url));
+  }
+
   // pay.loofta.xyz or localhost non-marketing path → transparently rewrite to /app/*
   // URL in the browser stays the same; only Next.js routing changes
   if (isAppDomain || isLocalAppPath) {

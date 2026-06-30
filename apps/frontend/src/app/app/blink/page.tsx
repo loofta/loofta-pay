@@ -4,7 +4,9 @@ import Image from "next/image";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
-import { useState, useEffect } from "react";
+import { useWallets } from "@privy-io/react-auth/solana";
+import { useState, useEffect, useMemo } from "react";
+import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
@@ -34,8 +36,10 @@ const TASK_META: Record<BlinkTaskKey, { icon: string }> = {
   two_private_payments: { icon: "🔒" },
 };
 
-async function fetchBlinkCampaign(token: string | null): Promise<BlinkCampaignData> {
-  const res = await fetch(`${BACKEND_URL}/rewards/blink/me`, {
+async function fetchBlinkCampaign(token: string | null, solanaAddress: string | null): Promise<BlinkCampaignData> {
+  const url = new URL(`${BACKEND_URL}/rewards/blink/me`);
+  if (solanaAddress) url.searchParams.set("address", solanaAddress);
+  const res = await fetch(url.toString(), {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error("Failed to load Blink campaign");
@@ -234,7 +238,12 @@ function CampaignHeader({ daysLeft }: { daysLeft: number | null }) {
 
 export default function BlinkCampaignPage() {
   const { authenticated, userId } = useAuth();
-  const { login: privyLogin, getAccessToken } = usePrivy();
+  const { login: privyLogin, getAccessToken, user } = usePrivy();
+  const { wallets: solanaWallets, ready: walletsReady } = useWallets();
+  const solanaAddress = useMemo(
+    () => deriveSolanaEmbeddedAddress(user) ?? solanaWallets[0]?.address ?? null,
+    [user, solanaWallets],
+  );
 
   const [isActive, setIsActive] = useState(false);
   const [daysLeft, setDaysLeft] = useState<number | null>(null);
@@ -245,12 +254,12 @@ export default function BlinkCampaignPage() {
   }, []);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ["blink-campaign", userId],
+    queryKey: ["blink-campaign", userId, solanaAddress],
     queryFn: async () => {
       const token = await getAccessToken().catch(() => null);
-      return fetchBlinkCampaign(token);
+      return fetchBlinkCampaign(token, solanaAddress);
     },
-    enabled: Boolean(authenticated && userId && isActive),
+    enabled: Boolean(authenticated && userId && isActive && walletsReady),
     staleTime: 60_000,
     gcTime: 5 * 60_000,
     refetchOnMount: true,

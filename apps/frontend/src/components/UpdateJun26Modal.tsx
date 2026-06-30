@@ -39,7 +39,7 @@ function useNetworkBalance(address: string | null, network: "mainnet" | "devnet"
 
 export function UpdateJun26Modal() {
   const { show } = useUpdateJun26();
-  const { user, authenticated, getAccessToken } = usePrivy();
+  const { user, authenticated, getAccessToken, logout } = usePrivy();
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
   const address = deriveSolanaEmbeddedAddress(user);
 
@@ -211,6 +211,23 @@ export function UpdateJun26Modal() {
                   </button>
                 </div>
               )}
+              <div className="flex items-center justify-between pt-1">
+                <a
+                  href="https://t.me/looftapay"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  Contact support
+                </a>
+                <button
+                  type="button"
+                  onClick={() => logout()}
+                  className="text-sm text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  Log out
+                </button>
+              </div>
             </>
           )}
         </div>

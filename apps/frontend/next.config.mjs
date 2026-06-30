@@ -1,11 +1,9 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
 import createNextIntlPlugin from 'next-intl/plugin';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
 
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 
@@ -19,7 +17,6 @@ const nextConfig = {
     '@walletconnect/core',
     '@walletconnect/ethereum-provider',
     '@supabase/supabase-js',
-    '@lightprotocol/hasher.rs',
   ],
   experimental: {
     // Tree-shake large icon/UI packages so only used exports are bundled
@@ -43,7 +40,6 @@ const nextConfig = {
       '@radix-ui/react-tooltip',
     ],
   },
-  // Use `npm run dev` (webpack) for WASM (e.g. @lightprotocol/hasher.rs); `npm run dev:turbo` for Turbopack only
   turbopack: {
     resolveAlias: {
       fs: { browser: './empty-module.js' },
@@ -73,66 +69,24 @@ const nextConfig = {
       { protocol: 'https', hostname: 'pbs.twimg.com' },
     ],
   },
-  webpack: (config, { isServer }) => {
+  webpack: (config) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,
       fs: false,
       net: false,
       tls: false,
     };
-    // Stub optional peer deps that @privy-io/react-auth tries to import but aren't installed
     config.resolve.alias = {
       ...config.resolve.alias,
       '@stripe/crypto': path.resolve(__dirname, 'empty-module.js'),
       '@farcaster/mini-app-solana': path.resolve(__dirname, 'empty-module.js'),
-      // Stub the viem/ox tempo module that has a dynamic require(expression)
-      // which causes webpack to bundle every possible module it might load
+      // viem/ox tempo has a dynamic require() that pulls in every possible module
       'ox/_esm/tempo/internal/virtualMasterPool': path.resolve(__dirname, 'empty-module.js'),
     };
-    config.experiments = {
-      ...config.experiments,
-      asyncWebAssembly: true,
-      layers: true,
-    };
-    config.module.rules.push({
-      test: /\.wasm$/,
-      type: 'asset/resource',
-    });
     config.ignoreWarnings = [
       ...(config.ignoreWarnings || []),
-      { module: /hasher_wasm_simd_bg\.wasm/ },
-      { module: /light_wasm_hasher_bg\.wasm/ },
-      { module: /@splinetool/ },
       { module: /virtualMasterPool/ },
     ];
-    if (!isServer) {
-      try {
-        const hasherPath = path.dirname(require.resolve('@lightprotocol/hasher.rs/package.json'));
-        const wasmSimdPath = path.resolve(hasherPath, 'dist/hasher_wasm_simd_bg.wasm');
-        const wasmLightPath = path.resolve(hasherPath, 'dist/light_wasm_hasher_bg.wasm');
-        const browserFatPath = path.resolve(hasherPath, 'dist/browser-fat/es');
-        const fs = require('fs');
-        const wasmSimdBrowserFat = path.resolve(browserFatPath, 'hasher_wasm_simd_bg.wasm');
-        const wasmLightBrowserFat = path.resolve(browserFatPath, 'light_wasm_hasher_bg.wasm');
-        let finalWasmSimd = null;
-        let finalWasmLight = null;
-        if (fs.existsSync(wasmSimdBrowserFat)) finalWasmSimd = wasmSimdBrowserFat;
-        else if (fs.existsSync(wasmSimdPath)) finalWasmSimd = wasmSimdPath;
-        if (fs.existsSync(wasmLightBrowserFat)) finalWasmLight = wasmLightBrowserFat;
-        else if (fs.existsSync(wasmLightPath)) finalWasmLight = wasmLightPath;
-        if (finalWasmSimd && finalWasmLight) {
-          config.resolve.alias = {
-            ...config.resolve.alias,
-            'hasher_wasm_simd_bg.wasm': finalWasmSimd,
-            'light_wasm_hasher_bg.wasm': finalWasmLight,
-          };
-        } else {
-          console.warn('[Next.js] WASM files not found in @lightprotocol/hasher.rs (run npm install; postinstall copies them).');
-        }
-      } catch (e) {
-        console.warn('[Next.js] @lightprotocol/hasher.rs not resolved:', e.message);
-      }
-    }
     return config;
   },
   // Suppress React hydration warnings from Privy (third-party library issue)
