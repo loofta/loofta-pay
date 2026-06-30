@@ -99,13 +99,14 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
 
   const handleCreate = async () => {
     if (!authenticated) {
-      login({ loginMethods: ["email"], disableSignup: false });
+      login({ loginMethods: ["twitter", "email"], disableSignup: false });
       return;
     }
     if (!amount || Number(amount) <= 0 || Number(amount) < minAmountUsd) {
       toast({ variant: "destructive", title: "Invalid amount", description: "Minimum payment amount is $5.00 USDC." });
       return;
     }
+
     setPreparing(true);
     const fullDescription = [description.trim(), gifUrl].filter(Boolean).join(" ").trim() || undefined;
     try {
@@ -193,11 +194,18 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
       <div>
         <Label className="text-slate-400 text-base">Amount (USD)</Label>
         <Input
-          type="number"
+          type="text"
+          inputMode="numeric"
           value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          min="0.01"
-          step="0.01"
+          onBeforeInput={(e) => {
+            const data = (e.nativeEvent as InputEvent).data;
+            if (data && /[^0-9]/.test(data)) e.preventDefault();
+          }}
+          onChange={(e) => {
+            const cleaned = e.target.value.replace(/[^0-9]/g, "");
+            e.target.value = cleaned;
+            setAmount(cleaned);
+          }}
           placeholder="100"
           className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500"
         />
@@ -243,7 +251,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
       )}
 
       <Button
-        onClick={handleCreate}
+        onClick={!authenticated ? () => login({ loginMethods: ["twitter", "email"], disableSignup: false }) : handleCreate}
         disabled={authenticated && (preparing || !amount || !Number.isFinite(amountNum) || amountNum <= 0 || belowMinAmount || insufficientBalance)}
         className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r text-lg from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
       >

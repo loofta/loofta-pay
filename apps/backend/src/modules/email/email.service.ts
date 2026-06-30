@@ -81,6 +81,22 @@ export class EmailService {
     }
   }
 
+  async sendMainnetLaunchEmail(recipientEmail: string): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: recipientEmail,
+        subject: 'it\'s finally happening 🎉',
+        html: this.buildMainnetLaunchHtml(),
+      });
+      this.logger.log(`Mainnet launch email sent to ${recipientEmail}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send mainnet launch email to ${recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
   async sendBetaAccessEmail(recipientEmail: string): Promise<void> {
     if (!this.resend) return;
     try {
@@ -94,6 +110,57 @@ export class EmailService {
     } catch (err: any) {
       this.logger.error(`Failed to send beta access email to ${recipientEmail}: ${err?.message ?? err}`);
     }
+  }
+
+  private buildMainnetLaunchHtml(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>mainnet goes live tomorrow</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:'Clash Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <tr>
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:36px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
+              <p style="margin:0 0 8px;font-size:32px;text-align:center;line-height:1;">🎉</p>
+              <p style="margin:0 0 28px;font-size:20px;color:#ffffff;font-weight:600;text-align:center;">mainnet goes live tomorrow</p>
+              <p style="margin:0 0 16px;">hey!</p>
+              <p style="margin:0 0 16px;">This is Lisa from Loofta, and I'm so happy you're with us for this.</p>
+              <p style="margin:0 0 24px;">We're going live on mainnet tomorrow and I couldn't be more excited to share it with you.</p>
+              <div style="background:#0f0f12;border:1px solid #2a2a30;border-radius:12px;padding:20px 24px;margin-bottom:24px;">
+                <p style="margin:0 0 4px;font-size:12px;color:#6b7280;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;">Going live</p>
+                <p style="margin:0;font-size:18px;font-weight:600;color:#ffffff;">July 1st at 6PM CET</p>
+              </div>
+              <p style="margin:0 0 32px;">One heads up before you jump in: you'll need to do a quick upgrade of the app first. Just open Loofta and follow the prompt when you see it. It takes a second and it's totally normal.</p>
+              <div style="text-align:center;">
+                <a href="https://pay.loofta.xyz" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Open Loofta
+                </a>
+              </div>
+              <p style="margin:28px 0 0;font-size:14px;color:#9ca3af;text-align:left;">Lisa</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
   }
 
   private buildBetaAccessHtml(): string {

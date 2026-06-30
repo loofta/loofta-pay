@@ -481,13 +481,19 @@ export default function AdminDashboard() {
   const [saving, setSaving] = useState(false);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist" | "analytics">("payments");
+  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist" | "analytics" | "blink">("payments");
 
   // Sparks leaderboard
   const [sparksData, setSparksData] = useState<any[]>([]);
   const [sparksLoading, setSparksLoading] = useState(false);
   const [sparksLoaded, setSparksLoaded] = useState(false);
   const [sparksSearch, setSparksSearch] = useState("");
+
+  // Blink campaign
+  const [blinkData, setBlinkData] = useState<any[]>([]);
+  const [blinkLoading, setBlinkLoading] = useState(false);
+  const [blinkLoaded, setBlinkLoaded] = useState(false);
+  const [blinkSearch, setBlinkSearch] = useState("");
 
   // Waitlist
   const [waitlistData, setWaitlistData] = useState<any[]>([]);
@@ -620,6 +626,21 @@ export default function AdminDashboard() {
       toast({ variant: "destructive", title: "Failed to load Sparks" });
     } finally {
       setSparksLoading(false);
+    }
+  }, [authHeaders, toast]);
+
+  const fetchBlink = useCallback(async () => {
+    setBlinkLoading(true);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch("/api/admin/blink-campaign", { headers });
+      if (!res.ok) throw new Error("Failed to load");
+      setBlinkData(await res.json());
+      setBlinkLoaded(true);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load Blink campaign data" });
+    } finally {
+      setBlinkLoading(false);
     }
   }, [authHeaders, toast]);
 
@@ -928,13 +949,14 @@ export default function AdminDashboard() {
           onClick={
             activeTab === "payments" ? refresh :
             activeTab === "sparks" ? fetchSparks :
+            activeTab === "blink" ? fetchBlink :
             activeTab === "analytics" ? fetchAnalytics :
             () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })
           }
-          disabled={loading || sparksLoading || waitlistLoading || analyticsLoading}
+          disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading}
           className="border-gray-700 text-gray-300 bg-gray-900 hover:bg-gray-800"
         >
-          {(loading || sparksLoading || waitlistLoading) ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          {(loading || sparksLoading || waitlistLoading || blinkLoading) ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
           <span className="ml-1.5">Refresh</span>
         </Button>
       </div>
@@ -955,6 +977,13 @@ export default function AdminDashboard() {
         >
           <Zap className="w-3.5 h-3.5" />
           Sparks
+        </button>
+        <button
+          type="button"
+          onClick={() => { setActiveTab("blink"); if (!blinkLoaded) fetchBlink(); }}
+          className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "blink" ? "border-cyan-500 text-cyan-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+        >
+          Blink Campaign
         </button>
         <button
           type="button"
@@ -1363,6 +1392,109 @@ export default function AdminDashboard() {
           )}
           {!sparksLoading && !sparksLoaded && (
             <div className="text-gray-600 text-base md:text-sm py-8 text-center">Click Refresh to load Sparks data.</div>
+          )}
+        </div>
+      )}
+
+      {/* ── Blink Campaign tab ── */}
+      {activeTab === "blink" && (
+        <div>
+          {blinkLoading && (
+            <div className="flex items-center gap-2 text-base md:text-sm text-gray-400 py-8">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading Blink campaign data…
+            </div>
+          )}
+          {!blinkLoading && blinkLoaded && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="relative flex-1 max-w-sm">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+                  <Input
+                    placeholder="Search by username or email…"
+                    value={blinkSearch}
+                    onChange={(e) => setBlinkSearch(e.target.value)}
+                    className="pl-9 bg-gray-900 border-gray-700 text-sm"
+                  />
+                </div>
+                <span className="text-sm md:text-xs text-gray-500 whitespace-nowrap">
+                  {(() => {
+                    const qualified = blinkData.filter((u: any) => u.qualified).length;
+                    const filtered = blinkSearch
+                      ? blinkData.filter((u: any) => {
+                          const q = blinkSearch.toLowerCase();
+                          return (u.username ?? "").toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q);
+                        }).length
+                      : blinkData.length;
+                    return blinkSearch ? `${filtered} / ${blinkData.length}` : `${qualified} qualified / ${blinkData.length} users`;
+                  })()}
+                </span>
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-gray-800">
+                <table className="w-full text-base md:text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-800 text-gray-400 text-sm md:text-xs uppercase tracking-wide">
+                      <th className="text-left px-4 py-2.5">#</th>
+                      <th className="text-left px-4 py-2.5">User</th>
+                      <th className="text-center px-3 py-2.5">Passkeys</th>
+                      <th className="text-center px-3 py-2.5">Deposits</th>
+                      <th className="text-center px-3 py-2.5">Priv. pays</th>
+                      <th className="text-center px-3 py-2.5">Qualified</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {blinkData
+                      .filter((u: any) => {
+                        if (!blinkSearch) return true;
+                        const q = blinkSearch.toLowerCase();
+                        return (u.username ?? "").toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q);
+                      })
+                      .map((u: any, i: number) => (
+                        <tr key={u.privyUserId} className={`border-b border-gray-800/60 hover:bg-gray-900/50 ${u.qualified ? "bg-cyan-950/20" : ""}`}>
+                          <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
+                          <td className="px-4 py-2.5">
+                            <div className="font-medium text-white">{u.username ? `@${u.username}` : "—"}</div>
+                            <div className="text-sm md:text-xs text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            {u.hasPasskeys ? <span className="text-green-400">✓</span> : <span className="text-gray-700">–</span>}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            {u.depositCount >= 2
+                              ? <span className="text-green-400">✓ {u.depositCount}</span>
+                              : u.depositCount > 0
+                                ? <span className="text-amber-400">{u.depositCount}/2</span>
+                                : <span className="text-gray-700">0/2</span>}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            {u.privatePaymentsCount >= 2
+                              ? <span className="text-green-400">✓ {u.privatePaymentsCount}</span>
+                              : u.privatePaymentsCount > 0
+                                ? <span className="text-amber-400">{u.privatePaymentsCount}/2</span>
+                                : <span className="text-gray-700">0/2</span>}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            {u.qualified
+                              ? <span className="text-cyan-400 font-semibold">✓ Done</span>
+                              : <span className="text-gray-700">–</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    {blinkData.filter((u: any) => {
+                      if (!blinkSearch) return true;
+                      const q = blinkSearch.toLowerCase();
+                      return (u.username ?? "").toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q);
+                    }).length === 0 && (
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-600">
+                        {blinkSearch ? `No users matching "${blinkSearch}"` : "No data"}
+                      </td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {!blinkLoading && !blinkLoaded && (
+            <div className="text-gray-600 text-base md:text-sm py-8 text-center">Click Refresh to load Blink campaign data.</div>
           )}
         </div>
       )}

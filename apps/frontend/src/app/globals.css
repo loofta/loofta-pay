@@ -233,6 +233,10 @@ body {
 .boost-range::-moz-range-progress { height: 8px; background: linear-gradient(90deg, #FF0F00, #EAB308); border-radius: 9999px; }
 .boost-range::-moz-range-thumb { height: 20px; width: 20px; border: none; border-radius: 9999px; background: linear-gradient(135deg, #FF0F00, #EAB308); box-shadow: 0 4px 10px rgba(255, 15, 0, 0.25); }
 
+/* Banner marquee */
+@keyframes marquee { from { transform: translateX(0) } to { transform: translateX(-50%) } }
+.animate-marquee { animation: marquee 18s linear infinite; }
+
 /* Gradient bullets utility */
 .boost-bullets { list-style: none; margin: 0; padding: 0; }
 .boost-bullets li { position: relative; padding-left: 1.25rem; }

@@ -93,9 +93,9 @@ export default function SettingsPage() {
         <div className="rounded-xl bg-white/5 border border-white/10 p-4 mb-4">
           {username && (
             <div className="mb-3 last:mb-0">
-              <p className="text-sm font-medium text-slate-400 mb-1">{t('username')}</p>
+              <p className="text-base font-medium text-slate-400 mb-1">{t('username')}</p>
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-white truncate">@{username}</p>
+                <p className="text-base font-semibold text-white truncate">@{username}</p>
                 <button
                   type="button"
                   onClick={() => copyToClipboard(`@${username}`)}
@@ -110,8 +110,8 @@ export default function SettingsPage() {
           )}
           {email && (
             <div>
-              <p className="text-sm font-medium text-slate-400 mb-1">{t('email')}</p>
-              <p className="text-sm text-white/90">{email}</p>
+              <p className="text-base font-medium text-slate-400 mb-1">{t('email')}</p>
+              <p className="text-base text-white/90">{email}</p>
             </div>
           )}
         </div>
@@ -124,23 +124,23 @@ export default function SettingsPage() {
           return (
             <div className="rounded-xl bg-white/5 border border-white/10 p-4 mb-4">
               <div className="flex items-center justify-between mb-3">
-                <p className="text-sm font-medium text-slate-400">Status</p>
-                <span className={`text-sm font-semibold px-2.5 py-0.5 rounded-full ${info.color} ${info.bg}`}>
+                <p className="text-base font-medium text-slate-400">Status</p>
+                <span className={`text-base font-semibold px-2.5 py-0.5 rounded-full ${info.color} ${info.bg}`}>
                   {info.label}
                 </span>
               </div>
               <div className="flex items-end justify-between">
                 <div>
-                  <p className="text-xs text-slate-500 mb-0.5">Total volume</p>
+                  <p className="text-sm text-slate-500 mb-0.5">Total volume</p>
                   <p className="text-base font-medium text-white">{formatVol(totalVolumeUsd)}</p>
                 </div>
                 {nextTier && (
-                  <p className="text-xs text-slate-500 text-right">
+                  <p className="text-sm text-slate-500 text-right">
                     {formatVol(remaining)} to <span className="text-slate-300">{nextTier.label}</span>
                   </p>
                 )}
                 {!nextTier && (
-                  <p className="text-xs text-slate-400">Top tier 🏆</p>
+                  <p className="text-sm text-slate-400">Top tier 🏆</p>
                 )}
               </div>
 
@@ -148,7 +148,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={() => setStatusOpen((v) => !v)}
-                className="mt-3 w-full flex items-center justify-between pt-3 border-t border-white/10 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+                className="mt-3 w-full flex items-center justify-between pt-3 border-t border-white/10 text-base text-slate-400 hover:text-slate-200 transition-colors"
               >
                 <span>About status levels</span>
                 <span className={`transition-transform duration-200 ${statusOpen ? "rotate-45" : ""}`}>+</span>
@@ -156,7 +156,7 @@ export default function SettingsPage() {
 
               <div className={`grid transition-all duration-200 ease-out ${statusOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
                 <div className="overflow-hidden">
-                  <p className="text-xs text-slate-400 mt-3 mb-2">
+                  <p className="text-sm text-slate-400 mt-3 mb-2">
                     Your status is based on total USDC volume sent and received on Loofta — mainnet only.
                   </p>
                   <div className="space-y-1.5">
@@ -168,7 +168,7 @@ export default function SettingsPage() {
                           className={`flex items-center justify-between rounded-lg px-3 py-2 ${isActive ? "bg-white/8 border border-white/10" : ""}`}
                         >
                           <span className={`text-sm font-semibold ${t.color}`}>{t.label}</span>
-                          <span className="text-xs text-slate-500">
+                          <span className="text-sm text-slate-500">
                             {formatVol(t.minVolume)}{t.maxVolume ? ` – ${formatVol(t.maxVolume)}` : "+"}
                           </span>
                         </div>
@@ -216,15 +216,6 @@ export default function SettingsPage() {
           {t('logOut')}
         </button>
 
-        <div className="mt-8 flex items-center justify-center gap-4">
-          <Link href="/terms" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">
-            Terms of Service
-          </Link>
-          <span className="text-slate-700 text-xs">·</span>
-          <Link href="/privacy" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">
-            Privacy Policy
-          </Link>
-        </div>
       </div>
     </div>
   );

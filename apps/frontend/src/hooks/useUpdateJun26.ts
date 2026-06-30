@@ -32,7 +32,8 @@ export function useUpdateJun26() {
   const privyUserId = user?.id;
 
   useEffect(() => {
-    if (!ready || !authenticated || !privyUserId) return;
+    if (!ready) return;
+    if (!authenticated || !privyUserId) { setShow(false); return; }
 
     if (isUpdateDone(privyUserId)) return;
 
@@ -41,12 +42,11 @@ export function useUpdateJun26() {
       return;
     }
 
-    setShow(true);
-
+    // Check DB before showing — avoids flash for users who already upgraded.
     (async () => {
       try {
         const token = await getAccessToken();
-        if (!token) return;
+        if (!token) { setShow(true); return; }
         const res = await fetch(`/api/users/update-jun26?update_id=${UPDATE_ID}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -54,7 +54,7 @@ export function useUpdateJun26() {
           const data = await res.json();
           if (data.completed) {
             markLocallyDone(privyUserId);
-            setShow(false);
+            // leave show=false
           } else if (isUpdateDone(privyUserId)) {
             // localStorage says done but DB doesn't — backfill.
             fetch("/api/users/update-jun26/complete", {
@@ -62,11 +62,15 @@ export function useUpdateJun26() {
               headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
               body: JSON.stringify({ update_id: UPDATE_ID }),
             }).catch(() => {});
-            setShow(false);
+            // leave show=false
+          } else {
+            setShow(true);
           }
+        } else {
+          setShow(true); // non-ok response — show modal as fallback
         }
       } catch {
-        // Backend unreachable — modal stays visible, which is correct
+        setShow(true); // Backend unreachable — show modal as fallback
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps

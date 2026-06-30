@@ -124,7 +124,7 @@ export default function Home() {
   }
 
   function onChangeAmount(v: string) {
-    setAmount(sanitizeNumberInput(v, 9));
+    setAmount(v.replace(/[^0-9]/g, ""));
   }
 
   const displayAmount = (amount && amount.length > 0) ? amount : "0";
@@ -406,9 +406,17 @@ export default function Home() {
                         <div className="flex flex-col">
                           <div className="flex items-baseline tabular-nums">
                             <input
-                              inputMode="decimal"
+                              inputMode="numeric"
                               value={amount}
-                              onChange={(e) => onChangeAmount(e.target.value)}
+                              onBeforeInput={(e) => {
+                                const data = (e.nativeEvent as InputEvent).data;
+                                if (data && /[^0-9]/.test(data)) e.preventDefault();
+                              }}
+                              onChange={(e) => {
+                                const cleaned = e.target.value.replace(/[^0-9]/g, "");
+                                e.target.value = cleaned;
+                                onChangeAmount(cleaned);
+                              }}
                               placeholder="0"
                               className={[
                                 "text-white placeholder:text-slate-600",
@@ -447,7 +455,7 @@ export default function Home() {
                             setRecipient(trimmed);
                           }}
                           autoComplete="off"
-                          className="h-12 pl-10 mb-2 bg-white/5 border-white/10 text-white text-md placeholder:text-slate-500 placeholder:text-[20px]"
+                          className="h-12 pl-10 mb-2 bg-white/5 border-white/10 text-white text-md placeholder:text-slate-500 placeholder:text-[14px] sm:placeholder:text-[20px]"
                           style={{ fontSize: `20px` }}
                         />
                       </div>

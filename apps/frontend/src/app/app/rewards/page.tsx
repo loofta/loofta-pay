@@ -116,6 +116,7 @@ export default function RewardsPage() {
   const [blinkDaysUntil, setBlinkDaysUntil] = useState<number | null>(null);
   const [blinkDaysLeft, setBlinkDaysLeft] = useState<number | null>(null);
   const [blinkActive, setBlinkActive] = useState(false);
+  const [isLocalhost, setIsLocalhost] = useState(false);
 
   useEffect(() => {
     const now = new Date();
@@ -123,6 +124,7 @@ export default function RewardsPage() {
     setBlinkDaysUntil(getDaysUntil(BLINK_START_DATE));
     setBlinkDaysLeft(getDaysLeft(BLINK_END_DATE));
     setBlinkActive(now >= BLINK_START_DATE);
+    setIsLocalhost(window.location.hostname === "localhost");
   }, []);
 
   const sparksIsEnding = sparksLeft !== null && sparksLeft <= 3;
@@ -209,7 +211,9 @@ export default function RewardsPage() {
           </p>
 
           {/* Blink Campaign */}
-          <Link href="/app/rewards/blink" className="block group">
+          {(() => {
+            const blinkClickable = blinkActive || isLocalhost;
+            const blinkCard = (
             <div
               className="relative rounded-2xl overflow-hidden border border-[#F7C948]/20 group-hover:border-[#F7C948]/40 transition-all duration-200 group-hover:shadow-[0_0_32px_rgba(247,201,72,0.10)]"
               style={{ backgroundImage: `url("${BLINK_BG}")`, backgroundSize: "cover", backgroundPosition: "center" }}
@@ -293,16 +297,22 @@ export default function RewardsPage() {
                       $2,000
                     </p>
                   </div>
-                  <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
-                    <span>View quests</span>
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
-                      <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </div>
+                  {blinkClickable && (
+                    <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
+                      <span>View quests</span>
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
+                        <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
-          </Link>
+            );
+            return blinkClickable
+              ? <Link href="/app/rewards/blink" className="block group">{blinkCard}</Link>
+              : <div className="block">{blinkCard}</div>;
+          })()}
         </div>
 
       </div>

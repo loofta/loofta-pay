@@ -384,7 +384,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
   function handleRequestPayment() {
     if (!authenticated) {
-      login({ loginMethods: ["email"], disableSignup: false });
+      login({ loginMethods: ["twitter", "email"], disableSignup: false });
       return;
     }
     if (filledRows.length < 2) {
@@ -831,11 +831,18 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
             <div>
               <Label className="text-slate-400 text-base md:text-sm">Amount (USD)</Label>
               <Input
-                type="number"
+                type="text"
+                inputMode="numeric"
                 value={row.amount}
-                onChange={(e) => updateRow(row.id, "amount", e.target.value)}
-                min="5"
-                step="1"
+                onBeforeInput={(e) => {
+                  const data = (e.nativeEvent as InputEvent).data;
+                  if (data && /[^0-9]/.test(data)) e.preventDefault();
+                }}
+                onChange={(e) => {
+                  const cleaned = e.target.value.replace(/[^0-9]/g, "");
+                  e.target.value = cleaned;
+                  updateRow(row.id, "amount", cleaned);
+                }}
                 placeholder="100"
                 className="mt-1 h-10 bg-white/5 border-white/10 text-white placeholder:text-slate-500 text-base"
               />
@@ -892,7 +899,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       )}
 
       <Button
-        onClick={handleRequestPayment}
+        onClick={!authenticated ? () => login({ loginMethods: ["twitter", "email"], disableSignup: false }) : handleRequestPayment}
         disabled={authenticated && !canReview}
         className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
       >
