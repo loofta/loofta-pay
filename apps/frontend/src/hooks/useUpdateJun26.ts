@@ -32,7 +32,8 @@ export function useUpdateJun26() {
   const privyUserId = user?.id;
 
   useEffect(() => {
-    if (!ready || !authenticated || !privyUserId) return;
+    if (!ready) return;
+    if (!authenticated || !privyUserId) { setShow(false); return; }
 
     if (isUpdateDone(privyUserId)) return;
 
