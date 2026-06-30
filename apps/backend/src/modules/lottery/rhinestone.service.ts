@@ -138,9 +138,17 @@ export class RhinestoneService {
       });
       this.logger.log(`Rhinestone: dry-run OK — proceeding with sponsored sendTransaction`);
     } catch (simErr: any) {
-      // Log the raw revert reason so we can diagnose and rethrow for the fallback path
-      this.logger.warn(`Rhinestone: dry-run revert from ${smartAcctAddress}: ${simErr.message?.slice(0, 200)}`);
-      throw simErr;
+      const msg: string = simErr.message ?? '';
+      // RPC-level errors (rate limit, timeout, network) are not contract reverts —
+      // skip the dry-run and let Rhinestone's own infrastructure attempt the tx.
+      const isRpcError = msg.includes('over rate limit') || msg.includes('RPC Request failed') ||
+                         msg.includes('timeout') || msg.includes('429');
+      if (isRpcError) {
+        this.logger.warn(`Rhinestone: dry-run skipped (RPC error, not a revert): ${msg.slice(0, 120)}`);
+      } else {
+        this.logger.warn(`Rhinestone: dry-run revert from ${smartAcctAddress}: ${msg.slice(0, 200)}`);
+        throw simErr;
+      }
     }
 
     const claimData = encodeFunctionData({

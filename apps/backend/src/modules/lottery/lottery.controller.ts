@@ -14,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { IsNumber, IsString, IsIn, IsArray, Min } from 'class-validator';
-import { AuthGuard } from '@/common/guards';
+import { AuthGuard, Public } from '@/common/guards';
 import { LotteryService, InitiatePurchaseResult, InitiatePublicPurchaseResult, LotteryDashboard, LotteryTicketSummary } from './lottery.service';
 import { LifiService } from './lifi.service';
 
@@ -71,6 +71,7 @@ export class LotteryController {
   ) {}
 
   @Get('bridge-fee')
+  @Public()
   @ApiOperation({ summary: 'Get actual Li.Fi bridge fee for withdrawal amount (Base→Solana)' })
   async bridgeFee(@Query('amountUsdc') amountUsdc: string): Promise<{ feeUsd: number; receiveUsdc: number }> {
     const amount = parseFloat(amountUsdc);
@@ -179,6 +180,16 @@ export class LotteryController {
   @ApiOperation({ summary: 'Fast Solana RPC check for USDC deposit — triggers immediate bridging if found' })
   async checkDeposit(@Param('ticketId') ticketId: string, @Request() req: any): Promise<{ status: string }> {
     return this.lottery.checkDepositFast(ticketId, req.user.id);
+  }
+
+  @Post('tickets/:ticketId/play-again')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Claim winnings and reinvest into new Megapot tickets — no bridge, no fees' })
+  async playAgain(
+    @Param('ticketId') ticketId: string,
+    @Request() req: any,
+  ): Promise<{ newTicketId: string; numTickets: number; roundId: string | null }> {
+    return this.lottery.playAgain({ ticketId, userId: req.user.id });
   }
 
   @Post('withdraw-batch')
