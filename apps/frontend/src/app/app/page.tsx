@@ -447,7 +447,7 @@ export default function Home() {
                             setRecipient(trimmed);
                           }}
                           autoComplete="off"
-                          className="h-12 pl-10 mb-2 bg-white/5 border-white/10 text-white text-md placeholder:text-slate-500 placeholder:text-[20px]"
+                          className="h-12 pl-10 mb-2 bg-white/5 border-white/10 text-white text-md placeholder:text-slate-500 placeholder:text-[14px] sm:placeholder:text-[20px]"
                           style={{ fontSize: `20px` }}
                         />
                       </div>
