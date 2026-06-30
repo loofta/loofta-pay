@@ -834,12 +834,15 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                 type="text"
                 inputMode="numeric"
                 value={row.amount}
+                onBeforeInput={(e) => {
+                  const data = (e.nativeEvent as InputEvent).data;
+                  if (data && /[^0-9]/.test(data)) e.preventDefault();
+                }}
                 onChange={(e) => {
                   const cleaned = e.target.value.replace(/[^0-9]/g, "");
                   e.target.value = cleaned;
                   updateRow(row.id, "amount", cleaned);
                 }}
-                onKeyDown={(e) => { if (e.key === "." || e.key === ",") e.preventDefault(); }}
                 placeholder="100"
                 className="mt-1 h-10 bg-white/5 border-white/10 text-white placeholder:text-slate-500 text-base"
               />
