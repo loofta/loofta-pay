@@ -77,17 +77,49 @@ export const JACKPOT_ABI = [
     inputs: [{ name: '', type: 'address' }],
     outputs: [{ name: '', type: 'uint256' }],
   },
+  {
+    name: 'getDrawingState',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: '_drawingId', type: 'uint256' }],
+    outputs: [
+      {
+        type: 'tuple',
+        components: [
+          { name: 'prizePool', type: 'uint256' },
+          { name: 'ticketPrice', type: 'uint256' },
+          { name: 'edgePerTicket', type: 'uint256' },
+          { name: 'referralWinShare', type: 'uint256' },
+          { name: 'referralFee', type: 'uint256' },
+          { name: 'globalTicketsBought', type: 'uint256' },
+          { name: 'lpEarnings', type: 'uint256' },
+          { name: 'drawingTime', type: 'uint256' },
+          { name: 'winningTicket', type: 'uint256' },
+          { name: 'ballMax', type: 'uint8' },
+          { name: 'bonusballMax', type: 'uint8' },
+          { name: 'payoutCalculator', type: 'address' },
+          { name: 'jackpotLock', type: 'bool' },
+        ],
+      },
+    ],
+  },
 ] as const;
 
-export interface MegapotRound {
+// Raw API response shape (snake_case)
+export interface MegapotRoundRaw {
   id: string;
-  drawTime: string;
-  prizePool: string;
-  ticketsSold: number;
   status: string;
-  // Populated after draw — field names vary by API version
-  winning_numbers?: number[] | null;
-  winning_bonus?: number | null;
+  ended_at: string | null;      // draw time
+  prize_pool: { amount: string; decimals: number } | null;
+  ticket_count?: number;
+  winning_numbers?: { normals: number[]; bonusball: number } | null;
+}
+
+// Normalized shape used throughout our codebase (camelCase conveniences added)
+export interface MegapotRound extends MegapotRoundRaw {
+  drawTime: string | null;   // = ended_at
+  prizePool: string | null;  // = prize_pool.amount
+  ticketsSold: number;       // = ticket_count
 }
 
 export interface MegapotTicket {
@@ -156,18 +188,56 @@ export class MegapotService {
     return res.json() as Promise<T>;
   }
 
+  private normalizeRound(raw: any): MegapotRound {
+    return {
+      ...raw,
+      drawTime: raw.ended_at ?? raw.draw_time ?? raw.drawTime ?? null,
+      prizePool: raw.prize_pool?.amount ?? raw.prizePool ?? null,
+      ticketsSold: raw.ticket_count ?? raw.ticketsSold ?? 0,
+    };
+  }
+
   async getActiveRound(): Promise<MegapotRound> {
-    return this.apiGet<MegapotRound>('/rounds/active');
+    const raw = await this.apiGet<any>('/rounds/active');
+    return this.normalizeRound(raw);
   }
 
   async getWalletTickets(address: string): Promise<MegapotTicket[]> {
-    const data = await this.apiGet<{ tickets: MegapotTicket[] }>(`/wallets/${address}/tickets`);
-    return data.tickets ?? [];
+    const data = await this.apiGet<{ data: MegapotTicket[] }>(`/wallets/${address}/tickets`);
+    return data.data ?? [];
   }
 
   async getWalletWins(address: string): Promise<MegapotWin[]> {
-    const data = await this.apiGet<{ wins: MegapotWin[] }>(`/wallets/${address}/wins`);
-    return data.wins ?? [];
+    const data = await this.apiGet<{ data: MegapotWin[] }>(`/wallets/${address}/wins`);
+    return data.data ?? [];
+  }
+
+  /** Check if a companion wallet won in a specific round via the Data API. Returns null if no win or wallet not indexed. */
+  async getWalletWinsForRound(
+    address: Address,
+    roundId: string,
+  ): Promise<{ winAmountUsdc: number; tier: number | null } | null> {
+    try {
+      const res = await this.apiGet<{ data: any[] }>(`/wallets/${address}/wins/rounds/${roundId}`);
+      const wins = res.data ?? [];
+      if (!wins.length) return null;
+      const totalAmount = wins.reduce((sum: number, w: any) => {
+        const raw = w.amount ?? w.win_amount ?? '0';
+        const n = parseFloat(String(raw));
+        if (!Number.isFinite(n) || n <= 0) return sum;
+        return sum + (n > 1_000 ? n / 1_000_000 : n);
+      }, 0);
+      const topTier = wins.reduce((best: number | null, w: any) => {
+        const t = w.tier ?? w.win_tier ?? null;
+        if (t == null) return best;
+        const num = Number(t);
+        return best === null ? num : Math.min(best, num);
+      }, null as number | null);
+      return totalAmount > 0 ? { winAmountUsdc: totalAmount, tier: topTier } : null;
+    } catch (e: any) {
+      this.logger.warn(`getWalletWinsForRound ${address} round ${roundId}: ${e.message}`);
+      return null;
+    }
   }
 
   async getWalletStats(address: string): Promise<MegapotWalletStats> {
@@ -175,22 +245,49 @@ export class MegapotService {
   }
 
   async getRound(roundId: string): Promise<MegapotRound> {
-    return this.apiGet<MegapotRound>(`/rounds/${roundId}`);
+    const raw = await this.apiGet<any>(`/rounds/${roundId}`);
+    return this.normalizeRound(raw);
   }
 
   /** Fetch the winning numbers for a settled round. Returns null if not yet drawn or unknown format. */
   async getWinningNumbersForRound(roundId: string): Promise<{ main: number[]; bonus: number } | null> {
     try {
-      const round = await this.apiGet<any>(`/rounds/${roundId}`);
-      // API may return winning_numbers (5 normals) + winning_bonus, or all 6 combined
-      const normals: number[] = round.winning_numbers ?? round.winningNumbers ?? round.normal_numbers ?? [];
-      const bonus: number = round.winning_bonus ?? round.winningBonus ?? round.bonus_number ?? round.bonusball ?? 0;
-      if (normals.length === 5 && bonus > 0) return { main: normals, bonus };
-      if (normals.length === 6) return { main: normals.slice(0, 5), bonus: normals[5] };
+      const raw = await this.apiGet<any>(`/rounds/${roundId}`);
+      // API returns winning_numbers: { normals: number[], bonusball: number }
+      const wn = raw.winning_numbers;
+      if (wn && Array.isArray(wn.normals) && wn.normals.length === 5 && wn.bonusball != null) {
+        return { main: wn.normals, bonus: wn.bonusball };
+      }
       return null;
     } catch (e: any) {
       this.logger.warn(`getWinningNumbersForRound ${roundId}: ${e.message}`);
       return null;
+    }
+  }
+
+  /**
+   * Read `referralWinShare` for a drawing from the Jackpot contract.
+   * Returns the fraction the WINNER keeps (1 - referralWinShare).
+   * e.g. if referralWinShare = 0.10e18 (10%), returns 0.9.
+   * Falls back to 1.0 (no deduction) on any error, so we err toward showing the gross amount.
+   */
+  async getWinClaimFactor(drawingId: string): Promise<number> {
+    try {
+      const rpcUrl = this.config.get<string>('BASE_RPC_URL', DEFAULT_BASE_RPC);
+      const client = createPublicClient({ chain: base, transport: http(rpcUrl) });
+      const state = await client.readContract({
+        address: MEGAPOT_JACKPOT,
+        abi: JACKPOT_ABI,
+        functionName: 'getDrawingState',
+        args: [BigInt(drawingId)],
+      }) as any;
+      const referralWinShare = BigInt(state.referralWinShare ?? 0n);
+      const factor = 1 - Number(referralWinShare) / 1e18;
+      this.logger.log(`getWinClaimFactor drawing=${drawingId}: referralWinShare=${Number(referralWinShare) / 1e18} → factor=${factor}`);
+      return Math.max(0, Math.min(1, factor));
+    } catch (e: any) {
+      this.logger.warn(`getWinClaimFactor drawing=${drawingId}: ${e.message} — falling back to gross`);
+      return 1;
     }
   }
 
@@ -208,7 +305,7 @@ export class MegapotService {
     // Scan Transfer(from=0x0, to=companion) mint events in the last ~28 hours on Base.
     // Base mainnet public RPC caps eth_getLogs at 10,000 blocks per call — paginate in 9,900-block chunks.
     const latest = await client.getBlockNumber();
-    const fromBlock = latest > 50_000n ? latest - 50_000n : 0n;
+    const fromBlock = latest > 150_000n ? latest - 150_000n : 0n;
     const CHUNK = 9_900n;
 
     const transferEvent = {
@@ -247,18 +344,33 @@ export class MegapotService {
     const tokenIds: string[] = [];
     const ticketNumbers: { main: number[]; bonus: number }[] = [];
 
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
     for (const log of logs) {
       const tokenId = log.args.tokenId?.toString();
       if (!tokenId) continue;
 
-      try {
-        const rawUri = await client.readContract({
-          address: MEGAPOT_TICKET_NFT,
-          abi: TICKET_NFT_ABI,
-          functionName: 'tokenURI',
-          args: [BigInt(tokenId)],
-        }) as string;
+      let rawUri: string | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          if (attempt > 0) await sleep(600 * attempt);
+          rawUri = await client.readContract({
+            address: MEGAPOT_TICKET_NFT,
+            abi: TICKET_NFT_ABI,
+            functionName: 'tokenURI',
+            args: [BigInt(tokenId)],
+          }) as string;
+          break;
+        } catch (e: any) {
+          if (attempt === 2) this.logger.warn(`getTicketNumbersFromNft: failed for token ${tokenId}: ${e.message}`);
+        }
+      }
+      if (!rawUri) {
+        await sleep(200);
+        continue;
+      }
 
+      try {
         let metadata: { attributes?: Array<{ trait_type: string; value: unknown }> };
         if (rawUri.startsWith('data:application/json;base64,')) {
           metadata = JSON.parse(Buffer.from(rawUri.slice(29), 'base64').toString('utf-8'));
@@ -275,6 +387,7 @@ export class MegapotService {
         const drawingId = String(get('Drawing ID') ?? '');
         if (roundId && drawingId && drawingId !== String(roundId)) {
           this.logger.log(`Token ${tokenId} is round ${drawingId}, skipping (want ${roundId})`);
+          await sleep(150);
           continue;
         }
 
@@ -288,8 +401,9 @@ export class MegapotService {
           ticketNumbers.push({ main, bonus });
         }
       } catch (e: any) {
-        this.logger.warn(`getTicketNumbersFromNft: failed for token ${tokenId}: ${e.message}`);
+        this.logger.warn(`getTicketNumbersFromNft: metadata parse failed for token ${tokenId}: ${e.message}`);
       }
+      await sleep(150);
     }
 
     return { tokenIds, ticketNumbers };
@@ -310,8 +424,8 @@ export class MegapotService {
       : `/wallets/${companionAddress}/tickets`;
 
     try {
-      const data = await this.apiGet<{ tickets: MegapotTicket[] }>(path);
-      const tickets = data.tickets ?? [];
+      const data = await this.apiGet<{ data: MegapotTicket[] }>(path);
+      const tickets = data.data ?? [];
       const ticketNumbers: { main: number[]; bonus: number }[] = [];
 
       for (const t of tickets) {

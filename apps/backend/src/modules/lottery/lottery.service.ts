@@ -1,6 +1,7 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
-import { Keypair, PublicKey, Connection, Transaction } from '@solana/web3.js';
+import { Keypair, PublicKey, Connection, Transaction, VersionedTransaction } from '@solana/web3.js';
 import {
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
@@ -15,6 +16,7 @@ import { NearIntentsService } from '../intents/near-intents.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
 import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI } from './megapot.service';
 import { RhinestoneService } from './rhinestone.service';
+import { LifiService } from './lifi.service';
 import { requestMagicblockPrivateTransfer, grossUpForMagicblockFee, MAGICBLOCK_GAS_USDC } from '@/common/magicblock-private-transfer';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
@@ -86,7 +88,7 @@ export interface InitiatePurchaseResult {
   feeBreakdown: {
     ticketCostUsdc: number;
     magicblockFeeUsdc: number;
-    nearIntentsFeeUsdc: number;
+    lifiBridgeFeeUsdc: number;
     totalUsdc: number;
   };
 }
@@ -143,6 +145,7 @@ export class LotteryService {
     private readonly enc: SendPaymentEncryptionService,
     private readonly megapot: MegapotService,
     private readonly rhinestone: RhinestoneService,
+    private readonly lifi: LifiService,
   ) {}
 
   // ─── Purchase initiation ───────────────────────────────────────────────────
@@ -168,14 +171,14 @@ export class LotteryService {
     const burnerKeyEnc = this.enc.encrypt(Buffer.from(burnerKeypair.secretKey), burnerAddress);
 
     const costUsdc = numTickets * TICKET_PRICE_USDC;
-    // Gross up for NEAR Intents bridge fee (~0.2%) so companion receives full cost_usdc after bridging.
+    // Gross up 1% for Li.Fi bridge fee (actual fee ~0.3–0.8% depending on route/liquidity).
     // Then gross up the bridged amount for MagicBlock's 10 BPS + gas so the burner receives the bridged amount.
-    const NEAR_INTENTS_FEE_BPS = 20; // 0.2% buffer — observed fee is ~0.16%
-    const bridgeUnits = Math.ceil(costUsdc * 1_000_000 * 10_000 / (10_000 - NEAR_INTENTS_FEE_BPS));
+    const LIFI_FEE_BPS = 100; // 1% buffer
+    const bridgeUnits = Math.ceil(costUsdc * 1_000_000 * 10_000 / (10_000 - LIFI_FEE_BPS));
     const grossAmount = grossUpForMagicblockFee(bridgeUnits); // user sends this; burner receives bridgeUnits
     const magicblockFeeUsdc = parseFloat(((grossAmount - bridgeUnits) / 1_000_000 + MAGICBLOCK_GAS_USDC).toFixed(6));
-    const nearIntentsFeeUsdc = parseFloat(((bridgeUnits - costUsdc * 1_000_000) / 1_000_000).toFixed(6));
-    const totalUsdc = costUsdc + magicblockFeeUsdc + nearIntentsFeeUsdc;
+    const lifiBridgeFeeUsdc = parseFloat(((bridgeUnits - costUsdc * 1_000_000) / 1_000_000).toFixed(6));
+    const totalUsdc = costUsdc + magicblockFeeUsdc + lifiBridgeFeeUsdc;
 
     // 4. Build MagicBlock private transfer: user → burner
     const cluster = this.getSolanaCluster();
@@ -223,7 +226,7 @@ export class LotteryService {
       ticketId: ticket.id,
       txBase64: txResponse.transactionBase64,
       requiredSigners: txResponse.requiredSigners,
-      feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, nearIntentsFeeUsdc, totalUsdc },
+      feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, lifiBridgeFeeUsdc, totalUsdc },
     };
   }
 
@@ -342,45 +345,35 @@ export class LotteryService {
       return;
     }
 
-    // NEAR Intents: USDC (Solana) → USDC (Base) → companion (no app fee so companion gets exact cost_usdc)
-    const [solUsdcId, baseUsdcId] = await Promise.all([
-      this.nearIntents.getDefuseAssetId('USDC', 'solana'),
-      this.nearIntents.getDefuseAssetId('USDC', 'base'),
-    ]);
-
-    // Quote for the full burner balance (includes NEAR Intents fee buffer), not just cost_usdc.
-    const amountIn = (Number(burnerBalance) / 1_000_000).toString();
-    const quote = await this.nearIntents.getDepositQuote({
-      fromToken: { tokenId: solUsdcId, chain: 'solana', symbol: 'USDC', decimals: 6 },
-      toToken: { tokenId: baseUsdcId, chain: 'base', symbol: 'USDC', decimals: 6 },
-      amountIn,
-      skipAppFees: true,
-      recipient: ticket.companion_address,
-      refundAddress: ticket.burner_sol_address,
+    // Li.Fi: Solana USDC (burner) → Base USDC (companion)
+    const amountUsdc = Number(burnerBalance) / 1_000_000;
+    const quote = await this.lifi.getSolToBaseQuote({
+      fromAddress: ticket.burner_sol_address,
+      toAddress: ticket.companion_address,
+      amountUsdc,
     });
 
-    if (!quote.depositAddress) {
-      this.logger.warn(`Ticket ${ticket.id}: NEAR Intents quote failed`);
-      return;
-    }
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
 
-    // Send USDC from burner to NEAR Intents deposit address
     const burnerKey = this.decryptKey(ticket.burner_sol_key_enc, ticket.burner_sol_address);
-    const burnerKeypair = Keypair.fromSecretKey(burnerKey);
-    await this.sendUsdcFromBurner(burnerKeypair, quote.depositAddress, burnerBalance);
+    const lifiTxHash = await this.lifi.executeSolanaQuote({
+      burnerSecretKey: burnerKey,
+      quote,
+      feePayerSecretKey: feePayerKey,
+    });
 
     const db = this.supabase.getClient();
     await db.from('lottery_tickets').update({
       status: 'bridging',
-      bridge_deposit_address: quote.depositAddress,
-      bridge_memo: quote.memo,
-      bridge_quote_id: quote.quoteId,
+      bridge_deposit_address: lifiTxHash, // repurpose: stores Li.Fi tx hash for SOL→Base
       bridge_status: 'pending',
-      bridge_expires_at: quote.deadline ?? null,
+      lifi_buy_tx_hash: lifiTxHash,
+      lifi_buy_tool: quote.tool,
       updated_at: new Date().toISOString(),
     }).eq('id', ticket.id);
 
-    this.logger.log(`Ticket ${ticket.id}: bridge started → deposit ${quote.depositAddress}`);
+    this.logger.log(`Ticket ${ticket.id}: Li.Fi bridge ${quote.tool} started, tx=${lifiTxHash}`);
   }
 
   /** Process all tickets in 'bridging' or stuck 'buying' status: check bridge + buy */
@@ -404,72 +397,87 @@ export class LotteryService {
   private async tryBuyTickets(ticket: any): Promise<void> {
     const db = this.supabase.getClient();
 
-    // If already in 'buying' (retry after Rhinestone failure) skip NEAR Intents check
+    // If already in 'buying' (retry after Rhinestone failure) skip bridge status check
     if (ticket.status !== 'buying') {
-      if (!ticket.bridge_deposit_address) {
-        this.logger.warn(`Ticket ${ticket.id}: no deposit address to poll`);
-        return;
-      }
+      if (ticket.lifi_buy_tx_hash) {
+        // New flow: Li.Fi bridge (SOL → Base)
+        const lifiStatus = await this.lifi.getStatus(ticket.lifi_buy_tx_hash, ticket.lifi_buy_tool, 'sol_to_base');
+        this.logger.log(`Ticket ${ticket.id}: Li.Fi buy status=${lifiStatus} tx=${ticket.lifi_buy_tx_hash}`);
 
-      // Fast path: check Solana RPC directly — much faster than waiting for NEAR Intents
-      if (ticket.status === 'pending_send') {
-        const solBalance = await this.checkSolanaUsdcDeposit(ticket.bridge_deposit_address).catch(() => 0);
-        if (solBalance > 0) {
-          this.logger.log(`Ticket ${ticket.id}: Solana RPC detected ${solBalance} USDC at deposit — fast transition to bridging`);
+        if (lifiStatus === 'FAILED') {
           await db.from('lottery_tickets').update({
-            status: 'bridging',
-            bridge_status: 'DEPOSITED',
+            status: 'failed',
+            bridge_status: 'FAILED',
             updated_at: new Date().toISOString(),
           }).eq('id', ticket.id);
-          ticket.status = 'bridging';
+          return;
         }
-      }
+        if (lifiStatus !== 'DONE') return; // still in flight
 
-      const nearStatus = await this.nearIntents.getExecutionStatus(ticket.bridge_deposit_address);
-      const s = String((nearStatus as any)?.status ?? (nearStatus as any)?.Status ?? '').toUpperCase();
-      this.logger.log(`Ticket ${ticket.id}: NEAR Intents status = ${s} | deposit = ${ticket.bridge_deposit_address}`);
-
-      const isDone = ['SUCCESS', 'COMPLETED'].includes(s);
-      const isFailed = ['REFUNDED', 'EXPIRED', 'FAILED', 'CANCELLED', 'INCOMPLETE_DEPOSIT'].includes(s);
-      const isInFlight = ['DEPOSITED', 'PROCESSING', 'SWAPPED'].includes(s);
-
-      if (isFailed) {
         await db.from('lottery_tickets').update({
-          status: 'failed',
-          bridge_status: s,
+          bridge_status: 'DONE',
+          status: 'buying',
           updated_at: new Date().toISOString(),
         }).eq('id', ticket.id);
-        this.logger.warn(`Ticket ${ticket.id}: bridge ${s} — marked failed`);
-        return;
-      }
+        this.logger.log(`Ticket ${ticket.id}: Li.Fi buy bridge DONE → buying`);
+      } else {
+        // Legacy flow: NEAR Intents bridge
+        if (!ticket.bridge_deposit_address) {
+          this.logger.warn(`Ticket ${ticket.id}: no deposit address to poll`);
+          return;
+        }
 
-      // If NEAR Intents never transitions PENDING_DEPOSIT → EXPIRED (abandoned quotes),
-      // fall back to local expiry check so stale tickets don't poll forever.
-      if (s === 'PENDING_DEPOSIT' && ticket.bridge_expires_at && new Date(ticket.bridge_expires_at) < new Date()) {
-        await db.from('lottery_tickets').update({
-          status: 'failed',
-          bridge_status: 'EXPIRED',
-          updated_at: new Date().toISOString(),
-        }).eq('id', ticket.id);
-        this.logger.warn(`Ticket ${ticket.id}: deposit window expired (local) — marked failed`);
-        return;
-      }
+        // Fast path: check Solana RPC directly — much faster than NEAR Intents polling
+        if (ticket.status === 'pending_send') {
+          const solBalance = await this.checkSolanaUsdcDeposit(ticket.bridge_deposit_address).catch(() => 0);
+          if (solBalance > 0) {
+            this.logger.log(`Ticket ${ticket.id}: Solana RPC detected ${solBalance} USDC at deposit — fast transition to bridging`);
+            await db.from('lottery_tickets').update({
+              status: 'bridging',
+              bridge_status: 'DEPOSITED',
+              updated_at: new Date().toISOString(),
+            }).eq('id', ticket.id);
+            ticket.status = 'bridging';
+          }
+        }
 
-      if (!isDone) {
-        // If public ticket shows deposit was received, move from pending_send → bridging
-        if (ticket.status === 'pending_send' && isInFlight) {
+        const nearStatus = await this.nearIntents.getExecutionStatus(ticket.bridge_deposit_address);
+        const s = String((nearStatus as any)?.status ?? (nearStatus as any)?.Status ?? '').toUpperCase();
+        this.logger.log(`Ticket ${ticket.id}: NEAR Intents status = ${s} | deposit = ${ticket.bridge_deposit_address}`);
+
+        const isDone = ['SUCCESS', 'COMPLETED'].includes(s);
+        const isFailed = ['REFUNDED', 'EXPIRED', 'FAILED', 'CANCELLED', 'INCOMPLETE_DEPOSIT'].includes(s);
+        const isInFlight = ['DEPOSITED', 'PROCESSING', 'SWAPPED'].includes(s);
+
+        if (isFailed) {
           await db.from('lottery_tickets').update({
-            status: 'bridging',
-            bridge_status: s,
-            updated_at: new Date().toISOString(),
+            status: 'failed', bridge_status: s, updated_at: new Date().toISOString(),
           }).eq('id', ticket.id);
-          this.logger.log(`Ticket ${ticket.id}: deposit received (${s}), moved to bridging`);
+          this.logger.warn(`Ticket ${ticket.id}: bridge ${s} — marked failed`);
+          return;
         }
-        return;
-      }
 
-      await db.from('lottery_tickets').update({ bridge_status: s, status: 'buying', updated_at: new Date().toISOString() }).eq('id', ticket.id);
-      this.logger.log(`Ticket ${ticket.id}: bridge complete (${s}), moving to buying`);
+        if (s === 'PENDING_DEPOSIT' && ticket.bridge_expires_at && new Date(ticket.bridge_expires_at) < new Date()) {
+          await db.from('lottery_tickets').update({
+            status: 'failed', bridge_status: 'EXPIRED', updated_at: new Date().toISOString(),
+          }).eq('id', ticket.id);
+          this.logger.warn(`Ticket ${ticket.id}: deposit window expired — marked failed`);
+          return;
+        }
+
+        if (!isDone) {
+          if (ticket.status === 'pending_send' && isInFlight) {
+            await db.from('lottery_tickets').update({
+              status: 'bridging', bridge_status: s, updated_at: new Date().toISOString(),
+            }).eq('id', ticket.id);
+            this.logger.log(`Ticket ${ticket.id}: deposit received (${s}), moved to bridging`);
+          }
+          return;
+        }
+
+        await db.from('lottery_tickets').update({ bridge_status: s, status: 'buying', updated_at: new Date().toISOString() }).eq('id', ticket.id);
+        this.logger.log(`Ticket ${ticket.id}: NEAR Intents complete (${s}), moving to buying`);
+      }
     }
 
     const companionKey = this.decryptKey(ticket.companion_key_enc, ticket.companion_address);
@@ -517,8 +525,8 @@ export class LotteryService {
     this.logger.log(`Ticket ${ticket.id}: private companion ${ticket.companion_address} USDC=${usdcBalance ?? '?'}`);
 
     const usdcNeeded = ticket.num_tickets * TICKET_PRICE_USDC;
-    // Allow up to 0.01 USDC shortfall from NEAR Intents bridge protocol fees
-    if (usdcBalance === null || usdcBalance < usdcNeeded - 0.01) {
+    // Allow up to 0.15 USDC shortfall — Li.Fi fees can be ~0.3–1% and may exceed NEAR Intents' 0.01 tolerance
+    if (usdcBalance === null || usdcBalance < usdcNeeded - 0.15) {
       this.logger.warn(`Ticket ${ticket.id}: companion has ${usdcBalance} USDC, need ${usdcNeeded} — waiting for bridge to settle`);
       return;
     }
@@ -625,16 +633,17 @@ export class LotteryService {
     const db = this.supabase.getClient();
     const { data: ticket } = await db
       .from('lottery_tickets')
-      .select('id, companion_address, round_id, status, ticket_numbers, ticket_nft_ids')
+      .select('id, companion_address, round_id, status, ticket_numbers, ticket_nft_ids, num_tickets')
       .eq('id', ticketId)
       .eq('user_id', userId)
       .single();
 
     if (!ticket?.companion_address) return { ok: false, count: 0 };
 
-    // Return early if already stored
-    if (Array.isArray(ticket.ticket_numbers) && ticket.ticket_numbers.length > 0) {
-      return { ok: true, count: ticket.ticket_numbers.length };
+    // Return early only when ALL ticket numbers are stored; re-fetch if count < num_tickets
+    const storedCount = Array.isArray(ticket.ticket_numbers) ? ticket.ticket_numbers.length : 0;
+    if (storedCount > 0 && storedCount >= ticket.num_tickets) {
+      return { ok: true, count: storedCount };
     }
 
     // Try Megapot API first (no RPC, fastest path)
@@ -661,14 +670,18 @@ export class LotteryService {
     this.logger.log(`syncTicketNumbers ${ticketId}: found ${ticketNumbers.length} NFT numbers on-chain, tokenIds=${tokenIds.slice(0, 3).join(',')}`);
 
     if (ticketNumbers.length > 0) {
+      // Merge: if new scan has more tickets than stored, use the larger set
+      const merged = ticketNumbers.length >= storedCount ? ticketNumbers : (ticket.ticket_numbers ?? ticketNumbers);
+      const mergedIds = ticketNumbers.length >= storedCount ? tokenIds : (ticket.ticket_nft_ids ?? tokenIds);
       await db.from('lottery_tickets').update({
-        ticket_numbers: ticketNumbers,
-        ticket_nft_ids: tokenIds,
+        ticket_numbers: merged,
+        ticket_nft_ids: mergedIds,
         updated_at: new Date().toISOString(),
       }).eq('id', ticketId);
+      this.logger.log(`syncTicketNumbers ${ticketId}: stored ${merged.length} numbers (was ${storedCount}, scan returned ${ticketNumbers.length})`);
     }
 
-    return { ok: true, count: ticketNumbers.length };
+    return { ok: true, count: Math.max(ticketNumbers.length, storedCount) };
   }
 
   async rescueCompanionFunds(ticketId: string, userId: string): Promise<{ ok: boolean }> {
@@ -1036,7 +1049,9 @@ export class LotteryService {
 
         // Read on-chain NFT metadata to check Tier + Win Amount post-draw
         const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
-        const totalWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
+        const grossWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
+        const claimFactor = await this.megapot.getWinClaimFactor(ticket.round_id);
+        const totalWinUsdc = parseFloat((grossWinUsdc * claimFactor).toFixed(6));
         const topWin = results.find(r => r.winAmountUsdc > 0);
 
         if (totalWinUsdc > 0) {
@@ -1047,7 +1062,7 @@ export class LotteryService {
             ...(winningNumbers ? { winning_numbers: winningNumbers } : {}),
             updated_at: new Date().toISOString(),
           }).eq('id', ticket.id);
-          this.logger.log(`Ticket ${ticket.id}: WON $${totalWinUsdc} (tier ${topWin?.tier})`);
+          this.logger.log(`Ticket ${ticket.id}: WON $${grossWinUsdc} gross → $${totalWinUsdc} net (tier ${topWin?.tier}, claimFactor=${claimFactor})`);
         } else {
           await db.from('lottery_tickets').update({
             status: 'lost',
@@ -1090,7 +1105,14 @@ export class LotteryService {
     }
     if (ticket.status !== 'active') throw new BadRequestException('Ticket is not active');
     if (!ticket.draw_time || new Date(ticket.draw_time) > new Date()) {
-      throw new BadRequestException('Draw has not happened yet');
+      // draw_time missing or future — check via Megapot API using roundId
+      if (!ticket.round_id) throw new BadRequestException('Draw has not happened yet');
+      let round: any;
+      try { round = await this.megapot.getRound(ticket.round_id); } catch { round = null; }
+      const roundDt = round?.drawTime ? new Date(round.drawTime) : null;
+      if (!roundDt || roundDt > new Date()) throw new BadRequestException('Draw has not happened yet');
+      // Round has drawn — persist the recovered draw_time so future calls are instant
+      await db.from('lottery_tickets').update({ draw_time: round.drawTime, updated_at: new Date().toISOString() }).eq('id', ticketId);
     }
 
     // Get or fetch NFT IDs
@@ -1114,6 +1136,27 @@ export class LotteryService {
     }
 
     if (!tokenIds.length) {
+      // NFT scan found nothing — try the Data API wins endpoint as a last resort
+      if (ticket.companion_address && ticket.round_id) {
+        const apiWin = await this.megapot.getWalletWinsForRound(
+          ticket.companion_address as Address,
+          ticket.round_id,
+        );
+        if (apiWin) {
+          const winningNumbers = await this.megapot.getWinningNumbersForRound(ticket.round_id);
+          const apiClaimFactor = await this.megapot.getWinClaimFactor(ticket.round_id);
+          const netApiWin = parseFloat((apiWin.winAmountUsdc * apiClaimFactor).toFixed(6));
+          await db.from('lottery_tickets').update({
+            status: 'won',
+            win_amount_usdc: netApiWin,
+            win_tier: apiWin.tier,
+            ...(winningNumbers ? { winning_numbers: winningNumbers } : {}),
+            updated_at: new Date().toISOString(),
+          }).eq('id', ticketId);
+          this.logger.log(`checkTicketResult ${ticketId}: WON $${apiWin.winAmountUsdc} gross → $${netApiWin} net (Data API, claimFactor=${apiClaimFactor})`);
+          return { status: 'won', winAmountUsdc: netApiWin, winTier: apiWin.tier, winningNumbers: winningNumbers ?? null, ticketNumbers: ticket.ticket_numbers ?? null };
+        }
+      }
       await db.from('lottery_tickets').update({ status: 'lost', updated_at: new Date().toISOString() }).eq('id', ticketId);
       return { status: 'lost', winAmountUsdc: null, winTier: null, winningNumbers: null, ticketNumbers: ticket.ticket_numbers ?? null };
     }
@@ -1124,7 +1167,9 @@ export class LotteryService {
       : null;
 
     const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
-    const totalWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
+    const grossWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
+    const nftClaimFactor = await this.megapot.getWinClaimFactor(ticket.round_id ?? '0');
+    const totalWinUsdc = parseFloat((grossWinUsdc * nftClaimFactor).toFixed(6));
     const topWin = results.find(r => r.winAmountUsdc > 0);
 
     if (totalWinUsdc > 0) {
@@ -1135,7 +1180,7 @@ export class LotteryService {
         ...(winningNumbers ? { winning_numbers: winningNumbers } : {}),
         updated_at: new Date().toISOString(),
       }).eq('id', ticketId);
-      this.logger.log(`checkTicketResult ${ticketId}: WON $${totalWinUsdc} (tier ${topWin?.tier})`);
+      this.logger.log(`checkTicketResult ${ticketId}: WON $${grossWinUsdc} gross → $${totalWinUsdc} net (tier ${topWin?.tier}, claimFactor=${nftClaimFactor})`);
       return { status: 'won', winAmountUsdc: totalWinUsdc, winTier: topWin?.tier ?? null, winningNumbers: winningNumbers ?? null, ticketNumbers: ticket.ticket_numbers ?? null };
     } else {
       await db.from('lottery_tickets').update({
@@ -1150,12 +1195,23 @@ export class LotteryService {
 
   // ─── Withdrawals ───────────────────────────────────────────────────────────
 
+  /** Single-ticket withdrawal (base or private). Private route delegates to initiateWithdrawalBatch. */
   async initiateWithdrawal(opts: {
     ticketId: string;
     userId: string;
     route: 'base' | 'solana_private';
     destinationAddress: string;
   }): Promise<{ withdrawalId: string }> {
+    if (opts.route === 'solana_private') {
+      const { withdrawalIds } = await this.initiateWithdrawalBatch({
+        ticketIds: [opts.ticketId],
+        userId: opts.userId,
+        destinationAddress: opts.destinationAddress,
+      });
+      return { withdrawalId: withdrawalIds[0] };
+    }
+
+    // Base route: direct USDC transfer on-chain (unchanged)
     const db = this.supabase.getClient();
     const { data: ticket, error: tErr } = await db
       .from('lottery_tickets')
@@ -1173,7 +1229,7 @@ export class LotteryService {
       .insert({
         user_id: opts.userId,
         ticket_id: opts.ticketId,
-        route: opts.route,
+        route: 'base',
         destination_address: opts.destinationAddress,
         amount_usdc: ticket.win_amount_usdc,
         status: 'pending',
@@ -1183,7 +1239,6 @@ export class LotteryService {
 
     if (wErr || !withdrawal) throw new Error(`Failed to create withdrawal: ${wErr?.message}`);
 
-    // Process immediately
     this.processWithdrawal(withdrawal.id, ticket).catch(e =>
       this.logger.error(`Withdrawal ${withdrawal.id} failed: ${e.message}`),
     );
@@ -1191,38 +1246,167 @@ export class LotteryService {
     return { withdrawalId: withdrawal.id };
   }
 
+  /**
+   * Batch private withdrawal: multiple companion wallets → one shared burner → single MagicBlock.
+   * Works for single tickets too (batch of 1).
+   */
+  async initiateWithdrawalBatch(opts: {
+    ticketIds: string[];
+    userId: string;
+    destinationAddress: string;
+  }): Promise<{ withdrawalIds: string[]; batchId: string }> {
+    if (!opts.ticketIds.length) throw new BadRequestException('No ticket IDs provided');
+    const db = this.supabase.getClient();
+
+    const { data: tickets, error: tErr } = await db
+      .from('lottery_tickets')
+      .select('*')
+      .in('id', opts.ticketIds)
+      .eq('user_id', opts.userId)
+      .eq('status', 'won');
+
+    if (tErr || !tickets?.length) {
+      // Check if all these tickets are already withdrawn — return gracefully if so
+      const { data: alreadyWithdrawn } = await db
+        .from('lottery_tickets')
+        .select('id, status')
+        .in('id', opts.ticketIds)
+        .eq('user_id', opts.userId)
+        .eq('status', 'withdrawn');
+      if (alreadyWithdrawn?.length === opts.ticketIds.length) {
+        throw new BadRequestException('Winnings already withdrawn');
+      }
+      throw new BadRequestException('No eligible won tickets found');
+    }
+
+    for (const t of tickets) {
+      if (!t.win_amount_usdc || parseFloat(t.win_amount_usdc) <= 0) {
+        throw new BadRequestException(`Ticket ${t.id} has no winnings to withdraw`);
+      }
+    }
+
+    // One shared burner Solana wallet for the entire batch
+    const burner = Keypair.generate();
+    const burnerAddress = burner.publicKey.toBase58();
+    const burnerKeyEnc = this.enc.encrypt(Buffer.from(burner.secretKey), burnerAddress);
+    const batchId = randomUUID();
+
+    const insertData = tickets.map(t => ({
+      user_id: opts.userId,
+      ticket_id: t.id,
+      batch_id: batchId,
+      route: 'solana_private' as const,
+      destination_address: opts.destinationAddress,
+      amount_usdc: parseFloat(t.win_amount_usdc),
+      status: 'pending',
+      withdrawal_burner_sol_address: burnerAddress,
+      withdrawal_burner_sol_key_enc: burnerKeyEnc,
+    }));
+
+    const { data: withdrawals, error: wErr } = await db
+      .from('lottery_withdrawals')
+      .insert(insertData)
+      .select('id, ticket_id');
+
+    if (wErr || !withdrawals?.length) throw new Error(`Failed to create batch withdrawals: ${wErr?.message}`);
+
+    // Claim + bridge each companion wallet in parallel
+    for (const w of withdrawals) {
+      const ticket = tickets.find(t => t.id === w.ticket_id);
+      if (ticket) {
+        this.processWithdrawal(w.id, ticket).catch(e =>
+          this.logger.error(`Batch withdrawal ${w.id}: ${e.message}`),
+        );
+      }
+    }
+
+    this.logger.log(`Batch withdrawal ${batchId}: ${tickets.length} tickets → burner ${burnerAddress}`);
+    return { withdrawalIds: withdrawals.map(w => w.id), batchId };
+  }
+
   async processWithdrawal(withdrawalId: string, ticket: any): Promise<void> {
     const db = this.supabase.getClient();
     const { data: withdrawal } = await db.from('lottery_withdrawals').select('*').eq('id', withdrawalId).single();
     if (!withdrawal) return;
 
+    const W = `[Withdrawal ${withdrawalId.slice(0, 8)}]`;
     const companionKey = this.decryptKey(ticket.companion_key_enc, ticket.companion_address);
     const companionPrivHex = `0x${companionKey.toString('hex')}`;
 
     try {
-      // First: claim winnings on Megapot (USDC lands in companion)
+      // ── Step 1: claimWinnings ──────────────────────────────────────────────
       if (!ticket.claim_tx_hash) {
-        const claimTx = await this.megapot.claimWinnings({
-          companionPrivateKey: companionPrivHex,
-          ticketNftIds: (ticket.ticket_nft_ids ?? []).map(BigInt),
-        });
-        await db.from('lottery_tickets').update({ claim_tx_hash: claimTx, updated_at: new Date().toISOString() }).eq('id', ticket.id);
+        const eoaAddress = privateKeyToAccount(companionPrivHex as `0x${string}`).address;
+
+        // Guard: if USDC is already at the companion (smart account or EOA), a prior
+        // claimWinnings call succeeded but the DB write was lost (e.g. a crash). Skip
+        // the claim entirely so we don't hit TokenDoesNotExist on a burned NFT.
+        const [preSmartUsdc, preEoaUsdc] = await Promise.all([
+          this.getCompanionUsdcBalance(ticket.companion_address).catch(() => 0),
+          this.getCompanionUsdcBalance(eoaAddress).catch(() => 0),
+        ]);
+        const preTotalUsdc = preSmartUsdc + preEoaUsdc;
+
+        if (preTotalUsdc >= withdrawal.amount_usdc - 0.15) {
+          this.logger.log(`${W} step 1/3 skip — USDC already at companion (${preTotalUsdc.toFixed(6)} USDC), claim already happened on-chain`);
+          await db.from('lottery_tickets').update({ claim_tx_hash: 'already_claimed', updated_at: new Date().toISOString() }).eq('id', ticket.id);
+        } else {
+          const allNftIds: string[] = ticket.ticket_nft_ids ?? [];
+
+          // From a batch purchase only the WINNING NFTs can be passed to claimWinnings.
+          // Passing losing NFT IDs causes Megapot to revert (TokenDoesNotExist).
+          this.logger.log(`${W} step 1/3 — checking ${allNftIds.length} NFT IDs for winners`);
+          const nftResults = await this.megapot.checkTicketResultsFromNft(allNftIds);
+          const winningNftIds = nftResults
+            .filter(r => r.winAmountUsdc > 0)
+            .map(r => BigInt(r.tokenId));
+
+          if (winningNftIds.length === 0) {
+            throw new Error(`No winning NFT IDs found among ${allNftIds.length} ticket NFTs — check ticket status`);
+          }
+          this.logger.log(`${W} step 1/3 — ${winningNftIds.length}/${allNftIds.length} NFTs are winners → claimWinnings`);
+
+          let claimTx: string;
+          try {
+            this.logger.log(`${W} step 1/3 — attempting Rhinestone sponsored claim (smart account=${ticket.companion_address})`);
+            claimTx = await this.rhinestone.claimWinnings({
+              companionPrivateKey: companionPrivHex as `0x${string}`,
+              ticketNftIds: winningNftIds,
+            });
+            this.logger.log(`${W} step 1/3 done — Rhinestone claim ok, claimTx=${claimTx}`);
+          } catch (rhinestoneErr: any) {
+            // Fall back: EOA direct call (needs BASE_FUNDER_PRIVATE_KEY for gas)
+            this.logger.warn(`${W} step 1/3 — Rhinestone failed (${rhinestoneErr.message?.slice(0, 120)}), falling back to EOA ${eoaAddress}`);
+            await this.megapot.ensureGas(eoaAddress);
+            claimTx = await this.megapot.claimWinnings({
+              companionPrivateKey: companionPrivHex,
+              ticketNftIds: winningNftIds,
+            });
+            this.logger.log(`${W} step 1/3 done — EOA claim ok, claimTx=${claimTx} (USDC at EOA ${eoaAddress})`);
+          }
+
+          await db.from('lottery_tickets').update({ claim_tx_hash: claimTx, updated_at: new Date().toISOString() }).eq('id', ticket.id);
+        }
+      } else {
+        this.logger.log(`${W} step 1/3 skip — already claimed (${ticket.claim_tx_hash.slice(0, 16)}…)`);
       }
 
       await db.from('lottery_withdrawals').update({ status: 'processing', updated_at: new Date().toISOString() }).eq('id', withdrawalId);
 
+      // ── Step 2: bridge ────────────────────────────────────────────────────
       if (withdrawal.route === 'base') {
-        // Direct Base USDC transfer (free)
+        this.logger.log(`${W} step 2/3 — transfer ${withdrawal.amount_usdc} USDC directly on Base to ${withdrawal.destination_address}`);
         const tx = await this.megapot.transferUsdcOnBase({
           companionPrivateKey: companionPrivHex,
           to: withdrawal.destination_address as Address,
           amountUsdc: withdrawal.amount_usdc,
         });
         await db.from('lottery_withdrawals').update({ status: 'complete', base_tx_hash: tx, updated_at: new Date().toISOString() }).eq('id', withdrawalId);
-        this.logger.log(`Withdrawal ${withdrawalId}: sent to Base ${withdrawal.destination_address}, tx: ${tx}`);
+        this.logger.log(`${W} complete — ${withdrawal.amount_usdc} USDC on Base, tx=${tx}`);
       } else {
-        // Private: NEAR Intents Base→Solana → fresh burner → MagicBlock → user Loofta balance
-        await this.processPrivateSolanaWithdrawal(withdrawalId, withdrawal, companionPrivHex, ticket);
+        this.logger.log(`${W} step 2/3 — starting Li.Fi bridge (Base→SOL) for ${withdrawal.amount_usdc} USDC`);
+        await this.processLifiWithdrawal(withdrawalId, withdrawal, companionPrivHex, ticket);
+        // step 3 (MagicBlock) fires in checkLifiWithdrawal when bridge confirms
       }
     } catch (err: any) {
       await db.from('lottery_withdrawals').update({
@@ -1230,126 +1414,306 @@ export class LotteryService {
         error_message: err.message,
         updated_at: new Date().toISOString(),
       }).eq('id', withdrawalId);
-      this.logger.error(`Withdrawal ${withdrawalId}: ${err.message}`);
+      this.logger.error(`${W} FAILED: ${err.message}`);
     }
   }
 
-  private async processPrivateSolanaWithdrawal(
+  /** Li.Fi bridge: Base USDC (companion) → Solana USDC (shared burner). */
+  private async processLifiWithdrawal(
     withdrawalId: string,
     withdrawal: any,
     companionPrivHex: string,
     ticket: any,
   ): Promise<void> {
     const db = this.supabase.getClient();
+    const W = `[Withdrawal ${withdrawalId.slice(0, 8)}]`;
+    const burnerAddress = withdrawal.withdrawal_burner_sol_address as string;
+    if (!burnerAddress) throw new Error('Batch burner address not set on withdrawal record');
 
-    // Fresh burner Solana wallet for withdrawal (breaks link)
-    const withdrawalBurner = Keypair.generate();
-    const withdrawalBurnerAddress = withdrawalBurner.publicKey.toBase58();
-    const withdrawalBurnerKeyEnc = this.enc.encrypt(Buffer.from(withdrawalBurner.secretKey), withdrawalBurnerAddress);
+    // Determine where the USDC actually is after claimWinnings.
+    // If Rhinestone claim succeeded → USDC is at smart account (companion_address).
+    // If EOA fallback was used → USDC is at the EOA.
+    const eoaAddress = privateKeyToAccount(companionPrivHex as `0x${string}`).address;
+    const [smartAcctUsdc, eoaUsdc] = await Promise.all([
+      this.getCompanionUsdcBalance(ticket.companion_address).catch(() => null),
+      this.getCompanionUsdcBalance(eoaAddress).catch(() => null),
+    ]);
+    this.logger.log(`${W} Li.Fi: USDC check — smartAcct=${ticket.companion_address}:${smartAcctUsdc ?? '?'} | EOA=${eoaAddress}:${eoaUsdc ?? '?'}`);
 
-    // NEAR Intents: USDC Base → USDC Solana → fresh burner
-    const quote = await this.nearIntents.getDepositQuote({
-      fromToken: { tokenId: NEAR_ASSET_BASE_USDC, chain: NEAR_ASSET_BASE_USDC_CHAIN, symbol: 'USDC', decimals: 6 },
-      toToken: { tokenId: NEAR_ASSET_SOL_USDC, chain: NEAR_ASSET_SOL_USDC_CHAIN, symbol: 'USDC', decimals: 6 },
-      amountIn: withdrawal.amount_usdc.toString(),
-      recipient: withdrawalBurnerAddress,
-      refundAddress: ticket.companion_address,
+    const useEoa = (eoaUsdc ?? 0) >= withdrawal.amount_usdc - 0.15 &&
+                  (smartAcctUsdc ?? 0) < withdrawal.amount_usdc - 0.15;
+    const fromAddress = useEoa ? eoaAddress : ticket.companion_address as string;
+
+    // Use actual on-chain balance, not the recorded win amount — they can differ because:
+    // 1. NFT metadata "Win Amount" is gross; Megapot applies a ~10% protocol fee on payout
+    // 2. Small USDC leftover from the buy buffer may already be at the companion
+    const actualUsdc = useEoa ? (eoaUsdc ?? withdrawal.amount_usdc) : (smartAcctUsdc ?? withdrawal.amount_usdc);
+    const bridgeAmount = Math.min(actualUsdc, withdrawal.amount_usdc);
+
+    // Update win_amount_usdc to the actual Megapot payout so the UI shows the correct amount
+    // (NFT metadata can overstate by ~10% due to Megapot's protocol fee)
+    if (bridgeAmount < withdrawal.amount_usdc - 0.05) {
+      await db.from('lottery_tickets')
+        .update({ win_amount_usdc: bridgeAmount, updated_at: new Date().toISOString() })
+        .eq('id', ticket.id);
+      this.logger.log(`${W} updated win_amount_usdc: ${withdrawal.amount_usdc.toFixed(6)} (NFT) → ${bridgeAmount.toFixed(6)} (actual)`);
+    }
+
+    this.logger.log(`${W} Li.Fi: bridging from ${useEoa ? 'EOA' : 'smart account'} (${fromAddress.slice(0, 10)}…) → burner=${burnerAddress.slice(0, 8)}… amount=${bridgeAmount.toFixed(6)} USDC`);
+    const quote = await this.lifi.getBaseToSolQuote({
+      fromAddress,
+      toAddress: burnerAddress,
+      amountUsdc: bridgeAmount,
     });
+    const feeUsd = this.lifi.feeFromQuote(quote);
+    const receiveUsdc = parseFloat(quote.estimate.toAmountMin) / 1_000_000;
+    this.logger.log(`${W} Li.Fi: quote via ${quote.tool} — send ${bridgeAmount.toFixed(6)} USDC, receive min ${receiveUsdc.toFixed(4)} USDC, fee ~$${feeUsd.toFixed(4)}`);
 
-    if (!quote.depositAddress) throw new Error('NEAR Intents bridge quote failed for withdrawal');
-
-    // Companion sends USDC to NEAR Intents deposit address on Base
-    await this.megapot.transferUsdcOnBase({
-      companionPrivateKey: companionPrivHex,
-      to: quote.depositAddress as Address,
-      amountUsdc: withdrawal.amount_usdc,
-    });
+    let txHash: string;
+    if (useEoa) {
+      // EOA owns the USDC — fund gas and execute directly (no Rhinestone)
+      this.logger.log(`${W} Li.Fi: EOA path — ensuring gas then executing directly`);
+      await this.megapot.ensureGas(eoaAddress);
+      txHash = await this.lifi.executeEvmQuote({ companionPrivateKey: companionPrivHex, quote });
+      this.logger.log(`${W} Li.Fi: EOA swap submitted tx=${txHash}`);
+    } else {
+      // Smart account owns the USDC — use Rhinestone sponsored execution
+      this.logger.log(`${W} Li.Fi: smart account path — executing via Rhinestone (sponsored gas)`);
+      txHash = await this.rhinestone.executeLifiSwap({
+        companionPrivateKey: companionPrivHex as `0x${string}`,
+        approvalAddress: quote.estimate.approvalAddress as Address | undefined,
+        fromAmountRaw: BigInt(quote.estimate.fromAmount),
+        swapTo: quote.transactionRequest.to as Address,
+        swapData: quote.transactionRequest.data as `0x${string}`,
+        swapValue: quote.transactionRequest.value ? BigInt(quote.transactionRequest.value) : 0n,
+        toChainAddress: burnerAddress,
+      });
+      this.logger.log(`${W} Li.Fi: Rhinestone swap submitted tx=${txHash}`);
+    }
 
     await db.from('lottery_withdrawals').update({
-      bridge_deposit_address: quote.depositAddress,
+      lifi_tx_hash: txHash,
+      lifi_step_tool: quote.tool,
       bridge_status: 'pending',
-      withdrawal_burner_sol_address: withdrawalBurnerAddress,
-      withdrawal_burner_sol_key_enc: withdrawalBurnerKeyEnc,
       updated_at: new Date().toISOString(),
     }).eq('id', withdrawalId);
 
-    this.logger.log(`Withdrawal ${withdrawalId}: bridge started → burner ${withdrawalBurnerAddress}`);
+    this.logger.log(`${W} Li.Fi bridge submitted — tool=${quote.tool} tx=${txHash} → waiting for DONE (polls every cron tick)`);
   }
 
-  /** Process pending private Solana withdrawals (bridge done → MagicBlock private transfer) */
+  /** Cron: check pending Li.Fi bridges → trigger MagicBlock when done. */
   async processPendingWithdrawals(): Promise<void> {
     const db = this.supabase.getClient();
-    const { data: withdrawals } = await db
+
+    // Li.Fi based withdrawals (new): bridge in-flight
+    const { data: lifiWithdrawals } = await db
       .from('lottery_withdrawals')
-      .select('*, lottery_tickets(*)')
+      .select('*')
       .eq('route', 'solana_private')
       .eq('status', 'processing')
+      .not('lifi_tx_hash', 'is', null)
+      .neq('bridge_status', 'done');
+
+    this.logger.log(`processPendingWithdrawals: ${lifiWithdrawals?.length ?? 0} Li.Fi in-flight`);
+
+    for (const w of lifiWithdrawals ?? []) {
+      await this.checkLifiWithdrawal(w).catch(e =>
+        this.logger.warn(`Withdrawal ${w.id} (Li.Fi): ${e.message}`),
+      );
+    }
+
+    // Retry: bridge done but MagicBlock step not yet complete (e.g. MagicBlock errored last time)
+    const { data: magicblockRetries } = await db
+      .from('lottery_withdrawals')
+      .select('*')
+      .eq('route', 'solana_private')
+      .eq('status', 'processing')
+      .eq('bridge_status', 'done')
+      .is('magicblock_tx_hash', null);
+
+    if (magicblockRetries?.length) {
+      this.logger.log(`processPendingWithdrawals: ${magicblockRetries.length} MagicBlock retries`);
+      for (const w of magicblockRetries) {
+        const retry = async () => {
+          if (w.batch_id) {
+            await this.tryCompleteBatch(w.batch_id, w);
+          } else {
+            await this.doMagicBlockTransfer(w, w.amount_usdc);
+          }
+        };
+        await retry().catch(e => this.logger.warn(`Withdrawal ${w.id} (MagicBlock retry): ${e.message}`));
+      }
+    }
+
+    // Legacy NEAR Intents withdrawals (backward compat for existing records)
+    const { data: nearWithdrawals } = await db
+      .from('lottery_withdrawals')
+      .select('*')
+      .eq('route', 'solana_private')
+      .eq('status', 'processing')
+      .is('lifi_tx_hash', null)
       .not('bridge_deposit_address', 'is', null);
 
-    for (const w of withdrawals ?? []) {
-      await this.tryCompletePrivateWithdrawal(w).catch(e =>
-        this.logger.warn(`Withdrawal ${w.id}: ${e.message}`),
+    for (const w of nearWithdrawals ?? []) {
+      await this.tryCompleteNearWithdrawal(w).catch(e =>
+        this.logger.warn(`Withdrawal ${w.id} (NEAR): ${e.message}`),
       );
     }
   }
 
-  private async tryCompletePrivateWithdrawal(withdrawal: any): Promise<void> {
-    const status = await this.nearIntents.getExecutionStatus(withdrawal.bridge_deposit_address);
-    const s = (status as any)?.status ?? (status as any)?.Status ?? '';
-    if (!['SUCCESS', 'COMPLETED'].includes(String(s).toUpperCase())) return;
-
+  private async checkLifiWithdrawal(withdrawal: any): Promise<void> {
     const db = this.supabase.getClient();
+    const W = `[Withdrawal ${withdrawal.id.slice(0, 8)}]`;
+    const status = await this.lifi.getStatus(withdrawal.lifi_tx_hash, withdrawal.lifi_step_tool, 'base_to_sol');
+    this.logger.log(`${W} Li.Fi bridge status=${status} tool=${withdrawal.lifi_step_tool} tx=${withdrawal.lifi_tx_hash?.slice(0, 16)}…`);
+
+    if (status === 'FAILED') {
+      await db.from('lottery_withdrawals').update({
+        status: 'failed',
+        error_message: 'Li.Fi bridge failed',
+        updated_at: new Date().toISOString(),
+      }).eq('id', withdrawal.id);
+      this.logger.warn(`${W} Li.Fi bridge FAILED — withdrawal marked failed`);
+      return;
+    }
+
+    if (status !== 'DONE') {
+      this.logger.log(`${W} bridge still in flight — will check again next cron tick`);
+      return;
+    }
+
+    this.logger.log(`${W} Li.Fi bridge DONE — USDC should be at burner ${withdrawal.withdrawal_burner_sol_address}`);
+    await db.from('lottery_withdrawals').update({
+      bridge_status: 'done',
+      updated_at: new Date().toISOString(),
+    }).eq('id', withdrawal.id);
+
+    if (withdrawal.batch_id) {
+      this.logger.log(`${W} step 3/3 — checking if all batch bridges done before MagicBlock`);
+      await this.tryCompleteBatch(withdrawal.batch_id, withdrawal);
+    } else {
+      this.logger.log(`${W} step 3/3 — triggering MagicBlock private transfer`);
+      await this.doMagicBlockTransfer(withdrawal, withdrawal.amount_usdc);
+    }
+  }
+
+  private async tryCompleteBatch(batchId: string, anyWithdrawal: any): Promise<void> {
+    const db = this.supabase.getClient();
+    const B = `[Batch ${batchId.slice(0, 8)}]`;
+
+    const { data: allInBatch } = await db
+      .from('lottery_withdrawals')
+      .select('id, bridge_status, amount_usdc, status')
+      .eq('batch_id', batchId);
+
+    if (!allInBatch?.length) return;
+
+    const pending = allInBatch.filter(w => w.bridge_status !== 'done' && w.status !== 'complete');
+    const done = allInBatch.length - pending.length;
+    if (pending.length > 0) {
+      this.logger.log(`${B} ${done}/${allInBatch.length} bridges done — ${pending.length} still pending, waiting`);
+      return;
+    }
+
+    const totalUsdc = allInBatch.reduce((sum, w) => sum + parseFloat(w.amount_usdc ?? '0'), 0);
+    this.logger.log(`${B} ALL bridges done (${allInBatch.length}/${allInBatch.length}) — total=${totalUsdc} USDC → MagicBlock private transfer`);
+    await this.doMagicBlockTransfer(anyWithdrawal, totalUsdc, batchId);
+  }
+
+  /** MagicBlock private transfer from burner → user's Loofta balance. Shared by single and batch. */
+  private async doMagicBlockTransfer(withdrawal: any, amountUsdc: number, batchId?: string): Promise<void> {
+    const db = this.supabase.getClient();
+    const W = batchId ? `[Batch ${batchId.slice(0, 8)}]` : `[Withdrawal ${withdrawal.id.slice(0, 8)}]`;
+
     const burnerBalance = await this.getBurnerUsdcBalance(withdrawal.withdrawal_burner_sol_address);
-    if (burnerBalance === 0n) return;
+    if (burnerBalance === 0n) {
+      this.logger.warn(`${W} step 3/3: burner balance 0 — bridge may still be settling, will retry next cron`);
+      return;
+    }
 
     const burnerKey = this.decryptKey(withdrawal.withdrawal_burner_sol_key_enc, withdrawal.withdrawal_burner_sol_address);
     const burnerKeypair = Keypair.fromSecretKey(burnerKey);
     const cluster = this.getSolanaCluster();
 
-    // MagicBlock private transfer: burner → user's destination (Solana embedded wallet)
-    // gasless: true — burner has 0 SOL (freshly generated), relay fee ($0.20 USDC) is taken
-    // from the burner's USDC balance by MagicBlock's sponsor. We subtract it upfront so the
-    // `amount` field reflects what's available for the transfer (not grossed up — burner has
-    // a fixed balance, not an unlimited sender).
     const relayFeeUnits = Math.round(MAGICBLOCK_GAS_USDC * 1_000_000);
     const transferAmount = Number(burnerBalance) - relayFeeUnits;
-    if (transferAmount <= 0) throw new Error(`Withdrawal burner balance too low to cover relay fee: ${burnerBalance} units`);
 
-    this.logger.log(`Withdrawal ${withdrawal.id}: sending ${transferAmount} units (burner=${burnerBalance}, relay=${relayFeeUnits})`);
+    this.logger.log(`${W} step 3/3 MagicBlock: burner ${withdrawal.withdrawal_burner_sol_address.slice(0, 8)}… balance=${burnerBalance} → transferAmount=${transferAmount} → ${withdrawal.destination_address}`);
 
-    let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
-    try {
-      txResponse = await requestMagicblockPrivateTransfer({
-        from: withdrawal.withdrawal_burner_sol_address,
-        to: withdrawal.destination_address,
-        mint: USDC_MINT.toBase58(),
-        amount: transferAmount,
-        cluster,
-        gasless: true,
-      });
-    } catch (err: any) {
-      if (String(err?.message).includes('delegated to another validator')) {
-        this.logger.warn(`Withdrawal ${withdrawal.id}: burner ATA delegated to another validator — will retry on next cron run`);
-        return;
+    let sig: string;
+
+    // MagicBlock gasless requires ≥5 USDC. For smaller amounts fall back to a direct SPL transfer.
+    const MAGICBLOCK_GASLESS_MIN_UNITS = 5_000_000;
+    const canUseGasless = transferAmount >= MAGICBLOCK_GASLESS_MIN_UNITS;
+
+    if (canUseGasless) {
+      let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
+      try {
+        txResponse = await requestMagicblockPrivateTransfer({
+          from: withdrawal.withdrawal_burner_sol_address,
+          to: withdrawal.destination_address,
+          mint: USDC_MINT.toBase58(),
+          amount: transferAmount,
+          cluster,
+          gasless: true,
+        });
+      } catch (err: any) {
+        if (String(err?.message).includes('delegated to another validator')) {
+          this.logger.warn(`${W} MagicBlock: burner ATA delegated — will retry next cron`);
+          return;
+        }
+        throw err;
       }
-      throw err;
+
+      const txBytes = Buffer.from(txResponse.transactionBase64, 'base64');
+      const conn = await this.getSolanaConnection();
+      // MagicBlock may return a v0 (versioned) or legacy transaction
+      let rawTx: Buffer;
+      try {
+        const vTx = VersionedTransaction.deserialize(txBytes);
+        vTx.sign([burnerKeypair]);
+        rawTx = Buffer.from(vTx.serialize());
+      } catch {
+        const tx = Transaction.from(txBytes);
+        tx.partialSign(burnerKeypair);
+        rawTx = tx.serialize() as Buffer;
+      }
+      sig = await conn.sendRawTransaction(rawTx);
+      this.logger.log(`${W} MagicBlock private tx: ${sig}`);
+    } else {
+      // Amount below MagicBlock minimum ($5) — send directly via SPL transfer (fee payer covers gas)
+      this.logger.log(`${W} balance ${(Number(burnerBalance) / 1e6).toFixed(6)} USDC < MagicBlock gasless minimum, using direct SPL transfer`);
+      sig = await this.sendUsdcFromBurner(burnerKeypair, withdrawal.destination_address, burnerBalance);
     }
 
-    // Auto-sign with burner keypair
-    const txBytes = Buffer.from(txResponse.transactionBase64, 'base64');
-    const tx = Transaction.from(txBytes);
-    const conn = await this.getSolanaConnection();
-    tx.partialSign(burnerKeypair);
+    this.logger.log(`${W} step 3/3 complete: sig=${sig}`);
+    const updateData = { status: 'complete', magicblock_tx_hash: sig, bridge_status: 'done', updated_at: new Date().toISOString() };
+    let ticketIds: string[] = [];
+    if (batchId) {
+      await db.from('lottery_withdrawals').update(updateData).eq('batch_id', batchId);
+      // Collect ticket IDs for the entire batch so we can mark each ticket withdrawn
+      const { data: batchRows } = await db.from('lottery_withdrawals').select('ticket_id').eq('batch_id', batchId);
+      ticketIds = (batchRows ?? []).map((r: any) => r.ticket_id).filter(Boolean);
+    } else {
+      await db.from('lottery_withdrawals').update(updateData).eq('id', withdrawal.id);
+      if (withdrawal.ticket_id) ticketIds = [withdrawal.ticket_id];
+    }
 
-    const sig = await conn.sendRawTransaction(tx.serialize());
-    this.logger.log(`Withdrawal ${withdrawal.id}: MagicBlock private tx ${sig}`);
+    // Mark each associated ticket as withdrawn so it disappears from the redeem UI
+    if (ticketIds.length) {
+      await db.from('lottery_tickets')
+        .update({ status: 'withdrawn', updated_at: new Date().toISOString() })
+        .in('id', ticketIds);
+      this.logger.log(`${W} marked ${ticketIds.length} ticket(s) withdrawn`);
+    }
+  }
 
-    await db.from('lottery_withdrawals').update({
-      status: 'complete',
-      magicblock_tx_hash: sig,
-      bridge_status: s,
-      updated_at: new Date().toISOString(),
-    }).eq('id', withdrawal.id);
+  /** Legacy NEAR Intents completion — kept for existing withdrawal records in DB. */
+  private async tryCompleteNearWithdrawal(withdrawal: any): Promise<void> {
+    const status = await this.nearIntents.getExecutionStatus(withdrawal.bridge_deposit_address);
+    const s = (status as any)?.status ?? (status as any)?.Status ?? '';
+    if (!['SUCCESS', 'COMPLETED'].includes(String(s).toUpperCase())) return;
+    await this.doMagicBlockTransfer(withdrawal, withdrawal.amount_usdc);
   }
 
   // ─── Dashboard ─────────────────────────────────────────────────────────────
@@ -1389,7 +1753,7 @@ export class LotteryService {
     }));
 
     const activeTickets = tickets.filter(t => ['pending_send', 'sent', 'bridging', 'buying', 'active'].includes(t.status));
-    const history = tickets.filter(t => ['won', 'lost', 'failed'].includes(t.status));
+    const history = tickets.filter(t => ['won', 'lost', 'failed', 'withdrawn'].includes(t.status));
 
     const totalSpent = tickets.reduce((sum, t) => sum + t.costUsdc, 0);
     const totalWon = tickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
@@ -1569,7 +1933,7 @@ export class LotteryService {
     burnerKeypair: Keypair,
     toAddress: string,
     amount: bigint,
-  ): Promise<void> {
+  ): Promise<string> {
     const conn = await this.getSolanaConnection();
     const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
     if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
@@ -1619,5 +1983,6 @@ export class LotteryService {
     const sig = await conn.sendRawTransaction(tx.serialize());
     await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
     this.logger.log(`Burner transfer complete: ${sig}, amount: ${amount}`);
+    return sig;
   }
 }
