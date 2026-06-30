@@ -1909,8 +1909,8 @@ export function BalanceModal({
           <div className={`w-10 h-1 rounded-full ${dark ? "bg-white/20" : "bg-gray-300"}`} />
         </div>
 
-        {/* Scrollable content area */}
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain [touch-action:pan-y] sm:contents px-6 pb-6 sm:p-0 space-y-5 sm:space-y-4">
+        {/* Content area — header + tabs static, content below scrolls */}
+        <div className="flex-1 min-h-0 flex flex-col sm:contents px-6 sm:p-0 space-y-5 sm:space-y-4">
 
           <DialogHeader className="pb-0 pt-2 sm:pt-0">
             <DialogTitle className={cn("text-3xl sm:text-4xl font-bold tracking-tight", dark ? "text-white" : "text-gray-900")}>
@@ -1996,6 +1996,9 @@ export function BalanceModal({
               )}>Recent</span>
             </button>
           </div>
+
+          {/* Scrollable tab content */}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain [touch-action:pan-y] pb-6 sm:pb-0 sm:contents">
 
           {/* Top Up tab — method cards */}
           {tab === "topup" && topUpView === null && (
@@ -3113,7 +3116,9 @@ export function BalanceModal({
             </div>
           )}
 
-        </div>{/* end scrollable area */}
+          </div>{/* end scrollable tab content */}
+
+        </div>{/* end content wrapper */}
 
         {/* Large close button — mobile only, always visible at bottom */}
         <div className={`sm:hidden shrink-0 px-4 pt-3 pb-8 border-t ${dark ? "border-white/10 bg-[#0f0f12]" : "border-gray-100 bg-white"}`}>
