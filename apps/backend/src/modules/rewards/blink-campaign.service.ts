@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createSign } from 'node:crypto';
 import { SupabaseService } from '@/database/supabase.service';
+import { PrivyVerificationService } from '@/auth/privy-verification.service';
 
 export type BlinkTaskKey = 'setup_passkeys' | 'two_deposits' | 'two_private_payments';
 
@@ -18,9 +20,19 @@ export interface BlinkCampaignData {
   qualified: boolean;
 }
 
-// TODO: restore CAMPAIGN_START to 2026-07-01T13:00:00.000Z before launch
-const CAMPAIGN_START = new Date('2026-06-01T00:00:00.000Z'); // testing: catch all recent payments
+const CAMPAIGN_START = new Date('2026-07-01T00:00:00.000Z');
 const CAMPAIGN_END = new Date('2026-08-15T00:00:00.000Z');
+
+export interface BlinkAdminUserStatus {
+  privyUserId: string;
+  username: string | null;
+  email: string | null;
+  solanaAddress: string | null;
+  hasPasskeys: boolean;
+  depositCount: number;
+  privatePaymentsCount: number;
+  qualified: boolean;
+}
 
 @Injectable()
 export class BlinkCampaignService {
@@ -29,11 +41,12 @@ export class BlinkCampaignService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly config: ConfigService,
+    private readonly privy: PrivyVerificationService,
   ) {}
 
-  async getBlinkCampaign(privyUserId: string): Promise<BlinkCampaignData> {
+  async getBlinkCampaign(privyUserId: string, solanaAddress?: string): Promise<BlinkCampaignData> {
     const [blinkDeposits, privatePaymentsCount] = await Promise.all([
-      this.getBlinkDepositsCount(privyUserId),
+      this.getBlinkDepositsCount(solanaAddress),
       this.getMainnetPrivatePaymentsCount(privyUserId),
     ]);
 
@@ -41,7 +54,7 @@ export class BlinkCampaignService {
     // (you can't deposit without setting up passkeys first)
     const hasPasskeys = blinkDeposits >= 1;
 
-    // Quest 2: at least 2 deposits with Blink
+    // Quest 2: at least 2 completed deposits with Blink
     const hasTwoDeposits = blinkDeposits >= 2;
 
     // Quest 3: at least 2 mainnet private payments on Loofta
@@ -78,57 +91,126 @@ export class BlinkCampaignService {
   }
 
   /**
-   * Queries Blink's Campaigns API for deposit count.
-   * Requires BLINK_MERCHANT_KEY + BLINK_CAMPAIGN_ID env vars.
-   * Returns 0 when not configured (quests show as incomplete until set up).
+   * Returns the number of completed Blink deposits since BLINK_CAMPAIGN_START.
+   * Step 1: GET /v1/merchant-users?embeddedWalletAddress={address} → get Blink userId
+   * Step 2: GET /v1/merchant-deposits?userId={id}&status=completed&createdAfter={start}&limit=2 → count items
+   * Using limit=2 is enough since we only need to know if count is 0, 1, or ≥2.
    */
-  private async getBlinkDepositsCount(privyUserId: string): Promise<number> {
-    const merchantKey = this.config.get<string>('BLINK_MERCHANT_KEY');
-    const campaignId = this.config.get<string>('BLINK_CAMPAIGN_ID');
+  private async getBlinkDepositsCount(solanaAddress?: string): Promise<number> {
+    if (!solanaAddress) {
+      this.logger.debug('No Solana address provided — Blink deposit quests return 0');
+      return 0;
+    }
 
-    if (!merchantKey || !campaignId) {
-      this.logger.debug('BLINK_MERCHANT_KEY or BLINK_CAMPAIGN_ID not set — Blink quests return 0');
+    const merchantId = this.config.get<string>('BLINK_MERCHANT_ID');
+    const privateKeyRaw = this.config.get<string>('BLINK_MERCHANT_PRIVATE_KEY');
+
+    if (!merchantId || !privateKeyRaw) {
+      this.logger.debug('BLINK_MERCHANT_ID or BLINK_MERCHANT_PRIVATE_KEY not set — Blink quests return 0');
       return 0;
     }
 
     try {
-      // Resolve the user's linked Blink wallet address from their profile
-      // (stored as blink_wallet_address on users table, or retrieved via Privy linked accounts)
-      const blinkWallet = await this.getUserBlinkWallet(privyUserId);
-      if (!blinkWallet) return 0;
-
-      // GET /v1/marketings/campaigns/{campaignId}/qualifiedWallets?address={address}
-      const url = `https://api.blink.cash/v1/marketings/campaigns/${campaignId}/qualifiedWallets?address=${encodeURIComponent(blinkWallet)}`;
-      const res = await fetch(url, {
-        headers: {
-          'X-Merchant-Authorization': merchantKey,
-          'Content-Type': 'application/json',
-        },
+      // Step 1: resolve Blink userId from wallet address
+      const authHeader1 = this.buildMerchantAuthHeader(merchantId, privateKeyRaw);
+      const usersUrl = `https://api.blink.cash/v1/merchant-users?embeddedWalletAddress=${encodeURIComponent(solanaAddress)}&chainId=792703809`;
+      const usersRes = await fetch(usersUrl, {
+        headers: { 'X-Merchant-Authorization': authHeader1, 'Content-Type': 'application/json' },
       });
 
-      if (!res.ok) {
-        this.logger.warn(`Blink qualifiedWallets API error: ${res.status}`);
+      if (!usersRes.ok) {
+        const errText = await usersRes.text().catch(() => '');
+        this.logger.warn(`Blink merchant-users API error: ${usersRes.status} — ${errText}`);
         return 0;
       }
 
-      const body = await res.json();
-      // Response is paginated: { data: [{ address, qualified, qualifiedDate, depositCount? }] }
-      const wallets: Array<{ address: string; qualified: boolean; depositCount?: number }> =
-        Array.isArray(body) ? body : (body.data ?? []);
+      const usersBody = await usersRes.json();
+      const users: Array<{ userId?: string }> =
+        Array.isArray(usersBody) ? usersBody : (usersBody.items ?? usersBody.data ?? []);
 
-      const walletData =
-        wallets.find((w) => w.address?.toLowerCase() === blinkWallet.toLowerCase()) ?? wallets[0];
+      const blinkUserId = users[0]?.userId;
+      if (!blinkUserId) return 0;
 
-      if (!walletData) return 0;
+      // Step 2: count completed deposits since campaign start
+      const authHeader2 = this.buildMerchantAuthHeader(merchantId, privateKeyRaw);
+      const depositsUrl = `https://api.blink.cash/v1/merchant-deposits?userId=${encodeURIComponent(blinkUserId)}&status=completed&createdAfter=${encodeURIComponent(CAMPAIGN_START.toISOString())}&limit=2`;
+      const depositsRes = await fetch(depositsUrl, {
+        headers: { 'X-Merchant-Authorization': authHeader2, 'Content-Type': 'application/json' },
+      });
 
-      // Use depositCount if available; otherwise qualified=true means the campaign threshold
-      // (2 deposits) was met — treat as count=2 so both deposit quests resolve correctly
-      return typeof walletData.depositCount === 'number'
-        ? walletData.depositCount
-        : walletData.qualified ? 2 : 0;
+      if (!depositsRes.ok) {
+        const errText = await depositsRes.text().catch(() => '');
+        this.logger.warn(`Blink merchant-deposits API error: ${depositsRes.status} — ${errText}`);
+        return 0;
+      }
+
+      const depositsBody = await depositsRes.json();
+      const deposits: unknown[] =
+        Array.isArray(depositsBody) ? depositsBody : (depositsBody.items ?? depositsBody.data ?? []);
+
+      return deposits.length;
     } catch (e) {
-      this.logger.warn(`Blink API fetch failed: ${(e as Error)?.message}`);
+      this.logger.warn(`Blink merchant API fetch failed: ${(e as Error)?.message}`);
       return 0;
+    }
+  }
+
+  async getAllBlinkCampaignStatus(): Promise<BlinkAdminUserStatus[]> {
+    const { data: users, error } = await this.supabase.appUsers
+      .select('privy_user_id, username, email')
+      .not('privy_user_id', 'is', null);
+
+    if (error || !users?.length) return [];
+
+    const CONCURRENCY = 5;
+    const results: BlinkAdminUserStatus[] = [];
+
+    for (let i = 0; i < users.length; i += CONCURRENCY) {
+      const batch = users.slice(i, i + CONCURRENCY);
+      const batchResults = await Promise.all(
+        batch.map(async (u: any) => {
+          const solanaAddress = await this.getPrivySolanaAddress(u.privy_user_id);
+          const [depositCount, privatePaymentsCount] = await Promise.all([
+            this.getBlinkDepositsCount(solanaAddress ?? undefined),
+            this.getMainnetPrivatePaymentsCount(u.privy_user_id),
+          ]);
+          return {
+            privyUserId: u.privy_user_id,
+            username: u.username ?? null,
+            email: u.email ?? null,
+            solanaAddress,
+            hasPasskeys: depositCount >= 1,
+            depositCount,
+            privatePaymentsCount,
+            qualified: depositCount >= 2 && privatePaymentsCount >= 2,
+          };
+        }),
+      );
+      results.push(...batchResults);
+    }
+
+    return results.sort((a, b) => {
+      if (a.qualified !== b.qualified) return a.qualified ? -1 : 1;
+      const aScore = (a.hasPasskeys ? 1 : 0) + (a.depositCount >= 2 ? 1 : 0) + (a.privatePaymentsCount >= 2 ? 1 : 0);
+      const bScore = (b.hasPasskeys ? 1 : 0) + (b.depositCount >= 2 ? 1 : 0) + (b.privatePaymentsCount >= 2 ? 1 : 0);
+      return bScore - aScore;
+    });
+  }
+
+  private async getPrivySolanaAddress(privyUserId: string): Promise<string | null> {
+    try {
+      const user = await this.privy.getPrivyUser(privyUserId);
+      const accounts: any[] = user?.linked_accounts ?? [];
+      const solana = accounts.find(
+        (a) =>
+          (a.type === 'wallet' || a.type === 'solana_embedded_wallet') &&
+          (a.wallet_client_type === 'privy' || a.type === 'solana_embedded_wallet') &&
+          (a.chain_type === 'solana' || a.chain === 'solana') &&
+          a.address,
+      );
+      return solana?.address ?? null;
+    } catch {
+      return null;
     }
   }
 
@@ -136,6 +218,18 @@ export class BlinkCampaignService {
    * Count successful mainnet private payments sent by this user during the campaign window.
    * Private payments are identified by from_chain IS NOT NULL (set only on MagicBlock transfers).
    */
+  private buildMerchantAuthHeader(merchantId: string, privateKeyRaw: string): string {
+    const privateKeyPem = privateKeyRaw.replace(/\\n/g, '\n');
+    const payloadObject = { version: 'v1', signatureTimestamp: new Date().toISOString() };
+    const payload = Buffer.from(JSON.stringify(payloadObject), 'utf8').toString('base64url');
+    const signer = createSign('SHA256');
+    signer.update(payload);
+    signer.end();
+    const signature = signer.sign(privateKeyPem).toString('base64url');
+    const envelope = JSON.stringify({ merchantId, payload, signature });
+    return Buffer.from(envelope, 'utf8').toString('base64');
+  }
+
   private async getMainnetPrivatePaymentsCount(privyUserId: string): Promise<number> {
     try {
       const db = this.supabase.getClient();
@@ -175,19 +269,6 @@ export class BlinkCampaignService {
     } catch (e) {
       this.logger.warn(`getMainnetPrivatePaymentsCount error: ${(e as Error)?.message}`);
       return 0;
-    }
-  }
-
-  private async getUserBlinkWallet(privyUserId: string): Promise<string | null> {
-    try {
-      const { data } = await this.supabase.getClient()
-        .from('app_users')
-        .select('blink_wallet_address')
-        .eq('privy_user_id', privyUserId)
-        .single();
-      return (data as any)?.blink_wallet_address ?? null;
-    } catch {
-      return null;
     }
   }
 }
