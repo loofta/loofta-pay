@@ -1733,8 +1733,8 @@ export function BalanceModal({
     const rawAddress = withdrawAddress.trim();
     const amount = withdrawAmountNum;
 
-    if (!(amount >= (devnetMode ? 0.01 : 1))) {
-      toast({ variant: "destructive", title: devnetMode ? "Minimum $0.01" : "Minimum $1", description: `Minimum withdrawal is ${devnetMode ? "$0.01" : "$1.00"} USDC.` });
+    if (amount <= 0) {
+      toast({ variant: "destructive", title: "Invalid amount", description: "Enter an amount greater than 0." });
       return;
     }
     if (amount > spendableBalance) {
@@ -1897,7 +1897,7 @@ export function BalanceModal({
         </div>
 
         {/* Scrollable content area */}
-        <div className="flex-1 min-h-0 overflow-y-auto sm:contents px-6 pb-6 sm:p-0 space-y-5 sm:space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain [touch-action:pan-y] sm:contents px-6 pb-6 sm:p-0 space-y-5 sm:space-y-4">
 
           <DialogHeader className="pb-0 pt-2 sm:pt-0">
             <DialogTitle className={cn("text-3xl sm:text-4xl font-bold tracking-tight", dark ? "text-white" : "text-gray-900")}>
@@ -2328,80 +2328,84 @@ export function BalanceModal({
                 <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
               </button>
 
-              {/* 2. Other token via Near Intents */}
-              <button
-                type="button"
-                disabled={!solanaAddress}
-                onClick={() => setWithdrawMethod("near-intents")}
-                className={cn(
-                  "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                  dark
-                    ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                    : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                )}
-              >
-                <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                  <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Other token or chain</p>
-                  <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    ETH · BTC · SOL · USDT — any chain
-                  </p>
-                </div>
-                <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-              </button>
+              {spendableBalance >= 1 && (
+                <>
+                  {/* 2. Other token via Near Intents */}
+                  <button
+                    type="button"
+                    disabled={!solanaAddress}
+                    onClick={() => setWithdrawMethod("near-intents")}
+                    className={cn(
+                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                      dark
+                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Other token or chain</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        ETH · BTC · SOL · USDT — any chain
+                      </p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
 
-              {/* 3. Cash out via Peer (ZKP2P) */}
-              <button
-                type="button"
-                disabled={!solanaAddress}
-                onClick={() => { setWithdrawMethod("peer-offramp"); setPeerStep("platform"); setPeerCurrency("USD"); }}
-                className={cn(
-                  "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                  dark
-                    ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                    : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                )}
-              >
-                <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                  <img src="/images/icons/withdraw-peer.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cash out with Peer</p>
-                  <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    Venmo · Cash App · Wise · 3 more
-                  </p>
-                </div>
-                <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-              </button>
+                  {/* 3. Cash out via Peer (ZKP2P) */}
+                  <button
+                    type="button"
+                    disabled={!solanaAddress}
+                    onClick={() => { setWithdrawMethod("peer-offramp"); setPeerStep("platform"); setPeerCurrency("USD"); }}
+                    className={cn(
+                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                      dark
+                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      <img src="/images/icons/withdraw-peer.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cash out with Peer</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        Venmo · Cash App · Wise · 3 more
+                      </p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
 
-              {/* 4. Bank or card via Coinbase off-ramp */}
-              <button
-                type="button"
-                disabled={!solanaAddress || coinbaseOfframpLoading}
-                onClick={handleCoinbaseOfframp}
-                className={cn(
-                  "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                  dark
-                    ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                    : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                )}
-              >
-                <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                  {coinbaseOfframpLoading
-                    ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
-                    : <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                  }
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Bank or credit card</p>
-                  <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    Apple Pay · card · bank transfer
-                  </p>
-                </div>
-                <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-              </button>
+                  {/* 4. Bank or card via Coinbase off-ramp */}
+                  <button
+                    type="button"
+                    disabled={!solanaAddress || coinbaseOfframpLoading}
+                    onClick={handleCoinbaseOfframp}
+                    className={cn(
+                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                      dark
+                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      {coinbaseOfframpLoading
+                        ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
+                        : <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                      }
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Bank or credit card</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        Apple Pay · card · bank transfer
+                      </p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+                </>
+              )}
 
             </div>
           )}
@@ -2486,7 +2490,7 @@ export function BalanceModal({
                   <Input
                     id="withdraw-amount"
                     type="number"
-                    min="1"
+                    min="0"
                     step="0.01"
                     max={payFromBalanceNum}
                     placeholder="0.00"
@@ -2504,9 +2508,6 @@ export function BalanceModal({
                     Max
                   </Button>
                 </div>
-                {withdrawAmountNum > 0 && withdrawAmountNum < (devnetMode ? 0.01 : 1) && (
-                  <p className="text-base md:text-sm text-red-400 mt-1">Minimum withdrawal is {devnetMode ? "$0.01" : "$1.00"} USDC.</p>
-                )}
                 {withdrawAmountNum > spendableBalance && spendableBalance > 0 && (
                   <p className="text-base md:text-sm text-red-400 mt-1">Exceeds available balance of {spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC.</p>
                 )}
@@ -2552,7 +2553,7 @@ export function BalanceModal({
                   onClick={handleWithdraw}
                   disabled={
                     withdrawing ||
-                    withdrawAmountNum < (devnetMode ? 0.01 : 1) ||
+                    withdrawAmountNum <= 0 ||
                     withdrawAmountNum > spendableBalance ||
                     !withdrawAddress.trim() ||
                     !wallet ||
