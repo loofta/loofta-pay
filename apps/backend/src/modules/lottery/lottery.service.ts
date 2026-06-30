@@ -1336,19 +1336,13 @@ export class LotteryService {
     try {
       // ── Step 1: claimWinnings ──────────────────────────────────────────────
       if (!ticket.claim_tx_hash) {
-        const eoaAddress = privateKeyToAccount(companionPrivHex as `0x${string}`).address;
+        // Guard: if USDC is already at the smart account, a prior Rhinestone claimWinnings
+        // succeeded but the DB write was lost (e.g. a crash). Skip re-claiming so we don't
+        // hit TokenDoesNotExist on an already-burned NFT.
+        const preSmartUsdc = await this.getCompanionUsdcBalance(ticket.companion_address).catch(() => 0);
 
-        // Guard: if USDC is already at the companion (smart account or EOA), a prior
-        // claimWinnings call succeeded but the DB write was lost (e.g. a crash). Skip
-        // the claim entirely so we don't hit TokenDoesNotExist on a burned NFT.
-        const [preSmartUsdc, preEoaUsdc] = await Promise.all([
-          this.getCompanionUsdcBalance(ticket.companion_address).catch(() => 0),
-          this.getCompanionUsdcBalance(eoaAddress).catch(() => 0),
-        ]);
-        const preTotalUsdc = preSmartUsdc + preEoaUsdc;
-
-        if (preTotalUsdc >= withdrawal.amount_usdc - 0.15) {
-          this.logger.log(`${W} step 1/3 skip — USDC already at companion (${preTotalUsdc.toFixed(6)} USDC), claim already happened on-chain`);
+        if (preSmartUsdc >= withdrawal.amount_usdc - 0.15) {
+          this.logger.log(`${W} step 1/3 skip — USDC already at smart account (${preSmartUsdc.toFixed(6)} USDC), claim already happened on-chain`);
           await db.from('lottery_tickets').update({ claim_tx_hash: 'already_claimed', updated_at: new Date().toISOString() }).eq('id', ticket.id);
         } else {
           const allNftIds: string[] = ticket.ticket_nft_ids ?? [];
@@ -1366,24 +1360,12 @@ export class LotteryService {
           }
           this.logger.log(`${W} step 1/3 — ${winningNftIds.length}/${allNftIds.length} NFTs are winners → claimWinnings`);
 
-          let claimTx: string;
-          try {
-            this.logger.log(`${W} step 1/3 — attempting Rhinestone sponsored claim (smart account=${ticket.companion_address})`);
-            claimTx = await this.rhinestone.claimWinnings({
-              companionPrivateKey: companionPrivHex as `0x${string}`,
-              ticketNftIds: winningNftIds,
-            });
-            this.logger.log(`${W} step 1/3 done — Rhinestone claim ok, claimTx=${claimTx}`);
-          } catch (rhinestoneErr: any) {
-            // Fall back: EOA direct call (needs BASE_FUNDER_PRIVATE_KEY for gas)
-            this.logger.warn(`${W} step 1/3 — Rhinestone failed (${rhinestoneErr.message?.slice(0, 120)}), falling back to EOA ${eoaAddress}`);
-            await this.megapot.ensureGas(eoaAddress);
-            claimTx = await this.megapot.claimWinnings({
-              companionPrivateKey: companionPrivHex,
-              ticketNftIds: winningNftIds,
-            });
-            this.logger.log(`${W} step 1/3 done — EOA claim ok, claimTx=${claimTx} (USDC at EOA ${eoaAddress})`);
-          }
+          this.logger.log(`${W} step 1/3 — Rhinestone sponsored claim (smart account=${ticket.companion_address})`);
+          const claimTx = await this.rhinestone.claimWinnings({
+            companionPrivateKey: companionPrivHex as `0x${string}`,
+            ticketNftIds: winningNftIds,
+          });
+          this.logger.log(`${W} step 1/3 done — Rhinestone claim ok, claimTx=${claimTx}`);
 
           await db.from('lottery_tickets').update({ claim_tx_hash: claimTx, updated_at: new Date().toISOString() }).eq('id', ticket.id);
         }
@@ -1430,28 +1412,14 @@ export class LotteryService {
     const burnerAddress = withdrawal.withdrawal_burner_sol_address as string;
     if (!burnerAddress) throw new Error('Batch burner address not set on withdrawal record');
 
-    // Determine where the USDC actually is after claimWinnings.
-    // If Rhinestone claim succeeded → USDC is at smart account (companion_address).
-    // If EOA fallback was used → USDC is at the EOA.
-    const eoaAddress = privateKeyToAccount(companionPrivHex as `0x${string}`).address;
-    const [smartAcctUsdc, eoaUsdc] = await Promise.all([
-      this.getCompanionUsdcBalance(ticket.companion_address).catch(() => null),
-      this.getCompanionUsdcBalance(eoaAddress).catch(() => null),
-    ]);
-    this.logger.log(`${W} Li.Fi: USDC check — smartAcct=${ticket.companion_address}:${smartAcctUsdc ?? '?'} | EOA=${eoaAddress}:${eoaUsdc ?? '?'}`);
+    // USDC is at the smart account (companion_address) after Rhinestone-sponsored claimWinnings.
+    // Use actual on-chain balance rather than recorded win amount — Megapot applies a ~10% protocol
+    // fee on payout so NFT metadata "Win Amount" overstates the actual received amount.
+    const smartAcctUsdc = await this.getCompanionUsdcBalance(ticket.companion_address).catch(() => null);
+    this.logger.log(`${W} Li.Fi: USDC check — smartAcct=${ticket.companion_address}:${smartAcctUsdc ?? '?'}`);
 
-    const useEoa = (eoaUsdc ?? 0) >= withdrawal.amount_usdc - 0.15 &&
-                  (smartAcctUsdc ?? 0) < withdrawal.amount_usdc - 0.15;
-    const fromAddress = useEoa ? eoaAddress : ticket.companion_address as string;
+    const bridgeAmount = Math.min(smartAcctUsdc ?? withdrawal.amount_usdc, withdrawal.amount_usdc);
 
-    // Use actual on-chain balance, not the recorded win amount — they can differ because:
-    // 1. NFT metadata "Win Amount" is gross; Megapot applies a ~10% protocol fee on payout
-    // 2. Small USDC leftover from the buy buffer may already be at the companion
-    const actualUsdc = useEoa ? (eoaUsdc ?? withdrawal.amount_usdc) : (smartAcctUsdc ?? withdrawal.amount_usdc);
-    const bridgeAmount = Math.min(actualUsdc, withdrawal.amount_usdc);
-
-    // Update win_amount_usdc to the actual Megapot payout so the UI shows the correct amount
-    // (NFT metadata can overstate by ~10% due to Megapot's protocol fee)
     if (bridgeAmount < withdrawal.amount_usdc - 0.05) {
       await db.from('lottery_tickets')
         .update({ win_amount_usdc: bridgeAmount, updated_at: new Date().toISOString() })
@@ -1459,9 +1427,9 @@ export class LotteryService {
       this.logger.log(`${W} updated win_amount_usdc: ${withdrawal.amount_usdc.toFixed(6)} (NFT) → ${bridgeAmount.toFixed(6)} (actual)`);
     }
 
-    this.logger.log(`${W} Li.Fi: bridging from ${useEoa ? 'EOA' : 'smart account'} (${fromAddress.slice(0, 10)}…) → burner=${burnerAddress.slice(0, 8)}… amount=${bridgeAmount.toFixed(6)} USDC`);
+    this.logger.log(`${W} Li.Fi: bridging smart account (${(ticket.companion_address as string).slice(0, 10)}…) → burner=${burnerAddress.slice(0, 8)}… amount=${bridgeAmount.toFixed(6)} USDC`);
     const quote = await this.lifi.getBaseToSolQuote({
-      fromAddress,
+      fromAddress: ticket.companion_address as string,
       toAddress: burnerAddress,
       amountUsdc: bridgeAmount,
     });
@@ -1469,27 +1437,16 @@ export class LotteryService {
     const receiveUsdc = parseFloat(quote.estimate.toAmountMin) / 1_000_000;
     this.logger.log(`${W} Li.Fi: quote via ${quote.tool} — send ${bridgeAmount.toFixed(6)} USDC, receive min ${receiveUsdc.toFixed(4)} USDC, fee ~$${feeUsd.toFixed(4)}`);
 
-    let txHash: string;
-    if (useEoa) {
-      // EOA owns the USDC — fund gas and execute directly (no Rhinestone)
-      this.logger.log(`${W} Li.Fi: EOA path — ensuring gas then executing directly`);
-      await this.megapot.ensureGas(eoaAddress);
-      txHash = await this.lifi.executeEvmQuote({ companionPrivateKey: companionPrivHex, quote });
-      this.logger.log(`${W} Li.Fi: EOA swap submitted tx=${txHash}`);
-    } else {
-      // Smart account owns the USDC — use Rhinestone sponsored execution
-      this.logger.log(`${W} Li.Fi: smart account path — executing via Rhinestone (sponsored gas)`);
-      txHash = await this.rhinestone.executeLifiSwap({
-        companionPrivateKey: companionPrivHex as `0x${string}`,
-        approvalAddress: quote.estimate.approvalAddress as Address | undefined,
-        fromAmountRaw: BigInt(quote.estimate.fromAmount),
-        swapTo: quote.transactionRequest.to as Address,
-        swapData: quote.transactionRequest.data as `0x${string}`,
-        swapValue: quote.transactionRequest.value ? BigInt(quote.transactionRequest.value) : 0n,
-        toChainAddress: burnerAddress,
-      });
-      this.logger.log(`${W} Li.Fi: Rhinestone swap submitted tx=${txHash}`);
-    }
+    const txHash = await this.rhinestone.executeLifiSwap({
+      companionPrivateKey: companionPrivHex as `0x${string}`,
+      approvalAddress: quote.estimate.approvalAddress as Address | undefined,
+      fromAmountRaw: BigInt(quote.estimate.fromAmount),
+      swapTo: quote.transactionRequest.to as Address,
+      swapData: quote.transactionRequest.data as `0x${string}`,
+      swapValue: quote.transactionRequest.value ? BigInt(quote.transactionRequest.value) : 0n,
+      toChainAddress: burnerAddress,
+    });
+    this.logger.log(`${W} Li.Fi: Rhinestone swap submitted tx=${txHash}`);
 
     await db.from('lottery_withdrawals').update({
       lifi_tx_hash: txHash,
@@ -1984,5 +1941,101 @@ export class LotteryService {
     await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
     this.logger.log(`Burner transfer complete: ${sig}, amount: ${amount}`);
     return sig;
+  }
+
+  /**
+   * "Play again" — claim winnings from a won ticket and immediately reinvest
+   * them into new Megapot tickets on Base. No bridge needed, no fees.
+   * Returns the new ticket ID and number of tickets purchased.
+   */
+  async playAgain(opts: {
+    ticketId: string;
+    userId: string;
+  }): Promise<{ newTicketId: string; numTickets: number; roundId: string | null }> {
+    const db = this.supabase.getClient();
+    const { data: ticket } = await db
+      .from('lottery_tickets')
+      .select('*')
+      .eq('id', opts.ticketId)
+      .eq('user_id', opts.userId)
+      .eq('status', 'won')
+      .single();
+
+    if (!ticket) throw new BadRequestException('Ticket not found or not in won status');
+    if (!ticket.win_amount_usdc || ticket.win_amount_usdc <= 0) {
+      throw new BadRequestException('No winnings to reinvest');
+    }
+
+    const companionKey = this.decryptKey(ticket.companion_key_enc, ticket.companion_address);
+    const companionPrivHex = `0x${companionKey.toString('hex')}` as `0x${string}`;
+
+    // Step 1: claim winnings if not already done
+    if (!ticket.claim_tx_hash) {
+      const allNftIds: string[] = ticket.ticket_nft_ids ?? [];
+      if (!allNftIds.length) throw new BadRequestException('No NFT IDs stored — sync ticket numbers first');
+
+      const nftResults = await this.megapot.checkTicketResultsFromNft(allNftIds);
+      const winningNftIds = nftResults.filter(r => r.winAmountUsdc > 0).map(r => BigInt(r.tokenId));
+      if (!winningNftIds.length) throw new BadRequestException('No winning NFTs found — draw may not have settled yet');
+
+      this.logger.log(`playAgain ${opts.ticketId}: claiming ${winningNftIds.length} winning NFT(s) via Rhinestone`);
+      const claimTx = await this.rhinestone.claimWinnings({ companionPrivateKey: companionPrivHex, ticketNftIds: winningNftIds });
+      await db.from('lottery_tickets').update({ claim_tx_hash: claimTx, updated_at: new Date().toISOString() }).eq('id', ticket.id);
+      this.logger.log(`playAgain ${opts.ticketId}: claimed — tx=${claimTx}`);
+    }
+
+    // Step 2: check actual USDC balance in companion smart account
+    const usdcBalance = await this.getCompanionUsdcBalance(ticket.companion_address);
+    const numTickets = Math.floor(usdcBalance / TICKET_PRICE_USDC);
+    if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy tickets ($${usdcBalance.toFixed(6)} USDC)`);
+
+    // Step 3: buy new tickets using existing companion smart account — no bridge
+    this.logger.log(`playAgain ${opts.ticketId}: buying ${numTickets} new ticket(s) with $${usdcBalance.toFixed(6)} USDC`);
+    await this.rhinestone.buyMegapotTickets({
+      companionPrivateKey: companionPrivHex,
+      numTickets,
+      recipient: ticket.companion_address as Address,
+      sourceId: this.megapot.getSourceId(),
+      referrers: this.megapot.getReferrers(),
+      splits: this.megapot.getSplits(),
+    });
+
+    // Step 4: mark old ticket as withdrawn, create new active ticket record
+    await db.from('lottery_tickets').update({ status: 'withdrawn', updated_at: new Date().toISOString() }).eq('id', ticket.id);
+
+    let roundId: string | null = null, drawTime: string | null = null;
+    try { const round = await this.megapot.getActiveRound(); roundId = round?.id ?? null; drawTime = round?.drawTime ?? null; } catch {}
+
+    const { data: newTicket, error } = await db
+      .from('lottery_tickets')
+      .insert({
+        user_id: opts.userId,
+        companion_address: ticket.companion_address,
+        companion_key_enc: ticket.companion_key_enc,
+        num_tickets: numTickets,
+        cost_usdc: numTickets * TICKET_PRICE_USDC,
+        status: 'active',
+        round_id: roundId,
+        draw_time: drawTime,
+      })
+      .select('id')
+      .single();
+
+    if (error || !newTicket) throw new Error(`Failed to create new ticket record: ${error?.message}`);
+
+    // Non-blocking: fetch new NFT numbers
+    this.megapot.getTicketNumbersFromNft(ticket.companion_address as Address, roundId ?? undefined)
+      .then(async ({ tokenIds, ticketNumbers }) => {
+        if (!tokenIds.length) return;
+        await db.from('lottery_tickets').update({
+          ticket_numbers: ticketNumbers,
+          ticket_nft_ids: tokenIds,
+          updated_at: new Date().toISOString(),
+        }).eq('id', newTicket.id);
+      })
+      .catch(e => this.logger.warn(`playAgain: NFT number fetch for new ticket: ${e.message}`));
+
+    this.logger.log(`playAgain ${opts.ticketId}: done — new ticket ${newTicket.id}, ${numTickets} tickets for round ${roundId}`);
+    return { newTicketId: newTicket.id, numTickets, roundId };
   }
 }

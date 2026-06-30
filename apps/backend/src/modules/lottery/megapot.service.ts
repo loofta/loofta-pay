@@ -455,15 +455,27 @@ export class MegapotService {
     if (!tokenIds.length) return [];
     const client = this.getPublicClient();
     const results: { tokenId: string; tier: number | null; winAmountUsdc: number }[] = [];
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
     for (const tokenId of tokenIds) {
+      await sleep(400); // throttle between calls — public Base RPC rate-limits burst requests
+      let rawUri: string | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          if (attempt > 0) await sleep(1_000 * attempt);
+          rawUri = await client.readContract({
+            address: MEGAPOT_TICKET_NFT,
+            abi: TICKET_NFT_ABI,
+            functionName: 'tokenURI',
+            args: [BigInt(tokenId)],
+          }) as string;
+          break;
+        } catch (e: any) {
+          if (attempt === 2) this.logger.warn(`checkTicketResultsFromNft failed for token ${tokenId}: ${e.message}`);
+        }
+      }
       try {
-        const rawUri = await client.readContract({
-          address: MEGAPOT_TICKET_NFT,
-          abi: TICKET_NFT_ABI,
-          functionName: 'tokenURI',
-          args: [BigInt(tokenId)],
-        }) as string;
+        if (!rawUri) continue;
 
         let metadata: { attributes?: Array<{ trait_type: string; value: unknown }> };
         if (rawUri.startsWith('data:application/json;base64,')) {
