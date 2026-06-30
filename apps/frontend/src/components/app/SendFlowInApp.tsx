@@ -197,12 +197,15 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
           type="text"
           inputMode="numeric"
           value={amount}
+          onBeforeInput={(e) => {
+            const data = (e.nativeEvent as InputEvent).data;
+            if (data && /[^0-9]/.test(data)) e.preventDefault();
+          }}
           onChange={(e) => {
             const cleaned = e.target.value.replace(/[^0-9]/g, "");
             e.target.value = cleaned;
             setAmount(cleaned);
           }}
-          onKeyDown={(e) => { if (e.key === "." || e.key === ",") e.preventDefault(); }}
           placeholder="100"
           className="mt-1.5 h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500"
         />
