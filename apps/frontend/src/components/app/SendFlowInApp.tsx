@@ -243,7 +243,7 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
       )}
 
       <Button
-        onClick={handleCreate}
+        onClick={!authenticated ? () => login({ loginMethods: ["email"], disableSignup: false }) : handleCreate}
         disabled={authenticated && (preparing || !amount || !Number.isFinite(amountNum) || amountNum <= 0 || belowMinAmount || insufficientBalance)}
         className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r text-lg from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
       >

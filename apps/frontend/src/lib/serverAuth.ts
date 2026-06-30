@@ -1,53 +1,40 @@
-/**
- * Server-side auth utilities for Next.js API routes.
- * Verifies identity by proxying to the NestJS backend (/users/me),
- * which calls Privy's API to validate the token — never trusts headers blindly.
- */
+import { PrivyClient } from "@privy-io/server-auth";
 
-const backendUrl = () =>
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+let _privyClient: PrivyClient | null = null;
+function getClient() {
+  if (!_privyClient) {
+    _privyClient = new PrivyClient(
+      process.env.NEXT_PUBLIC_PRIVY_APP_ID!,
+      process.env.PRIVY_APP_SECRET!
+    );
+  }
+  return _privyClient;
+}
 
-/**
- * Returns the verified Privy user ID for the incoming request, or null.
- *
- * Tries in order:
- *  1. Authorization: Bearer <privy-jwt>  — verified by NestJS via Privy API
- *  2. x-privy-user-id header (legacy)    — also verified by NestJS via Privy API
- */
+// Cache verified tokens for 30s to avoid re-verifying the same JWT on every API call
+const tokenCache = new Map<string, { userId: string; exp: number }>();
+const TOKEN_TTL_MS = 30_000;
+
 export async function getVerifiedUserId(request: Request): Promise<string | null> {
   const authHeader = request.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) return null;
 
-  if (authHeader?.startsWith("Bearer ")) {
-    try {
-      const res = await fetch(`${backendUrl()}/users/me`, {
-        headers: { authorization: authHeader },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.userId) return data.userId;
-      }
-    } catch (e) {
-      console.warn("[serverAuth] Bearer verify failed:", e);
+  const token = authHeader.slice(7);
+
+  const hit = tokenCache.get(token);
+  if (hit && Date.now() < hit.exp) return hit.userId;
+
+  try {
+    const claims = await getClient().verifyAuthToken(token);
+    if (!claims.userId) return null;
+    // Evict expired entries before inserting to keep Map bounded
+    if (tokenCache.size > 500) {
+      const now = Date.now();
+      for (const [k, v] of tokenCache) if (now > v.exp) tokenCache.delete(k);
     }
-    // If Bearer is present but invalid, don't fall through to legacy header
+    tokenCache.set(token, { userId: claims.userId, exp: Date.now() + TOKEN_TTL_MS });
+    return claims.userId;
+  } catch {
     return null;
   }
-
-  const legacyId = request.headers.get("x-privy-user-id");
-  if (legacyId) {
-    try {
-      const res = await fetch(`${backendUrl()}/users/me`, {
-        headers: { "x-privy-user-id": legacyId },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.userId) return data.userId;
-      }
-    } catch (e) {
-      console.warn("[serverAuth] Legacy ID verify failed:", e);
-    }
-    return null;
-  }
-
-  return null;
 }

@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 						createOnLogin: "users-without-wallets",
 					},
 					solana: {
-						createOnLogin: "all-users",
+						createOnLogin: "users-without-wallets",
 					},
 					// Disable Privy's signing confirmation modal — app drives its own UX.
 					showWalletUIs: false,

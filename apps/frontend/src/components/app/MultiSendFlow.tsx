@@ -892,7 +892,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       )}
 
       <Button
-        onClick={handleRequestPayment}
+        onClick={!authenticated ? () => login({ loginMethods: ["email"], disableSignup: false }) : handleRequestPayment}
         disabled={authenticated && !canReview}
         className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
       >

@@ -97,8 +97,8 @@ export class BlinkCampaignService {
       const blinkWallet = await this.getUserBlinkWallet(privyUserId);
       if (!blinkWallet) return 0;
 
-      // GET /v1/marketings/campaigns/{campaignId}/qualifiedWallets?wallet={address}
-      const url = `https://api.blink.cash/v1/marketings/campaigns/${campaignId}/qualifiedWallets?wallet=${encodeURIComponent(blinkWallet)}`;
+      // GET /v1/marketings/campaigns/{campaignId}/qualifiedWallets?address={address}
+      const url = `https://api.blink.cash/v1/marketings/campaigns/${campaignId}/qualifiedWallets?address=${encodeURIComponent(blinkWallet)}`;
       const res = await fetch(url, {
         headers: {
           'X-Merchant-Authorization': merchantKey,
@@ -111,9 +111,21 @@ export class BlinkCampaignService {
         return 0;
       }
 
-      const data = await res.json() as { depositCount?: number; count?: number; deposits?: unknown[] };
-      // Return deposit count from however the API surfaces it
-      return data.depositCount ?? data.count ?? (Array.isArray(data.deposits) ? data.deposits.length : 0);
+      const body = await res.json();
+      // Response is paginated: { data: [{ address, qualified, qualifiedDate, depositCount? }] }
+      const wallets: Array<{ address: string; qualified: boolean; depositCount?: number }> =
+        Array.isArray(body) ? body : (body.data ?? []);
+
+      const walletData =
+        wallets.find((w) => w.address?.toLowerCase() === blinkWallet.toLowerCase()) ?? wallets[0];
+
+      if (!walletData) return 0;
+
+      // Use depositCount if available; otherwise qualified=true means the campaign threshold
+      // (2 deposits) was met — treat as count=2 so both deposit quests resolve correctly
+      return typeof walletData.depositCount === 'number'
+        ? walletData.depositCount
+        : walletData.qualified ? 2 : 0;
     } catch (e) {
       this.logger.warn(`Blink API fetch failed: ${(e as Error)?.message}`);
       return 0;
