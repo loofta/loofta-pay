@@ -172,6 +172,11 @@ export class ClaimsService {
 
     try {
       const user = await this.usersService.findByUsername(cleanUsername);
+      if (!isDevnet && !(await this.usersService.hasCompletedMainnetWalletUpdate(user.privyUserId))) {
+        throw new BadRequestException(
+          "This recipient is registered but hasn't updated Loofta to mainnet yet. Ask them to open Loofta and complete the update, then try sending again.",
+        );
+      }
       requiresPrivate = user.requirePrivatePayments || false;
       finalIsPrivate = requiresPrivate ? true : isPrivate;
       if (requiresPrivate && !isPrivate) {
@@ -539,6 +544,11 @@ export class ClaimsService {
 
     try {
       const user = await this.usersService.findByEmail(cleanEmail);
+      if (!isDevnet && !(await this.usersService.hasCompletedMainnetWalletUpdate(user.privyUserId))) {
+        throw new BadRequestException(
+          "This recipient is registered but hasn't updated Loofta to mainnet yet. Ask them to open Loofta and complete the update, then try sending again.",
+        );
+      }
       requiresPrivate = user.requirePrivatePayments || false;
       if (requiresPrivate && !isPrivate) {
         throw new BadRequestException(
@@ -903,9 +913,21 @@ export class ClaimsService {
     }
     if (recipientAddress.startsWith(ClaimsService.PENDING_USERNAME_PREFIX)) {
       const pendingUsername = recipientAddress.slice(ClaimsService.PENDING_USERNAME_PREFIX.length).trim().toLowerCase();
+      if (!pendingUsername) return { isRecipient: false };
       const creator = await this.usersService.findByPrivyId(privyUserId);
       const userUsername = creator?.username?.toLowerCase() ?? '';
-      return { isRecipient: !!pendingUsername && userUsername === pendingUsername };
+      if (userUsername === pendingUsername) {
+        return { isRecipient: true };
+      }
+      // Fallback: match against the claimant's connected X/Twitter handle. Covers the case
+      // where a payment was sent to someone's X handle but their Loofta username (set at
+      // signup, e.g. a "loo-" prefixed default) doesn't match it 1:1.
+      const matchesTwitter = await this.usersService.verifyRecipientIdentityForSendPayment(
+        privyUserId,
+        'twitter',
+        pendingUsername,
+      );
+      return { isRecipient: matchesTwitter };
     }
     try {
       const userWallet = await this.usersService.getSolanaWalletAddress(privyUserId);
