@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common'
 import { SupabaseService } from '@/database/supabase.service';
 import { ConfigService } from '@nestjs/config';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
+import { MAINNET_WALLET_UPDATE_ID } from '@/common/force-update';
 
 const SEARCH_CACHE_TTL_MS = 60 * 1000; // 1 min
 
@@ -472,6 +473,12 @@ export class UsersService {
       .eq('update_id', updateId)
       .maybeSingle();
     return { completed: !!data };
+  }
+
+  /** True once the recipient has completed the mandatory mainnet wallet-migration update. */
+  async hasCompletedMainnetWalletUpdate(privyUserId: string): Promise<boolean> {
+    const { completed } = await this.getForceUpdateStatus(privyUserId, MAINNET_WALLET_UPDATE_ID);
+    return completed;
   }
 
   async markForceUpdateComplete(privyUserId: string, updateId: string): Promise<void> {

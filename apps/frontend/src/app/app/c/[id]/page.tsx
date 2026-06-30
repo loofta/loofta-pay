@@ -45,7 +45,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 const EVM_CHAIN_SET = new Set(["eth", "ethereum", "arb", "arbitrum", "base", "op", "optimism", "bsc", "avax", "avalanche", "polygon", "matic", "fantom", "ftm", "gnosis", "linea", "scroll", "zksync", "zk", "blast", "pol"]);
 function isEvmChainId(chain?: string): boolean { return EVM_CHAIN_SET.has(String(chain || "").toLowerCase()); }
-import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
+import { usePrivy, useWallets as useEvmWallets, useLinkAccount } from "@privy-io/react-auth";
 import {
   useWallets as useSolanaWallets,
   useSignTransaction as usePrivySolanaSignTransaction,
@@ -609,6 +609,48 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   }, []);
   const { toast } = useToast();
   const { user, logout, login, authenticated, ready: privyReady, getAccessToken } = usePrivy();
+
+  // Twitter/X handle from Privy linked accounts — used to nudge recipients whose Loofta
+  // username doesn't match their X handle into syncing it (see backend X-handle fallback
+  // matching in claims.service.ts checkIsRecipient).
+  const twitterHandle = useMemo(() => {
+    const linkedAccounts = (user?.linkedAccounts || []) as Array<{ type?: string; username?: string; name?: string; subject?: string }>;
+    const tw = linkedAccounts.find((a) => a.type === "twitter_oauth" || a.type === "twitter" || a.type === "x");
+    const raw = tw?.username || tw?.name || tw?.subject || null;
+    return raw ? raw.replace(/^@/, "") : null;
+  }, [user?.linkedAccounts]);
+  const hasTwitterLinked = !!twitterHandle;
+  const hasEmailLinked = useMemo(
+    () => ((user?.linkedAccounts || []) as Array<{ type?: string }>).some((a) => a.type === "email"),
+    [user?.linkedAccounts],
+  );
+  const [updatingUsernameToTwitter, setUpdatingUsernameToTwitter] = useState(false);
+  const { linkTwitter, linkEmail } = useLinkAccount({
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Couldn't connect", description: String(error) });
+    },
+  });
+  const useTwitterHandleAsUsername = async (handle: string) => {
+    setUpdatingUsernameToTwitter(true);
+    try {
+      const token = await getAccessToken().catch(() => null);
+      const res = await fetch("/api/users/setup-username", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ username: handle }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({ variant: "destructive", title: "Update failed", description: data?.error || "Try again." });
+        return;
+      }
+      toast({ title: "Username updated", description: `Your Loofta link is now @${data?.user?.username ?? handle}` });
+    } catch {
+      toast({ variant: "destructive", title: "Update failed", description: "Try again." });
+    } finally {
+      setUpdatingUsernameToTwitter(false);
+    }
+  };
 
   const networkMode = useAuthStore((s) => s.networkMode);
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
@@ -2635,6 +2677,33 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 <p className="text-slate-400 text-base mb-6 max-w-xs">
                   Oops — this link may not be addressed to you or may no longer exist.
                 </p>
+                {(claim?.recipient_pending_email || claim?.recipient_pending_username) && (
+                  <div className="mb-6 max-w-xs rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left">
+                    <p className="text-slate-300 text-base md:text-sm">
+                      Think this payment was meant for you? Add your email address or connect your X account and use it as your Loofta username — the payment will show up here automatically.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {!hasTwitterLinked && (
+                        <button
+                          type="button"
+                          onClick={() => linkTwitter()}
+                          className="inline-flex items-center justify-center rounded-lg bg-white/10 text-white px-3 py-1.5 text-base md:text-sm font-semibold hover:bg-white/20"
+                        >
+                          Connect X
+                        </button>
+                      )}
+                      {!hasEmailLinked && (
+                        <button
+                          type="button"
+                          onClick={() => linkEmail()}
+                          className="inline-flex items-center justify-center rounded-lg bg-white/10 text-white px-3 py-1.5 text-base md:text-sm font-semibold hover:bg-white/20"
+                        >
+                          Add email
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <Link
                   href={from === "history" ? "/history" : "/"}
                   className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors"
@@ -3041,6 +3110,23 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <div className="text-left max-w-md mx-auto">
                         <ClaimDescriptionMessageBox description={claim?.description} />
                       </div>
+                      {twitterHandle &&
+                        claim?.recipient_pending_username_value &&
+                        twitterHandle.toLowerCase() === claim.recipient_pending_username_value.toLowerCase() && (
+                          <div className="mb-4 max-w-md mx-auto rounded-xl border border-amber-300/40 bg-amber-50/60 px-4 py-3 text-left">
+                            <p className="text-base md:text-sm text-amber-900">
+                              Set <span className="font-semibold">@{twitterHandle}</span> as your Loofta username so future payments to your X handle land directly — no more &quot;not found&quot; links.
+                            </p>
+                            <button
+                              type="button"
+                              disabled={updatingUsernameToTwitter}
+                              onClick={() => useTwitterHandleAsUsername(twitterHandle)}
+                              className="mt-2 inline-flex items-center justify-center rounded-lg bg-amber-500 text-white px-3 py-1.5 text-base md:text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                            >
+                              {updatingUsernameToTwitter ? "Updating…" : `Use @${twitterHandle} as my username`}
+                            </button>
+                          </div>
+                        )}
                       <div className="flex items-center justify-center gap-2 text-base md:text-sm mb-4">
                         {burnerIsChecking ? (
                           <>
