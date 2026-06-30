@@ -47,7 +47,7 @@ const PEER_SESSION_KEY = "loofta_peer_session";
 const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
 const ZKP2P_RATE_1_TO_1 = "1000000000000000000";
 
-type WithdrawalStep = "idle" | "submitting" | "sent" | "bridging" | "complete" | "failed";
+type WithdrawalStep = "idle" | "submitting" | "sent" | "bridging" | "complete" | "failed" | "settling";
 type PeerStep = "platform" | "form" | "bridging" | "creating-deposit" | "deposit-error" | "deposited" | "complete" | "cancelling" | "cancelled" | "failed";
 
 // "cancelling" intentionally excluded — requires active signing and can't be resumed; maps to deposit-error on restore
@@ -1269,6 +1269,19 @@ export function BalanceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depositAddressForPolling, withdrawStep]);
 
+  // Auto-dismiss settling state after 7 s (lets the RPC index the TX)
+  useEffect(() => {
+    if (withdrawStep !== "settling") return;
+    const t = setTimeout(() => {
+      setWithdrawStep("idle");
+      setWithdrawMethod(null);
+      setActiveWithdrawal(null);
+      onRefresh();
+    }, 7000);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withdrawStep]);
+
   // Initialise amount to full spendable balance when modal opens or balance changes
   useEffect(() => {
     if (open && spendableBalance > 0) setWithdrawAmount(spendableBalance.toFixed(6).replace(/\.?0+$/, ""));
@@ -2277,8 +2290,8 @@ export function BalanceModal({
             </div>
           )}
 
-          {/* Withdraw tab — progress panel (not shown during peer offramp which has its own UI) */}
-          {tab === "withdraw" && withdrawStep !== "idle" && withdrawMethod !== "peer-offramp" && (
+          {/* Withdraw tab — progress panel (not shown during peer offramp or settling state) */}
+          {tab === "withdraw" && withdrawStep !== "idle" && withdrawStep !== "settling" && withdrawMethod !== "peer-offramp" && (
             <ProgressSteps
               step={withdrawStep}
               isNearIntents={Boolean(isNearIntentsWithdraw || activeWithdrawal?.isNearIntents)}
@@ -2290,14 +2303,59 @@ export function BalanceModal({
               amountUSDC={activeWithdrawal?.amountUSDC || withdrawAmountNum || payFromBalanceNum}
               dark={dark}
               onDone={() => {
-                setWithdrawStep("idle");
+                const wasDirectUsdc = withdrawMethod === "usdc-sol";
                 setActiveWithdrawal(null);
                 setBridgeStatus(null);
                 setDepositAddressForPolling(null);
-                setWithdrawMethod(null);
-                if (withdrawStep === "complete") onRefresh();
+                if (withdrawStep === "complete" && wasDirectUsdc) {
+                  setWithdrawStep("settling");
+                  onRefresh();
+                } else {
+                  setWithdrawStep("idle");
+                  setWithdrawMethod(null);
+                  if (withdrawStep === "complete") onRefresh();
+                }
               }}
             />
+          )}
+
+          {/* Withdraw tab — settling state: shown after a direct USDC withdrawal is sent */}
+          {tab === "withdraw" && withdrawStep === "settling" && (
+            <div className="py-2 space-y-4">
+              <div className={cn(
+                "rounded-xl border p-5 flex items-start gap-4",
+                dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"
+              )}>
+                <div className={cn(
+                  "shrink-0 w-10 h-10 rounded-full flex items-center justify-center",
+                  dark ? "bg-emerald-500/15" : "bg-emerald-50"
+                )}>
+                  <Clock className={cn("w-5 h-5", dark ? "text-emerald-400" : "text-emerald-500")} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className={cn("font-semibold", dark ? "text-white" : "text-gray-900")}>Withdrawal in progress</p>
+                  <p className={cn("text-sm mt-1", dark ? "text-slate-400" : "text-gray-500")}>
+                    Your USDC is on its way — balance will update in a few seconds.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setWithdrawStep("idle");
+                  setWithdrawMethod(null);
+                  setActiveWithdrawal(null);
+                }}
+                className={cn(
+                  "w-full h-11 rounded-xl font-medium text-sm border transition-colors",
+                  dark
+                    ? "border-white/10 text-slate-300 hover:bg-white/5"
+                    : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                )}
+              >
+                Dismiss
+              </button>
+            </div>
           )}
 
           {/* Withdraw tab — method selection */}
