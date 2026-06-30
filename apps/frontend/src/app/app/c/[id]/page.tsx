@@ -4241,6 +4241,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             <p className="text-slate-400 text-base mb-6 max-w-xs">
               Oops — this link may have expired, been cancelled, or never existed.
             </p>
+            <p className="text-slate-500 text-sm mb-6 max-w-xs">
+              If it was sent to your email or X handle, make sure you've added it to your profile first.
+            </p>
             <Link
               href={from === "history" ? "/history" : "/"}
               className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors"
