@@ -6,8 +6,8 @@ import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 
 const SPARKS_END_DATE = new Date("2026-07-01T00:00:00.000Z");
-// Blink campaign: July 1 at 3pm CET (UTC+2 in summer = UTC 13:00)
-const BLINK_START_DATE = new Date("2026-07-01T13:00:00.000Z");
+// Blink campaign: July 2 at 2pm CET (UTC+2 in summer = UTC 12:00)
+const BLINK_START_DATE = new Date("2026-07-02T12:00:00.000Z");
 const BLINK_END_DATE = new Date("2026-08-15T00:00:00.000Z");
 
 function getDaysLeft(endDate: Date): number {

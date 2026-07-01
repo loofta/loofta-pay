@@ -1441,6 +1441,16 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                       {switchingUsername ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Use"}
                                     </button>
                                   )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowChangeUsername(true)}
+                                    className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors"
+                                  >
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                    </svg>
+                                  </button>
                                 </div>
                               )}
                               {storeTwitterUsername && hasTwitterLinked && (
@@ -1533,20 +1543,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </div>
                       ) : null}
 
-                      {/* Change username */}
-                      {!storeTwitterUsername && (
-                        <button
-                          type="button"
-                          onClick={() => setShowChangeUsername(true)}
-                          className="w-full flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-white/[0.04] border border-white/[0.08] text-slate-400 hover:text-white hover:bg-white/[0.07] transition-colors"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                          </svg>
-                          <span className="text-base font-medium">Change username</span>
-                        </button>
-                      )}
 
                       {/* Network toggle card */}
                       <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">

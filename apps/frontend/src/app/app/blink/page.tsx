@@ -10,8 +10,7 @@ import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
-// TODO: restore to 2026-07-01T13:00:00.000Z before launch
-const BLINK_START_DATE = new Date("2026-06-01T00:00:00.000Z"); // testing: always active
+const BLINK_START_DATE = new Date("2026-07-02T12:00:00.000Z");
 const BLINK_END_DATE = new Date("2026-08-15T00:00:00.000Z");
 
 type BlinkTaskKey = "setup_passkeys" | "two_deposits" | "two_private_payments";
