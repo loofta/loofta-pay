@@ -481,7 +481,7 @@ export default function AdminDashboard() {
   const [saving, setSaving] = useState(false);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist" | "analytics" | "blink">("payments");
+  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout">("payments");
 
   // Sparks leaderboard
   const [sparksData, setSparksData] = useState<any[]>([]);
@@ -512,6 +512,14 @@ export default function AdminDashboard() {
   const [grantingByEmail, setGrantingByEmail] = useState(false);
   const [grantTwitterInput, setGrantTwitterInput] = useState("");
   const [grantingByTwitter, setGrantingByTwitter] = useState(false);
+
+  // Cash Out (Peer offramp)
+  const [cashoutData, setCashoutData] = useState<any[]>([]);
+  const [cashoutLoading, setCashoutLoading] = useState(false);
+  const [cashoutLoaded, setCashoutLoaded] = useState(false);
+  const [cashoutTotal, setCashoutTotal] = useState(0);
+  const [cashoutPage, setCashoutPage] = useState(1);
+  const [cashoutStatusFilter, setCashoutStatusFilter] = useState("");
 
   // Analytics
   type AnalyticsData = {
@@ -682,6 +690,26 @@ export default function AdminDashboard() {
       toast({ variant: "destructive", title: "Failed to load analytics" });
     } finally {
       setAnalyticsLoading(false);
+    }
+  }, [authHeaders, toast]);
+
+  const fetchCashOuts = useCallback(async (page = 1, status = "") => {
+    setCashoutLoading(true);
+    try {
+      const headers = await authHeaders();
+      const qs = new URLSearchParams({ page: String(page) });
+      if (status) qs.set("status", status);
+      const res = await fetch(`/api/admin/offramp?${qs}`, { headers });
+      if (!res.ok) throw new Error("Failed to load cash outs");
+      const data = await res.json();
+      setCashoutData(data.data ?? []);
+      setCashoutTotal(data.total ?? 0);
+      setCashoutPage(page);
+      setCashoutLoaded(true);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load cash outs" });
+    } finally {
+      setCashoutLoading(false);
     }
   }, [authHeaders, toast]);
 
@@ -951,9 +979,10 @@ export default function AdminDashboard() {
             activeTab === "sparks" ? fetchSparks :
             activeTab === "blink" ? fetchBlink :
             activeTab === "analytics" ? fetchAnalytics :
+            activeTab === "cashout" ? () => fetchCashOuts(cashoutPage, cashoutStatusFilter) :
             () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })
           }
-          disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading}
+          disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading || cashoutLoading}
           className="border-gray-700 text-gray-300 bg-gray-900 hover:bg-gray-800"
         >
           {(loading || sparksLoading || waitlistLoading || blinkLoading) ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -1000,6 +1029,14 @@ export default function AdminDashboard() {
         >
           <BarChart2 className="w-3.5 h-3.5" />
           Analytics
+        </button>
+        <button
+          type="button"
+          onClick={() => { setActiveTab("cashout"); if (!cashoutLoaded) fetchCashOuts(1, ""); }}
+          className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "cashout" ? "border-orange-500 text-orange-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+        >
+          Cash Out
+          {cashoutLoaded && <span className="text-sm md:text-xs bg-orange-900/50 text-orange-400 rounded px-1.5 py-0.5">{cashoutTotal}</span>}
         </button>
         <Link
           href={outreachUrl}
@@ -1190,6 +1227,105 @@ export default function AdminDashboard() {
                   Next →
                 </Button>
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Cash Out tab ── */}
+      {activeTab === "cashout" && (
+        <div className="space-y-3">
+          {/* Filter bar */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <select
+              value={cashoutStatusFilter}
+              onChange={(e) => { setCashoutStatusFilter(e.target.value); fetchCashOuts(1, e.target.value); }}
+              className="bg-gray-900 border border-gray-700 text-gray-300 rounded-lg px-3 py-1.5 text-base"
+            >
+              <option value="">All statuses</option>
+              <option value="PENDING_BRIDGE">Pending Bridge</option>
+              <option value="BRIDGING">Bridging</option>
+              <option value="DEPOSITED">Deposited — awaiting peer</option>
+              <option value="COMPLETE">Complete</option>
+              <option value="CANCELLED">Cancelled</option>
+              <option value="FAILED">Failed</option>
+            </select>
+            <span className="text-base text-gray-500">{cashoutTotal} total</span>
+          </div>
+
+          {cashoutLoading && (
+            <div className="flex items-center gap-2 text-base text-gray-400 py-8">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading cash outs…
+            </div>
+          )}
+
+          {!cashoutLoading && cashoutLoaded && (
+            <div className="overflow-x-auto rounded-xl border border-gray-800">
+              <table className="w-full text-base text-gray-300">
+                <thead>
+                  <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
+                    <th className="text-left px-4 py-2.5">Date</th>
+                    <th className="text-left px-4 py-2.5">Platform</th>
+                    <th className="text-left px-4 py-2.5">Identifier</th>
+                    <th className="text-right px-4 py-2.5">Amount</th>
+                    <th className="text-left px-4 py-2.5">Currency</th>
+                    <th className="text-left px-4 py-2.5">Status</th>
+                    <th className="text-left px-4 py-2.5">Deposit ID</th>
+                    <th className="text-left px-4 py-2.5 max-w-[120px]">User ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cashoutData.length === 0 && (
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-600">No cash out requests found.</td></tr>
+                  )}
+                  {cashoutData.map((row: any) => {
+                    const statusColors: Record<string, string> = {
+                      COMPLETE: "text-emerald-400",
+                      DEPOSITED: "text-blue-400",
+                      BRIDGING: "text-amber-400",
+                      PENDING_BRIDGE: "text-gray-400",
+                      CANCELLED: "text-gray-500",
+                      FAILED: "text-red-400",
+                      CANCELLING: "text-orange-400",
+                    };
+                    return (
+                      <tr key={row.id} className="border-b border-gray-800/50 hover:bg-gray-900/40">
+                        <td className="px-4 py-2.5 whitespace-nowrap tabular-nums text-gray-500">
+                          {new Date(row.created_at).toLocaleDateString()} {new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </td>
+                        <td className="px-4 py-2.5 font-medium capitalize">{row.platform}</td>
+                        <td className="px-4 py-2.5 font-mono">{row.platform_identifier}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums font-medium">${Number(row.amount_usdc).toFixed(2)}</td>
+                        <td className="px-4 py-2.5">{row.currency}</td>
+                        <td className={`px-4 py-2.5 font-medium ${statusColors[row.status] ?? "text-gray-400"}`}>{row.status}</td>
+                        <td className="px-4 py-2.5 font-mono text-gray-400">
+                          {row.zkp2p_deposit_id ?? <span className="text-gray-700">—</span>}
+                        </td>
+                        <td className="px-4 py-2.5 max-w-[120px] truncate text-gray-600 font-mono text-sm">{row.user_id}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {cashoutLoaded && cashoutTotal > 50 && (
+            <div className="flex items-center gap-3 justify-center pt-1">
+              <button
+                type="button"
+                disabled={cashoutPage <= 1}
+                onClick={() => fetchCashOuts(cashoutPage - 1, cashoutStatusFilter)}
+                className="px-3 py-1 rounded border border-gray-700 text-gray-400 disabled:opacity-40 hover:bg-gray-800"
+              >← Prev</button>
+              <span className="text-base text-gray-500">Page {cashoutPage} of {Math.ceil(cashoutTotal / 50)}</span>
+              <button
+                type="button"
+                disabled={cashoutPage >= Math.ceil(cashoutTotal / 50)}
+                onClick={() => fetchCashOuts(cashoutPage + 1, cashoutStatusFilter)}
+                className="px-3 py-1 rounded border border-gray-700 text-gray-400 disabled:opacity-40 hover:bg-gray-800"
+              >Next →</button>
             </div>
           )}
         </div>
