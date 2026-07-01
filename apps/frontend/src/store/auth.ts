@@ -11,6 +11,8 @@ type AuthState = {
 	userId?: string;
 	email?: string;
 	username?: string | null;
+	looUsername?: string | null;
+	twitterUsername?: string | null;
 	mainnetAccess: boolean;
 	networkMode: "devnet" | "mainnet";
 	openShareModal: boolean;
@@ -21,8 +23,10 @@ type AuthState = {
 	ataMigratedMainnet: boolean | null; // null = not yet loaded from DB
 	ataMigratedDevnet: boolean | null;
 	setAtaMigrated: (network: "mainnet" | "devnet", value: boolean) => void;
-	setAuth: (v: { authenticated: boolean; userId?: string; email?: string; username?: string | null }) => void;
+	setAuth: (v: { authenticated: boolean; userId?: string; email?: string; username?: string | null; looUsername?: string | null; twitterUsername?: string | null }) => void;
 	setUsername: (username: string | null) => void;
+	setLooUsername: (v: string | null) => void;
+	setTwitterUsername: (v: string | null) => void;
 	setMainnetAccess: (access: boolean) => void;
 	setNetworkMode: (mode: "devnet" | "mainnet") => void;
 	setOpenShareModal: (open: boolean) => void;
@@ -56,6 +60,8 @@ export const useAuthStore = create<AuthState>()(
 			userId: undefined,
 			email: undefined,
 			username: undefined,
+			looUsername: undefined,
+			twitterUsername: undefined,
 			mainnetAccess: false,
 			networkMode: CLUSTER_DEFAULT_NETWORK_MODE,
 			openShareModal: false,
@@ -79,6 +85,8 @@ export const useAuthStore = create<AuthState>()(
 							userId: undefined,
 							email: undefined,
 							username: null,
+							looUsername: null,
+							twitterUsername: null,
 							mainnetAccess: false,
 							networkMode: CLUSTER_DEFAULT_NETWORK_MODE,
 							tier: 'noob',
@@ -95,10 +103,14 @@ export const useAuthStore = create<AuthState>()(
 						userId: newUserId,
 						email: v.email ?? state.email,
 						...(v.username !== undefined && { username: v.username }),
+						...(v.looUsername !== undefined && { looUsername: v.looUsername }),
+						...(v.twitterUsername !== undefined && { twitterUsername: v.twitterUsername }),
 						...(savedMode !== null && { networkMode: savedMode }),
 					};
 				}),
 			setUsername: (username) => set({ username }),
+			setLooUsername: (looUsername) => set({ looUsername }),
+			setTwitterUsername: (twitterUsername) => set({ twitterUsername }),
 			setMainnetAccess: (access) => set({ mainnetAccess: access }),
 			setNetworkMode: (mode) =>
 				set((state) => {

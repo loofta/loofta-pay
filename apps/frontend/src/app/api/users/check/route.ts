@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
 
     const { data: user, error } = await supabase
       .from("app_users")
-      .select("id, privy_user_id, email, username, skip_onboarding, ata_migrated_mainnet, ata_migrated_devnet, created_at")
+      .select("id, privy_user_id, email, username, loo_username, twitter_username, skip_onboarding, ata_migrated_mainnet, ata_migrated_devnet, created_at")
       .eq("privy_user_id", privyUserId)
       .single();
 
@@ -38,6 +38,8 @@ export async function POST(request: NextRequest) {
           privyUserId: user.privy_user_id,
           email: user.email,
           username: user.username ?? null,
+          looUsername: user.loo_username ?? null,
+          twitterUsername: user.twitter_username ?? null,
           skipOnboarding: user.skip_onboarding ?? false,
           ataMigratedMainnet: user.ata_migrated_mainnet ?? false,
           ataMigratedDevnet: user.ata_migrated_devnet ?? false,

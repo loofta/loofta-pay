@@ -84,7 +84,7 @@ export function BottomNav() {
                     <NavItem href="/app/megapot" label="Buy" active={activeKey === 'megapot-buy'} icon={<Ticket />} />
                     <NavItem href="/app/megapot?tab=redeem" label="Redeem" active={activeKey === 'megapot-redeem'} icon={<Trophy />} />
                     <NavItem href="/app/megapot?tab=history" label="History" active={activeKey === 'megapot-history'} icon={<Clock />} />
-                    <NavItem href="/app/settings" label="Profile" active={false} icon={<Settings />} />
+                    <NavItem href="/app/profile" label="Profile" active={false} icon={<Settings />} />
                 </div>
             </nav>
         );
@@ -93,7 +93,7 @@ export function BottomNav() {
     let activeKey: NavKey;
     if (pathname === "/history" || pathname === "/app/history") {
         activeKey = "history";
-    } else if (pathname === "/settings" || pathname === "/app/settings") {
+    } else if (pathname === "/settings" || pathname === "/app/settings" || pathname === "/app/profile") {
         activeKey = "settings";
     } else if ((pathname === "/" || pathname === "/app") && tab === "receive") {
         activeKey = "receive";
@@ -104,7 +104,7 @@ export function BottomNav() {
     const sendHref = isAppPath ? '/app' : '/';
     const receiveHref = isAppPath ? '/app?tab=receive' : '/?tab=receive';
     const historyHref = isAppPath ? '/app/history' : '/history';
-    const settingsHref = isAppPath ? '/app/settings' : '/settings';
+    const settingsHref = isAppPath ? '/app/profile' : '/settings';
 
     return (
         <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-pb bg-[#0f0f12]/70 backdrop-blur-xl border-t border-white/10 shadow-[0_-10px_30px_rgba(0,0,0,0.35)]">

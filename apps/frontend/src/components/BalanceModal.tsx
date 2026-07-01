@@ -1898,7 +1898,7 @@ export function BalanceModal({
         onInteractOutside={(e) => e.preventDefault()}
         className={cn(
           contentCls,
-          "left-0 right-0 top-0 translate-x-0 translate-y-0 h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col",
+          "left-0 right-0 top-0 [transform:none] h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col data-[state=open]:!zoom-in-100 data-[state=open]:!animate-none",
           "sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-xl sm:rounded-2xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block",
           "[&>button]:h-12 [&>button]:w-12 [&>button]:rounded-full [&>button_svg]:h-5 [&>button_svg]:w-5"
         )}
@@ -1911,8 +1911,8 @@ export function BalanceModal({
 
         {/* Scrollable content area */}
         <div
-          className="flex-1 min-h-0 sm:contents px-6 pb-6 sm:p-0 space-y-5 sm:space-y-4"
-          style={{ overflowY: "auto", WebkitOverflowScrolling: "touch" } as React.CSSProperties}
+          className="sm:contents px-6 pb-6 sm:p-0 space-y-5 sm:space-y-4"
+          style={{ flex: "1 1 0", height: 0, overflowY: "auto", WebkitOverflowScrolling: "touch" } as React.CSSProperties}
         >
 
           <DialogHeader className="pb-0 pt-2 sm:pt-0">
