@@ -625,11 +625,27 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     [user?.linkedAccounts],
   );
   const [updatingUsernameToTwitter, setUpdatingUsernameToTwitter] = useState(false);
+  const [usernameSetSuccess, setUsernameSetSuccess] = useState(false);
+  const setStoreUsername = useAuthStore((s) => s.setUsername);
+  const setStoreLooUsername = useAuthStore((s) => s.setLooUsername);
+  const setStoreTwitterUsername = useAuthStore((s) => s.setTwitterUsername);
+  const storeUsername = useAuthStore((s) => s.username ?? null);
+
   const { linkTwitter, linkEmail } = useLinkAccount({
     onError: (error) => {
       toast({ variant: "destructive", title: "Couldn't connect", description: String(error) });
     },
   });
+
+  // When the user links Twitter mid-session, re-check if they are the recipient
+  const prevTwitterHandleRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (twitterHandle && !prevTwitterHandleRef.current) {
+      recipientCheckQuery.refetch();
+    }
+    prevTwitterHandleRef.current = twitterHandle ?? null;
+  }, [twitterHandle]);
+
   const useTwitterHandleAsUsername = async (handle: string) => {
     setUpdatingUsernameToTwitter(true);
     try {
@@ -644,7 +660,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         toast({ variant: "destructive", title: "Update failed", description: data?.error || "Try again." });
         return;
       }
-      toast({ title: "Username updated", description: `Your Loofta link is now @${data?.user?.username ?? handle}` });
+      const saved = data?.user?.username ?? handle;
+      setStoreUsername(saved);
+      if (data?.user?.looUsername) setStoreLooUsername(data.user.looUsername);
+      if (data?.user?.twitterUsername) setStoreTwitterUsername(data.user.twitterUsername);
+      setUsernameSetSuccess(true);
+      void claimQuery.refetch();
     } catch {
       toast({ variant: "destructive", title: "Update failed", description: "Try again." });
     } finally {
@@ -3157,7 +3178,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       </div>
                       {twitterHandle &&
                         claim?.recipient_pending_username_value &&
-                        twitterHandle.toLowerCase() === claim.recipient_pending_username_value.toLowerCase() && (
+                        twitterHandle.toLowerCase() === claim.recipient_pending_username_value.toLowerCase() &&
+                        storeUsername?.toLowerCase() !== twitterHandle.toLowerCase() &&
+                        !usernameSetSuccess && (
                           <div className="mb-5 flex items-center justify-between gap-3 max-w-md mx-auto rounded-xl border border-white/10 bg-white/5 px-4 py-3">
                             <span className="text-sm text-slate-300">
                               Use <span className="font-semibold text-white">@{twitterHandle}</span> as your Loofta username
@@ -3172,6 +3195,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             </button>
                           </div>
                         )}
+                      {usernameSetSuccess && (
+                        <div className="mb-5 flex items-center justify-center gap-2 max-w-md mx-auto rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3">
+                          <svg className="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          <span className="text-sm text-emerald-300 font-medium">Username set to @{twitterHandle}</span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-center gap-2 text-base md:text-sm mb-4">
                         {burnerIsChecking ? (
                           <>
