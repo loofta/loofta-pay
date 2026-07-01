@@ -21,7 +21,8 @@ import {
   ApiSecurity,
   ApiParam,
 } from '@nestjs/swagger';
-import { AuthGuard, OptionalAuthGuard, CronGuard } from '@/common/guards';
+import { AuthGuard, OptionalAuthGuard, CronGuard, RateLimitGuard } from '@/common/guards';
+import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 
 // All payment-mutating endpoints require authentication (create, pay, status, tx-hash).
 // Read-only claim endpoints (GET /:id, /:id/latest-intent) remain public via OptionalAuthGuard.
@@ -47,7 +48,8 @@ export class ClaimsController {
    * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
   @Post('create')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'claims:create')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Create a new payment claim' })
   @ApiResponse({
@@ -73,7 +75,8 @@ export class ClaimsController {
    * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
   @Post('create-from-username')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'claims:create')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Create claim from username (wallet address stays server-side)' })
   @ApiResponse({
@@ -99,7 +102,8 @@ export class ClaimsController {
    * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
   @Post('create-from-email')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'claims:create')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Create claim from email (recipient may not have an account yet)' })
   @ApiResponse({
@@ -190,7 +194,8 @@ export class ClaimsController {
    */
   @Post(':id/claim')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(5, 60, 'claims:claim')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Claim a pending payment as the recipient' })
   @ApiParam({ name: 'id', description: 'Claim UUID' })
@@ -224,7 +229,8 @@ export class ClaimsController {
 
   @Post(':id/build-private-transfer')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'claims:build-transfer')
   @ApiSecurity('privy-auth')
   @ApiOperation({
     summary:
@@ -288,7 +294,8 @@ export class ClaimsController {
    * Get claim by ID
    */
   @Get(':id')
-  @UseGuards(OptionalAuthGuard)
+  @UseGuards(OptionalAuthGuard, RateLimitGuard)
+  @RateLimit(120, 60, 'claims:get')
   @ApiOperation({ summary: 'Get claim details' })
   @ApiParam({ name: 'id', description: 'Claim UUID' })
   @ApiResponse({ status: 200, description: 'Claim details', type: Claim })
@@ -302,7 +309,8 @@ export class ClaimsController {
    * Get claim with latest intent
    */
   @Get(':id/latest-intent')
-  @UseGuards(OptionalAuthGuard)
+  @UseGuards(OptionalAuthGuard, RateLimitGuard)
+  @RateLimit(120, 60, 'claims:get')
   @ApiOperation({ summary: 'Get claim with latest intent' })
   @ApiParam({ name: 'id', description: 'Claim UUID' })
   @ApiResponse({
@@ -428,7 +436,8 @@ export class ClaimsController {
    */
   @Post('solana-sponsor/prepare')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'claims:sponsor-prepare')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Prepare unsigned Solana transaction with sponsor fee payer' })
   @ApiResponse({
@@ -463,7 +472,8 @@ export class ClaimsController {
    */
   @Post('solana-sponsor/sign-and-broadcast')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(15, 60, 'claims:sponsor-broadcast')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Sign and broadcast sponsored Solana transaction' })
   @ApiResponse({
@@ -499,7 +509,8 @@ export class ClaimsController {
    */
   @Post('solana-sponsor/per/sign-and-broadcast')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(15, 60, 'claims:per-broadcast')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Countersign and broadcast a user-signed MagicBlock PER transaction' })
   @ApiResponse({ status: 200, description: 'Transaction signature', schema: { properties: { signature: { type: 'string' } } } })

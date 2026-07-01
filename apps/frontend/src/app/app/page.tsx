@@ -36,8 +36,7 @@ export default function Home() {
   const { authenticated } = useAuth();
   const username = useAuthStore((s) => s.username ?? null);
   const networkMode = useAuthStore((s) => s.networkMode);
-  const mainnetAccess = useAuthStore((s) => s.mainnetAccess);
-  const canMultiSend = networkMode !== "mainnet" || mainnetAccess;
+  const canMultiSend = true;
   const { login: privyLogin, getAccessToken } = usePrivy();
   const [activeTab, setActiveTabState] = useState<"send" | "receive">(() => {
     const fromUrl = searchParams.get("tab") === "receive" ? "receive" : null;

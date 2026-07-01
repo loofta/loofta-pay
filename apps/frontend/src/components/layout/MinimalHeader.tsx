@@ -154,13 +154,8 @@ function MobileMenu({
           <div className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/8 transition-colors">
             <div className="flex flex-col min-w-0">
               <span className="text-base text-slate-300">
-                {networkMode === "mainnet"
-                  ? (mainnetAccess ? t('mainnetBeta') : t('mainnetViewOnly'))
-                  : t('devnet')}
+                {t('mainnetBeta')}
               </span>
-              {networkMode === "mainnet" && !mainnetAccess && (
-                <span className="text-sm text-amber-400/80 leading-tight">{t('paymentsDisabled')}</span>
-              )}
             </div>
             <Switch
               checked={networkMode === "mainnet"}

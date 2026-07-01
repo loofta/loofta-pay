@@ -9,7 +9,6 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
 import { useAuthStore } from "@/store/auth";
-import { getCachedMainnetAccess, setCachedMainnetAccess } from "@/lib/mainnetAccessCache";
 import { TIERS, getTierForVolume } from "@/lib/tiers";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -383,30 +382,10 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     }
   }, [showShareModal, authenticated, getAccessToken, privyUser?.id]);
 
-  // Fetch mainnet access on every login/mount — always re-fetch so newly granted access is picked up immediately.
-  // Apply cached value first for instant UI, then overwrite with fresh API response.
+  // Mainnet is open to everyone — always grant access on login.
   useEffect(() => {
-    if (!authenticated || !getAccessToken || !privyUser?.id) return;
-    const userId = privyUser.id;
-    const cached = getCachedMainnetAccess(userId);
-    if (cached !== null) {
-      setMainnetAccess(cached);
-    }
-    const check = async () => {
-      try {
-        const token = await getAccessToken();
-        const res = await fetch("/api/users/mainnet-access", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const { mainnetAccess: access } = await res.json();
-          setMainnetAccess(!!access);
-          setCachedMainnetAccess(userId, !!access);
-        }
-      } catch { /* non-critical */ }
-    };
-    check();
-  }, [authenticated, privyUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (authenticated) setMainnetAccess(true);
+  }, [authenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch user tier (volume-based status) on mount
   useEffect(() => {
@@ -774,13 +753,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               <div className={`flex items-center justify-between px-3 py-2 rounded-lg ${isDarkPage ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}>
                 <div className="flex flex-col min-w-0">
                   <span className={`text-base md:text-sm ${isDarkPage ? "text-gray-300" : "text-gray-700"}`}>
-                    {networkMode === "mainnet"
-                      ? (mainnetAccess ? t('mainnetBeta') : t('mainnetViewOnly'))
-                      : t('devnet')}
+                    {t('mainnetBeta')}
                   </span>
-                  {networkMode === "mainnet" && !mainnetAccess && (
-                    <span className="text-base md:text-sm text-amber-400/80 leading-tight">{t('paymentsDisabled')}</span>
-                  )}
                 </div>
                 <Switch
                   checked={networkMode === "mainnet"}
@@ -1555,13 +1529,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         <div className="flex items-center justify-between px-4 py-3.5">
                           <div className="flex flex-col min-w-0">
                             <span className="text-base text-white/80">
-                              {networkMode === "mainnet"
-                                ? (mainnetAccess ? t('mainnetBeta') : t('mainnetViewOnly'))
-                                : t('devnet')}
+                              {t('mainnetBeta')}
                             </span>
-                            {networkMode === "mainnet" && !mainnetAccess && (
-                              <span className="text-base text-amber-400/80 mt-0.5">{t('balanceWithdrawOnly')}</span>
-                            )}
                           </div>
                           <Switch
                             checked={networkMode === "mainnet"}

@@ -81,6 +81,22 @@ export class EmailService {
     }
   }
 
+  async sendMainnetLiveEmail(recipientEmail: string): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: recipientEmail,
+        subject: 'we\'re live. 🎉',
+        html: this.buildMainnetLiveHtml(),
+      });
+      this.logger.log(`Mainnet live email sent to ${recipientEmail}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send mainnet live email to ${recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
   async sendMainnetLaunchEmail(recipientEmail: string): Promise<void> {
     if (!this.resend) return;
     try {
@@ -110,6 +126,83 @@ export class EmailService {
     } catch (err: any) {
       this.logger.error(`Failed to send beta access email to ${recipientEmail}: ${err?.message ?? err}`);
     }
+  }
+
+  private buildMainnetLiveHtml(): string {
+    const imageUrl = 'https://pay.loofta.xyz/liveloofta-email.png';
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>we're live</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <tr>
+            <td style="padding:0;">
+              <img src="${imageUrl}" alt="Loofta is on mainnet" width="520" style="display:block;width:100%;max-width:520px;border:0;" />
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:36px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
+              <p style="margin:0 0 16px;">hey!</p>
+              <p style="margin:0 0 16px;">This is Lisa from Loofta.</p>
+              <p style="margin:0 0 28px;">We're live on mainnet and I'm so happy you're here for this. Here's what you can do right now.</p>
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                <tr>
+                  <td style="padding:12px 0;border-bottom:1px solid #2a2a30;">
+                    <p style="margin:0;font-size:13px;color:#6b7280;">Send &amp; receive</p>
+                    <p style="margin:2px 0 0;font-size:15px;color:#ffffff;font-weight:500;">Private payments to any email, username, or X handle</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 0;border-bottom:1px solid #2a2a30;">
+                    <p style="margin:0;font-size:13px;color:#6b7280;">Bulk pay</p>
+                    <p style="margin:2px 0 0;font-size:15px;color:#ffffff;font-weight:500;">Pay your whole team at once, privately</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 0;border-bottom:1px solid #2a2a30;">
+                    <p style="margin:0;font-size:13px;color:#6b7280;">Payment links</p>
+                    <p style="margin:2px 0 0;font-size:15px;color:#ffffff;font-weight:500;">Create a payment link and share it with your client</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 0;border-bottom:1px solid #2a2a30;">
+                    <p style="margin:0;font-size:13px;color:#6b7280;">Withdraw</p>
+                    <p style="margin:2px 0 0;font-size:15px;color:#ffffff;font-weight:500;">Cash out in any token, your way</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 0;">
+                    <p style="margin:0;font-size:13px;color:#6b7280;">Off-ramp</p>
+                    <p style="margin:2px 0 0;font-size:15px;color:#ffffff;font-weight:500;">Withdraw privately to Cash App, Wise, Revolut or Venmo at a low fee</p>
+                  </td>
+                </tr>
+              </table>
+              <div style="text-align:center;">
+                <a href="https://pay.loofta.xyz" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Start at pay.loofta.xyz
+                </a>
+              </div>
+              <p style="margin:28px 0 0;font-size:14px;color:#9ca3af;text-align:left;">Lisa</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
   }
 
   private buildMainnetLaunchHtml(): string {

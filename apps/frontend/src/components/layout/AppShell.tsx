@@ -8,6 +8,7 @@ import { MinimalHeader } from "./MinimalHeader";
 import { UserSync } from "./UserSync";
 import dynamic from "next/dynamic";
 const UpdateJun26Modal = dynamic(() => import("@/components/UpdateJun26Modal").then(m => ({ default: m.UpdateJun26Modal })), { ssr: false });
+const MainnetLaunchCelebration = dynamic(() => import("@/components/MainnetLaunchCelebration").then(m => ({ default: m.MainnetLaunchCelebration })), { ssr: false });
 import { usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
 import { useTranslations } from "next-intl";
@@ -51,6 +52,7 @@ function ShellContent({ children }: { children: ReactNode }) {
     <>
       <UserSync />
       <UpdateJun26Modal />
+      <MainnetLaunchCelebration />
       {showBanner && (
         <div className="relative w-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-3 mb-3 flex items-center text-white overflow-hidden">
           {/* Mobile: single-line scrolling ticker */}
