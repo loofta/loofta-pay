@@ -959,6 +959,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       return { prevClaim, prevHistories };
     },
     onSuccess: (data: { claimed?: boolean; sweepTxHash?: string; sweptAmount?: string; swept?: boolean } | undefined, _vars, context) => {
+      setClaimCompleted(true);
       setStatus("SUCCESS");
       setShowBalanceUpdating(true);
       setTimeout(() => setShowBalanceUpdating(false), 10000);
@@ -1000,11 +1001,55 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [retrySweepLoading, setRetrySweepLoading] = useState(false);
   const [reclaimingSenderFunds, setReclaimingSenderFunds] = useState(false);
   const [claimInitiated, setClaimInitiated] = useState(false);
+  const [claimCompleted, setClaimCompleted] = useState(false);
+  const confettiFiredRef = React.useRef(false);
   const [optimisticClaimedAt, setOptimisticClaimedAt] = useState<string | null>(null);
   const [showBalanceUpdating, setShowBalanceUpdating] = useState(false);
 
+  // Poll claim status while mutation is pending (catches cases where HTTP response is lost
+  // but the backend already processed the claim and balance has updated).
+  useEffect(() => {
+    if (!claimInitiated || !claimAsRecipientMutation.isPending || claimCompleted) return;
+    const interval = setInterval(() => {
+      queryClient.refetchQueries({ queryKey: ["claim", id] });
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [claimInitiated, claimAsRecipientMutation.isPending, claimCompleted, id, queryClient]);
+
+  // Auto-detect success from polled claim status.
+  useEffect(() => {
+    if (!claimInitiated || !claimAsRecipientMutation.isPending || claimCompleted) return;
+    const currentStatus = String(claim?.status || "").toUpperCase();
+    if (["SUCCESS", "CLAIMED"].includes(currentStatus)) {
+      setClaimCompleted(true);
+    }
+  }, [claim?.status, claimInitiated, claimAsRecipientMutation.isPending, claimCompleted]);
+
+  // Trigger balance refetch and confetti whenever claimCompleted first becomes true.
+  useEffect(() => {
+    if (!claimCompleted || confettiFiredRef.current) return;
+    confettiFiredRef.current = true;
+    const end = Date.now() + 2200;
+    const colors = ["#FF1301", "#EAB308", "#22c55e", "#a855f7", "#3b82f6"];
+    (function frame() {
+      confetti({ particleCount: 6, angle: 60, spread: 55, origin: { x: 0 }, colors });
+      confetti({ particleCount: 6, angle: 120, spread: 55, origin: { x: 1 }, colors });
+      if (Date.now() < end) requestAnimationFrame(frame);
+    })();
+    for (let i = 1; i <= 5; i++) {
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+        queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
+        queryClient.refetchQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+        queryClient.refetchQueries({ queryKey: ["solanaPaymentBalance"] });
+      }, i * 2000);
+    }
+  }, [claimCompleted, queryClient]);
+
   useEffect(() => {
     if (!claimAsRecipientMutation.isSuccess) return;
+    if (confettiFiredRef.current) return;
+    confettiFiredRef.current = true;
     const end = Date.now() + 2200;
     const colors = ["#FF1301", "#EAB308", "#22c55e", "#a855f7", "#3b82f6"];
     (function frame() {
@@ -2828,7 +2873,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                   )}
               </div>
-            ) : user?.id && claimAsRecipientMutation.isPending ? (
+            ) : user?.id && claimAsRecipientMutation.isPending && !claimCompleted ? (
               (() => {
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
                 return (
@@ -2870,7 +2915,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                 );
               })()
-            ) : user?.id && (claimInitiated || claimAsRecipientMutation.isSuccess) ? (
+            ) : user?.id && (claimCompleted || claimInitiated || claimAsRecipientMutation.isSuccess) ? (
               (() => {
                 const senderLabel =
                   claim?.creator_username ? `@${claim.creator_username}` : (claim?.creator_email || null);
@@ -3113,17 +3158,17 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       {twitterHandle &&
                         claim?.recipient_pending_username_value &&
                         twitterHandle.toLowerCase() === claim.recipient_pending_username_value.toLowerCase() && (
-                          <div className="mb-4 max-w-md mx-auto rounded-xl border border-amber-300/40 bg-amber-50/60 px-4 py-3 text-left">
-                            <p className="text-base md:text-sm text-amber-900">
-                              Set <span className="font-semibold">@{twitterHandle}</span> as your Loofta username so future payments to your X handle land directly — no more &quot;not found&quot; links.
-                            </p>
+                          <div className="mb-5 flex items-center justify-between gap-3 max-w-md mx-auto rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                            <span className="text-sm text-slate-300">
+                              Use <span className="font-semibold text-white">@{twitterHandle}</span> as your Loofta username
+                            </span>
                             <button
                               type="button"
                               disabled={updatingUsernameToTwitter}
                               onClick={() => useTwitterHandleAsUsername(twitterHandle)}
-                              className="mt-2 inline-flex items-center justify-center rounded-lg bg-amber-500 text-white px-3 py-1.5 text-base md:text-sm font-semibold hover:opacity-90 disabled:opacity-60"
+                              className="shrink-0 inline-flex items-center justify-center rounded-lg bg-white text-black px-3 py-1.5 text-sm font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
                             >
-                              {updatingUsernameToTwitter ? "Updating…" : `Use @${twitterHandle} as my username`}
+                              {updatingUsernameToTwitter ? "Setting…" : "Set username"}
                             </button>
                           </div>
                         )}
