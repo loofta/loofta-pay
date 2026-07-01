@@ -546,6 +546,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       }
       await unlinkOAuth.unlink({ provider: "twitter", subject: twitterSubject });
       setTwitterLinkedOptimistic(false);
+      setTwitterUsername(null);
       try { await refreshUser(); } catch { /* non-critical */ }
       toast({ title: "Twitter disconnected", description: "Your X account has been removed from sign-in methods." });
     } catch (e: unknown) {
@@ -1470,13 +1471,12 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           </div>
                         </div>
                       ) : canUpdateToTwitter && twitterHandle ? (
-                        <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-4 py-3.5">
-                          <p className="text-base font-semibold text-white mb-1">{t('paymentLink')}</p>
-                          <p className="text-base text-slate-500 mb-3">{t('useTwitterAsLink', { handle: twitterHandle })}</p>
-                          <Button
+                        <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-4 py-3.5 flex items-center justify-between gap-3">
+                          <span className="text-base text-slate-300">
+                            Use <span className="font-semibold text-white">@{twitterHandle}</span> as your payment link
+                          </span>
+                          <button
                             type="button"
-                            size="sm"
-                            className="rounded-xl bg-gradient-to-r from-[#FF4A26] to-[#E1A041] text-white border-0 hover:opacity-90 text-base font-medium"
                             disabled={updatingToTwitter || !privyUser?.id}
                             onClick={async () => {
                               if (!privyUser?.id || !twitterHandle) return;
@@ -1496,21 +1496,38 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                   toast({ variant: "destructive", title: "Update failed", description: data.error || "Try again." });
                                   return;
                                 }
-                                const newUsername = data.user?.username ?? twitterHandle;
-                                setUsername(newUsername);
-                                if (data.user?.looUsername) setLooUsername(data.user.looUsername);
-                                if (data.user?.twitterUsername) setTwitterUsername(data.user.twitterUsername);
-                                setAuth({ authenticated: true, email: storeEmail, username: newUsername, looUsername: data.user?.looUsername, twitterUsername: data.user?.twitterUsername });
-                                toast({ title: "Payment link updated", description: `Your link is now @${newUsername}` });
+                                // Refresh full user state from DB — response may lack looUsername/twitterUsername
+                                // if the columns are still being populated server-side
+                                const refreshToken = await getAccessToken().catch(() => null);
+                                const refreshRes = await fetch("/api/users/check", {
+                                  method: "POST",
+                                  headers: {
+                                    "Content-Type": "application/json",
+                                    ...(refreshToken ? { Authorization: `Bearer ${refreshToken}` } : {}),
+                                  },
+                                  body: JSON.stringify({ email: storeEmail }),
+                                });
+                                const refreshData = await refreshRes.json();
+                                if (refreshData.user) {
+                                  const u = refreshData.user;
+                                  setUsername(u.username ?? twitterHandle);
+                                  setLooUsername(u.looUsername ?? null);
+                                  setTwitterUsername(u.twitterUsername ?? null);
+                                  setAuth({ authenticated: true, email: storeEmail, username: u.username ?? twitterHandle, looUsername: u.looUsername ?? null, twitterUsername: u.twitterUsername ?? null });
+                                } else {
+                                  setUsername(twitterHandle);
+                                }
+                                toast({ title: "Payment link updated", description: `Your link is now @${twitterHandle}` });
                               } catch {
                                 toast({ variant: "destructive", title: "Update failed", description: "Try again." });
                               } finally {
                                 setUpdatingToTwitter(false);
                               }
                             }}
+                            className="shrink-0 inline-flex items-center justify-center rounded-lg bg-white text-black px-3 py-1.5 text-sm font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
                           >
-                            {updatingToTwitter ? t('updating') : t('useHandle', { handle: twitterHandle })}
-                          </Button>
+                            {updatingToTwitter ? "Setting…" : "Set username"}
+                          </button>
                         </div>
                       ) : null}
 
