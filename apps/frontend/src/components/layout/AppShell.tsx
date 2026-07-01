@@ -12,11 +12,13 @@ const MainnetLaunchCelebration = dynamic(() => import("@/components/MainnetLaunc
 import { usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
 import { useTranslations } from "next-intl";
+import { useUpdateJun26 } from "@/hooks/useUpdateJun26";
 
 function ShellContent({ children }: { children: ReactNode }) {
   const t = useTranslations('AppShell');
   const pathname = usePathname();
   const networkMode = useAuthStore((s) => s.networkMode);
+  const { show: updateShow, resolved: updateResolved } = useUpdateJun26();
   const [bannerDismissed, setBannerDismissed] = useState(false);
   useEffect(() => {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
@@ -51,8 +53,8 @@ function ShellContent({ children }: { children: ReactNode }) {
   return (
     <>
       <UserSync />
-      <UpdateJun26Modal />
-      <MainnetLaunchCelebration />
+      <UpdateJun26Modal show={updateShow} />
+      <MainnetLaunchCelebration blockedByUpdate={!updateResolved || updateShow} />
       {showBanner && (
         <div className="relative w-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-3 mb-3 flex items-center text-white overflow-hidden">
           {/* Mobile: single-line scrolling ticker */}

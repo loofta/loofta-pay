@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+
 import { usePrivy, useUser, useWallets, useLinkAccount, useUnlinkOAuth, useUnlinkEmail } from "@privy-io/react-auth";
 import { useExportWallet } from "@privy-io/react-auth/solana";
 import Link from "next/link";
@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Globe, Wallet } from "lucide-react";
+import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Wallet } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
@@ -95,10 +95,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const username = usernameProp ?? storeUsername;
   const email = emailProp ?? storeEmail;
 
-  const mainnetAccess = useAuthStore((s) => s.mainnetAccess);
-  const networkMode = useAuthStore((s) => s.networkMode);
   const setMainnetAccess = useAuthStore((s) => s.setMainnetAccess);
-  const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
   const tier = useAuthStore((s) => s.tier);
   const totalVolumeUsd = useAuthStore((s) => s.totalVolumeUsd);
   const setTier = useAuthStore((s) => s.setTier);
@@ -716,22 +713,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
 
 
 
-            {/* Rewards */}
-            <div className="mb-2">
-              <Link
-                href="/sparks"
-                onClick={() => setIsOpen(false)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-base md:text-sm transition-colors flex items-center gap-2 ${isDarkPage
-                  ? "text-amber-400 hover:bg-amber-400/10"
-                  : "text-amber-600 hover:bg-amber-50"
-                  }`}
-              >
-                <span>⚡</span>
-                {t('sparks')}
-              </Link>
-            </div>
-
-            {/* Settings - opens modal with wallet address & export private keys */}
+{/* Settings - opens modal with wallet address & export private keys */}
             <div className="mb-2">
               <button
                 onClick={() => {
@@ -746,21 +728,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 <Settings className="w-4 h-4 shrink-0" />
                 {t('settings')}
               </button>
-            </div>
-
-            {/* Network toggle — visible to all; non-mainnetAccess users get view-only mainnet */}
-            <div className="mb-2">
-              <div className={`flex items-center justify-between px-3 py-2 rounded-lg ${isDarkPage ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}>
-                <div className="flex flex-col min-w-0">
-                  <span className={`text-base md:text-sm ${isDarkPage ? "text-gray-300" : "text-gray-700"}`}>
-                    {t('mainnetBeta')}
-                  </span>
-                </div>
-                <Switch
-                  checked={networkMode === "mainnet"}
-                  onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
-                />
-              </div>
             </div>
 
             {/* Divider */}
@@ -1517,27 +1484,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </div>
                       ) : null}
 
-
-                      {/* Network toggle card */}
-                      <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
-                        <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-3 border-b border-white/[0.06]">
-                          <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
-                            <Globe className="w-3.5 h-3.5 text-slate-300" />
-                          </div>
-                          <span className="text-base font-semibold text-white">{t('network')}</span>
-                        </div>
-                        <div className="flex items-center justify-between px-4 py-3.5">
-                          <div className="flex flex-col min-w-0">
-                            <span className="text-base text-white/80">
-                              {t('mainnetBeta')}
-                            </span>
-                          </div>
-                          <Switch
-                            checked={networkMode === "mainnet"}
-                            onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
-                          />
-                        </div>
-                      </div>
 
                       {/* Wallet card */}
                       {walletAddress ? (
