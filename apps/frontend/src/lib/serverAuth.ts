@@ -15,6 +15,15 @@ function getClient() {
 const tokenCache = new Map<string, { userId: string; exp: number }>();
 const TOKEN_TTL_MS = 30_000;
 
+/** Returns the full Privy user object (with linkedAccounts) for the given privy user ID. */
+export async function getPrivyUser(privyUserId: string) {
+  try {
+    return await getClient().getUser(privyUserId);
+  } catch {
+    return null;
+  }
+}
+
 export async function getVerifiedUserId(request: Request): Promise<string | null> {
   const authHeader = request.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;

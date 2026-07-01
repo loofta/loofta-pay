@@ -20,6 +20,8 @@ export function UserSync() {
   const username = useAuthStore((s) => s.username ?? null);
   const setUsername = useAuthStore((s) => s.setUsername);
   const setAuth = useAuthStore((s) => s.setAuth);
+  const setLooUsername = useAuthStore((s) => s.setLooUsername);
+  const setTwitterUsername = useAuthStore((s) => s.setTwitterUsername);
   const setAtaMigrated = useAuthStore((s) => s.setAtaMigrated);
   const setIsOnboardingOpen = useAuthStore((s) => s.setIsOnboardingOpen);
   const walletCreatedRef = useRef(false);
@@ -68,6 +70,8 @@ export function UserSync() {
         if (userData.user) {
           const usernameValue = userData.user.username || null;
           setUsername(usernameValue);
+          setLooUsername(userData.user.looUsername ?? null);
+          setTwitterUsername(userData.user.twitterUsername ?? null);
           setAtaMigrated("mainnet", userData.user.ataMigratedMainnet ?? false);
           setAtaMigrated("devnet", userData.user.ataMigratedDevnet ?? false);
           if (userData.user.email) {
@@ -76,6 +80,8 @@ export function UserSync() {
               userId,
               email: userData.user.email,
               username: usernameValue,
+              looUsername: userData.user.looUsername ?? null,
+              twitterUsername: userData.user.twitterUsername ?? null,
             });
           }
           // Onboarding (add-email, then welcome flow) shows after login; no separate username modal
@@ -160,6 +166,8 @@ export function UserSync() {
       });
       const data = await r.json();
       if (data.user?.username) setUsername(data.user.username);
+      if (data.user?.looUsername !== undefined) setLooUsername(data.user.looUsername ?? null);
+      if (data.user?.twitterUsername !== undefined) setTwitterUsername(data.user.twitterUsername ?? null);
     } catch (e) {
       console.error("[UserSync] Error refreshing user:", e);
     }

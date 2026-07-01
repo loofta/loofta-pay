@@ -25,7 +25,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   const showBottomNav = !isCheckoutPage && (
     pathname === '/' || pathname === '/app' ||
     pathname === '/history' || pathname === '/app/history' ||
-    pathname === '/settings' || pathname === '/app/settings' ||
+    pathname === '/settings' || pathname === '/app/settings' || pathname === '/app/profile' ||
     pathname?.startsWith('/c/') || pathname?.startsWith('/app/c/') ||
     pathname === '/sparks' || pathname === '/app/sparks' ||
     pathname === '/waitlist' || pathname === '/app/waitlist'

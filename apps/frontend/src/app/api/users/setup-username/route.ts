@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
-import { getVerifiedUserId } from "@/lib/serverAuth";
+import { getVerifiedUserId, getPrivyUser } from "@/lib/serverAuth";
 
 /**
- * Set username for user
+ * Set username for user.
  * POST /api/users/setup-username
+ *
+ * Also fills loo_username and twitter_username so new users have all three set from day 1:
+ *   - loo-* username  → loo_username = username (same value)
+ *   - Twitter handle  → twitter_username = username, loo_username = loo-{handle} (generated, unique)
  */
 export async function POST(request: NextRequest) {
   const privyUserId = await getVerifiedUserId(request);
@@ -15,13 +19,10 @@ export async function POST(request: NextRequest) {
     const { username } = await request.json();
 
     if (!username) {
-      return NextResponse.json(
-        { error: "username is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "username is required" }, { status: 400 });
     }
 
-    // Validate username format: 3-20 alphanumeric + underscore, or loo- + 1-16 chars (for email-only users)
+    // Validate: 3-20 alphanumeric+underscore OR loo- + 1-16 chars
     const usernameRegex = /^(?:[a-zA-Z0-9_]{3,20}|loo-[a-zA-Z0-9_]{1,16})$/;
     if (!usernameRegex.test(username)) {
       return NextResponse.json(
@@ -30,64 +31,95 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const normalized = username.toLowerCase();
+    const isLoo = normalized.startsWith("loo-");
+
+    // Non-loo usernames must match the user's actual linked Twitter/X handle.
+    // Prevents anyone from claiming a Twitter username they don't own.
+    if (!isLoo) {
+      const privyUser = await getPrivyUser(privyUserId);
+      if (!privyUser) {
+        return NextResponse.json({ error: "Could not verify your account" }, { status: 500 });
+      }
+      const twitterAccount = privyUser.linkedAccounts.find(
+        (a: { type: string }) => a.type === "twitter_oauth" || a.type === "twitter" || a.type === "x"
+      ) as { type: string; username?: string | null; name?: string | null } | undefined;
+
+      const twitterHandle = (twitterAccount?.username ?? twitterAccount?.name ?? "")
+        .replace(/^@/, "")
+        .toLowerCase()
+        .trim();
+
+      if (!twitterHandle || twitterHandle !== normalized) {
+        return NextResponse.json(
+          {
+            error: twitterHandle
+              ? `This username is reserved. Connect the @${normalized} X account to use it.`
+              : "Connect your X account to use a non-loo username.",
+          },
+          { status: 403 }
+        );
+      }
+    }
+
     const supabase = getSupabaseAdmin();
 
-    // Check if username is already taken (or already set for this user)
+    // Check if username is already taken by another user
     const { data: existingUser, error: checkError } = await supabase
       .from("app_users")
-      .select("id, privy_user_id")
-      .eq("username", username.toLowerCase())
+      .select("id, privy_user_id, loo_username, twitter_username")
+      .eq("username", normalized)
       .single();
 
     if (checkError && checkError.code !== "PGRST116") {
       console.error("[users/setup-username] Error checking username:", checkError);
-      return NextResponse.json(
-        { error: "Failed to check username availability" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Failed to check username availability" }, { status: 500 });
     }
 
-    if (existingUser) {
-      if (existingUser.privy_user_id === privyUserId) {
-        // Same user already has this username — idempotent success
-        const { data: user } = await supabase
-          .from("app_users")
-          .select("id, privy_user_id, email, username, created_at")
-          .eq("privy_user_id", privyUserId)
-          .single();
-        return NextResponse.json({
-          success: true,
-          user: user
-            ? {
-                id: user.id,
-                privyUserId: user.privy_user_id,
-                email: user.email,
-                username: user.username,
-                createdAt: user.created_at,
-              }
-            : { id: existingUser.id, privyUserId, email: null, username: username.toLowerCase(), createdAt: null },
-        });
+    if (existingUser && existingUser.privy_user_id !== privyUserId) {
+      return NextResponse.json({ error: "Username is already taken" }, { status: 409 });
+    }
+
+    // Fetch current user to see if loo_username is already set
+    const { data: currentUser } = await supabase
+      .from("app_users")
+      .select("id, loo_username, twitter_username")
+      .eq("privy_user_id", privyUserId)
+      .single();
+
+    // Determine what to set for loo_username and twitter_username
+    let looUsername: string | null = currentUser?.loo_username ?? null;
+    let twitterUsername: string | null = currentUser?.twitter_username ?? null;
+
+    if (isLoo) {
+      // loo-username IS the permanent backup — use it directly
+      looUsername = normalized;
+    } else {
+      // Twitter handle: save as twitter_username, generate a loo_username if not already set
+      twitterUsername = normalized;
+      if (!looUsername) {
+        looUsername = await generateUniqueLooUsername(normalized, privyUserId, supabase);
       }
-      return NextResponse.json(
-        { error: "Username is already taken" },
-        { status: 409 }
-      );
     }
 
-    // Update user with username
+    // Build the update payload
+    const updatePayload: Record<string, string | null> = { username: normalized };
+    if (looUsername) updatePayload.loo_username = looUsername;
+    if (twitterUsername) updatePayload.twitter_username = twitterUsername;
+
     const { data: updatedUser, error: updateError } = await supabase
       .from("app_users")
-      .update({ username: username.toLowerCase() })
+      .update(updatePayload)
       .eq("privy_user_id", privyUserId)
-      .select("id, privy_user_id, email, username, created_at")
+      .select("id, privy_user_id, email, username, loo_username, twitter_username, created_at")
       .single();
 
     if (updateError) {
       console.error("[users/setup-username] Error updating username:", updateError);
-      return NextResponse.json(
-        { error: "Failed to set username" },
-        { status: 500 }
-      );
+      if (updateError.code === "23505") {
+        return NextResponse.json({ error: "Username is already taken" }, { status: 409 });
+      }
+      return NextResponse.json({ error: "Failed to set username" }, { status: 500 });
     }
 
     return NextResponse.json({
@@ -97,14 +129,59 @@ export async function POST(request: NextRequest) {
         privyUserId: updatedUser.privy_user_id,
         email: updatedUser.email,
         username: updatedUser.username,
+        looUsername: updatedUser.loo_username,
+        twitterUsername: updatedUser.twitter_username,
         createdAt: updatedUser.created_at,
       },
     });
-  } catch (error: any) {
-    console.error("[users/setup-username] Unexpected error:", error);
-    return NextResponse.json(
-      { error: error?.message || "Internal server error" },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Internal server error";
+    console.error("[users/setup-username] Unexpected error:", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+/**
+ * Generate a unique loo-{handle} that doesn't conflict with any existing
+ * username or loo_username in the table. Appends a counter when needed.
+ *
+ * loo-username max = "loo-" (4) + 16 suffix chars = 20 chars total.
+ * Candidate with counter: "loo-" + handle_truncated + counter, always ≤ 20 chars.
+ */
+async function generateUniqueLooUsername(
+  handle: string,
+  privyUserId: string,
+  supabase: ReturnType<typeof getSupabaseAdmin>
+): Promise<string> {
+  let counter = 0;
+
+  while (true) {
+    // Build candidate: leave room for counter digits so total suffix ≤ 16 chars
+    const counterStr = counter === 0 ? "" : String(counter);
+    const suffix = handle.slice(0, 16 - counterStr.length) + counterStr;
+    const candidate = "loo-" + suffix;
+
+    // Check both columns with separate queries to avoid PostgREST quoting issues
+    // with hyphens in .or() filter strings
+    const [{ data: byUsername }, { data: byLoo }] = await Promise.all([
+      supabase
+        .from("app_users")
+        .select("privy_user_id")
+        .eq("username", candidate)
+        .neq("privy_user_id", privyUserId)
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("app_users")
+        .select("privy_user_id")
+        .eq("loo_username", candidate)
+        .neq("privy_user_id", privyUserId)
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+    if (!byUsername && !byLoo) return candidate;
+
+    counter = counter === 0 ? 2 : counter + 1;
   }
 }
