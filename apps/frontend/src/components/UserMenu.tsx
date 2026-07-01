@@ -107,6 +107,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const setOpenShareModal = useAuthStore((s) => s.setOpenShareModal);
   const openSettingsModalFromStore = useAuthStore((s) => s.openSettingsModal);
   const setOpenSettingsModal = useAuthStore((s) => s.setOpenSettingsModal);
+  const setIsOnboardingOpen = useAuthStore((s) => s.setIsOnboardingOpen);
 
   // Sync props to store to ensure persistence
   useEffect(() => {
@@ -1120,7 +1121,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 20 }}
-              className="bg-[#0f0f12] sm:border sm:border-white/10 sm:rounded-2xl w-full sm:max-w-sm shadow-2xl flex flex-col h-full sm:h-auto overflow-hidden"
+              className="bg-[#0f0f12] sm:border sm:border-white/10 sm:rounded-2xl w-full sm:max-w-lg shadow-2xl flex flex-col h-full sm:h-auto overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Scrollable content */}
@@ -1138,13 +1139,13 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </div>
                         <p className="text-white font-semibold text-lg mb-1">New wallet ready</p>
                         {newWalletAddress && (
-                          <p className="text-slate-400 text-sm mb-3 font-mono">{newWalletAddress.slice(0, 8)}…{newWalletAddress.slice(-6)}</p>
+                          <p className="text-slate-400 text-base mb-3 font-mono">{newWalletAddress.slice(0, 8)}…{newWalletAddress.slice(-6)}</p>
                         )}
-                        <p className="text-slate-400 text-sm mb-6">Your new wallet is now active. The previous address is no longer used by Loofta.</p>
+                        <p className="text-slate-400 text-base mb-6">Your new wallet is now active. The previous address is no longer used by Loofta.</p>
                         <button
                           type="button"
                           onClick={() => { setShowRotateConfirm(false); setRotateState("idle"); setNewWalletAddress(""); }}
-                          className="w-full py-3 rounded-xl text-sm font-semibold bg-white/10 hover:bg-white/15 text-white transition-colors"
+                          className="w-full py-3 rounded-xl text-base font-semibold bg-white/10 hover:bg-white/15 text-white transition-colors"
                         >
                           Done
                         </button>
@@ -1157,17 +1158,17 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           </svg>
                         </div>
                         <p className="text-white font-semibold text-lg mb-2">Generate new wallet?</p>
-                        <p className="text-slate-400 text-sm mb-1">A new Solana wallet will be created and used for all future payments on Loofta.</p>
-                        <p className="text-slate-500 text-sm mb-6">Your previous wallet stays in Privy but won&apos;t be used by Loofta anymore.</p>
+                        <p className="text-slate-400 text-base mb-1">A new Solana wallet will be created and used for all future payments on Loofta.</p>
+                        <p className="text-slate-500 text-base mb-6">Your previous wallet stays in Privy but won&apos;t be used by Loofta anymore.</p>
                         {rotateState === "error" && (
-                          <p className="text-red-400 text-sm mb-3">{rotateError}</p>
+                          <p className="text-red-400 text-base mb-3">{rotateError}</p>
                         )}
                         <div className="flex gap-3 w-full">
                           <button
                             type="button"
                             disabled={rotateState === "loading"}
                             onClick={() => { setShowRotateConfirm(false); setRotateState("idle"); setRotateError(""); }}
-                            className="flex-1 py-3 rounded-xl text-sm font-semibold bg-white/10 hover:bg-white/15 text-white transition-colors disabled:opacity-50"
+                            className="flex-1 py-3 rounded-xl text-base font-semibold bg-white/10 hover:bg-white/15 text-white transition-colors disabled:opacity-50"
                           >
                             Cancel
                           </button>
@@ -1209,7 +1210,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                 setRotateState("error");
                               }
                             }}
-                            className="flex-1 py-3 rounded-xl text-sm font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+                            className="flex-1 py-3 rounded-xl text-base font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
                           >
                             {rotateState === "loading" ? (
                               <span className="flex items-center justify-center gap-2">
@@ -1248,7 +1249,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </div>
                       </div>
                       <h2 className="text-xl font-bold text-white mb-1">{t('settingsTitle')}</h2>
-                      <p className="text-sm text-slate-500">{t('settingsSubtitle')}</p>
+                      <p className="text-base text-slate-500">{t('settingsSubtitle')}</p>
                     </div>
 
                     <div className="space-y-3">
@@ -1259,7 +1260,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
                             <Shield className="w-3.5 h-3.5 text-slate-300" />
                           </div>
-                          <span className="text-sm font-semibold text-white">{t('signInMethods')}</span>
+                          <span className="text-base font-semibold text-white">{t('signInMethods')}</span>
                         </div>
 
                         <div className="px-4 pt-3 pb-4 space-y-2.5">
@@ -1275,18 +1276,18 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                         <polyline points="22,6 12,13 2,6" />
                                       </svg>
                                     </div>
-                                    <span className="flex-1 text-sm text-white/80 truncate">{linkedEmailAddress}</span>
+                                    <span className="flex-1 text-base text-white/80 truncate">{linkedEmailAddress}</span>
                                     {totalMethods > 1 ? (
                                       <button
                                         type="button"
                                         onClick={handleUnlinkEmail}
                                         disabled={unlinkingEmail}
-                                        className="shrink-0 px-2 py-1 rounded-lg text-sm text-slate-500 hover:text-slate-300 hover:bg-white/8 transition-colors disabled:opacity-40"
+                                        className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-500 hover:text-slate-300 hover:bg-white/8 transition-colors disabled:opacity-40"
                                       >
                                         {unlinkingEmail ? <Loader2 className="w-3 h-3 animate-spin" /> : "Remove"}
                                       </button>
                                     ) : (
-                                      <span className="shrink-0 px-2 py-0.5 rounded-full text-sm bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
+                                      <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
                                     )}
                                   </div>
                                 )}
@@ -1298,14 +1299,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                           <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
                                         </svg>
                                       </div>
-                                      <span className="flex-1 text-sm text-white/80">@{twitterHandle}</span>
+                                      <span className="flex-1 text-base text-white/80">@{twitterHandle}</span>
                                       {totalMethods > 1 ? (
                                         confirmUnlinkTwitter ? (
                                           <div className="flex items-center gap-1 shrink-0">
                                             <button
                                               type="button"
                                               onClick={() => setConfirmUnlinkTwitter(false)}
-                                              className="px-2 py-1 rounded-lg text-sm text-slate-400 hover:text-white hover:bg-white/8 transition-colors"
+                                              className="px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/8 transition-colors"
                                             >
                                               Cancel
                                             </button>
@@ -1313,7 +1314,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                               type="button"
                                               onClick={handleUnlinkTwitter}
                                               disabled={unlinkingTwitter}
-                                              className="px-2 py-1 rounded-lg text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+                                              className="px-2 py-1 rounded-lg text-base text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors disabled:opacity-40"
                                             >
                                               {unlinkingTwitter ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes, remove"}
                                             </button>
@@ -1323,18 +1324,18 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                             type="button"
                                             onClick={() => setConfirmUnlinkTwitter(true)}
                                             disabled={unlinkingTwitter}
-                                            className="shrink-0 px-2 py-1 rounded-lg text-sm text-slate-500 hover:text-slate-300 hover:bg-white/8 transition-colors disabled:opacity-40"
+                                            className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-500 hover:text-slate-300 hover:bg-white/8 transition-colors disabled:opacity-40"
                                           >
                                             Remove
                                           </button>
                                         )
                                       ) : (
-                                        <span className="shrink-0 px-2 py-0.5 rounded-full text-sm bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
+                                        <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
                                       )}
                                     </div>
                                     {confirmUnlinkTwitter && (
                                       <div className="mt-2 ml-10 px-3 py-2 rounded-xl bg-amber-500/[0.08] border border-amber-500/20">
-                                        <p className="text-sm text-amber-300/90 leading-snug">
+                                        <p className="text-base text-amber-300/90 leading-snug">
                                           {username?.toLowerCase() === twitterHandle.toLowerCase()
                                             ? `Your payment link will switch to @${storeLooUsername ?? `loo-${username?.slice(0, 16)}`}.`
                                             : "Your payment link username stays the same."}
@@ -1352,7 +1353,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           {totalMethods < 2 && (
                             <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/[0.08] border border-amber-500/20">
                               <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
-                              <p className="text-sm text-amber-300/90 leading-snug">{t('addSecondMethod')}</p>
+                              <p className="text-base text-amber-300/90 leading-snug">{t('addSecondMethod')}</p>
                             </div>
                           )}
 
@@ -1367,7 +1368,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                   try { await linkTwitter(); } catch { /* surfaced via onError */ }
                                 }}
                                 title="You'll be redirected to Twitter to log in"
-                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors border border-white/[0.05]"
+                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-base text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors border border-white/[0.05]"
                               >
                                 <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
                                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-slate-500">
@@ -1385,7 +1386,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                   setLinkingMethod("email");
                                   try { await linkEmail(); } catch { /* surfaced via onError */ }
                                 }}
-                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors border border-white/[0.05]"
+                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-base text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors border border-white/[0.05]"
                               >
                                 <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
                                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-500">
@@ -1411,28 +1412,28 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                 <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
                               </svg>
                             </div>
-                            <span className="text-sm font-semibold text-white">Payment link</span>
+                            <span className="text-base font-semibold text-white">Payment link</span>
                           </div>
                           <div className="px-4 pt-3 pb-4 space-y-2">
-                            <p className="text-sm text-slate-500">Choose which username your payment link uses.</p>
+                            <p className="text-base text-slate-500">Choose which username your payment link uses.</p>
                             <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] overflow-hidden divide-y divide-white/[0.05]">
                               {storeLooUsername && (
                                 <div className="flex items-center gap-3 px-3 py-2.5">
                                   <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
-                                    <span className="text-sm font-bold text-slate-400 leading-none">L</span>
+                                    <span className="text-base font-bold text-slate-400 leading-none">L</span>
                                   </div>
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-sm text-white/80 truncate">@{storeLooUsername}</p>
-                                    <p className="text-sm text-slate-600">Your Loofta username</p>
+                                    <p className="text-base text-white/80 truncate">@{storeLooUsername}</p>
+                                    <p className="text-base text-slate-600">Your Loofta username</p>
                                   </div>
                                   {username === storeLooUsername ? (
-                                    <span className="shrink-0 px-2 py-0.5 rounded-full text-sm bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
+                                    <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
                                   ) : (
                                     <button
                                       type="button"
                                       onClick={() => handleSwitchUsername("loo")}
                                       disabled={switchingUsername}
-                                      className="shrink-0 px-3 py-1 rounded-lg text-sm text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-40"
+                                      className="shrink-0 px-3 py-1 rounded-lg text-base text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-40"
                                     >
                                       {switchingUsername ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Use"}
                                     </button>
@@ -1447,17 +1448,17 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                     </svg>
                                   </div>
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-sm text-white/80 truncate">@{storeTwitterUsername}</p>
-                                    <p className="text-sm text-slate-600">Your X username</p>
+                                    <p className="text-base text-white/80 truncate">@{storeTwitterUsername}</p>
+                                    <p className="text-base text-slate-600">Your X username</p>
                                   </div>
                                   {username === storeTwitterUsername ? (
-                                    <span className="shrink-0 px-2 py-0.5 rounded-full text-sm bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
+                                    <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
                                   ) : (
                                     <button
                                       type="button"
                                       onClick={() => handleSwitchUsername("twitter")}
                                       disabled={switchingUsername || !hasTwitterLinked}
-                                      className="shrink-0 px-3 py-1 rounded-lg text-sm text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-40"
+                                      className="shrink-0 px-3 py-1 rounded-lg text-base text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-40"
                                       title={!hasTwitterLinked ? "Re-link X to use this username" : undefined}
                                     >
                                       {switchingUsername ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Use"}
@@ -1470,12 +1471,12 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </div>
                       ) : canUpdateToTwitter && twitterHandle ? (
                         <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-4 py-3.5">
-                          <p className="text-sm font-semibold text-white mb-1">{t('paymentLink')}</p>
-                          <p className="text-sm text-slate-500 mb-3">{t('useTwitterAsLink', { handle: twitterHandle })}</p>
+                          <p className="text-base font-semibold text-white mb-1">{t('paymentLink')}</p>
+                          <p className="text-base text-slate-500 mb-3">{t('useTwitterAsLink', { handle: twitterHandle })}</p>
                           <Button
                             type="button"
                             size="sm"
-                            className="rounded-xl bg-gradient-to-r from-[#FF4A26] to-[#E1A041] text-white border-0 hover:opacity-90 text-sm font-medium"
+                            className="rounded-xl bg-gradient-to-r from-[#FF4A26] to-[#E1A041] text-white border-0 hover:opacity-90 text-base font-medium"
                             disabled={updatingToTwitter || !privyUser?.id}
                             onClick={async () => {
                               if (!privyUser?.id || !twitterHandle) return;
@@ -1513,23 +1514,39 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </div>
                       ) : null}
 
+                      {/* Change username */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenSettingsModal(false);
+                          setIsOnboardingOpen(true);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-white/[0.04] border border-white/[0.08] text-slate-400 hover:text-white hover:bg-white/[0.07] transition-colors"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                        </svg>
+                        <span className="text-base font-medium">Change username</span>
+                      </button>
+
                       {/* Network toggle card */}
                       <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
                         <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-3 border-b border-white/[0.06]">
                           <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
                             <Globe className="w-3.5 h-3.5 text-slate-300" />
                           </div>
-                          <span className="text-sm font-semibold text-white">{t('network')}</span>
+                          <span className="text-base font-semibold text-white">{t('network')}</span>
                         </div>
                         <div className="flex items-center justify-between px-4 py-3.5">
                           <div className="flex flex-col min-w-0">
-                            <span className="text-sm text-white/80">
+                            <span className="text-base text-white/80">
                               {networkMode === "mainnet"
                                 ? (mainnetAccess ? t('mainnetBeta') : t('mainnetViewOnly'))
                                 : t('devnet')}
                             </span>
                             {networkMode === "mainnet" && !mainnetAccess && (
-                              <span className="text-sm text-amber-400/80 mt-0.5">{t('balanceWithdrawOnly')}</span>
+                              <span className="text-base text-amber-400/80 mt-0.5">{t('balanceWithdrawOnly')}</span>
                             )}
                           </div>
                           <Switch
@@ -1546,12 +1563,12 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                             <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
                               <Wallet className="w-3.5 h-3.5 text-slate-300" />
                             </div>
-                            <span className="text-sm font-semibold text-white">{t('walletAddress')}</span>
+                            <span className="text-base font-semibold text-white">{t('walletAddress')}</span>
                           </div>
                           <div className="px-4 pt-3 pb-4 space-y-2">
                             <div className="flex items-center gap-2 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                               <p
-                                className="flex-1 text-sm font-mono break-all cursor-pointer text-white/70 hover:text-white/90 transition-colors"
+                                className="flex-1 text-base font-mono break-all cursor-pointer text-white/70 hover:text-white/90 transition-colors"
                                 onClick={() => {
                                   setShowFullAddress(!showFullAddress);
                                   if (!showFullAddress) copyToClipboard(walletAddress, false);
@@ -1577,14 +1594,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                 )}
                               </button>
                             </div>
-                            <p className="text-sm text-slate-500">{showFullAddress ? t('clickToHide') : t('clickToCopy')}</p>
+                            <p className="text-base text-slate-500">{showFullAddress ? t('clickToHide') : t('clickToCopy')}</p>
 
                             <button
                               onClick={() => {
                                 setShowSettingsModal(false);
                                 window.open(`https://solscan.io/account/${walletAddress}`, '_blank');
                               }}
-                              className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors"
+                              className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-base text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors"
                             >
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
@@ -1597,16 +1614,16 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                             {walletAddress && isLocalhost && (
                               <div className="flex items-center justify-between gap-3 pt-2 border-t border-white/[0.06]">
                                 <div>
-                                  <p className="text-sm text-slate-400">New wallet address</p>
+                                  <p className="text-base text-slate-400">New wallet address</p>
                                   {balanceUSD >= 0.1 && (
-                                    <p className="text-sm text-amber-400/80 mt-0.5">Withdraw below $0.10 first</p>
+                                    <p className="text-base text-amber-400/80 mt-0.5">Withdraw below $0.10 first</p>
                                   )}
                                 </div>
                                 <button
                                   type="button"
                                   disabled={balanceUSD >= 0.1}
                                   onClick={() => setShowRotateConfirm(true)}
-                                  className="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-white/10 hover:bg-white/15 text-white"
+                                  className="shrink-0 px-3 py-1.5 rounded-lg text-base font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-white/10 hover:bg-white/15 text-white"
                                 >
                                   Generate new
                                 </button>
@@ -1617,9 +1634,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                       ) : (
                         <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-4 py-5 text-center">
                           {!privyReady ? (
-                            <p className="text-sm text-slate-500">{t('loadingWallet')}</p>
+                            <p className="text-base text-slate-500">{t('loadingWallet')}</p>
                           ) : (
-                            <p className="text-sm text-slate-500">{t('walletAutoCreated')}</p>
+                            <p className="text-base text-slate-500">{t('walletAutoCreated')}</p>
                           )}
                         </div>
                       )}
