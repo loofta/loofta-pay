@@ -971,7 +971,12 @@ export class ClaimsService {
       throw new BadRequestException('No Solana wallet linked to your account. Please add a wallet in settings.');
     }
 
-    // For pending claims we need to record the real wallet; for registered recipients it's already set.
+    // Attempt sweep before writing recipient_address — if sweep throws (e.g. fee payer has no SOL)
+    // we must not have overwritten the PENDING_EMAIL/PENDING_USERNAME address, otherwise the user
+    // cannot retry because the pending-claim detection no longer matches.
+    const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
+
+    // Sweep didn't throw — safe to commit the resolved wallet to DB.
     if (isPendingEmail || isPendingUsername) {
       const { error } = await this.updateRow(
         claimId,
@@ -984,7 +989,6 @@ export class ClaimsService {
       }
     }
 
-    const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
     if (sweepTxHash) {
       await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
       this.notifyRecipientAfterPayment(claimId);
@@ -1383,9 +1387,10 @@ export class ClaimsService {
         // Guard: fee payer must have SOL or the tx will be silently dropped (causes "timed out" not "failed").
         const feePayerSolBalance = await conn.getBalance(feePayerPubkey).catch(() => 0);
         if (feePayerSolBalance < 10_000) {
-          throw new Error(
-            `Fee payer ${feePayerPubkey.toBase58().slice(0, 8)}… has insufficient SOL (${feePayerSolBalance} lamports). Please top up the fee payer wallet.`,
+          this.logger.warn(
+            `Claim ${claimId}: fee payer ${feePayerPubkey.toBase58()} has insufficient SOL (${feePayerSolBalance} lamports) — cannot sweep`,
           );
+          throw new Error('Network fee sponsorship is temporarily unavailable');
         }
         this.logger.log(
           `Claim ${claimId}: [SWEEP] direct SPL burner->recipient ${balance} base units (burner ${burnerKeypair.publicKey.toBase58().slice(0, 8)} → ${wallet.slice(0, 8)}) feePayer=${feePayerPubkey.toBase58().slice(0, 8)} sol=${feePayerSolBalance}`,
