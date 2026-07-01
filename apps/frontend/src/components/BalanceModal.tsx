@@ -1909,8 +1909,11 @@ export function BalanceModal({
           <div className={`w-10 h-1 rounded-full ${dark ? "bg-white/20" : "bg-gray-300"}`} />
         </div>
 
-        {/* Static: header + tabs */}
-        <div className="shrink-0 sm:contents px-6 sm:p-0 space-y-5 sm:space-y-4">
+        {/* Scrollable content area */}
+        <div
+          className="flex-1 min-h-0 sm:contents px-6 pb-6 sm:p-0 space-y-5 sm:space-y-4"
+          style={{ overflowY: "auto", WebkitOverflowScrolling: "touch" } as React.CSSProperties}
+        >
 
           <DialogHeader className="pb-0 pt-2 sm:pt-0">
             <DialogTitle className={cn("text-3xl sm:text-4xl font-bold tracking-tight", dark ? "text-white" : "text-gray-900")}>
@@ -1996,11 +1999,6 @@ export function BalanceModal({
               )}>Recent</span>
             </button>
           </div>
-        </div>{/* end static header+tabs */}
-
-        {/* Scrollable tab content — relative/absolute for iOS Safari compatibility */}
-        <div className="flex-1 min-h-0 relative sm:contents">
-          <div className="absolute inset-0 overflow-y-auto overscroll-contain [touch-action:pan-y] px-6 sm:px-0 pt-5 sm:pt-0 pb-6 sm:pb-0 sm:static sm:inset-auto sm:overflow-visible">
 
           {/* Top Up tab — method cards */}
           {tab === "topup" && topUpView === null && (
@@ -3118,8 +3116,7 @@ export function BalanceModal({
             </div>
           )}
 
-          </div>{/* end absolute scroll div */}
-        </div>{/* end scrollable tab content */}
+        </div>{/* end scrollable content */}
 
         {/* Large close button — mobile only, always visible at bottom */}
         <div className={`sm:hidden shrink-0 px-4 pt-3 pb-8 border-t ${dark ? "border-white/10 bg-[#0f0f12]" : "border-gray-100 bg-white"}`}>
