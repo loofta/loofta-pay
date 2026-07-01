@@ -300,9 +300,15 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     if (!useLegacy) {
       const ep = existingPayment as { created_by?: string | null; direction?: string; sender_user_id?: string | null; recipient_user_id?: string | null };
 
-      // Ownership check — private payments (from_sender) can only be updated by a payment party.
-      // from_recipient payment requests are public-facing: any authenticated payer may update them.
-      if (ep.direction !== "from_recipient") {
+      // Ownership check
+      if (ep.direction === "from_recipient") {
+        // Payment request link: any authenticated user may pay (sender_user_id is null).
+        // Once a sender is assigned, only they or the creator may update further.
+        if (ep.sender_user_id && ep.sender_user_id !== userId && ep.created_by !== userId) {
+          return NextResponse.json({ error: "Not authorized to update this payment" }, { status: 403 });
+        }
+      } else {
+        // from_sender: only creator/sender/recipient
         const isCreator   = !!ep.created_by && ep.created_by === userId;
         const isSender    = !!ep.sender_user_id && ep.sender_user_id === userId;
         const isRecipient = !!ep.recipient_user_id && ep.recipient_user_id === userId;

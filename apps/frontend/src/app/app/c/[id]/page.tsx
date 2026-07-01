@@ -67,7 +67,6 @@ import {
   privatePaymentFundsAppearCopy,
   privatePaymentWaitingAfterSenderCopy,
 } from "@/lib/privatePaymentCopy";
-import { getCachedMainnetAccess, setCachedMainnetAccess } from "@/lib/mainnetAccessCache";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
@@ -676,41 +675,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const networkMode = useAuthStore((s) => s.networkMode);
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
   const isOnboardingOpen = useAuthStore((s) => s.isOnboardingOpen);
-  const [hasMainnetAccess, setHasMainnetAccess] = useState(false);
-  const [mainnetAccessChecked, setMainnetAccessChecked] = useState(false);
-  useEffect(() => {
-    if (!privyReady) return;
-    if (!authenticated || !user) {
-      // Privy loaded but not signed in — no access, safe to render
-      setMainnetAccessChecked(true);
-      return;
-    }
-    const userId = user.id;
-    const cached = getCachedMainnetAccess(userId);
-    if (cached !== null) {
-      setHasMainnetAccess(cached);
-      setMainnetAccessChecked(true);
-      return;
-    }
-    setMainnetAccessChecked(false);
-    getAccessToken().then((token) => {
-      fetch("/api/users/mainnet-access", {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
-        .then((r) => r.json())
-        .then((d) => {
-          const access = !!d?.mainnetAccess;
-          setHasMainnetAccess(access);
-          setCachedMainnetAccess(userId, access);
-        })
-        .catch(() => { })
-        .finally(() => setMainnetAccessChecked(true));
-    });
-  }, [authenticated, user, privyReady, getAccessToken]);
-
   const hideAlternateTokenPay = false;
-  /** User is viewing mainnet but cannot send payments (no beta access). Balance/withdraw still works. */
-  const mainnetViewOnly = mainnetAccessChecked && networkMode === "mainnet" && !hasMainnetAccess;
+  const mainnetViewOnly = false;
   const { data: tokensRaw = [], isLoading } = useTokensQuery();
   /** Devnet mode: inject devnet USDC mint so Pay with + selection resolve correctly. */
   const tokens = useMemo(() => {

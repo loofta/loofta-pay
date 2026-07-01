@@ -15,7 +15,8 @@ import {
   ApiSecurity,
   ApiParam,
 } from '@nestjs/swagger';
-import { AuthGuard, OptionalAuthGuard } from '@/common/guards';
+import { AuthGuard, OptionalAuthGuard, RateLimitGuard } from '@/common/guards';
+import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { SendPaymentService } from './send-payment.service';
 import { CreateSendPaymentDto, ClaimSendPaymentDto, BuildMultiSendDto } from './dto';
@@ -27,7 +28,8 @@ export class SendPaymentController {
   constructor(private readonly sendPaymentService: SendPaymentService) {}
 
   @Post('create')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'sendpay:create')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Create a send payment link (sender commits funds)' })
   @ApiResponse({
@@ -73,7 +75,8 @@ export class SendPaymentController {
   }
 
   @Post('multi-create')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'sendpay:create')
   @HttpCode(HttpStatus.OK)
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Create N payment records for multi-send (step 1 — no MagicBlock calls yet)' })
@@ -85,7 +88,8 @@ export class SendPaymentController {
   }
 
   @Post('multi-build')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'sendpay:build')
   @HttpCode(HttpStatus.OK)
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Build one combined SPL transaction for multiple recipients' })
@@ -98,7 +102,8 @@ export class SendPaymentController {
   }
 
   @Post('multi-build-private')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'sendpay:build')
   @HttpCode(HttpStatus.OK)
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Build one MagicBlock private transfer tx per recipient (sign all in one go)' })
@@ -124,7 +129,8 @@ export class SendPaymentController {
   }
 
   @Post(':id/build-private-transfer')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'sendpay:build')
   @HttpCode(HttpStatus.OK)
   @ApiSecurity('privy-auth')
   @ApiOperation({
@@ -143,7 +149,8 @@ export class SendPaymentController {
   }
 
   @Get(':id')
-  @UseGuards(OptionalAuthGuard)
+  @UseGuards(OptionalAuthGuard, RateLimitGuard)
+  @RateLimit(120, 60, 'sendpay:get')
   @ApiOperation({ summary: 'Get public send payment link details (optional auth for is_sender)' })
   @ApiParam({ name: 'id', description: 'Send payment link UUID' })
   @ApiResponse({ status: 200, description: 'Public details' })
