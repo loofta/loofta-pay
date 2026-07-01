@@ -29,16 +29,19 @@ export function markLocallyDone(userId: string) {
 export function useUpdateJun26() {
   const { ready, authenticated, user, getAccessToken } = usePrivy();
   const [show, setShow] = useState(false);
+  // resolved = we've definitively determined whether the update is needed
+  const [resolved, setResolved] = useState(false);
   const privyUserId = user?.id;
 
   useEffect(() => {
     if (!ready) return;
-    if (!authenticated || !privyUserId) { setShow(false); return; }
+    if (!authenticated || !privyUserId) { setShow(false); setResolved(true); return; }
 
-    if (isUpdateDone(privyUserId)) return;
+    if (isUpdateDone(privyUserId)) { setResolved(true); return; }
 
     if (isNewUser(user?.createdAt)) {
       markLocallyDone(privyUserId);
+      setResolved(true);
       return;
     }
 
@@ -71,6 +74,8 @@ export function useUpdateJun26() {
         }
       } catch {
         setShow(true); // Backend unreachable — show modal as fallback
+      } finally {
+        setResolved(true);
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -90,5 +95,5 @@ export function useUpdateJun26() {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [authenticated, privyUserId, user?.createdAt]);
 
-  return { show };
+  return { show, resolved };
 }

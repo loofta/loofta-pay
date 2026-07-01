@@ -6,7 +6,7 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 import { fetchEmbeddedSolanaUsdcBalance } from "@/services/solanaBalance";
-import { useUpdateJun26, markLocallyDone, UPDATE_ID } from "@/hooks/useUpdateJun26";
+import { markLocallyDone, UPDATE_ID } from "@/hooks/useUpdateJun26";
 import {
   Dialog,
   DialogContent,
@@ -37,8 +37,7 @@ function useNetworkBalance(address: string | null, network: "mainnet" | "devnet"
   });
 }
 
-export function UpdateJun26Modal() {
-  const { show } = useUpdateJun26();
+export function UpdateJun26Modal({ show }: { show: boolean }) {
   const { user, authenticated, getAccessToken, logout } = usePrivy();
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
   const address = deriveSolanaEmbeddedAddress(user);
