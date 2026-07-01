@@ -133,4 +133,41 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       await this.releaseLock(key, lockValue);
     }
   }
+
+  /**
+   * Sliding-window rate limiter using a Redis sorted set.
+   * Adds the current request, removes entries older than the window, then counts.
+   * Fails open when Redis is unavailable (so an outage doesn't block the app).
+   */
+  async slideWindow(
+    key: string,
+    limit: number,
+    windowSecs: number,
+  ): Promise<{ allowed: boolean; remaining: number; retryAfterMs: number }> {
+    if (!this.client) {
+      return { allowed: true, remaining: limit, retryAfterMs: 0 };
+    }
+
+    const now = Date.now();
+    const windowMs = windowSecs * 1000;
+    const cutoff = now - windowMs;
+    const member = `${now}:${Math.random().toString(36).slice(2, 9)}`;
+
+    const pipeline = this.client.pipeline();
+    pipeline.zremrangebyscore(key, 0, cutoff);
+    pipeline.zadd(key, now, member);
+    pipeline.zcard(key);
+    pipeline.expire(key, windowSecs + 1);
+    const results = await pipeline.exec();
+
+    const count = (results?.[2]?.[1] as number) ?? 0;
+    const allowed = count <= limit;
+    const remaining = Math.max(0, limit - count);
+
+    if (!allowed) {
+      await this.client.zrem(key, member);
+    }
+
+    return { allowed, remaining, retryAfterMs: allowed ? 0 : windowMs };
+  }
 }
