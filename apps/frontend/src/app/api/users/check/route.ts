@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
-import { getVerifiedUserId } from "@/lib/serverAuth";
+import { getVerifiedUserId, getPrivyUser } from "@/lib/serverAuth";
+import { generateUniqueLooUsername, getTwitterHandleFromLinkedAccounts } from "@/lib/looUsername";
 
 /**
  * Check if user exists and return user data
@@ -49,11 +50,42 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // User doesn't exist — create with no username; onboarding will prompt them to choose one
+    // User doesn't exist — detect Twitter handle via Privy so we can set all three columns upfront
+    const privyUserObj = await getPrivyUser(privyUserId);
+    const twitterHandle = getTwitterHandleFromLinkedAccounts(
+      privyUserObj?.linkedAccounts as Array<{ type: string; username?: string | null; name?: string | null }> | undefined
+    );
+
+    const insertPayload: Record<string, string | null> = {
+      privy_user_id: privyUserId,
+      email: email || null,
+    };
+
+    let initialTwitterUsername: string | null = null;
+
+    // Derive the handle to base the loo- username on:
+    // - Twitter users  → use their handle (also set as active username + twitter_username)
+    // - Email-only     → use the part before @ (sanitised)
+    const looHandle = twitterHandle
+      ?? (email ? email.split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 16) : null)
+      ?? "user";
+
+    const initialLooUsername = await generateUniqueLooUsername(looHandle, privyUserId, supabase);
+
+    if (twitterHandle) {
+      initialTwitterUsername = twitterHandle;
+      insertPayload.username = twitterHandle;
+      insertPayload.twitter_username = initialTwitterUsername;
+    } else {
+      // Email-only: active username starts as the loo- username
+      insertPayload.username = initialLooUsername;
+    }
+    insertPayload.loo_username = initialLooUsername;
+
     const { data: newUser, error: createError } = await supabase
       .from("app_users")
-      .insert({ privy_user_id: privyUserId, email: email || null })
-      .select("id, privy_user_id, email, created_at")
+      .insert(insertPayload)
+      .select("id, privy_user_id, email, username, loo_username, twitter_username, created_at")
       .single();
 
     if (createError) {
@@ -70,15 +102,15 @@ export async function POST(request: NextRequest) {
         id: newUser.id,
         privyUserId: newUser.privy_user_id,
         email: newUser.email,
-        username: null,
-        looUsername: null,
-        twitterUsername: null,
+        username: newUser.username ?? null,
+        looUsername: newUser.loo_username ?? null,
+        twitterUsername: newUser.twitter_username ?? null,
         skipOnboarding: false,
         ataMigratedMainnet: false,
         ataMigratedDevnet: false,
         createdAt: newUser.created_at,
       },
-      needsUsername: true,
+      needsUsername: false,
     });
   } catch (error: any) {
     console.error("[users/check] Unexpected error:", error);

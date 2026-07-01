@@ -124,12 +124,6 @@ export function UserSync() {
 
     const run = async () => {
       try {
-        if (typeof window !== "undefined" && sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1") {
-          welcomeDismissedRef.current = true;
-          return;
-        }
-        if (welcomeDismissedRef.current) return;
-
         const token = await getAccessToken();
         const userResponse = await fetch("/api/users/check", {
           method: "POST",
@@ -141,10 +135,21 @@ export function UserSync() {
         });
         const userData = await userResponse.json();
         if (cancelled || userData.user?.skipOnboarding) return;
-        if (welcomeDismissedRef.current) return;
+
+        const isNewUser = userData.exists === false;
+
+        // New users always see onboarding — bypass all dismissal caches
+        if (!isNewUser) {
+          if (typeof window !== "undefined" && sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1") {
+            welcomeDismissedRef.current = true;
+            return;
+          }
+          if (welcomeDismissedRef.current) return;
+        }
 
         timer = setTimeout(() => {
-          if (!cancelled && !welcomeDismissedRef.current) {
+          if (!cancelled) {
+            welcomeDismissedRef.current = false;
             setShowWelcomeOnboarding(true);
             setIsOnboardingOpen(true);
           }
@@ -215,7 +220,11 @@ export function UserSync() {
           }}
           username={username ?? null}
           privyUserId={userId}
-          onEditUsername={refreshUser}
+          onUsernameSaved={(newUsername, looUsername, twitterUsername) => {
+            setUsername(newUsername);
+            if (looUsername !== undefined) setLooUsername(looUsername ?? null);
+            if (twitterUsername !== undefined) setTwitterUsername(twitterUsername ?? null);
+          }}
         />
       )}
     </>

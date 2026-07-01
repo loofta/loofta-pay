@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { getVerifiedUserId, getPrivyUser } from "@/lib/serverAuth";
+import { generateUniqueLooUsername } from "@/lib/looUsername";
 
 /**
  * Set username for user.
@@ -141,47 +142,3 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * Generate a unique loo-{handle} that doesn't conflict with any existing
- * username or loo_username in the table. Appends a counter when needed.
- *
- * loo-username max = "loo-" (4) + 16 suffix chars = 20 chars total.
- * Candidate with counter: "loo-" + handle_truncated + counter, always ≤ 20 chars.
- */
-async function generateUniqueLooUsername(
-  handle: string,
-  privyUserId: string,
-  supabase: ReturnType<typeof getSupabaseAdmin>
-): Promise<string> {
-  let counter = 0;
-
-  while (true) {
-    // Build candidate: leave room for counter digits so total suffix ≤ 16 chars
-    const counterStr = counter === 0 ? "" : String(counter);
-    const suffix = handle.slice(0, 16 - counterStr.length) + counterStr;
-    const candidate = "loo-" + suffix;
-
-    // Check both columns with separate queries to avoid PostgREST quoting issues
-    // with hyphens in .or() filter strings
-    const [{ data: byUsername }, { data: byLoo }] = await Promise.all([
-      supabase
-        .from("app_users")
-        .select("privy_user_id")
-        .eq("username", candidate)
-        .neq("privy_user_id", privyUserId)
-        .limit(1)
-        .maybeSingle(),
-      supabase
-        .from("app_users")
-        .select("privy_user_id")
-        .eq("loo_username", candidate)
-        .neq("privy_user_id", privyUserId)
-        .limit(1)
-        .maybeSingle(),
-    ]);
-
-    if (!byUsername && !byLoo) return candidate;
-
-    counter = counter === 0 ? 2 : counter + 1;
-  }
-}

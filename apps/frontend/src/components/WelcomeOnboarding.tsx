@@ -36,12 +36,12 @@ interface WelcomeOnboardingProps {
   onClose: (dontShowAgain: boolean) => void;
   username: string | null;
   privyUserId?: string;
-  onEditUsername?: () => void;
+  onUsernameSaved?: (username: string, looUsername?: string | null, twitterUsername?: string | null) => void;
 }
 
 const TOTAL_STEPS = 5; // welcome, username, pay friend, top up, share
 
-export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEditUsername }: WelcomeOnboardingProps) {
+export function WelcomeOnboarding({ open, onClose, username, privyUserId, onUsernameSaved }: WelcomeOnboardingProps) {
   const { user: privyUser, getAccessToken } = usePrivy();
   const { refreshUser } = useUser();
   const [emailLinkError, setEmailLinkError] = useState<"already_linked" | null>(null);
@@ -286,14 +286,14 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onEdit
         throw new Error(data.error || "Failed to set username");
       }
 
-      // Username saved successfully
+      // Username saved successfully — immediately update the header via callback
       setUsernameError(null);
-
-      // Trigger a callback to update parent component
-      if (onEditUsername) {
-        setTimeout(() => {
-          onEditUsername();
-        }, 100);
+      if (onUsernameSaved) {
+        onUsernameSaved(
+          data.user?.username ?? trimmed,
+          data.user?.looUsername ?? null,
+          data.user?.twitterUsername ?? null
+        );
       }
 
       return true;
