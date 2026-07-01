@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 const MAGICBLOCK_PAYMENTS_BASE = "https://payments.magicblock.app";
 
@@ -11,6 +12,9 @@ const DELAYS = {
 };
 
 export async function POST(req: NextRequest) {
+  const userId = await getVerifiedUserId(req);
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { from, to, amountUsdc, cluster } = await req.json() as {
     from: string;
     to: string;
@@ -43,9 +47,6 @@ export async function POST(req: NextRequest) {
     maxDelayMs,
     ...(cluster === "mainnet" ? { gasless: true } : {}),
   };
-
-  console.log('body', body);
-  console.log(`[test-transfer/build] POST ${MAGICBLOCK_PAYMENTS_BASE}/v1/spl/transfer`, JSON.stringify(body));
 
   const res = await fetch(`${MAGICBLOCK_PAYMENTS_BASE}/v1/spl/transfer`, {
     method: "POST",

@@ -109,7 +109,6 @@ export class SendPaymentService {
     linkId: string,
     privyUserId: string,
     senderWallet: string,
-    requestCluster?: 'devnet' | 'mainnet',
   ): Promise<MagicblockPrivateTransferTxResponse> {
     const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
     const link = await this.getOne(linkId);
@@ -126,8 +125,7 @@ export class SendPaymentService {
       throw new BadRequestException('Invalid amount');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
-    const cluster = requestCluster
-      ?? (isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet');
+    const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
     const effectiveMint = cluster === 'mainnet'
       ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
       : new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || this.usdcMint.toBase58());
@@ -771,7 +769,7 @@ export class SendPaymentService {
       );
     }
 
-    const isDevnet = dto.cluster === 'mainnet' ? false : dto.cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
+    const isDevnet = isSolanaDevnetFromConfig(this.configService);
     const senderPubkey = new PublicKey(dto.sender_wallet.trim());
     const senderAta = await getAssociatedTokenAddress(this.usdcMint, senderPubkey);
 
@@ -1087,9 +1085,8 @@ export class SendPaymentService {
     recipientCount: number;
   }> {
     const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
-    const isDevnet = dto.cluster === 'mainnet' ? false : dto.cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
-    const cluster: 'devnet' | 'mainnet' | 'localhost' = dto.cluster
-      ?? (isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet');
+    const isDevnet = isSolanaDevnetFromConfig(this.configService);
+    const cluster: 'devnet' | 'mainnet' | 'localhost' = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isDevnet ? 'devnet' : 'mainnet';
     const effectiveMint = cluster === 'mainnet'
       ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
       : new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || this.usdcMint.toBase58());
@@ -1233,7 +1230,7 @@ export class SendPaymentService {
     total_fee_usdc: number;
     recipient_count: number;
   }> {
-    const isDevnet = dto.cluster === 'mainnet' ? false : dto.cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
+    const isDevnet = isSolanaDevnetFromConfig(this.configService);
 
     if (!isDevnet) {
       const { data: waitlistRow } = await this.supabaseService.mainnetWaitlist

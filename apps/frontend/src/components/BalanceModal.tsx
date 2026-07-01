@@ -3170,6 +3170,13 @@ export function BalanceModal({
                 >
                   <X className="h-4 w-4 mr-2" />Cancel and get USDC back
                 </Button>
+                <button
+                  type="button"
+                  onClick={() => { resetPeer(); }}
+                  className={`w-full text-base text-center ${dark ? "text-slate-500 hover:text-slate-300" : "text-gray-400 hover:text-gray-600"}`}
+                >
+                  Start a new cash out
+                </button>
               </div>
             );
           })()}

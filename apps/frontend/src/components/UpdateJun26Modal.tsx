@@ -122,7 +122,7 @@ export function UpdateJun26Modal() {
   };
 
   return (
-    <Dialog open={show} onOpenChange={() => {}}>
+    <Dialog open={show} onOpenChange={() => {}} modal={false}>
       <DialogContent
         onInteractOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => e.preventDefault()}

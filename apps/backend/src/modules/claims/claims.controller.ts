@@ -474,7 +474,7 @@ export class ClaimsController {
   @ApiResponse({ status: 400, description: 'Invalid transaction' })
   @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
   async signAndBroadcastSponsored(
-    @Body() body: { transaction: string; network?: string },
+    @Body() body: { transaction: string },
   ): Promise<{ signature: string }> {
     if (!body?.transaction || typeof body.transaction !== 'string') {
       throw new BadRequestException('Missing or invalid transaction');
@@ -483,7 +483,7 @@ export class ClaimsController {
       throw new ServiceUnavailableException('Solana fee sponsorship is not configured');
     }
     try {
-      return await this.solanaSponsor.signAndBroadcast(body.transaction, body.network);
+      return await this.solanaSponsor.signAndBroadcast(body.transaction);
     } catch (e: any) {
       if (e?.message?.includes('not configured')) {
         throw new ServiceUnavailableException('Solana sponsorship is not configured');
@@ -506,7 +506,7 @@ export class ClaimsController {
   @ApiResponse({ status: 400, description: 'Invalid transaction' })
   @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
   async signAndBroadcastPER(
-    @Body() body: { transaction: string; cluster?: 'devnet' | 'mainnet' },
+    @Body() body: { transaction: string },
   ): Promise<{ signature: string }> {
     if (!body?.transaction || typeof body.transaction !== 'string') {
       throw new BadRequestException('Missing or invalid transaction');
@@ -515,12 +515,7 @@ export class ClaimsController {
       throw new ServiceUnavailableException('Solana fee sponsorship is not configured');
     }
     try {
-      const { Connection } = await import('@solana/web3.js');
-      const heliusKey = this.configService.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
-      const conn = body.cluster === 'mainnet'
-        ? new Connection(heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com', 'confirmed')
-        : undefined;
-      return await this.solanaSponsor.signAndBroadcastPER(body.transaction, conn);
+      return await this.solanaSponsor.signAndBroadcastPER(body.transaction);
     } catch (e: any) {
       if (e?.message?.includes('not configured')) {
         throw new ServiceUnavailableException('Solana sponsorship is not configured');
