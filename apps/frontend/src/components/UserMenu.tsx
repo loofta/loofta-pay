@@ -25,6 +25,7 @@ import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Globe, Wallet } 
 import { useTranslations } from "next-intl";
 import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
+import { ChangeUsernameModal } from "@/components/ChangeUsernameModal";
 /** Privy uses type "twitter_oauth" for Twitter (not "twitter" or "x"). */
 const TWITTER_TYPES = ["twitter_oauth", "twitter", "x"] as const;
 
@@ -164,6 +165,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [confirmUnlinkTwitter, setConfirmUnlinkTwitter] = useState(false);
   const [unlinkingEmail, setUnlinkingEmail] = useState(false);
   const [switchingUsername, setSwitchingUsername] = useState(false);
+  const [showChangeUsername, setShowChangeUsername] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
   const { refreshUser } = useUser();
@@ -1531,14 +1533,11 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </div>
                       ) : null}
 
-                      {/* Change username — only for email-only users; Twitter users use the toggle above */}
+                      {/* Change username */}
                       {!storeTwitterUsername && (
                         <button
                           type="button"
-                          onClick={() => {
-                            setOpenSettingsModal(false);
-                            setIsOnboardingOpen(true);
-                          }}
+                          onClick={() => setShowChangeUsername(true)}
                           className="w-full flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-white/[0.04] border border-white/[0.08] text-slate-400 hover:text-white hover:bg-white/[0.07] transition-colors"
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
@@ -1680,6 +1679,20 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         </AnimatePresence>,
         document.body
       )}
+
+      {/* Change Username Modal */}
+      <ChangeUsernameModal
+        open={showChangeUsername}
+        onClose={() => setShowChangeUsername(false)}
+        currentUsername={username ?? null}
+        storeLooUsername={storeLooUsername}
+        storeTwitterUsername={storeTwitterUsername}
+        onSaved={(newUsername, looUsername, twitterUsername) => {
+          setUsername(newUsername);
+          setLooUsername(looUsername ?? null);
+          if (twitterUsername !== null) setTwitterUsername(twitterUsername);
+        }}
+      />
 
       {/* Export Wallet Modal */}
       <Dialog open={showExportModal} onOpenChange={setShowExportModal}>
