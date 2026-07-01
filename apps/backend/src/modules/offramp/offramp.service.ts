@@ -218,6 +218,16 @@ export class OfframpService {
   }
 
   // Returns the latest non-terminal offramp record for a user (for session recovery on the frontend).
+  async getUserOfframps(userId: string, limit = 10) {
+    const { data } = await this.supabase.getClient()
+      .from('offramp_requests')
+      .select('id, created_at, platform, platform_identifier, currency, amount_usdc, status, zkp2p_deposit_id, completed_at, cancelled_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    return data ?? [];
+  }
+
   async getPendingForUser(userId: string) {
     const { data } = await this.supabase.getClient()
       .from('offramp_requests')
@@ -274,6 +284,18 @@ export class OfframpService {
     } catch (err: any) {
       this.logger.debug(`checkFulfilment ${record.id}:`, err.message);
     }
+  }
+
+  async getAllOfframps(page = 1, limit = 50) {
+    const from = (page - 1) * limit;
+    const { data, count, error } = await this.supabase.getClient()
+      .from('offramp_requests')
+      .select('id, created_at, updated_at, user_id, platform, platform_identifier, currency, amount_usdc, status, zkp2p_deposit_id, zkp2p_tx_hash, near_intents_deposit_address, completed_at, cancelled_at', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(from, from + limit - 1);
+
+    if (error) throw new BadRequestException('Failed to fetch offramp records');
+    return { data: data ?? [], total: count ?? 0, page, limit };
   }
 
   private async getRecord(offrampId: string, userId: string) {

@@ -45,10 +45,16 @@ const LOG_PREFIX = "[BalanceModal]";
 const PEER_LOG = "[Peer Offramp]";
 const PEER_SESSION_KEY = "loofta_peer_session";
 const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
-const ZKP2P_RATE_1_TO_1 = "1000000000000000000";
+const ZKP2P_RATE_UNIT = 1_000_000_000_000_000_000n; // 1e18
+function zkp2pRate(spreadPercent: number): string {
+  // conversionRate = (1 - spread) * 1e18 — peers pay less fiat per USDC, incentivizing faster fills
+  return ((ZKP2P_RATE_UNIT * BigInt(Math.round((1 - spreadPercent / 100) * 10_000))) / 10_000n).toString();
+}
+const BRIDGE_FEE_PCT = 0.6; // Near Intents ~0.1% + 50 BPS Loofta referral fee (Solana → Base)
 
 type WithdrawalStep = "idle" | "submitting" | "sent" | "bridging" | "complete" | "failed" | "settling";
 type PeerStep = "platform" | "form" | "bridging" | "creating-deposit" | "deposit-error" | "deposited" | "complete" | "cancelling" | "cancelled" | "failed";
+type PeerOfframpRecord = { id: string; created_at: string; platform: string; platform_identifier: string; currency: string; amount_usdc: number; status: string; zkp2p_deposit_id: string | null };
 
 // "cancelling" intentionally excluded — requires active signing and can't be resumed; maps to deposit-error on restore
 const ACTIVE_PEER_STEPS = new Set<PeerStep>(["bridging", "creating-deposit", "deposit-error", "deposited"]);
@@ -296,6 +302,8 @@ export function BalanceModal({
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
   const [addressRiskStatus, setAddressRiskStatus] = useState<"idle" | "checking" | "safe" | "unsafe">("idle");
   const [recentWithdrawals, setRecentWithdrawals] = useState<WithdrawalHistoryItem[]>([]);
+  const [peerOfframpHistory, setPeerOfframpHistory] = useState<PeerOfframpRecord[]>([]);
+  const [peerHistoryLoading, setPeerHistoryLoading] = useState(false);
 
   // Quote estimation for cross-chain
   const [quoteAmount, setQuoteAmount] = useState<string | null>(null);
@@ -799,15 +807,43 @@ export function BalanceModal({
           intentAmountRange: { min: minIntent, max: atomicUsdc },
           processorNames: [platform.processorName],
           payeeData: [{ offchainId: zkp2pId }],
-          conversionRates: [[{ currency: peerCurrency.toUpperCase(), conversionRate: ZKP2P_RATE_1_TO_1 }]],
+          conversionRates: [[{ currency: peerCurrency.toUpperCase(), conversionRate: zkp2pRate(getPeerCurrency(peerCurrency)?.spreadPercent ?? 0) }]],
         });
 
         if (cancelled) return;
 
-        // Fetch the newly created deposit ID from on-chain
-        const deposits = await client.getAccountDeposits(peerBaseWalletAddress as `0x${string}`);
-        const latest = Array.isArray(deposits) ? deposits[deposits.length - 1] : null;
-        const depositId = latest?.depositId?.toString() ?? null;
+        // Wait for tx to be mined, then extract deposit ID from receipt logs
+        const receipt = await pubClient.waitForTransactionReceipt({ hash: depositTxHash as `0x${string}`, timeout: 90_000 });
+        let depositId: string | null = null;
+
+        // Primary: parse deposit ID from emitted event logs
+        try {
+          const { parseEventLogs } = await import("viem");
+          const { getContracts: getZkpContracts } = await import("@zkp2p/sdk");
+          const { abis } = getZkpContracts(base.id, 'production');
+          const parsed = parseEventLogs({ abi: abis.escrow as any, logs: receipt.logs });
+          for (const log of parsed as any[]) {
+            if (log.args?.depositId !== undefined) {
+              depositId = log.args.depositId.toString();
+              break;
+            }
+          }
+        } catch { /* fall through to polling */ }
+
+        // Fallback: poll getAccountDeposits until the new deposit appears
+        if (!depositId) {
+          for (let attempt = 0; attempt < 6; attempt++) {
+            try {
+              const deposits = await client.getAccountDeposits(peerBaseWalletAddress as `0x${string}`);
+              if (Array.isArray(deposits) && deposits.length > 0) {
+                const latest = deposits[deposits.length - 1];
+                depositId = latest?.depositId?.toString() ?? null;
+                if (depositId) break;
+              }
+            } catch { /* retry */ }
+            await new Promise(r => setTimeout(r, 2000));
+          }
+        }
 
         console.log(PEER_LOG, "Peer deposit created", { depositId, depositTxHash });
 
@@ -851,7 +887,7 @@ export function BalanceModal({
           toast({ variant: "destructive", title: "Signing cancelled", description: "You declined the transaction. Tap retry to try again." });
           setPeerStep("bridging");
         } else {
-          toast({ variant: "destructive", title: "Peer deposit failed", description: "Your USDC is on Base. Retry or bridge it back to Solana." });
+          toast({ variant: "destructive", title: "Setup failed", description: "Your USDC is safe. Try again or cancel to get it back." });
           setPeerStep("deposit-error");
         }
       }
@@ -933,7 +969,7 @@ export function BalanceModal({
           setPeerBridgeBackDepositAddress(null);
           setPeerBridgeBackStatus(null);
           setPeerStep("deposit-error");
-          toast({ variant: "destructive", title: "Bridge refunded", description: "Near Intents refunded your USDC back to Base. Tap 'Bridge USDC back to Solana' to retry." });
+          toast({ variant: "destructive", title: "Refunded", description: "Your USDC was returned. Tap 'Cancel and get USDC back' to complete the cancellation." });
         }
       } catch (err) {
         console.warn(PEER_LOG, "bridge-back poll error", err);
@@ -984,14 +1020,14 @@ export function BalanceModal({
     if (!amountUsdc || amountUsdc <= 0) return null;
     const cur = getPeerCurrency(currency);
     if (!cur) return null;
-    // USD: USDC ≈ USD at live peg price
+    const afterBridge = amountUsdc * (1 - BRIDGE_FEE_PCT / 100);
     if (currency === "USD") {
-      const usd = amountUsdc * peerUsdcUsdPrice;
-      return { formatted: `$${usd.toFixed(2)} USD`, spreadPct: 0 };
+      const usd = afterBridge * peerUsdcUsdPrice * (1 - cur.spreadPercent / 100);
+      return { formatted: `$${usd.toFixed(2)} USD`, spreadPct: cur.spreadPercent };
     }
     const usdToTarget = peerFxRates[currency];
     if (!usdToTarget) return null; // still loading
-    const receive = amountUsdc * peerUsdcUsdPrice * usdToTarget * (1 - cur.spreadPercent / 100);
+    const receive = afterBridge * peerUsdcUsdPrice * usdToTarget * (1 - cur.spreadPercent / 100);
     const decimals = currency === "EUR" ? 2 : 0;
     const formatted = `${cur.symbol}${receive.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals })} ${currency}`;
     return { formatted, spreadPct: cur.spreadPercent };
@@ -1106,6 +1142,7 @@ export function BalanceModal({
     if (!open) return;
     const history = getWithdrawalHistory();
     setRecentWithdrawals(history);
+    fetchPeerHistory();
 
     // Restore deposit view if a Near Intents top-up is still pending
     if (depositAddr && !TERMINAL_BRIDGE_STATUSES.has(depositBridgeStatus || "")) {
@@ -1153,7 +1190,7 @@ export function BalanceModal({
             setPeerCancelSubStep("bridging-back");
           }
           setWithdrawMethod("peer-offramp");
-          setTab("withdraw");
+          setTab("history");
           restoredFromSession = true;
         }
       }
@@ -1201,7 +1238,7 @@ export function BalanceModal({
             setPeerStep("deposited");
           }
           setWithdrawMethod("peer-offramp");
-          setTab("withdraw");
+          setTab("history");
         } catch { /* non-fatal */ }
       });
     }
@@ -1383,6 +1420,40 @@ export function BalanceModal({
     setPeerCancelSubStep(null);
   };
 
+  const fetchPeerHistory = async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+    setPeerHistoryLoading(true);
+    try {
+      const res = await fetch("/api/offramp?history=true", { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const records = await res.json();
+        setPeerOfframpHistory(Array.isArray(records) ? records : []);
+      }
+    } catch { /* non-fatal */ } finally { setPeerHistoryLoading(false); }
+  };
+
+  const resumePeerOfframp = (record: PeerOfframpRecord) => {
+    const baseWallet = evmWalletsRef.current.find(
+      (w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"
+    );
+    resetPeer();
+    setPeerOfframpId(record.id);
+    setPeerPlatformId(record.platform);
+    setPeerIdentifier(record.platform_identifier);
+    setPeerCurrency(record.currency);
+    setPeerAmountUSDC(record.amount_usdc);
+    if (baseWallet) setPeerBaseWalletAddress(baseWallet.address);
+    if (record.zkp2p_deposit_id) setPeerZkp2pDepositId(record.zkp2p_deposit_id);
+    if (record.status === "CANCELLING") {
+      setPeerStep("deposit-error");
+    } else {
+      setPeerStep("deposited");
+    }
+    setWithdrawMethod("peer-offramp");
+    setTab("withdraw");
+  };
+
   const handlePeerBridgeBackDirect = async () => {
     if (!peerBaseWalletAddress || !peerOfframpId || !solanaAddress) return;
     setPeerStep("cancelling");
@@ -1412,37 +1483,53 @@ export function BalanceModal({
       });
       const walletClient = createWalletClient({ chain: base, transport: sponsoredTransport, account: peerBaseWalletAddress as `0x${string}` });
 
-      // Step 2: Close any open ZKP2P deposit
+      // Step 2: Close any open ZKP2P deposit — if deposit found but withdrawal fails, STOP (don't mark cancelled)
       setPeerCancelSubStep("signing-withdraw");
-      try {
+      let foundDepositId: bigint | null = null;
+      {
         const { OfframpClient } = await import("@zkp2p/sdk");
         const offrampClient = new OfframpClient({ walletClient: walletClient as any, chainId: base.id, runtimeEnv: 'production' });
 
-        let depositIdBigInt: bigint | null = null;
+        // Find deposit ID: use known value first, otherwise scan on-chain
         if (peerZkp2pDepositId) {
-          depositIdBigInt = BigInt(peerZkp2pDepositId);
+          foundDepositId = BigInt(peerZkp2pDepositId);
           console.log(PEER_LOG, "bridge-back: using known deposit ID", peerZkp2pDepositId);
         } else {
-          const deposits = await offrampClient.getAccountDeposits(peerBaseWalletAddress as `0x${string}`);
-          const activeDeposit = Array.isArray(deposits) ? deposits.find((d: any) => {
-            const remaining = d.remainingDeposits ?? d.remainingAmount ?? d.deposit?.remainingDeposits;
-            return remaining !== undefined && BigInt(remaining) > 0n;
-          }) : null;
-          if (activeDeposit) {
-            const depositId = (activeDeposit as any).depositId ?? (activeDeposit as any).deposit?.depositId;
-            depositIdBigInt = BigInt(depositId);
+          try {
+            const deposits = await offrampClient.getAccountDeposits(peerBaseWalletAddress as `0x${string}`);
+            const activeDeposit = Array.isArray(deposits) ? deposits.find((d: any) => {
+              const remaining = d.remainingDeposits ?? d.remainingAmount ?? d.deposit?.remainingDeposits;
+              return remaining !== undefined && BigInt(remaining) > 0n;
+            }) : null;
+            if (activeDeposit) {
+              const depositId = (activeDeposit as any).depositId ?? (activeDeposit as any).deposit?.depositId;
+              foundDepositId = BigInt(depositId);
+            }
+          } catch (err: any) {
+            console.warn(PEER_LOG, "bridge-back: deposit lookup failed (will check balance anyway)", err.message);
           }
         }
 
-        if (depositIdBigInt !== null) {
-          console.log(PEER_LOG, "bridge-back: withdrawing Peer deposit", { depositId: depositIdBigInt.toString() });
-          await offrampClient.withdrawDeposit({ depositId: depositIdBigInt });
-          console.log(PEER_LOG, "bridge-back: Peer deposit withdrawn");
+        if (foundDepositId !== null) {
+          console.log(PEER_LOG, "bridge-back: withdrawing Peer deposit", { depositId: foundDepositId.toString() });
+          try {
+            await offrampClient.withdrawDeposit({ depositId: foundDepositId });
+            console.log(PEER_LOG, "bridge-back: Peer deposit withdrawn");
+          } catch (err: any) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            console.error(PEER_LOG, "bridge-back: withdrawDeposit failed", errMsg);
+            setPeerCancelSubStep(null);
+            if (errMsg.includes("user rejected") || errMsg.includes("denied")) {
+              toast({ variant: "destructive", title: "Signing cancelled" });
+            } else {
+              toast({ variant: "destructive", title: "Could not retrieve USDC", description: "Your USDC is still in the cash out escrow. Please try again." });
+            }
+            setPeerStep("deposit-error");
+            return;
+          }
         } else {
-          console.log(PEER_LOG, "bridge-back: no active Peer deposit found");
+          console.log(PEER_LOG, "bridge-back: no active Peer deposit found on-chain");
         }
-      } catch (err: any) {
-        console.warn(PEER_LOG, "bridge-back: Peer deposit lookup/withdraw failed (continuing)", err.message);
       }
 
       // Step 3: Read ACTUAL on-chain balance (after withdrawal, exact amount to bridge)
@@ -1455,10 +1542,18 @@ export function BalanceModal({
       console.log(PEER_LOG, "bridge-back: actual Base USDC balance after withdrawal", rawBalance.toString());
 
       if (rawBalance === 0n) {
+        if (foundDepositId !== null) {
+          // We just withdrew from escrow but balance is still 0 — something went wrong
+          setPeerCancelSubStep(null);
+          toast({ variant: "destructive", title: "Balance check failed", description: "USDC not found after withdrawal. Please try again." });
+          setPeerStep("deposit-error");
+          return;
+        }
+        // No deposit found anywhere and no balance — safe to mark cancelled
         await fetch(`/api/offramp/${peerOfframpId}?action=mark-cancelled`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
         setPeerCancelSubStep(null);
         setPeerStep("cancelled");
-        toast({ title: "Cancelled", description: "No USDC remaining on Base — record cleared." });
+        toast({ title: "Cancelled", description: "No USDC remaining — record cleared." });
         return;
       }
 
@@ -1634,8 +1729,8 @@ export function BalanceModal({
     if (!peerOfframpId) { setWithdrawMethod(null); resetPeer(); return; }
     console.log(PEER_LOG, "cancel", { offrampId: peerOfframpId, step: peerStep });
 
-    // USDC is on Base but ZKP2P deposit was never created — bridge back directly
-    if ((peerStep === "creating-deposit" || peerStep === "deposit-error") && peerBaseWalletAddress && !peerZkp2pDepositId) {
+    // USDC is on Base but ZKP2P deposit ID is unknown or deposit never created — bridge back directly
+    if ((peerStep === "creating-deposit" || peerStep === "deposit-error" || peerStep === "deposited") && peerBaseWalletAddress && !peerZkp2pDepositId) {
       return handlePeerBridgeBackDirect();
     }
 
@@ -1748,10 +1843,17 @@ export function BalanceModal({
       const res = await fetch(`/api/offramp/${peerOfframpId}?action=cancel`, {
         method: "POST", headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json() as { refundNote?: string };
+      const data = await res.json() as { status?: string; refundNote?: string; zkp2pDepositId?: string | null };
       console.log(PEER_LOG, "cancel response", data);
-      setPeerStep("cancelled");
-      if (data.refundNote) toast({ title: "Cancelling offramp", description: data.refundNote });
+
+      if (data.status === 'CANCELLING' && peerBaseWalletAddress) {
+        // Backend says ZKP2P deposit exists — need to sign withdrawal + bridge back
+        if (data.zkp2pDepositId) setPeerZkp2pDepositId(data.zkp2pDepositId);
+        setPeerStep("deposit-error");
+      } else {
+        setPeerStep("cancelled");
+        if (data.refundNote) toast({ title: "Cancelling", description: data.refundNote });
+      }
     } catch (err) {
       console.error(PEER_LOG, "cancel error", err);
       toast({ variant: "destructive", title: "Cancel failed", description: "Try again or contact support." });
@@ -2007,7 +2109,7 @@ export function BalanceModal({
             {/* Recent */}
             <button
               type="button"
-              onClick={() => { setRecentWithdrawals(getWithdrawalHistory()); setTab("history"); }}
+              onClick={() => { setRecentWithdrawals(getWithdrawalHistory()); fetchPeerHistory(); setTab("history"); }}
               className="group relative z-10 flex-1 inline-flex flex-col items-center justify-center gap-1 rounded-xl px-2 py-2 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]"
             >
               <IconBubble active={tab === "history"} dark={dark}><Clock /></IconBubble>
@@ -2223,92 +2325,132 @@ export function BalanceModal({
             </div>
           )}
 
-          {/* History tab */}
-          {tab === "history" && (
-            <div className="py-2 min-h-0 overflow-y-auto sm:max-h-[60vh]">
-              {recentWithdrawals.length === 0 ? (
-                <p className={`text-base text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent withdrawals.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {recentWithdrawals.map((item) => {
-                    const isInProgress = item.isNearIntents && !item.nearIntentsComplete;
-                    return (
-                      <li key={item.id}>
-                        <div
-                          className={`rounded-lg border p-3 transition-colors ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="min-w-0 flex-1">
-                              <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
-                                ${item.amountUSDC.toFixed(2)} → {item.destinationToken}
-                                {item.estimatedOut && (
-                                  <span className={`font-normal text-base ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                                    (~{Number(item.estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} received)
-                                  </span>
+          {/* History tab — unified list of regular withdrawals + peer cash out requests */}
+          {tab === "history" && (() => {
+            const isEmpty = recentWithdrawals.length === 0 && peerOfframpHistory.length === 0;
+            return (
+              <div className="py-2 min-h-0 overflow-y-auto sm:max-h-[60vh]">
+                {peerHistoryLoading && peerOfframpHistory.length === 0 ? (
+                  <div className="flex justify-center py-6"><Loader2 className={`h-5 w-5 animate-spin ${dark ? "text-slate-400" : "text-gray-400"}`} /></div>
+                ) : isEmpty ? (
+                  <p className={`text-base text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent activity.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {/* Peer cash out requests */}
+                    {peerOfframpHistory.map((record) => {
+                      const platform = getPlatform(record.platform);
+                      const isActive = ["PENDING_BRIDGE", "BRIDGING", "DEPOSITED", "CANCELLING"].includes(record.status);
+                      const canResume = ["DEPOSITED", "CANCELLING"].includes(record.status);
+                      const statusLabel = record.status === "PENDING_BRIDGE" ? "Sending…" : record.status === "BRIDGING" ? "Bridging…" : record.status === "DEPOSITED" ? "Waiting for peer" : record.status === "COMPLETE" ? "Complete" : record.status === "CANCELLING" ? "Cancelling…" : record.status === "CANCELLED" ? "Cancelled" : "Failed";
+                      const statusColor = record.status === "COMPLETE" ? "text-emerald-400" : record.status === "CANCELLED" ? (dark ? "text-slate-500" : "text-gray-400") : record.status === "FAILED" ? "text-red-400" : "text-blue-400";
+                      return (
+                        <li key={`peer-${record.id}`}>
+                          <div className={`rounded-lg border p-3 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
+                                  ${Number(record.amount_usdc).toFixed(2)} → {record.currency} via {platform?.name ?? record.platform}
+                                </p>
+                                <p className={`text-base mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>{record.platform_identifier}</p>
+                                <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                                  {new Date(record.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                </p>
+                              </div>
+                              <div className="flex flex-col items-end gap-2 shrink-0">
+                                <span className={`text-base font-medium flex items-center gap-1 ${statusColor}`}>
+                                  {isActive && <Loader2 className="h-3 w-3 animate-spin" />}
+                                  {statusLabel}
+                                </span>
+                                {canResume && (
+                                  <button
+                                    type="button"
+                                    onClick={() => resumePeerOfframp(record)}
+                                    className={`text-base font-medium underline underline-offset-2 ${dark ? "text-orange-400 hover:text-orange-300" : "text-orange-600 hover:text-orange-700"}`}
+                                  >
+                                    Resume →
+                                  </button>
                                 )}
-                              </p>
-                              <p className={`text-base font-mono mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                                To {shortAddr(item.destinationAddress)} · {item.destinationChain}
-                              </p>
-                              <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
-                                {new Date(item.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                              </p>
-                            </div>
-                            <div className="flex flex-col items-end gap-1.5 shrink-0">
-                              {isInProgress ? (
-                                <span className="flex items-center gap-1 text-base font-medium text-blue-400">
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                  Bridging
-                                </span>
-                              ) : item.nearIntentsComplete && item.nearIntentsStatus ? (
-                                <span className={`text-base font-medium ${SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "text-emerald-400" : "text-amber-400"}`}>
-                                  {SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "Completed" : item.nearIntentsStatus}
-                                </span>
-                              ) : !item.isNearIntents ? (
-                                <span className="text-base font-medium text-emerald-400">Sent</span>
-                              ) : null}
-                              <a
-                                href={getExplorerTxUrl("solana", item.txSignature)}
-                                target="_blank"
-                                rel="noreferrer"
-                                className={`${dark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-600"}`}
-                              >
-                                <ExternalLink className="h-4 w-4" />
-                              </a>
+                              </div>
                             </div>
                           </div>
-
-                          {/* Bridge status for in-progress */}
-                          {isInProgress && item.nearIntentsStatus && (
-                            <p className={`text-base mt-2 pt-2 border-t ${dark ? "border-white/10 text-slate-400" : "border-gray-100 text-gray-500"}`}>
-                              {bridgeStatusLabel(item.nearIntentsStatus)}
-                            </p>
-                          )}
-
-                          {/* Track button for in-progress near intents */}
-                          {isInProgress && item.depositAddress && withdrawStep !== "bridging" && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActiveWithdrawal(item);
-                                setBridgeStatus(item.nearIntentsStatus ?? null);
-                                setWithdrawStep("bridging");
-                                setDepositAddressForPolling(item.depositAddress!);
-                                setTab("withdraw");
-                              }}
-                              className={`mt-2 text-base font-medium underline underline-offset-2 ${dark ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"}`}
-                            >
-                              Track progress →
-                            </button>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          )}
+                        </li>
+                      );
+                    })}
+                    {/* Regular withdrawals (direct USDC / Near Intents) */}
+                    {recentWithdrawals.map((item) => {
+                      const isInProgress = item.isNearIntents && !item.nearIntentsComplete;
+                      return (
+                        <li key={item.id}>
+                          <div className={`rounded-lg border p-3 transition-colors ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
+                            <div className="flex items-center gap-3">
+                              <div className="min-w-0 flex-1">
+                                <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
+                                  ${item.amountUSDC.toFixed(2)} → {item.destinationToken}
+                                  {item.estimatedOut && (
+                                    <span className={`font-normal text-base ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                                      (~{Number(item.estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} received)
+                                    </span>
+                                  )}
+                                </p>
+                                <p className={`text-base font-mono mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                                  To {shortAddr(item.destinationAddress)} · {item.destinationChain}
+                                </p>
+                                <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                                  {new Date(item.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                </p>
+                              </div>
+                              <div className="flex flex-col items-end gap-1.5 shrink-0">
+                                {isInProgress ? (
+                                  <span className="flex items-center gap-1 text-base font-medium text-blue-400">
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    Bridging
+                                  </span>
+                                ) : item.nearIntentsComplete && item.nearIntentsStatus ? (
+                                  <span className={`text-base font-medium ${SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "text-emerald-400" : "text-amber-400"}`}>
+                                    {SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "Completed" : item.nearIntentsStatus}
+                                  </span>
+                                ) : !item.isNearIntents ? (
+                                  <span className="text-base font-medium text-emerald-400">Sent</span>
+                                ) : null}
+                                <a
+                                  href={getExplorerTxUrl("solana", item.txSignature)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={`${dark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-600"}`}
+                                >
+                                  <ExternalLink className="h-4 w-4" />
+                                </a>
+                              </div>
+                            </div>
+                            {isInProgress && item.nearIntentsStatus && (
+                              <p className={`text-base mt-2 pt-2 border-t ${dark ? "border-white/10 text-slate-400" : "border-gray-100 text-gray-500"}`}>
+                                {bridgeStatusLabel(item.nearIntentsStatus)}
+                              </p>
+                            )}
+                            {isInProgress && item.depositAddress && withdrawStep !== "bridging" && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveWithdrawal(item);
+                                  setBridgeStatus(item.nearIntentsStatus ?? null);
+                                  setWithdrawStep("bridging");
+                                  setDepositAddressForPolling(item.depositAddress!);
+                                  setTab("withdraw");
+                                }}
+                                className={`mt-2 text-base font-medium underline underline-offset-2 ${dark ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"}`}
+                              >
+                                Track progress →
+                              </button>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Withdraw tab — progress panel (not shown during peer offramp or settling state) */}
           {tab === "withdraw" && withdrawStep !== "idle" && withdrawStep !== "settling" && withdrawMethod !== "peer-offramp" && (
@@ -2436,7 +2578,7 @@ export function BalanceModal({
                   <button
                     type="button"
                     disabled={!solanaAddress}
-                    onClick={() => { setWithdrawMethod("peer-offramp"); setPeerStep("platform"); setPeerCurrency("USD"); }}
+                    onClick={() => { resetPeer(); setWithdrawMethod("peer-offramp"); }}
                     className={cn(
                       "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
                       dark
@@ -2590,7 +2732,7 @@ export function BalanceModal({
                   {/* Bridge label */}
                   <div className={`flex items-center gap-2 px-4 py-1.5 border-y ${dark ? "border-white/[0.06] bg-white/[0.02]" : "border-gray-100 bg-gray-50/60"}`}>
                     <ArrowDown className={`h-3.5 w-3.5 shrink-0 ${dark ? "text-slate-500" : "text-gray-400"}`} />
-                    <span className={`text-base ${dark ? "text-slate-500" : "text-gray-400"}`}>Cross-chain via Near Intents</span>
+                    <span className={`text-base ${dark ? "text-slate-500" : "text-gray-400"}`}>Cross-chain bridge</span>
                   </div>
                   {/* TO row — token selector */}
                   <div className={`px-4 py-3.5 ${dark ? "" : ""}`}>
@@ -2861,7 +3003,7 @@ export function BalanceModal({
                       {(() => {
                         const est = getPeerEstimate(withdrawAmountNum, peerCurrency);
                         if (est?.spreadPct && est.spreadPct > 0) {
-                          return <p className={`text-xs mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>live rate · {est.spreadPct}% LP spread</p>;
+                          return null;
                         }
                         return null;
                       })()}
@@ -3059,7 +3201,7 @@ export function BalanceModal({
             const steps: SubStepDef[] = [
               {
                 label: "Setting up wallet",
-                sublabel: "Preparing sponsored Base wallet",
+                sublabel: "Preparing your wallet",
                 status: sub === null ? "pending"
                   : sub === "getting-address" ? "active"
                     : "done",
