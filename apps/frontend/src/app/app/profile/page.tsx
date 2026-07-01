@@ -131,16 +131,16 @@ export default function ProfilePage() {
               </div>
               <div className="flex items-end justify-between">
                 <div>
-                  <p className="text-sm text-slate-500 mb-0.5">Total volume</p>
+                  <p className="text-base text-slate-500 mb-0.5">Total volume</p>
                   <p className="text-base font-medium text-white">{formatVol(totalVolumeUsd)}</p>
                 </div>
                 {nextTier && (
-                  <p className="text-sm text-slate-500 text-right">
+                  <p className="text-base text-slate-500 text-right">
                     {formatVol(remaining)} to <span className="text-slate-300">{nextTier.label}</span>
                   </p>
                 )}
                 {!nextTier && (
-                  <p className="text-sm text-slate-400">Top tier 🏆</p>
+                  <p className="text-base text-slate-400">Top tier 🏆</p>
                 )}
               </div>
 
@@ -156,7 +156,7 @@ export default function ProfilePage() {
 
               <div className={`grid transition-all duration-200 ease-out ${statusOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
                 <div className="overflow-hidden">
-                  <p className="text-sm text-slate-400 mt-3 mb-2">
+                  <p className="text-base text-slate-400 mt-3 mb-2">
                     Your status is based on total USDC volume sent and received on Loofta — mainnet only.
                   </p>
                   <div className="space-y-1.5">
@@ -167,8 +167,8 @@ export default function ProfilePage() {
                           key={t.key}
                           className={`flex items-center justify-between rounded-lg px-3 py-2 ${isActive ? "bg-white/8 border border-white/10" : ""}`}
                         >
-                          <span className={`text-sm font-semibold ${t.color}`}>{t.label}</span>
-                          <span className="text-sm text-slate-500">
+                          <span className={`text-base font-semibold ${t.color}`}>{t.label}</span>
+                          <span className="text-base text-slate-500">
                             {formatVol(t.minVolume)}{t.maxVolume ? ` – ${formatVol(t.maxVolume)}` : "+"}
                           </span>
                         </div>
@@ -197,7 +197,7 @@ export default function ProfilePage() {
         <button
           type="button"
           onClick={() => setOpenSettingsModal(true)}
-          className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 text-white hover:bg-white/10"
+          className="w-full text-left px-3 py-3 rounded-lg text-base font-medium transition-colors flex items-center gap-3 text-white hover:bg-white/10"
         >
           <Settings className="w-4 h-4 shrink-0" />
           {t('settings')}
@@ -211,7 +211,7 @@ export default function ProfilePage() {
             logout();
             router.push("/");
           }}
-          className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium transition-colors text-red-400 hover:bg-red-400/10"
+          className="w-full text-left px-3 py-3 rounded-lg text-base font-medium transition-colors text-red-400 hover:bg-red-400/10"
         >
           {t('logOut')}
         </button>

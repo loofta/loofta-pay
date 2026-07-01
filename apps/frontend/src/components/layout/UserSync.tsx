@@ -23,6 +23,7 @@ export function UserSync() {
   const setLooUsername = useAuthStore((s) => s.setLooUsername);
   const setTwitterUsername = useAuthStore((s) => s.setTwitterUsername);
   const setAtaMigrated = useAuthStore((s) => s.setAtaMigrated);
+  const isOnboardingOpen = useAuthStore((s) => s.isOnboardingOpen);
   const setIsOnboardingOpen = useAuthStore((s) => s.setIsOnboardingOpen);
   const walletCreatedRef = useRef(false);
   const [showUsernameModal, setShowUsernameModal] = useState(false);
@@ -104,6 +105,14 @@ export function UserSync() {
       sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1";
   }, [authenticated, userId]);
 
+  // Allow external callers (e.g. "Change username" in settings) to re-open onboarding via store flag
+  useEffect(() => {
+    if (isOnboardingOpen && !showWelcomeOnboarding) {
+      welcomeDismissedRef.current = false;
+      setShowWelcomeOnboarding(true);
+    }
+  }, [isOnboardingOpen]);
+
   // Show onboarding right after login (add-email, then welcome flow). Don't wait for Solana wallet.
   useEffect(() => {
     if (!authenticated || !privyReady || !privyUser || !userId) {
@@ -131,7 +140,7 @@ export function UserSync() {
           body: JSON.stringify({ email }),
         });
         const userData = await userResponse.json();
-        if (cancelled || userData.exists !== false || userData.user?.skipOnboarding) return;
+        if (cancelled || userData.user?.skipOnboarding) return;
         if (welcomeDismissedRef.current) return;
 
         timer = setTimeout(() => {

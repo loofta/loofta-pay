@@ -49,16 +49,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // User doesn't exist — create with auto-generated username
-    const prefix = email
-      ? email.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "")
-      : "user";
-    const autoUsername = `${prefix}${Math.floor(Math.random() * 100000000)}`;
-
+    // User doesn't exist — create with no username; onboarding will prompt them to choose one
     const { data: newUser, error: createError } = await supabase
       .from("app_users")
-      .insert({ privy_user_id: privyUserId, email: email || null, username: autoUsername })
-      .select("id, privy_user_id, email, username, created_at")
+      .insert({ privy_user_id: privyUserId, email: email || null })
+      .select("id, privy_user_id, email, created_at")
       .single();
 
     if (createError) {
@@ -75,13 +70,15 @@ export async function POST(request: NextRequest) {
         id: newUser.id,
         privyUserId: newUser.privy_user_id,
         email: newUser.email,
-        username: newUser.username ?? autoUsername,
+        username: null,
+        looUsername: null,
+        twitterUsername: null,
         skipOnboarding: false,
         ataMigratedMainnet: false,
         ataMigratedDevnet: false,
         createdAt: newUser.created_at,
       },
-      needsUsername: false,
+      needsUsername: true,
     });
   } catch (error: any) {
     console.error("[users/check] Unexpected error:", error);
