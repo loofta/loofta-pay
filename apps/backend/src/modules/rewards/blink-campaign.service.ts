@@ -20,7 +20,7 @@ export interface BlinkCampaignData {
   qualified: boolean;
 }
 
-const CAMPAIGN_START = new Date('2026-07-01T00:00:00.000Z');
+const CAMPAIGN_START = new Date('2026-07-02T12:00:00.000Z');
 const CAMPAIGN_END = new Date('2026-08-15T00:00:00.000Z');
 
 export interface BlinkAdminUserStatus {
