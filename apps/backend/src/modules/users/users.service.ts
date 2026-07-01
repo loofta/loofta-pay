@@ -475,10 +475,21 @@ export class UsersService {
     return { completed: !!data };
   }
 
-  /** True once the recipient has completed the mandatory mainnet wallet-migration update. */
+  /** True once the recipient has completed the mandatory mainnet wallet-migration update.
+   *  Users created after 2026-06-29 were born on mainnet and are always considered complete. */
   async hasCompletedMainnetWalletUpdate(privyUserId: string): Promise<boolean> {
     const { completed } = await this.getForceUpdateStatus(privyUserId, MAINNET_WALLET_UPDATE_ID);
-    return completed;
+    if (completed) return true;
+
+    // New users (after the migration was shipped) never had old ATAs to migrate.
+    const MIGRATION_CUTOFF = new Date('2026-06-28T00:00:00Z');
+    const { data: user } = await this.supabaseService.appUsers
+      .select('created_at')
+      .eq('privy_user_id', privyUserId)
+      .maybeSingle();
+    if (user?.created_at && new Date(user.created_at) >= MIGRATION_CUTOFF) return true;
+
+    return false;
   }
 
   async markForceUpdateComplete(privyUserId: string, updateId: string): Promise<void> {

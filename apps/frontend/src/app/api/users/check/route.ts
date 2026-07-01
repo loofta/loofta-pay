@@ -56,9 +56,12 @@ export async function POST(request: NextRequest) {
       privyUserObj?.linkedAccounts as Array<{ type: string; username?: string | null; name?: string | null }> | undefined
     );
 
-    const insertPayload: Record<string, string | null> = {
+    const insertPayload: Record<string, string | boolean | null> = {
       privy_user_id: privyUserId,
       email: email || null,
+      // New users are born on mainnet — no ATA migration needed
+      ata_migrated_mainnet: true,
+      ata_migrated_devnet: true,
     };
 
     let initialTwitterUsername: string | null = null;
@@ -106,8 +109,8 @@ export async function POST(request: NextRequest) {
         looUsername: newUser.loo_username ?? null,
         twitterUsername: newUser.twitter_username ?? null,
         skipOnboarding: false,
-        ataMigratedMainnet: false,
-        ataMigratedDevnet: false,
+        ataMigratedMainnet: true,
+        ataMigratedDevnet: true,
         createdAt: newUser.created_at,
       },
       needsUsername: false,
