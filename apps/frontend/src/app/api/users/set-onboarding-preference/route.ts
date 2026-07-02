@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Bust the cache so the next /check from any device reads fresh data from DB
-    void redisDel(userPrefsKey(privyUserId));
+    await redisDel(userPrefsKey(privyUserId));
 
     return NextResponse.json({
       success: true,

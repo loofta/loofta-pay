@@ -126,6 +126,18 @@ export function UserSync() {
 
     const run = async () => {
       try {
+        // Fastest gate: localStorage is permanent and device-local — check before any network call.
+        // Users who completed onboarding (current or any prior session on this device) stop here.
+        if (typeof window !== "undefined") {
+          if (
+            localStorage.getItem(welcomePermanentDismissedKey(userId)) === "1" ||
+            sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1"
+          ) {
+            welcomeDismissedRef.current = true;
+            return;
+          }
+        }
+
         const token = await getAccessToken();
         const userResponse = await fetch("/api/users/check", {
           method: "POST",
@@ -144,10 +156,6 @@ export function UserSync() {
 
         // New users always see onboarding — bypass all dismissal caches
         if (!isNewUser) {
-          if (typeof window !== "undefined" && sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1") {
-            welcomeDismissedRef.current = true;
-            return;
-          }
           if (welcomeDismissedRef.current) return;
         }
 
