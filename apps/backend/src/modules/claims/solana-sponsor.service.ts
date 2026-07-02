@@ -446,6 +446,13 @@ export class SolanaSponsorService {
           }
         }
       }
+      // Strip CloseAccount instructions (SPL Token discriminator 0x09).
+      // Prevents ATA-rent drain: attacker embeds CloseAccount to refund rent the fee payer paid.
+      const before = legacy.instructions.length;
+      legacy.instructions = legacy.instructions.filter(ix => !(ix.data.length >= 1 && ix.data[0] === 0x09));
+      if (legacy.instructions.length < before) {
+        this.logger.warn(`SolanaSponsor[sign-and-broadcast]: stripped ${before - legacy.instructions.length} CloseAccount instruction(s) — possible drain attempt`);
+      }
       legacy.partialSign(this.feePayerKeypair);
       const missingLegacySigners = legacy.signatures
         .filter((s) => !s.signature)
