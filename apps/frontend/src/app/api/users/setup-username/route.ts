@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { getVerifiedUserId, getPrivyUser } from "@/lib/serverAuth";
 import { generateUniqueLooUsername } from "@/lib/looUsername";
+import { redisDel } from "@/lib/redis-cache";
+
+function userPrefsKey(uid: string) { return `user:prefs:${uid}`; }
 
 /**
  * Set username for user.
@@ -122,6 +125,9 @@ export async function POST(request: NextRequest) {
       }
       return NextResponse.json({ error: "Failed to set username" }, { status: 500 });
     }
+
+    // Bust the cache so the next /check from any device reads fresh data from DB
+    void redisDel(userPrefsKey(privyUserId));
 
     return NextResponse.json({
       success: true,

@@ -53,7 +53,6 @@ function MobileMenu({
   const navLinks = [
     { href: "/", label: "Send & Receive", description: "Send and receive payments" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
-    { href: "/waitlist", label: t('waitlist'), description: t('requestAccess') },
   ];
 
   return (
@@ -281,19 +280,6 @@ export function MinimalHeader() {
                   ].join(" ")}
                 >
                   <span>{t('rewards')}</span>
-                </Link>
-
-                {/* Desktop: Waitlist link */}
-                <Link
-                  href="/waitlist"
-                  className={[
-                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    pathname === "/waitlist"
-                      ? "text-green-300 bg-green-500/10"
-                      : "text-slate-300 hover:text-white hover:bg-white/10",
-                  ].join(" ")}
-                >
-                  <span>{t('waitlist')}</span>
                 </Link>
 
                 {/* Desktop: Balance button */}

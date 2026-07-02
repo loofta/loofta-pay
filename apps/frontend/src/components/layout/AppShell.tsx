@@ -30,8 +30,7 @@ function ShellContent({ children }: { children: ReactNode }) {
     pathname === '/history' || pathname === '/app/history' ||
     pathname === '/settings' || pathname === '/app/settings' || pathname === '/app/profile' ||
     pathname?.startsWith('/c/') || pathname?.startsWith('/app/c/') ||
-    pathname === '/sparks' || pathname === '/app/sparks' ||
-    pathname === '/waitlist' || pathname === '/app/waitlist'
+    pathname === '/sparks' || pathname === '/app/sparks'
   );
   const showMinimalHeader = !isCheckoutPage;
   const showBanner = showMinimalHeader && !bannerDismissed;

@@ -3,6 +3,8 @@ import { SupabaseService } from '@/database/supabase.service';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 min
+// Campaign ended July 1 2026 at 18:00 CET (CEST = UTC+2) = 16:00 UTC
+const SPARKS_CUTOFF_ISO = '2026-07-01T16:00:00.000Z';
 
 export type TaskKey =
   | 'connect_email'
@@ -198,7 +200,8 @@ export class RewardsService {
         .eq('sender_user_id', privyUserId)
         .eq('status', 'SUCCESS')
         .eq('is_devnet', isDevnet)
-        .neq('direction', 'from_recipient');
+        .neq('direction', 'from_recipient')
+        .lte('created_at', SPARKS_CUTOFF_ISO);
 
       // Legacy fallback: created_by without sender_user_id
       const { data: byCreator } = await db
@@ -208,7 +211,8 @@ export class RewardsService {
         .is('sender_user_id', null)
         .eq('status', 'SUCCESS')
         .eq('is_devnet', isDevnet)
-        .neq('direction', 'from_recipient');
+        .neq('direction', 'from_recipient')
+        .lte('created_at', SPARKS_CUTOFF_ISO);
 
       const sentByIdSet = new Set((byCreator ?? []).map((r: any) => r.id));
       const allSent = [
@@ -231,6 +235,7 @@ export class RewardsService {
         .eq('direction', 'from_recipient')
         .eq('status', 'SUCCESS')
         .eq('is_devnet', isDevnet)
+        .lte('created_at', SPARKS_CUTOFF_ISO)
         .limit(1);
 
       return {

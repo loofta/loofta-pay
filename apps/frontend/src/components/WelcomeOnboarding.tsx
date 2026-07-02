@@ -338,7 +338,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onUser
   const persistAndClose = useCallback(async () => {
     if (onboardingCloseOnceRef.current) return;
     onboardingCloseOnceRef.current = true;
-    if (dontShowAgain && privyUserId) {
+    if (privyUserId) {
       try {
         await fetch("/api/users/set-onboarding-preference", {
           method: "POST",

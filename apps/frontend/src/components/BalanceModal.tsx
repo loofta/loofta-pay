@@ -325,7 +325,9 @@ export function BalanceModal({
   const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | "peer-offramp" | null>(null);
   const [coinbaseOfframpLoading, setCoinbaseOfframpLoading] = useState(false);
   const [showFiatOfframpPicker, setShowFiatOfframpPicker] = useState(false);
+  const [showFiatOnrampPicker, setShowFiatOnrampPicker] = useState(false);
   const [moonpayOfframpLoading, setMoonpayOfframpLoading] = useState(false);
+  const [moonpayOnrampLoading, setMoonpayOnrampLoading] = useState(false);
 
   // Peer offramp state
   const [peerPlatformId, setPeerPlatformId] = useState<string | null>(null);
@@ -547,6 +549,20 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "MoonPay error", description: msg });
     } finally {
       setMoonpayOfframpLoading(false);
+    }
+  };
+
+  // MoonPay Onramp: buy USDC via Privy's fund wallet with MoonPay as preferred provider
+  const handleMoonpayOnramp = async () => {
+    if (!solanaAddress) return;
+    setMoonpayOnrampLoading(true);
+    try {
+      await privyFundWallet({ address: solanaAddress, options: { asset: 'USDC', card: { preferredProvider: 'moonpay' } } });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not open MoonPay.";
+      toast({ variant: "destructive", title: "MoonPay error", description: msg });
+    } finally {
+      setMoonpayOnrampLoading(false);
     }
   };
 
@@ -1039,6 +1055,7 @@ export function BalanceModal({
       setBlinkError(null);
       setWithdrawMethod(null);
       setShowFiatOfframpPicker(false);
+      setShowFiatOnrampPicker(false);
       // Reset peer offramp unless an active deposit is in-flight
       if (!["deposited", "bridging", "creating-deposit", "deposit-error"].includes(peerStep)) {
         setPeerPlatformId(null); setPeerIdentifier(""); setPeerCurrency("USD");
@@ -2135,6 +2152,74 @@ export function BalanceModal({
                     </div>
                   )}
                 </div>
+              ) : showFiatOnrampPicker ? (
+                <div className="py-2 space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowFiatOnrampPicker(false)}
+                    className={cn(
+                      "flex items-center gap-1 text-base font-medium transition-colors",
+                      dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"
+                    )}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Back
+                  </button>
+
+                  <p className={`text-base font-medium ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    Choose your provider
+                  </p>
+
+                  {/* Coinbase */}
+                  <button
+                    type="button"
+                    disabled={!solanaAddress || coinbaseLoading}
+                    onClick={handleCoinbaseOnramp}
+                    className={cn(
+                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                      dark
+                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      {coinbaseLoading
+                        ? <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                        : <img src="/images/icons/coinbase-logo.svg" alt="Coinbase" className="w-10 h-10 object-contain" />
+                      }
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Coinbase</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Apple Pay · card · bank transfer</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+
+                  {/* MoonPay */}
+                  <button
+                    type="button"
+                    disabled={!solanaAddress || moonpayOnrampLoading}
+                    onClick={handleMoonpayOnramp}
+                    className={cn(
+                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                      dark
+                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      {moonpayOnrampLoading
+                        ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
+                        : <img src="/images/icons/moonpay-logo.svg" alt="MoonPay" className="w-10 h-10 object-contain" />
+                      }
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>MoonPay</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Card · Apple Pay · Google Pay</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+                </div>
               ) : (
                 <div className="py-2 space-y-3">
 
@@ -2154,12 +2239,12 @@ export function BalanceModal({
 
                   {blinkError && <p className="text-base text-orange-500 text-center px-1">{blinkError}</p>}
 
-                  {/* 2. Fiat / bank via Coinbase Onramp */}
-                  <button type="button" disabled={!solanaAddress || blinkDepositing || coinbaseLoading} onClick={handleCoinbaseOnramp}
+                  {/* 2. Fiat / bank — opens provider picker */}
+                  <button type="button" disabled={!solanaAddress || blinkDepositing} onClick={() => setShowFiatOnrampPicker(true)}
                     className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
                     <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      {coinbaseLoading ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" /> : <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />}
+                      <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Buy with card or bank</p>
@@ -2507,6 +2592,7 @@ export function BalanceModal({
                   setWithdrawStep("idle");
                   setWithdrawMethod(null);
                   setActiveWithdrawal(null);
+                  onClose();
                 }}
                 className={cn(
                   "w-full h-11 rounded-xl font-medium text-base border transition-colors",
