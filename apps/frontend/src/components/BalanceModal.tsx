@@ -24,9 +24,33 @@ import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, type Pee
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
 import { usePrivy, useWallets as useEvmWallets, useCreateWallet, useSendTransaction as useEvmSendTransaction } from "@privy-io/react-auth";
-import { useWallets, useSignAndSendTransaction, useSignTransaction, useFundWallet } from "@privy-io/react-auth/solana";
+import { useWallets, useSignTransaction, useFundWallet } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
-import { sendUsdcWithPrivyEmbeddedWallet, sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
+import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
+
+/** Gate check before any EVM gas-sponsored transaction. Throws if rate-limited. */
+async function assertEvmSponsorAllowed(walletAddress: string, userId: string, accessToken: string | null) {
+  try {
+    const res = await fetch("/api/payments/sponsor-check", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      body: JSON.stringify({ walletAddress }),
+    });
+    if (res.status === 429 || res.status === 403) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      throw new Error(body.error ?? "Sponsorship limit reached. Try again tomorrow.");
+    }
+  } catch (err) {
+    if (err instanceof Error && (err.message.includes("limit") || err.message.includes("denied") || err.message.includes("Unauthorized"))) {
+      throw err; // re-throw rate-limit / auth errors
+    }
+    // Network failure — fail open so users aren't blocked by infra issues
+    console.warn("[evmSponsorGate] check failed, proceeding:", err);
+  }
+}
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
 import type { NearToken } from "@/services/nearIntents";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
@@ -376,7 +400,6 @@ export function BalanceModal({
 
   const { user, getAccessToken } = usePrivy();
   const { wallets: solanaWallets } = useWallets();
-  const { signAndSendTransaction } = useSignAndSendTransaction();
   const { signTransaction } = useSignTransaction();
   const { fundWallet: privyFundWallet } = useFundWallet();
   const { wallets: evmWallets } = useEvmWallets();
@@ -805,6 +828,8 @@ export function BalanceModal({
     const run = async () => {
       try {
         console.log(PEER_LOG, "step 3 — Peer signing on Base (gas sponsored via Privy)", { baseWallet: peerBaseWalletAddress });
+        const evmGateToken = await getAccessToken();
+        await assertEvmSponsorAllowed(peerBaseWalletAddress!, user!.id, evmGateToken);
 
         const { base } = await import("viem/chains");
         const { createPublicClient: mkPublic, createWalletClient, custom, http: httpT, erc20Abi: _erc20Abi, encodeFunctionData } = await import("viem");
@@ -1550,6 +1575,7 @@ export function BalanceModal({
     setPeerStep("cancelling");
     setPeerCancelSubStep("getting-address");
     const token = await getAccessToken();
+    await assertEvmSponsorAllowed(peerBaseWalletAddress, user!.id, token);
     try {
       const { createPublicClient, createWalletClient, custom, http, erc20Abi, encodeFunctionData } = await import("viem");
       const { base } = await import("viem/chains");
@@ -1763,35 +1789,20 @@ export function BalanceModal({
       const connection = new SolanaConnection(getRpcForMode(mode), "confirmed");
 
       const bridgeAccessToken = await getAccessToken();
-      const sig = devnetMode
-        ? await sendUsdcWithBackendFeePayer({
-          senderAddress: solanaAddress,
-          recipientAddress: prep.depositAddress,
-          amountUSDC: withdrawAmountNum,
-          connection,
-          wallet,
-          privyUserId: user!.id,
-          signTransaction,
-          memo: prep.memo ?? undefined,
-          usdcMint: getUsdcMintForMode(mode),
-          chain: getPrivySolanaChainForMode(mode),
-          accessToken: bridgeAccessToken,
-          network: "devnet",
-        })
-        : await sendUsdcWithPrivyEmbeddedWallet({
-          senderAddress: solanaAddress,
-          recipientAddress: prep.depositAddress,
-          amountUSDC: withdrawAmountNum,
-          connection,
-          wallet,
-          privyUserId: user?.id,
-          signAndSendTransaction,
-          signTransaction,
-          memo: prep.memo ?? undefined,
-          usdcMint: getUsdcMintForMode(mode),
-          chain: getPrivySolanaChainForMode(mode),
-          accessToken: bridgeAccessToken,
-        });
+      const sig = await sendUsdcWithBackendFeePayer({
+        senderAddress: solanaAddress,
+        recipientAddress: prep.depositAddress,
+        amountUSDC: withdrawAmountNum,
+        connection,
+        wallet,
+        privyUserId: user!.id,
+        signTransaction,
+        memo: prep.memo ?? undefined,
+        usdcMint: getUsdcMintForMode(mode),
+        chain: getPrivySolanaChainForMode(mode),
+        accessToken: bridgeAccessToken,
+        network: devnetMode ? "devnet" : "mainnet",
+      });
 
       console.log(PEER_LOG, "USDC sent to bridge", { sig });
       setPeerBridgeTxSig(sig);
@@ -1828,6 +1839,7 @@ export function BalanceModal({
     }
 
     const token = await getAccessToken();
+    if (peerBaseWalletAddress) await assertEvmSponsorAllowed(peerBaseWalletAddress, user!.id, token);
 
     // DEPOSITED state: user must sign ZKP2P withdrawDeposit + USDC bridge on Base
     if (peerStep === "deposited" && peerZkp2pDepositId && peerBaseWalletAddress) {
@@ -2025,35 +2037,20 @@ export function BalanceModal({
       setWithdrawStep("sent");
 
       const accessToken = await getAccessToken();
-      const sig = devnetMode
-        ? await sendUsdcWithBackendFeePayer({
-          senderAddress: solanaAddress,
-          recipientAddress,
-          amountUSDC: amount,
-          connection,
-          wallet,
-          privyUserId: user!.id,
-          signTransaction,
-          memo: memo ?? undefined,
-          usdcMint: getUsdcMintForMode(mode),
-          chain: getPrivySolanaChainForMode(mode),
-          accessToken,
-          network: "devnet" as const,
-        })
-        : await sendUsdcWithPrivyEmbeddedWallet({
-          senderAddress: solanaAddress,
-          recipientAddress,
-          amountUSDC: amount,
-          connection,
-          wallet,
-          privyUserId: user?.id,
-          signAndSendTransaction,
-          signTransaction,
-          memo: memo ?? undefined,
-          usdcMint: getUsdcMintForMode(mode),
-          chain: getPrivySolanaChainForMode(mode),
-          accessToken,
-        });
+      const sig = await sendUsdcWithBackendFeePayer({
+        senderAddress: solanaAddress,
+        recipientAddress,
+        amountUSDC: amount,
+        connection,
+        wallet,
+        privyUserId: user!.id,
+        signTransaction,
+        memo: memo ?? undefined,
+        usdcMint: getUsdcMintForMode(mode),
+        chain: getPrivySolanaChainForMode(mode),
+        accessToken,
+        network: devnetMode ? "devnet" : "mainnet",
+      });
 
       // Save to localStorage and DB
       const item = addWithdrawal({

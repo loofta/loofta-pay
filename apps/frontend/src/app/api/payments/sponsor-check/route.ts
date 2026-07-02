@@ -29,20 +29,26 @@ const BLOCKED_PRIVY_IDS = new Set([
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const LIMITS = {
-  perWalletDailyCents: 200,   // $2  / wallet / day
-  perUserDailyCents:   500,   // $5  / user   / day
-  perIpDailyCents:    1000,   // $10 / IP     / day  — blocks multi-account attacks
-  perAppDailyCents:   5000,   // $50 / app    / day
+  perWalletDailyCents:  200,  // $2   / wallet / day
+  perUserDailyCents:    500,  // $5   / user   / day
+  perIpDailyCents:     1000,  // $10  / IP     / day  — blocks multi-account attacks
+  perAppDailyCents:   10000,  // $100 / app    / day  (Privy recipe default)
+
+  // Hard tx-count ceilings (Privy security docs recommendation).
+  // Without these, $0.01 cost estimate × $2 cap = 200 txs/day.
+  // ATA rent is $0.40/tx so 200 txs = $80 real damage. Count limits close that gap.
+  perWalletDailyTxs:    20,   // 20 sends/wallet/day is plenty for any legitimate user
+  perIpDailyTxs:        50,   // 50 sends/IP/day across all wallets
 };
 
-// Solana worst-case: ATA rent + tx fee ≈ $0.50
-const SOLANA_COST_CENTS = 50;
+// Privy recipe: Solana normal tx ≈ $0.01.
+const SOLANA_COST_CENTS = 1;
 
 // ─── In-process spend tracking ────────────────────────────────────────────────
 // Resets on deploy/restart. Each Next.js server process maintains its own Map.
 // For a distributed / serverless fleet, swap for Redis (Upstash) or Supabase.
 
-type DailyBucket = { date: string; cents: number };
+type DailyBucket = { date: string; cents: number; txCount: number };
 
 const walletSpend = new Map<string, DailyBucket>();
 const userSpend   = new Map<string, DailyBucket>();
@@ -57,29 +63,35 @@ function getBucket(map: Map<string, DailyBucket>, key: string): DailyBucket {
   const today = todayUTC();
   const existing = map.get(key);
   if (existing && existing.date === today) return existing;
-  const fresh: DailyBucket = { date: today, cents: 0 };
+  const fresh: DailyBucket = { date: today, cents: 0, txCount: 0 };
   map.set(key, fresh);
   return fresh;
 }
 
 function getAppBucket(): DailyBucket {
   const today = todayUTC();
-  if (appSpend.date !== today) appSpend = { date: today, cents: 0 };
+  if (appSpend.date !== today) appSpend = { date: today, cents: 0, txCount: 0 };
   return appSpend;
 }
 
 function canSponsor(walletAddress: string, userId: string, ip: string): { allowed: boolean; reason?: string } {
   const walletBucket = getBucket(walletSpend, walletAddress);
+  if (walletBucket.txCount >= LIMITS.perWalletDailyTxs) {
+    return { allowed: false, reason: `Daily send limit reached for this wallet (${LIMITS.perWalletDailyTxs} sends/day). Try again tomorrow.` };
+  }
   if (walletBucket.cents + SOLANA_COST_CENTS > LIMITS.perWalletDailyCents) {
-    return { allowed: false, reason: `Daily send limit reached for this wallet ($${LIMITS.perWalletDailyCents / 100}). Try again tomorrow.` };
+    return { allowed: false, reason: `Daily spend limit reached for this wallet ($${LIMITS.perWalletDailyCents / 100}). Try again tomorrow.` };
   }
 
   const userBucket = getBucket(userSpend, userId);
   if (userBucket.cents + SOLANA_COST_CENTS > LIMITS.perUserDailyCents) {
-    return { allowed: false, reason: `Daily send limit reached for this account ($${LIMITS.perUserDailyCents / 100}). Try again tomorrow.` };
+    return { allowed: false, reason: `Daily spend limit reached for this account ($${LIMITS.perUserDailyCents / 100}). Try again tomorrow.` };
   }
 
   const ipBucket = getBucket(ipSpend, ip);
+  if (ipBucket.txCount >= LIMITS.perIpDailyTxs) {
+    return { allowed: false, reason: "Too many requests from your network. Try again tomorrow." };
+  }
   if (ipBucket.cents + SOLANA_COST_CENTS > LIMITS.perIpDailyCents) {
     return { allowed: false, reason: "Too many requests from your network. Try again tomorrow." };
   }
@@ -93,10 +105,17 @@ function canSponsor(walletAddress: string, userId: string, ip: string): { allowe
 }
 
 function recordSpend(walletAddress: string, userId: string, ip: string) {
-  getBucket(walletSpend, walletAddress).cents += SOLANA_COST_CENTS;
-  getBucket(userSpend, userId).cents          += SOLANA_COST_CENTS;
-  getBucket(ipSpend, ip).cents                += SOLANA_COST_CENTS;
-  getAppBucket().cents                        += SOLANA_COST_CENTS;
+  const wb = getBucket(walletSpend, walletAddress);
+  wb.cents += SOLANA_COST_CENTS; wb.txCount++;
+
+  const ub = getBucket(userSpend, userId);
+  ub.cents += SOLANA_COST_CENTS; ub.txCount++;
+
+  const ib = getBucket(ipSpend, ip);
+  ib.cents += SOLANA_COST_CENTS; ib.txCount++;
+
+  const ab = getAppBucket();
+  ab.cents += SOLANA_COST_CENTS; ab.txCount++;
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────

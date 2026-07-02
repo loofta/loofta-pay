@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   useWallets,
-  useSignAndSendTransaction,
   useSignTransaction,
 } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
@@ -37,7 +36,6 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
   const { enabled = true } = options;
   const { getAccessToken, user, authenticated } = usePrivy();
   const { wallets: standardWallets } = useWallets();
-  const { signAndSendTransaction } = useSignAndSendTransaction();
   const { signTransaction } = useSignTransaction();
   const networkMode = useAuthStore((s) => s.networkMode);
   const [isLoading, setIsLoading] = useState(false);
@@ -106,12 +104,11 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
         amountUSDC: config.amount,
         connection: conn,
         wallet,
-        privyUserId: user?.id,
+        privyUserId: user?.id ?? "",
         signTransaction,
-        signAndSendTransaction,
         usdcMint: getUsdcMintForMode(networkMode),
         chain: getPrivySolanaChainForMode(networkMode),
-        skipLooftaFeePayer: networkMode === "mainnet",
+        network: networkMode,
         accessToken,
       });
     } catch (error: any) {
