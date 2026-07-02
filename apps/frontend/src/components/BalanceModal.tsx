@@ -552,12 +552,19 @@ export function BalanceModal({
     }
   };
 
-  // MoonPay Onramp: buy USDC via Privy's fund wallet with MoonPay as preferred provider
+  // MoonPay Onramp: buy USDC via Privy's fund wallet, bypassing the method picker
   const handleMoonpayOnramp = async () => {
     if (!solanaAddress) return;
     setMoonpayOnrampLoading(true);
     try {
-      await privyFundWallet({ address: solanaAddress, options: { asset: 'USDC', card: { preferredProvider: 'moonpay' } } });
+      await privyFundWallet({
+        address: solanaAddress,
+        options: {
+          asset: 'USDC',
+          defaultFundingMethod: 'card',
+          card: { preferredProvider: 'moonpay' },
+        },
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Could not open MoonPay.";
       toast({ variant: "destructive", title: "MoonPay error", description: msg });
