@@ -475,8 +475,10 @@ export class UsersService {
 
   async getForceUpdateStatus(privyUserId: string, updateId: string): Promise<{ completed: boolean }> {
     const cacheKey = forceUpdateKey(privyUserId, updateId);
-    const cached = await this.redisService?.get(cacheKey).catch(() => null);
-    if (cached === '1') return { completed: true };
+    if (this.redisService) {
+      const cached = await this.redisService.get(cacheKey).catch(() => null);
+      if (cached === '1') return { completed: true };
+    }
 
     const { data } = await this.supabaseService.forceUpdate
       .select('user_id')
@@ -484,8 +486,8 @@ export class UsersService {
       .eq('update_id', updateId)
       .maybeSingle();
     const completed = !!data;
-    if (completed) {
-      await this.redisService?.set(cacheKey, '1', FORCE_UPDATE_TTL).catch(() => {});
+    if (completed && this.redisService) {
+      await this.redisService.set(cacheKey, '1', FORCE_UPDATE_TTL).catch(() => {});
     }
     return { completed };
   }
@@ -515,6 +517,8 @@ export class UsersService {
       throw new Error('Failed to mark update complete');
     }
     // Cache immediately so the next check from any device skips the DB
-    await this.redisService?.set(forceUpdateKey(privyUserId, updateId), '1', FORCE_UPDATE_TTL).catch(() => {});
+    if (this.redisService) {
+      await this.redisService.set(forceUpdateKey(privyUserId, updateId), '1', FORCE_UPDATE_TTL).catch(() => {});
+    }
   }
 }
