@@ -48,6 +48,14 @@ export function TokenCombobox({
 }: Props) {
 	const [open, setOpen] = React.useState(false);
 	const [query, setQuery] = React.useState("");
+	const inputRef = React.useRef<HTMLInputElement>(null);
+
+	React.useEffect(() => {
+		if (!open) return;
+		const prev = document.body.style.overflow;
+		document.body.style.overflow = "hidden";
+		return () => { document.body.style.overflow = prev; };
+	}, [open]);
 	const filteredTokens = React.useMemo(() => {
 		return tokens.filter(t => {
 			if (hideChains.length > 0 && hideChains.includes(t.chain?.toLowerCase() || '')) return false;
@@ -170,12 +178,14 @@ export function TokenCombobox({
 			<DialogPortal>
 				{/* Manual overlay (Radix skips it when modal=false) */}
 				<div
-					className="fixed inset-0 z-50 bg-black/80"
+					className="fixed inset-0 z-[60] bg-black/80"
 					onClick={() => setOpen(false)}
 				/>
 				<DialogPrimitive.Content
+					onOpenAutoFocus={(e) => { e.preventDefault(); inputRef.current?.focus(); }}
 					className={cn(
-						"fixed z-50 bg-background shadow-lg outline-none flex flex-col",
+						"dark",
+						"fixed z-[61] bg-background shadow-lg outline-none flex flex-col",
 						"data-[state=open]:animate-in data-[state=closed]:animate-out",
 						"data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
 						"data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
@@ -259,7 +269,7 @@ export function TokenCombobox({
 						{/* Token list */}
 						<div className="flex-1 min-w-0 min-h-0 overflow-hidden">
 							<Command className="h-full">
-								<CommandInput placeholder="Search token, network or address" value={query} onValueChange={setQuery} />
+								<CommandInput ref={inputRef} placeholder="Search token, network or address" value={query} onValueChange={setQuery} />
 								<CommandList className="max-h-[calc(100dvh-140px)] sm:max-h-[380px] overflow-y-auto">
 									{loading ? (
 										<div className="py-4 text-center text-base md:text-sm text-muted-foreground">Searching…</div>
