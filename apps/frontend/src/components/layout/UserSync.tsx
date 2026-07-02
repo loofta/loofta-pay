@@ -215,7 +215,7 @@ export function UserSync() {
       {userId && (
         <WelcomeOnboarding
           open={showWelcomeOnboarding}
-          onClose={(_dontShowAgain) => {
+          onClose={() => {
             welcomeDismissedRef.current = true;
             if (typeof window !== "undefined") {
               try {

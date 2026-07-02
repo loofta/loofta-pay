@@ -3,7 +3,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Checkbox } from "@/components/ui/checkbox";
 import { usePrivy, useUser, useLinkAccount } from "@privy-io/react-auth";
 
 const LOO_PREFIX = "loo-";
@@ -33,7 +32,7 @@ function getTwitterUsername(linkedAccounts: Array<{ type?: string; username?: st
 
 interface WelcomeOnboardingProps {
   open: boolean;
-  onClose: (dontShowAgain: boolean) => void;
+  onClose: () => void;
   username: string | null;
   privyUserId?: string;
   onUsernameSaved?: (username: string, looUsername?: string | null, twitterUsername?: string | null) => void;
@@ -70,7 +69,6 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onUser
   const [emailStepDone, setEmailStepDone] = useState(() => isEmailSkipActive());
   const [step, setStep] = useState(0);
   const [displayText, setDisplayText] = useState("");
-  const [dontShowAgain, setDontShowAgain] = useState(false);
   const [newUsername, setNewUsername] = useState("");
   const [usernameError, setUsernameError] = useState<string | null>(null);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
@@ -140,7 +138,6 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onUser
       setEmailStepDone(hasEmail || isEmailSkipActive());
       setEmailLinkError(null);
       setDisplayText("");
-      setDontShowAgain(false);
       if (twitterUsername) {
         setNewUsername(twitterUsername);
       } else if (username && username.startsWith(LOO_PREFIX)) {
@@ -338,7 +335,8 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onUser
   const persistAndClose = useCallback(async () => {
     if (onboardingCloseOnceRef.current) return;
     onboardingCloseOnceRef.current = true;
-    if (privyUserId) {
+    const savedUsername = username || newUsername.trim();
+    if (privyUserId && savedUsername) {
       try {
         await fetch("/api/users/set-onboarding-preference", {
           method: "POST",
@@ -352,8 +350,8 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onUser
         console.error("[WelcomeOnboarding] Error saving preference:", error);
       }
     }
-    onClose(dontShowAgain);
-  }, [dontShowAgain, privyUserId, onClose]);
+    onClose();
+  }, [privyUserId, onClose, username, newUsername]);
 
   const handleNext = async () => {
     // If on step 1, save username first before proceeding
@@ -791,17 +789,6 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onUser
                   >
                     {step < 4 ? "Next" : "Get Started"}
                   </button>
-                </div>
-                <div className="mt-3 flex items-center justify-center gap-2">
-                  <Checkbox
-                    id="dontShowAgain"
-                    checked={dontShowAgain}
-                    onCheckedChange={(v) => setDontShowAgain(v === true)}
-                    className="shrink-0 border-white/20 bg-white/5 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500 data-[state=checked]:text-white"
-                  />
-                  <label htmlFor="dontShowAgain" className="text-base text-slate-500 cursor-pointer select-none">
-                    Don&apos;t show this again
-                  </label>
                 </div>
               </div>
             </>
