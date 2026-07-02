@@ -17,12 +17,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getVerifiedUserId } from "@/lib/serverAuth";
 
+const SUPABASE_URL = process.env.SUPABASE_URL!;
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY!;
+
+// Permanently blocked Privy user IDs (attackers, abusers).
+const BLOCKED_PRIVY_IDS = new Set([
+  "cih671wjoh1agoah95o50gb5", // ATA-rent drain attacker #1, July 2026
+  "p4kh3hw0m2jzvti016fc7378", // ATA-rent drain attacker #2, July 2026
+]);
+
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const LIMITS = {
-  perWalletDailyCents: 200,  // $2 / wallet / day
-  perUserDailyCents:   500,  // $5 / user  / day
-  perAppDailyCents:   5000,  // $50 / app  / day
+  perWalletDailyCents: 200,   // $2  / wallet / day
+  perUserDailyCents:   500,   // $5  / user   / day
+  perIpDailyCents:    1000,   // $10 / IP     / day  — blocks multi-account attacks
+  perAppDailyCents:   5000,   // $50 / app    / day
 };
 
 // Solana worst-case: ATA rent + tx fee ≈ $0.50
@@ -36,6 +46,7 @@ type DailyBucket = { date: string; cents: number };
 
 const walletSpend = new Map<string, DailyBucket>();
 const userSpend   = new Map<string, DailyBucket>();
+const ipSpend     = new Map<string, DailyBucket>();
 let   appSpend: DailyBucket = { date: "", cents: 0 };
 
 function todayUTC(): string {
@@ -57,7 +68,7 @@ function getAppBucket(): DailyBucket {
   return appSpend;
 }
 
-function canSponsor(walletAddress: string, userId: string): { allowed: boolean; reason?: string } {
+function canSponsor(walletAddress: string, userId: string, ip: string): { allowed: boolean; reason?: string } {
   const walletBucket = getBucket(walletSpend, walletAddress);
   if (walletBucket.cents + SOLANA_COST_CENTS > LIMITS.perWalletDailyCents) {
     return { allowed: false, reason: `Daily send limit reached for this wallet ($${LIMITS.perWalletDailyCents / 100}). Try again tomorrow.` };
@@ -68,6 +79,11 @@ function canSponsor(walletAddress: string, userId: string): { allowed: boolean; 
     return { allowed: false, reason: `Daily send limit reached for this account ($${LIMITS.perUserDailyCents / 100}). Try again tomorrow.` };
   }
 
+  const ipBucket = getBucket(ipSpend, ip);
+  if (ipBucket.cents + SOLANA_COST_CENTS > LIMITS.perIpDailyCents) {
+    return { allowed: false, reason: "Too many requests from your network. Try again tomorrow." };
+  }
+
   const appBucket = getAppBucket();
   if (appBucket.cents + SOLANA_COST_CENTS > LIMITS.perAppDailyCents) {
     return { allowed: false, reason: "Platform send limit reached. Please try again later." };
@@ -76,13 +92,36 @@ function canSponsor(walletAddress: string, userId: string): { allowed: boolean; 
   return { allowed: true };
 }
 
-function recordSpend(walletAddress: string, userId: string) {
+function recordSpend(walletAddress: string, userId: string, ip: string) {
   getBucket(walletSpend, walletAddress).cents += SOLANA_COST_CENTS;
   getBucket(userSpend, userId).cents          += SOLANA_COST_CENTS;
+  getBucket(ipSpend, ip).cents                += SOLANA_COST_CENTS;
   getAppBucket().cents                        += SOLANA_COST_CENTS;
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────
+
+function getClientIp(req: NextRequest): string {
+  // Railway (and most proxies) set x-forwarded-for; take the first (leftmost) IP.
+  const forwarded = req.headers.get("x-forwarded-for");
+  if (forwarded) return forwarded.split(",")[0].trim();
+  return req.headers.get("x-real-ip") ?? "unknown";
+}
+
+async function isRegisteredLooftaUser(privyUserId: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/users?privy_user_id=eq.${encodeURIComponent(privyUserId)}&select=id&limit=1`,
+      { headers: { apikey: SUPABASE_SECRET_KEY, Authorization: `Bearer ${SUPABASE_SECRET_KEY}` } },
+    );
+    if (!res.ok) return false;
+    const rows = await res.json() as unknown[];
+    return rows.length > 0;
+  } catch {
+    // Fail-open: if Supabase is unreachable, don't block legitimate users.
+    return true;
+  }
+}
 
 export async function POST(req: NextRequest) {
   // Verify caller is a real authenticated Privy user.
@@ -90,6 +129,22 @@ export async function POST(req: NextRequest) {
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // Block permanently banned identities immediately.
+  if (BLOCKED_PRIVY_IDS.has(userId)) {
+    console.warn(`[sponsor-check] BANNED userId=${userId}`);
+    return NextResponse.json({ error: "Access denied." }, { status: 403 });
+  }
+
+  // Only fully onboarded Loofta users get gas sponsorship.
+  // This closes the "logged in but never registered" exploit path.
+  const registered = await isRegisteredLooftaUser(userId);
+  if (!registered) {
+    console.warn(`[sponsor-check] UNREGISTERED userId=${userId} — sponsorship denied`);
+    return NextResponse.json({ error: "Complete your Loofta account setup before sending." }, { status: 403 });
+  }
+
+  const ip = getClientIp(req);
 
   let walletAddress: string | undefined;
   try {
@@ -103,13 +158,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid walletAddress" }, { status: 400 });
   }
 
-  const result = canSponsor(walletAddress, userId);
+  const result = canSponsor(walletAddress, userId, ip);
   if (!result.allowed) {
-    console.warn(`[sponsor-check] BLOCKED userId=${userId} wallet=${walletAddress.slice(0, 8)}… reason=${result.reason}`);
+    console.warn(`[sponsor-check] BLOCKED ip=${ip} userId=${userId} wallet=${walletAddress.slice(0, 8)}… reason=${result.reason}`);
     return NextResponse.json({ error: result.reason }, { status: 429 });
   }
 
-  recordSpend(walletAddress, userId);
-  console.info(`[sponsor-check] OK userId=${userId} wallet=${walletAddress.slice(0, 8)}… wallet=${getBucket(walletSpend, walletAddress).cents}¢ user=${getBucket(userSpend, userId).cents}¢ app=${getAppBucket().cents}¢`);
+  recordSpend(walletAddress, userId, ip);
+  console.info(`[sponsor-check] OK ip=${ip} userId=${userId} wallet=${walletAddress.slice(0, 8)}… wallet=${getBucket(walletSpend, walletAddress).cents}¢ user=${getBucket(userSpend, userId).cents}¢ ip=${getBucket(ipSpend, ip).cents}¢ app=${getAppBucket().cents}¢`);
   return NextResponse.json({ ok: true });
 }
