@@ -302,6 +302,10 @@ export function BalanceModal({
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
   const [addressRiskStatus, setAddressRiskStatus] = useState<"idle" | "checking" | "safe" | "unsafe">("idle");
   const [recentWithdrawals, setRecentWithdrawals] = useState<WithdrawalHistoryItem[]>([]);
+  const [dbDeposits, setDbDeposits] = useState<{ id: string; type: string; status: string; amount_usdc: number | null; deposit_address: string | null; bridge_status: string | null; created_at: string }[]>([]);
+  const [dbDepositsLoading, setDbDepositsLoading] = useState(false);
+  // DB id of the current in-flight Near Intents deposit so we can PATCH it as the bridge progresses
+  const [depositDbId, setDepositDbId] = useState<string | null>(null);
   const [peerOfframpHistory, setPeerOfframpHistory] = useState<PeerOfframpRecord[]>([]);
   const [peerHistoryLoading, setPeerHistoryLoading] = useState(false);
 
@@ -387,6 +391,57 @@ export function BalanceModal({
   const privySendEvmTxRef = useRef(privySendEvmTx);
   useEffect(() => { privySendEvmTxRef.current = privySendEvmTx; }, [privySendEvmTx]);
 
+  // DB deposit helpers
+  const fetchDbDeposits = useCallback(async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+    setDbDepositsLoading(true);
+    try {
+      const res = await fetch("/api/users/deposits", { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const data = await res.json();
+        setDbDeposits(data.deposits ?? []);
+      }
+    } catch { /* non-fatal */ } finally {
+      setDbDepositsLoading(false);
+    }
+  }, [getAccessToken]);
+
+  const recordDeposit = useCallback(async (
+    type: string, status = "pending", amount_usdc?: number, deposit_address?: string
+  ): Promise<string | null> => {
+    const token = await getAccessToken();
+    if (!token) return null;
+    try {
+      const res = await fetch("/api/users/deposits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ type, status, amount_usdc, deposit_address }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        fetchDbDeposits();
+        return data.id ?? null;
+      }
+    } catch { /* non-fatal */ }
+    return null;
+  }, [getAccessToken, fetchDbDeposits]);
+
+  const patchDeposit = useCallback(async (
+    id: string, updates: { status?: string; bridge_status?: string; amount_usdc?: number }
+  ) => {
+    const token = await getAccessToken();
+    if (!token) return;
+    try {
+      await fetch("/api/users/deposits", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ id, ...updates }),
+      });
+      fetchDbDeposits();
+    } catch { /* non-fatal */ }
+  }, [getAccessToken, fetchDbDeposits]);
+
   // Blink signer: called by the SDK to sign each request server-side
   const getBlinkSigner = useCallback(async (data: unknown) => {
     const token = await getAccessToken();
@@ -425,6 +480,7 @@ export function BalanceModal({
         token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
       });
       toast({ title: "Deposit complete!", description: "USDC will appear in your balance shortly." });
+      recordDeposit("blink", "complete");
       onRefresh();
     } catch (err: unknown) {
       const { DepositError, getDisplayMessage } = await import("@swype-org/deposit");
@@ -475,6 +531,8 @@ export function BalanceModal({
       params.set("sessionToken", sessionToken);
 
       const onrampUrl = `https://pay.coinbase.com/buy/select-asset?${params.toString()}`;
+
+      recordDeposit("coinbase", "pending");
 
       // Open in Coinbase's recommended popup size
       const popup = window.open(
@@ -557,6 +615,7 @@ export function BalanceModal({
     if (!solanaAddress) return;
     setMoonpayOnrampLoading(true);
     try {
+      recordDeposit("moonpay", "pending");
       await privyFundWallet({
         address: solanaAddress,
         options: {
@@ -592,6 +651,9 @@ export function BalanceModal({
       setDepositMemo(info.memo ?? null);
       setDepositPollAddr(info.depositAddress);
       setDepositBridgeStatus("PENDING");
+      recordDeposit("near-intents", "pending", depositAmountNum, info.depositAddress).then((id) => {
+        setDepositDbId(id);
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Could not get deposit address";
       toast({ variant: "destructive", title: "Failed to get deposit address", description: msg });
@@ -1126,8 +1188,12 @@ export function BalanceModal({
         const s = String(result?.status || result?.executionStatus || result?.state || "PENDING").toUpperCase();
         setDepositBridgeStatus(s);
         if (TERMINAL_BRIDGE_STATUSES.has(s)) {
+          const isSuccess = SUCCESS_BRIDGE_STATUSES.has(s);
+          if (depositDbId) patchDeposit(depositDbId, { status: isSuccess ? "complete" : "failed", bridge_status: s });
           setDepositPollAddr(null);
-          if (SUCCESS_BRIDGE_STATUSES.has(s)) onRefresh();
+          if (isSuccess) onRefresh();
+        } else {
+          if (depositDbId) patchDeposit(depositDbId, { bridge_status: s });
         }
       } catch { /* ignore */ }
     };
@@ -1167,6 +1233,7 @@ export function BalanceModal({
     const history = getWithdrawalHistory();
     setRecentWithdrawals(history);
     fetchPeerHistory();
+    fetchDbDeposits();
 
     // Restore deposit view if a Near Intents top-up is still pending
     if (depositAddr && !TERMINAL_BRIDGE_STATUSES.has(depositBridgeStatus || "")) {
@@ -2133,7 +2200,12 @@ export function BalanceModal({
             {/* Recent */}
             <button
               type="button"
-              onClick={() => { setRecentWithdrawals(getWithdrawalHistory()); fetchPeerHistory(); setTab("history"); }}
+              onClick={() => {
+                setRecentWithdrawals(getWithdrawalHistory());
+                fetchPeerHistory();
+                fetchDbDeposits();
+                setTab("history");
+              }}
               className="group relative z-10 flex-1 inline-flex flex-col items-center justify-center gap-1 rounded-xl px-2 py-2 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]"
             >
               <IconBubble active={tab === "history"} dark={dark}><Clock /></IconBubble>
@@ -2238,7 +2310,7 @@ export function BalanceModal({
                       {blinkDepositing ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" /> : <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Crypto deposit</p>
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with Blink</p>
                       <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>ETH · USDC · USDT — any chain</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
@@ -2246,7 +2318,21 @@ export function BalanceModal({
 
                   {blinkError && <p className="text-base text-orange-500 text-center px-1">{blinkError}</p>}
 
-                  {/* 2. Fiat / bank — opens provider picker */}
+                  {/* 2. More crypto via Near Intents */}
+                  <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("near-intents-deposit")}
+                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      <img src="/images/icons/deposit-receive.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with Near</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>ZEC · TON · BTC — cross-chain</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+
+                  {/* 3. Fiat / bank — opens provider picker */}
                   <button type="button" disabled={!solanaAddress || blinkDepositing} onClick={() => setShowFiatOnrampPicker(true)}
                     className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
@@ -2417,17 +2503,54 @@ export function BalanceModal({
             </div>
           )}
 
-          {/* History tab — unified list of regular withdrawals + peer cash out requests */}
+          {/* History tab — deposits (from DB) + withdrawals */}
           {tab === "history" && (() => {
-            const isEmpty = recentWithdrawals.length === 0 && peerOfframpHistory.length === 0;
+            const depositTypeLabel: Record<string, string> = {
+              blink: "Crypto deposit",
+              "near-intents": "Bridge deposit",
+              coinbase: "Coinbase",
+              moonpay: "MoonPay",
+            };
+            const isEmpty = dbDeposits.length === 0 && recentWithdrawals.length === 0 && peerOfframpHistory.length === 0 && !dbDepositsLoading;
             return (
               <div className="py-2 min-h-0 overflow-y-auto sm:max-h-[60vh]">
-                {peerHistoryLoading && peerOfframpHistory.length === 0 ? (
+                {dbDepositsLoading && dbDeposits.length === 0 && peerOfframpHistory.length === 0 ? (
                   <div className="flex justify-center py-6"><Loader2 className={`h-5 w-5 animate-spin ${dark ? "text-slate-400" : "text-gray-400"}`} /></div>
                 ) : isEmpty ? (
                   <p className={`text-base text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent activity.</p>
                 ) : (
                   <ul className="space-y-2">
+                    {/* Deposits saved to DB */}
+                    {dbDeposits.map((dep) => {
+                      const isPending = dep.status === "pending";
+                      const isComplete = dep.status === "complete";
+                      const statusColor = isComplete ? "text-emerald-400" : dep.status === "failed" ? "text-red-400" : "text-blue-400";
+                      const statusLabel = isComplete ? "Complete"
+                        : dep.status === "failed" ? "Failed"
+                        : dep.type === "near-intents" ? (dep.bridge_status ? bridgeStatusLabel(dep.bridge_status) : "Bridging…")
+                        : "Check your wallet";
+                      return (
+                        <li key={dep.id}>
+                          <div className={`rounded-lg border p-3 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
+                                  {dep.amount_usdc ? `$${Number(dep.amount_usdc).toFixed(2)} · ` : ""}
+                                  {depositTypeLabel[dep.type] ?? dep.type}
+                                </p>
+                                <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                                  {new Date(dep.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                </p>
+                              </div>
+                              <span className={`text-base font-medium flex items-center gap-1 shrink-0 ${statusColor}`}>
+                                {isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+                                {statusLabel}
+                              </span>
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
                     {/* Peer cash out requests */}
                     {peerOfframpHistory.map((record) => {
                       const platform = getPlatform(record.platform);

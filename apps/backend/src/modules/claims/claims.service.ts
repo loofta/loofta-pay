@@ -1050,12 +1050,13 @@ export class ClaimsService {
     }, BURNER_INBOUND_POLL_MS);
   }
 
-  /** Poll on-chain burner USDC ATA until balance &gt; 0 or timeout (payer→burner delivery). */
+  /** Poll on-chain burner USDC ATA until balance >= minUnits or timeout (payer→burner delivery). */
   private async pollBurnerAtaUntilPositive(
     claimId: string,
     conn: Connection,
     burnerAta: PublicKey,
     maxWaitMs: number,
+    minUnits: bigint = BigInt(1),
   ): Promise<bigint> {
     const deadline = Date.now() + maxWaitMs;
     let attempt = 0;
@@ -1063,11 +1064,16 @@ export class ClaimsService {
       attempt += 1;
       try {
         const acc = await getAccount(conn, burnerAta);
-        if (acc.amount > BigInt(0)) {
+        if (acc.amount >= minUnits) {
           this.logger.log(
-            `Claim ${claimId}: burner ATA credited ${acc.amount} base units (poll attempt ${attempt}, waited ≤${maxWaitMs}ms)`,
+            `Claim ${claimId}: burner ATA credited ${acc.amount} base units (≥${minUnits} expected, poll attempt ${attempt}, waited ≤${maxWaitMs}ms)`,
           );
           return acc.amount;
+        }
+        if (acc.amount > BigInt(0)) {
+          this.logger.log(
+            `Claim ${claimId}: burner ATA partially funded ${acc.amount}/${minUnits} base units (split in transit, attempt ${attempt})`,
+          );
         }
       } catch {
         /* ATA missing or not funded yet */
@@ -1215,11 +1221,13 @@ export class ClaimsService {
   ): Promise<{ sweepTxHash?: string; sweptAmount?: string }> {
     const burnerAta = await getAssociatedTokenAddress(this.usdcMint, burnerKeypair.publicKey);
 
-    // Wait for NEAR intent USDC delivery
+    // Wait for NEAR intent USDC delivery — full amount must arrive before forwarding
+    const amountUsdCrossChain = parseFloat(String(claim.amount || '0'));
+    const expectedUnitsCrossChain = BigInt(Math.round(amountUsdCrossChain * 1_000_000));
     let balance = BigInt(0);
     try { balance = (await getAccount(conn, burnerAta)).amount; } catch { /* not yet */ }
-    if (balance === BigInt(0)) {
-      balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS);
+    if (balance < expectedUnitsCrossChain) {
+      balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS, expectedUnitsCrossChain);
     }
     if (balance === BigInt(0)) {
       this.logger.log(`[CrossChain] ${claimId}: USDC not yet in burner — funds still in flight`);
@@ -1344,6 +1352,8 @@ export class ClaimsService {
         conn,
         String(claim.amount || '0'),
       );
+      const amountUsdForSweep = parseFloat(String(claim.amount || '0'));
+      const expectedUnits = BigInt(Math.round(amountUsdForSweep * 1_000_000));
       const burnerAta = await getAssociatedTokenAddress(claimMint, burnerKeypair.publicKey);
       let balance = BigInt(0);
       try {
@@ -1352,16 +1362,16 @@ export class ClaimsService {
       } catch {
         // ATA may not exist yet
       }
-      if (balance === BigInt(0)) {
+      if (balance < expectedUnits) {
         this.logger.log(
-          `Claim ${claimId}: burner ATA empty after PER step — polling for payer→burner delivery (up to ${BURNER_INBOUND_INLINE_MAX_MS}ms)…`,
+          `Claim ${claimId}: burner ATA balance=${balance} < expected=${expectedUnits} — polling for full delivery (up to ${BURNER_INBOUND_INLINE_MAX_MS}ms)…`,
         );
-        balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS);
+        balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS, expectedUnits);
       }
       this.logger.log(
-        `Claim ${claimId}: [MONEY] burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} balance=${balance} perAttempted=${perWithdraw.attempted} perSuccess=${perWithdraw.success} -> recipient ${wallet.slice(0, 8)}...`,
+        `Claim ${claimId}: [MONEY] burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} balance=${balance} expected=${expectedUnits} perAttempted=${perWithdraw.attempted} perSuccess=${perWithdraw.success} -> recipient ${wallet.slice(0, 8)}...`,
       );
-      if (balance > BigInt(0)) {
+      if (balance >= expectedUnits) {
         // Direct SPL sweep: burner → recipient (public). Payer→burner was already private via MagicBlock.
         const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
         const recipientPubkey = new PublicKey(wallet.trim());
