@@ -651,7 +651,7 @@ export function BalanceModal({
       setDepositMemo(info.memo ?? null);
       setDepositPollAddr(info.depositAddress);
       setDepositBridgeStatus("PENDING");
-      recordDeposit("near-intents", "pending", depositAmountNum, info.depositAddress).then((id) => {
+      recordDeposit("near-intents", "pending", depositQuoteOut ? parseFloat(depositQuoteOut) : undefined, info.depositAddress).then((id) => {
         setDepositDbId(id);
       });
     } catch (err: unknown) {
@@ -1189,7 +1189,7 @@ export function BalanceModal({
         setDepositBridgeStatus(s);
         if (TERMINAL_BRIDGE_STATUSES.has(s)) {
           const isSuccess = SUCCESS_BRIDGE_STATUSES.has(s);
-          if (depositDbId) patchDeposit(depositDbId, { status: isSuccess ? "complete" : "failed", bridge_status: s });
+          if (depositDbId) patchDeposit(depositDbId, { status: isSuccess ? "complete" : "failed", bridge_status: s, ...(isSuccess && depositQuoteOut ? { amount_usdc: parseFloat(depositQuoteOut) } : {}) });
           setDepositPollAddr(null);
           if (isSuccess) onRefresh();
         } else {
@@ -2506,8 +2506,8 @@ export function BalanceModal({
           {/* History tab — deposits (from DB) + withdrawals */}
           {tab === "history" && (() => {
             const depositTypeLabel: Record<string, string> = {
-              blink: "Crypto deposit",
-              "near-intents": "Bridge deposit",
+              blink: "Blink",
+              "near-intents": "Near Intents",
               coinbase: "Coinbase",
               moonpay: "MoonPay",
             };
@@ -2535,8 +2535,8 @@ export function BalanceModal({
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0 flex-1">
                                 <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
-                                  {dep.amount_usdc ? `$${Number(dep.amount_usdc).toFixed(2)} · ` : ""}
-                                  {depositTypeLabel[dep.type] ?? dep.type}
+                                  {depositTypeLabel[dep.type] ?? dep.type} deposit
+                                  {dep.amount_usdc ? <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>· ${Number(dep.amount_usdc).toFixed(2)} USDC</span> : ""}
                                 </p>
                                 <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
                                   {new Date(dep.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
