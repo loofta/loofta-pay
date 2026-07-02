@@ -1584,6 +1584,12 @@ export default function AdminDashboard() {
                         const q = blinkSearch.toLowerCase();
                         return (u.username ?? "").toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q);
                       })
+                      .sort((a: any, b: any) => {
+                        if (b.qualified !== a.qualified) return (b.qualified ? 1 : 0) - (a.qualified ? 1 : 0);
+                        const scoreA = (a.hasPasskeys ? 1 : 0) + Math.min(a.depositCount, 2) + Math.min(a.privatePaymentsCount, 2);
+                        const scoreB = (b.hasPasskeys ? 1 : 0) + Math.min(b.depositCount, 2) + Math.min(b.privatePaymentsCount, 2);
+                        return scoreB - scoreA;
+                      })
                       .map((u: any, i: number) => (
                         <tr key={u.privyUserId} className={`border-b border-gray-800/60 hover:bg-gray-900/50 ${u.qualified ? "bg-cyan-950/20" : ""}`}>
                           <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>

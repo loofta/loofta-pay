@@ -1,14 +1,10 @@
 /**
  * Send USDC from Privy embedded Solana wallet.
  *
- * Mainnet: Privy handles gas sponsorship (signAndSendTransaction with sponsor: true).
+ * Mainnet: attempts Privy gas sponsorship ({ sponsor: true }) after a per-user rate-limit check.
+ * If sponsorship is paused in the Privy dashboard, falls back to backend fee payer automatically.
  *
  * Devnet: backend fee payer co-signs.
- *   - Same keypair as mainnet, just needs devnet SOL (airdrop to fee payer address once).
- *   - signTransaction with { uiOptions: { showWalletUIs: false } } skips Privy's preflight
- *     SOL-balance check (fee payer is the backend, not the user's wallet).
- *   - sign-and-broadcast receives network: "devnet" so the backend uses the devnet RPC.
- *   - skipPreflight: true on the backend means no simulation — tx is accepted/rejected on-chain.
  */
 
 import type { ConnectedStandardSolanaWallet } from "@privy-io/react-auth/solana";
@@ -19,6 +15,7 @@ import { buildUSDCTransferTransaction } from "@/services/solanaTransfer";
 import {
   fetchSolanaFeePayerAddress,
   signAndBroadcastSponsoredTx,
+  isPrivyGasSponsorNotConfiguredError,
 } from "@/services/solanaSponsor";
 
 type PrivySolanaChain = ReturnType<typeof getPrivySolanaChain>;
@@ -38,7 +35,38 @@ type SignTransactionFn = (input: {
   options?: any;
 }) => Promise<{ signedTransaction: Uint8Array }>;
 
-/** Mainnet path — Privy handles gas sponsorship. */
+/**
+ * Call the backend rate-limit gate before sponsoring.
+ * Returns true if sponsoring is allowed, false if rate-limited.
+ * Never throws — on any check failure we allow the send (fail-open so legitimate users aren't blocked).
+ */
+async function checkSponsorRateLimit(
+  walletAddress: string,
+  privyUserId: string,
+  accessToken: string | null | undefined,
+): Promise<{ allowed: boolean; reason?: string }> {
+  try {
+    const res = await fetch("/api/payments/sponsor-check", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      body: JSON.stringify({ walletAddress, userId: privyUserId }),
+    });
+    if (res.status === 429) {
+      const body = await res.json().catch(() => ({})) as { reason?: string };
+      return { allowed: false, reason: body.reason ?? "Rate limit exceeded. Please wait before sending again." };
+    }
+    return { allowed: true };
+  } catch {
+    // Fail-open: don't block legitimate users if the gate is unreachable.
+    console.warn("[sponsorCheck] rate-limit check failed, proceeding anyway");
+    return { allowed: true };
+  }
+}
+
+/** Mainnet path — Privy gas sponsorship with rate-limit gate and backend-fee-payer fallback. */
 export async function sendUsdcWithPrivyEmbeddedWallet(params: {
   senderAddress: string;
   recipientAddress: string;
@@ -53,9 +81,18 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
   /** Unused — kept for call-site compatibility. */
   skipLooftaFeePayer?: boolean;
   signTransaction?: unknown;
+  accessToken?: string | null;
 }): Promise<string> {
   const { senderAddress, recipientAddress, amountUSDC, connection, wallet, memo, usdcMint, signAndSendTransaction } = params;
   const chain = params.chain ?? getPrivySolanaChain();
+
+  // Rate-limit gate: enforce per-wallet and per-user daily caps before sponsoring.
+  if (params.privyUserId) {
+    const check = await checkSponsorRateLimit(senderAddress, params.privyUserId, params.accessToken);
+    if (!check.allowed) {
+      throw new Error(check.reason ?? "Sponsorship rate limit reached.");
+    }
+  }
 
   const unsignedTx = await buildUSDCTransferTransaction({
     senderAddress,
@@ -66,13 +103,27 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
     usdcMint,
   });
 
-  const { signature } = await signAndSendTransaction({
-    transaction: unsignedTx.serialize(),
-    wallet,
-    chain,
-    options: { sponsor: true } as never,
-  });
-  return bs58.encode(signature);
+  try {
+    const { signature } = await signAndSendTransaction({
+      transaction: unsignedTx.serialize(),
+      wallet,
+      chain,
+      options: { sponsor: true } as never,
+    });
+    return bs58.encode(signature);
+  } catch (err) {
+    // Privy sponsorship paused/disabled in dashboard → fall back to backend fee payer transparently.
+    if (isPrivyGasSponsorNotConfiguredError(err) && params.signTransaction && params.privyUserId) {
+      console.warn("[sendUsdc] Privy sponsorship unavailable, falling back to backend fee payer");
+      return sendUsdcWithBackendFeePayer({
+        ...params,
+        privyUserId: params.privyUserId,
+        signTransaction: params.signTransaction as SignTransactionFn,
+        network: "mainnet",
+      });
+    }
+    throw err;
+  }
 }
 
 /**

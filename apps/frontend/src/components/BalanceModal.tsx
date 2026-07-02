@@ -1786,9 +1786,11 @@ export function BalanceModal({
           wallet,
           privyUserId: user?.id,
           signAndSendTransaction,
+          signTransaction,
           memo: prep.memo ?? undefined,
           usdcMint: getUsdcMintForMode(mode),
           chain: getPrivySolanaChainForMode(mode),
+          accessToken: bridgeAccessToken,
         });
 
       console.log(PEER_LOG, "USDC sent to bridge", { sig });
@@ -2046,9 +2048,11 @@ export function BalanceModal({
           wallet,
           privyUserId: user?.id,
           signAndSendTransaction,
+          signTransaction,
           memo: memo ?? undefined,
           usdcMint: getUsdcMintForMode(mode),
           chain: getPrivySolanaChainForMode(mode),
+          accessToken,
         });
 
       // Save to localStorage and DB

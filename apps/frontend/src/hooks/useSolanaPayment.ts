@@ -99,6 +99,7 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
     setIsLoading(true);
     try {
       const conn = new Connection(getRpcForMode(networkMode), "confirmed");
+      const accessToken = await getAccessToken?.();
       return await sendUsdcWithPrivyEmbeddedWallet({
         senderAddress,
         recipientAddress: config.recipientAddress.trim(),
@@ -111,6 +112,7 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
         usdcMint: getUsdcMintForMode(networkMode),
         chain: getPrivySolanaChainForMode(networkMode),
         skipLooftaFeePayer: networkMode === "mainnet",
+        accessToken,
       });
     } catch (error: any) {
       if (
