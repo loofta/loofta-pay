@@ -53,7 +53,7 @@ type DailyBucket = { date: string; cents: number; txCount: number };
 const walletSpend = new Map<string, DailyBucket>();
 const userSpend   = new Map<string, DailyBucket>();
 const ipSpend     = new Map<string, DailyBucket>();
-let   appSpend: DailyBucket = { date: "", cents: 0 };
+let   appSpend: DailyBucket = { date: "", cents: 0, txCount: 0 };
 
 function todayUTC(): string {
   return new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
