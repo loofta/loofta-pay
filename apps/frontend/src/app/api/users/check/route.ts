@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { getVerifiedUserId, getPrivyUser } from "@/lib/serverAuth";
 import { generateUniqueLooUsername, getTwitterHandleFromLinkedAccounts } from "@/lib/looUsername";
+import { redisGet, redisSet } from "@/lib/redis-cache";
+
+const USER_PREFS_TTL = 60 * 60 * 24; // 24h
+function userPrefsKey(privyUserId: string) { return `user:prefs:${privyUserId}`; }
 
 /**
  * Check if user exists and return user data
@@ -14,6 +18,25 @@ export async function POST(request: NextRequest) {
   }
   try {
     const { email } = await request.json();
+
+    // Fast path: Redis cache with full user object (avoids DB hit on every page load, cross-device)
+    const cached = await redisGet(userPrefsKey(privyUserId));
+    if (cached) {
+      try {
+        const u = JSON.parse(cached) as {
+          id: string; privyUserId: string; email: string | null;
+          username: string | null; looUsername: string | null; twitterUsername: string | null;
+          skipOnboarding: boolean;
+          ataMigratedMainnet: boolean; ataMigratedDevnet: boolean; createdAt: string;
+        };
+        // Only serve from cache when onboarding is definitively done
+        if (u.skipOnboarding || u.username) {
+          return NextResponse.json({ exists: true, user: u, needsUsername: !u.username });
+        }
+      } catch {
+        /* corrupt cache — fall through to DB */
+      }
+    }
 
     const supabase = getSupabaseAdmin();
 
@@ -32,22 +55,23 @@ export async function POST(request: NextRequest) {
     }
 
     if (user) {
-      return NextResponse.json({
-        exists: true,
-        user: {
-          id: user.id,
-          privyUserId: user.privy_user_id,
-          email: user.email,
-          username: user.username ?? null,
-          looUsername: user.loo_username ?? null,
-          twitterUsername: user.twitter_username ?? null,
-          skipOnboarding: user.skip_onboarding ?? false,
-          ataMigratedMainnet: user.ata_migrated_mainnet ?? false,
-          ataMigratedDevnet: user.ata_migrated_devnet ?? false,
-          createdAt: user.created_at,
-        },
-        needsUsername: !user.username,
-      });
+      const userPayload = {
+        id: user.id,
+        privyUserId: user.privy_user_id,
+        email: user.email,
+        username: user.username ?? null,
+        looUsername: user.loo_username ?? null,
+        twitterUsername: user.twitter_username ?? null,
+        skipOnboarding: user.skip_onboarding ?? false,
+        ataMigratedMainnet: user.ata_migrated_mainnet ?? false,
+        ataMigratedDevnet: user.ata_migrated_devnet ?? false,
+        createdAt: user.created_at,
+      };
+      // Populate cache so future requests (from any device) skip the DB
+      if (userPayload.skipOnboarding || userPayload.username) {
+        void redisSet(userPrefsKey(privyUserId), JSON.stringify(userPayload), USER_PREFS_TTL);
+      }
+      return NextResponse.json({ exists: true, user: userPayload, needsUsername: !user.username });
     }
 
     // User doesn't exist — detect Twitter handle via Privy so we can set all three columns upfront

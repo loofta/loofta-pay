@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { redisDel } from "@/lib/redis-cache";
+
+function userPrefsKey(privyUserId: string) { return `user:prefs:${privyUserId}`; }
 
 /**
  * Set onboarding preference for user
@@ -33,6 +36,9 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
+
+    // Bust the cache so the next /check from any device reads fresh data from DB
+    void redisDel(userPrefsKey(privyUserId));
 
     return NextResponse.json({
       success: true,

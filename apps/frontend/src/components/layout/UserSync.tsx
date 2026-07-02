@@ -32,6 +32,7 @@ export function UserSync() {
   const welcomeDismissedRef = useRef(false);
 
   const welcomeSessionDismissedKey = (uid: string) => `loofta_welcome_onboarding_dismissed_${uid}`;
+  const welcomePermanentDismissedKey = (uid: string) => `loofta_onboarding_done_${uid}`;
 
   // Ensure the user has a Solana embedded wallet. Privy's createOnLogin config handles new logins,
   // but users who signed up before Solana wallets were enabled land here with no wallet.
@@ -102,7 +103,8 @@ export function UserSync() {
     }
     welcomeDismissedRef.current =
       typeof window !== "undefined" &&
-      sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1";
+      (sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1" ||
+        localStorage.getItem(welcomePermanentDismissedKey(userId)) === "1");
   }, [authenticated, userId]);
 
   // Allow external callers (e.g. "Change username" in settings) to re-open onboarding via store flag
@@ -137,6 +139,8 @@ export function UserSync() {
         if (cancelled || userData.user?.skipOnboarding) return;
 
         const isNewUser = userData.exists === false;
+        // Returning users with a username already set have already been through onboarding
+        if (!isNewUser && userData.user?.username) return;
 
         // New users always see onboarding — bypass all dismissal caches
         if (!isNewUser) {
@@ -208,6 +212,7 @@ export function UserSync() {
             if (typeof window !== "undefined") {
               try {
                 sessionStorage.setItem(welcomeSessionDismissedKey(userId), "1");
+                localStorage.setItem(welcomePermanentDismissedKey(userId), "1");
               } catch {
                 /* ignore quota / private mode */
               }

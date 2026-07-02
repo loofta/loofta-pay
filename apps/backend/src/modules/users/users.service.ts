@@ -3,6 +3,12 @@ import { SupabaseService } from '@/database/supabase.service';
 import { ConfigService } from '@nestjs/config';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { MAINNET_WALLET_UPDATE_ID } from '@/common/force-update';
+import { RedisService } from '@/redis/redis.service';
+
+const FORCE_UPDATE_TTL = 60 * 60 * 24 * 7; // 7 days — completed state is permanent
+function forceUpdateKey(privyUserId: string, updateId: string) {
+  return `force-update:${privyUserId}:${updateId}`;
+}
 
 const SEARCH_CACHE_TTL_MS = 60 * 1000; // 1 min
 
@@ -32,6 +38,7 @@ export class UsersService {
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
     @Optional() private readonly privyVerification: PrivyVerificationService | null,
+    @Optional() private readonly redisService: RedisService | null,
   ) {}
 
   /**
@@ -467,12 +474,20 @@ export class UsersService {
   }
 
   async getForceUpdateStatus(privyUserId: string, updateId: string): Promise<{ completed: boolean }> {
+    const cacheKey = forceUpdateKey(privyUserId, updateId);
+    const cached = await this.redisService?.get(cacheKey).catch(() => null);
+    if (cached === '1') return { completed: true };
+
     const { data } = await this.supabaseService.forceUpdate
       .select('user_id')
       .eq('user_id', privyUserId)
       .eq('update_id', updateId)
       .maybeSingle();
-    return { completed: !!data };
+    const completed = !!data;
+    if (completed) {
+      await this.redisService?.set(cacheKey, '1', FORCE_UPDATE_TTL).catch(() => {});
+    }
+    return { completed };
   }
 
   /** True once the recipient has completed the mandatory mainnet wallet-migration update.
@@ -499,5 +514,7 @@ export class UsersService {
       this.logger.error('markForceUpdateComplete error:', error);
       throw new Error('Failed to mark update complete');
     }
+    // Cache immediately so the next check from any device skips the DB
+    await this.redisService?.set(forceUpdateKey(privyUserId, updateId), '1', FORCE_UPDATE_TTL).catch(() => {});
   }
 }
