@@ -118,7 +118,10 @@ export async function signAndBroadcastSponsoredTx(
   console.info(
     `[PER sponsor] POST /sign-and-broadcast start (${label}) bytes=${signedTransactionBytes.length}`,
   );
-  const r = await fetch(`${BACKEND_URL}/claims/solana-sponsor/sign-and-broadcast`, {
+  // Route through our Next.js BFF so the backend can verify the request
+  // came from our own server (X-Loofta-Internal secret) rather than directly
+  // from an attacker who found the backend URL.
+  const r = await fetch(`/api/payments/solana-sign-broadcast`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
