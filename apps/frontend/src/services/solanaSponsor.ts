@@ -38,7 +38,7 @@ export async function fetchSolanaFeePayerAddress(privyUserId?: string | null, ac
   if (!privyUserId) return null;
   try {
     const r = await fetch(`${BACKEND_URL}/claims/solana-sponsor/fee-payer`, {
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : { "x-privy-user-id": privyUserId },
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
     });
     if (!r.ok) return null;
     const j = (await r.json()) as { feePayerAddress?: string | null };
@@ -64,7 +64,7 @@ export async function prepareSponsoredTransaction(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : { "x-privy-user-id": privyUserId }),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     body: JSON.stringify({
       transaction: uint8ArrayToBase64(unsignedTransactionBytes),
@@ -122,7 +122,7 @@ export async function signAndBroadcastSponsoredTx(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : { "x-privy-user-id": privyUserId }),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     body: JSON.stringify({
       transaction: uint8ArrayToBase64(signedTransactionBytes),

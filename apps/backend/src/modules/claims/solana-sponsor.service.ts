@@ -17,6 +17,25 @@ import {
 const bs58Module = require('bs58');
 const bs58 = bs58Module?.default ?? bs58Module;
 
+// Programs allowed in sponsored USDC-transfer transactions.
+// Any instruction from an unlisted program is rejected — blocks custom-program drain attacks.
+const ALLOWED_SPONSOR_PROGRAMS = new Set([
+  '11111111111111111111111111111111',               // System Program
+  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',  // SPL Token
+  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bsn', // Associated Token Program
+  'ComputeBudget111111111111111111111111111111',    // Compute Budget
+  'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo',  // Memo v1
+  'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr',  // Memo v2
+]);
+
+// USDC mint addresses. ATA creation is blocked for any other mint.
+const USDC_MINT_SET = new Set([
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC mainnet
+  '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', // USDC devnet (Helius)
+]);
+
+const ATA_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bsn';
+
 /** Read env var from .env.local on disk when ConfigService doesn't have it (e.g. run from monorepo root). */
 function getEnvFromFile(varName: string): string | null {
   // Match ConfigModule envFilePath: backend root .env.local (same as SendPaymentService key source)
@@ -453,6 +472,32 @@ export class SolanaSponsorService {
       if (legacy.instructions.length < before) {
         this.logger.warn(`SolanaSponsor[sign-and-broadcast]: stripped ${before - legacy.instructions.length} CloseAccount instruction(s) — possible drain attempt`);
       }
+      // Program whitelist: reject any instruction from a non-whitelisted program.
+      // Also blocks System Program createAccount/createAccountWithSeed/transferWithSeed
+      // FROM the fee payer (these drain SOL beyond the base tx fee).
+      // ATA creation is only allowed for the USDC mint (prevents rent-drain on arbitrary tokens).
+      for (const ix of legacy.instructions) {
+        const prog = ix.programId.toBase58();
+        if (!ALLOWED_SPONSOR_PROGRAMS.has(prog)) {
+          this.logger.warn(`SolanaSponsor[sign-and-broadcast]: blocked disallowed program ${prog}`);
+          throw new Error(`Transaction contains disallowed program: ${prog}`);
+        }
+        if (prog === SystemProgram.programId.toBase58() && ix.data.length >= 4) {
+          const discriminator = Buffer.from(ix.data).readUInt32LE(0);
+          // createAccount=0, createAccountWithSeed=3, transferWithSeed=11 — all fund new accounts FROM payer
+          if ((discriminator === 0 || discriminator === 3 || discriminator === 11) &&
+              ix.keys[0]?.pubkey.toBase58() === this.feePayerAddress) {
+            throw new Error('Transaction attempts to create/fund an account from fee payer');
+          }
+        }
+        if (prog === ATA_PROGRAM_ID) {
+          const mint = ix.keys[3]?.pubkey?.toBase58();
+          if (!mint || !USDC_MINT_SET.has(mint)) {
+            this.logger.warn(`SolanaSponsor[sign-and-broadcast]: blocked ATA creation for non-USDC mint ${mint ?? 'undefined'}`);
+            throw new Error('ATA creation only allowed for USDC');
+          }
+        }
+      }
       legacy.partialSign(this.feePayerKeypair);
       const missingLegacySigners = legacy.signatures
         .filter((s) => !s.signature)
@@ -511,6 +556,28 @@ export class SolanaSponsorService {
         const sender = accountKeys[senderIndex];
         if (sender?.toBase58() === this.feePayerAddress) {
           throw new Error('Transaction attempts to transfer SOL from fee payer');
+        }
+      }
+    }
+    // Program whitelist + ATA-mint guard (v0 path).
+    for (const ix of message.compiledInstructions) {
+      const prog = accountKeys[ix.programIdIndex]?.toBase58();
+      if (!prog || !ALLOWED_SPONSOR_PROGRAMS.has(prog)) {
+        this.logger.warn(`SolanaSponsor[sign-and-broadcast]: blocked disallowed program (v0) ${prog}`);
+        throw new Error(`Transaction contains disallowed program: ${prog}`);
+      }
+      if (prog === systemProgramId && ix.data.length >= 4) {
+        const discriminator = Buffer.from(ix.data).readUInt32LE(0);
+        if ((discriminator === 0 || discriminator === 3 || discriminator === 11) &&
+            accountKeys[ix.accountKeyIndexes[0]]?.toBase58() === this.feePayerAddress) {
+          throw new Error('Transaction attempts to create/fund an account from fee payer');
+        }
+      }
+      if (prog === ATA_PROGRAM_ID) {
+        const mint = accountKeys[ix.accountKeyIndexes[3]]?.toBase58();
+        if (!mint || !USDC_MINT_SET.has(mint)) {
+          this.logger.warn(`SolanaSponsor[sign-and-broadcast]: blocked ATA creation for non-USDC mint (v0) ${mint ?? 'undefined'}`);
+          throw new Error('ATA creation only allowed for USDC');
         }
       }
     }
