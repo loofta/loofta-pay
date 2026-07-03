@@ -245,6 +245,34 @@ export class SolanaSponsorService {
   }
 
   /**
+   * Extract the non-fee-payer required signers from a base64 serialized transaction.
+   * Used by the controller to verify the user signer belongs to the authenticated account.
+   * Returns an empty array on parse failure (the full signAndBroadcast will surface the error).
+   */
+  getRequiredUserSigners(serializedBase64: string): string[] {
+    const feePayerAddr = this.feePayerAddress;
+    const txBuffer = Buffer.from(serializedBase64, 'base64');
+    try {
+      const tx = Transaction.from(txBuffer);
+      return tx.signatures
+        .map((s) => s.publicKey.toBase58())
+        .filter((addr) => addr !== feePayerAddr);
+    } catch {
+      // not a legacy tx — try versioned
+    }
+    try {
+      const vtx = VersionedTransaction.deserialize(txBuffer);
+      const numSigners = vtx.message.header.numRequiredSignatures;
+      return vtx.message.staticAccountKeys
+        .slice(0, numSigners)
+        .map((k) => k.toBase58())
+        .filter((addr) => addr !== feePayerAddr);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Rebuild transaction server-side with sponsor fee payer + fresh blockhash.
    * Keeps instructions unchanged so the user can sign client-side afterwards.
    */
