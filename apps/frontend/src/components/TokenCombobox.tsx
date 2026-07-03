@@ -168,7 +168,7 @@ export function TokenCombobox({
 				>
 					<div className="flex items-center gap-2.5 min-w-0">
 						<TokenIcon token={selectedToken ?? undefined} chain={selectedToken?.chain} size={26} />
-						<span className="text-base font-bold text-white truncate">
+						<span className="text-base font-medium text-white truncate">
 							{selectedToken ? selectedToken.symbol : placeholder}
 						</span>
 						{selectedToken ? (
@@ -181,24 +181,26 @@ export function TokenCombobox({
 				</button>
 			</DialogTrigger>
 			<DialogPortal>
-				{/* Manual overlay */}
+				{/* Overlay */}
 				<div
 					className="fixed inset-0 z-[60] bg-black/75 backdrop-blur-sm"
 					onClick={() => setOpen(false)}
 				/>
+				{/* Centering shell — flex center on desktop, full-screen on mobile.
+				    pointer-events-none so clicks outside the content hit the overlay. */}
+				<div className="fixed inset-0 z-[61] flex items-center justify-center pointer-events-none sm:p-4">
 				<DialogPrimitive.Content
 					onOpenAutoFocus={(e) => { e.preventDefault(); inputRef.current?.focus(); }}
 					className={cn(
-						"fixed z-[61] outline-none flex flex-col",
+						"pointer-events-auto outline-none flex flex-col",
 						"bg-[#0d0d14]/90 backdrop-blur-2xl",
 						"data-[state=open]:animate-in data-[state=closed]:animate-out",
 						"data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
 						"data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
-						// Mobile: full screen
-						"inset-0 h-[100dvh] w-screen rounded-none border-0",
-						// Desktop: centered modal
-						"sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2",
-						"sm:h-[min(620px,88vh)] sm:w-[min(96vw,540px)] sm:max-w-[540px]",
+						// Mobile: fill the fixed wrapper
+						"absolute inset-0 rounded-none border-0",
+						// Desktop: natural size inside the flex center shell
+						"sm:relative sm:inset-auto sm:h-[min(620px,88vh)] sm:w-[min(96vw,540px)] sm:max-w-[540px]",
 						"sm:rounded-2xl sm:border sm:border-white/[0.08] sm:shadow-2xl sm:shadow-black/60",
 						"p-0 overflow-hidden"
 					)}
@@ -307,7 +309,7 @@ export function TokenCombobox({
 														<div className="flex items-center gap-3.5 w-full">
 															<TokenIcon token={it.token} chain={it.chain} size={32} />
 															<div className="flex-1 overflow-hidden">
-																<div className="text-base font-bold text-white truncate">{it.symbol}</div>
+																<div className="text-base font-medium text-white truncate">{it.symbol}</div>
 																<div className="text-sm text-white/45 truncate">
 																	{it.name} · {formatChainLabel(it.chain)}
 																</div>
@@ -341,7 +343,7 @@ export function TokenCombobox({
 														<div className="flex items-center gap-3.5 w-full">
 															<TokenIcon token={tok ?? g} chain={effectiveChain} size={32} />
 															<div className="flex-1 overflow-hidden">
-																<div className="text-base font-bold text-white truncate">{g.symbol}</div>
+																<div className="text-base font-medium text-white truncate">{g.symbol}</div>
 																<div className="text-sm text-white/45 truncate">
 																	{g.name} · {formatChainLabel(effectiveChain)}
 																	{showMultiChain && (
@@ -361,6 +363,7 @@ export function TokenCombobox({
 						</div>
 					</div>
 				</DialogPrimitive.Content>
+				</div>
 			</DialogPortal>
 		</Dialog>
 	);

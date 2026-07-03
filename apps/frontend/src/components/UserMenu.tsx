@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Wallet } from "lucide-react";
+import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Wallet, Info } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
@@ -47,26 +47,68 @@ function formatVolume(n: number): string {
 }
 
 function TierBadge({ volumeUsd, dark }: { volumeUsd: number; dark: boolean }) {
+  const [showTiers, setShowTiers] = useState(false);
   const info = getTierForVolume(volumeUsd);
   const nextTier = TIERS.find((t) => t.minVolume > volumeUsd);
   return (
     <div className={`mt-2 pt-2 pb-1 border-t ${dark ? "border-white/10" : "border-gray-200"}`}>
-      <div className="flex items-center justify-between mb-1.5">
-        <span className={`text-sm font-medium ${dark ? "text-gray-400" : "text-gray-500"}`}>Status</span>
+      {/* Status row */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5">
+          <span className={`text-sm font-medium ${dark ? "text-gray-400" : "text-gray-500"}`}>Status</span>
+          <button
+            type="button"
+            onClick={() => setShowTiers(v => !v)}
+            className={`rounded-full p-0.5 transition-colors ${dark ? "text-gray-600 hover:text-gray-300" : "text-gray-400 hover:text-gray-600"}`}
+            title="About tiers"
+          >
+            <Info className="w-3.5 h-3.5" />
+          </button>
+        </div>
         <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${info.color} ${info.bg}`}>
           {info.label}
         </span>
       </div>
-      <div className="flex items-center justify-between">
-        <span className={`text-sm ${dark ? "text-gray-500" : "text-gray-400"}`}>
-          {formatVolume(volumeUsd)} sent &amp; received
-        </span>
-        {nextTier && (
-          <span className={`text-sm ${dark ? "text-gray-600" : "text-gray-400"}`}>
-            {formatVolume(nextTier.minVolume - volumeUsd)} to {nextTier.label}
+
+      {/* Volume stats */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col">
+          <span className={`text-sm font-semibold ${dark ? "text-gray-100" : "text-gray-800"}`}>
+            {formatVolume(volumeUsd)}
           </span>
+          <span className={`text-xs ${dark ? "text-gray-500" : "text-gray-400"}`}>sent &amp; received</span>
+        </div>
+        {nextTier && (
+          <div className="flex flex-col items-end">
+            <span className={`text-sm font-semibold ${dark ? "text-gray-100" : "text-gray-800"}`}>
+              {formatVolume(nextTier.minVolume - volumeUsd)}
+            </span>
+            <span className={`text-xs ${dark ? "text-gray-500" : "text-gray-400"}`}>to {nextTier.label}</span>
+          </div>
         )}
       </div>
+
+      {/* Tier info panel */}
+      {showTiers && (
+        <div className={`mt-3 rounded-xl border p-3 ${dark ? "bg-white/[0.04] border-white/[0.07]" : "bg-gray-50 border-gray-200"}`}>
+          <p className={`text-xs font-semibold uppercase tracking-widest mb-2 ${dark ? "text-gray-500" : "text-gray-400"}`}>All tiers</p>
+          <div className="space-y-1">
+            {TIERS.map((t) => (
+              <div
+                key={t.key}
+                className={`flex items-center justify-between rounded-lg px-2 py-1.5 ${info.key === t.key ? (dark ? "bg-white/[0.07]" : "bg-white shadow-sm") : ""}`}
+              >
+                <span className={`text-sm font-medium ${t.color}`}>{t.label}</span>
+                <span className={`text-xs tabular-nums ${dark ? "text-gray-500" : "text-gray-400"}`}>
+                  {t.maxVolume
+                    ? `$${t.minVolume.toLocaleString()} – $${t.maxVolume.toLocaleString()}`
+                    : `$${t.minVolume.toLocaleString()}+`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -611,14 +653,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       {/* Dropdown Menu */}
       {isOpen && (
         <div
-          className={`absolute right-0 top-full mt-2 w-64 rounded-xl shadow-lg border z-50 ${isDarkPage
-            ? "bg-gray-900 border-gray-700"
+          className={`absolute right-0 top-full mt-2 w-64 rounded-xl shadow-2xl border z-50 ${isDarkPage
+            ? "bg-[#0d0d14]/90 backdrop-blur-2xl border-white/[0.08]"
             : "bg-white border-gray-200"
             }`}
         >
           <div className="p-2">
             {/* User Info Section */}
-            <div className={`px-3 py-2 rounded-lg mb-1 ${isDarkPage ? "bg-gray-800" : "bg-gray-50"
+            <div className={`px-3 py-2 rounded-lg mb-1 ${isDarkPage ? "bg-white/[0.05]" : "bg-gray-50"
               }`}>
               {username && (
                 <div className="mb-2">
@@ -676,7 +718,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             </div>
 
             {/* Divider */}
-            <div className={`h-px my-2 ${isDarkPage ? "bg-gray-700" : "bg-gray-200"
+            <div className={`h-px my-2 ${isDarkPage ? "bg-white/[0.07]" : "bg-gray-200"
               }`}></div>
 
             {/* Share Payment Link Section */}
@@ -721,7 +763,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   setShowSettingsModal(true);
                 }}
                 className={`w-full text-left px-3 py-2 rounded-lg text-base md:text-sm transition-colors flex items-center gap-2 ${isDarkPage
-                  ? "text-gray-300 hover:bg-gray-800"
+                  ? "text-gray-300 hover:bg-white/[0.07]"
                   : "text-gray-700 hover:bg-gray-100"
                   }`}
               >
@@ -732,7 +774,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
 
             {/* Divider */}
             {username && (
-              <div className={`h-px my-2 ${isDarkPage ? "bg-gray-700" : "bg-gray-200"
+              <div className={`h-px my-2 ${isDarkPage ? "bg-white/[0.07]" : "bg-gray-200"
                 }`}></div>
             )}
 
