@@ -319,8 +319,8 @@ export default function BlinkCampaignPage() {
             {(
               [
                 { key: "setup_passkeys", label: "Set up Blink with passkeys", description: "Go to your balance, tap Top up, and deposit with Blink — this creates your Blink account and passkeys." },
-                { key: "two_deposits", label: "Make at least 2 deposits with Blink", description: "Deposit funds into your Blink wallet twice during the campaign." },
-                { key: "two_private_payments", label: "Send 2 mainnet private payments", description: "Send at least 2 private payments on Loofta mainnet." },
+                { key: "two_deposits", label: "Make at least 2 deposits with Blink", description: "Deposit funds into your Blink wallet twice during the campaign. Make sure you have enough to cover private payments." },
+                { key: "two_private_payments", label: "Send 2 mainnet private payments", description: "Send at least 2 private payments on Loofta mainnet (min $5 each)" },
               ] as { key: BlinkTaskKey; label: string; description: string }[]
             ).map((task) => (
               <div
