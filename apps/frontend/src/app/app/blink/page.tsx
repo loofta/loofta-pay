@@ -29,8 +29,8 @@ interface BlinkCampaignData {
   qualified: boolean;
 }
 
-const TASK_META: Record<BlinkTaskKey, { icon: string }> = {
-  setup_passkeys: { icon: "🔑" },
+const TASK_META: Record<BlinkTaskKey, { icon: string; demoLink?: string }> = {
+  setup_passkeys: { icon: "🔑", demoLink: "https://x.com/looftapay/status/2072671554010264051" },
   two_deposits: { icon: "💳" },
   two_private_payments: { icon: "🔒" },
 };
@@ -116,6 +116,16 @@ function TaskCard({ task }: { task: BlinkTaskStatus }) {
             <p className="text-base text-slate-400 mt-0.5 leading-snug">
               {task.description}
             </p>
+            {meta.demoLink && (
+              <a
+                href={meta.demoLink}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 mt-1.5 text-sm text-[#F7C948]/70 hover:text-[#F7C948] transition-colors"
+              >
+                Watch demo →
+              </a>
+            )}
             {showProgress && (
               <ProgressBar value={task.progress!} max={task.total!} />
             )}
@@ -308,7 +318,7 @@ export default function BlinkCampaignPage() {
           <div className="space-y-3">
             {(
               [
-                { key: "setup_passkeys", label: "Set up Blink with passkeys", description: "Create your Blink account and secure it with passkeys." },
+                { key: "setup_passkeys", label: "Set up Blink with passkeys", description: "Go to your balance, tap Top up, and deposit with Blink — this creates your Blink account and passkeys." },
                 { key: "two_deposits", label: "Make at least 2 deposits with Blink", description: "Deposit funds into your Blink wallet twice during the campaign." },
                 { key: "two_private_payments", label: "Send 2 mainnet private payments", description: "Send at least 2 private payments on Loofta mainnet." },
               ] as { key: BlinkTaskKey; label: string; description: string }[]

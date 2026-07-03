@@ -2515,7 +2515,7 @@ export function BalanceModal({
             const isEmpty = dbDeposits.length === 0 && recentWithdrawals.length === 0 && peerOfframpHistory.length === 0 && !dbDepositsLoading;
             return (
               <div className="py-2 min-h-0 overflow-y-auto sm:max-h-[60vh]">
-                {dbDepositsLoading && dbDeposits.length === 0 && peerOfframpHistory.length === 0 ? (
+                {dbDepositsLoading && dbDeposits.length === 0 && peerOfframpHistory.length === 0 && recentWithdrawals.length === 0 ? (
                   <div className="flex justify-center py-6"><Loader2 className={`h-5 w-5 animate-spin ${dark ? "text-slate-400" : "text-gray-400"}`} /></div>
                 ) : isEmpty ? (
                   <p className={`text-base text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent activity.</p>
