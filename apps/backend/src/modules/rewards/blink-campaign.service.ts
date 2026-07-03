@@ -21,7 +21,7 @@ export interface BlinkCampaignData {
 }
 
 const CAMPAIGN_START = new Date('2026-07-02T12:00:00.000Z');
-const CAMPAIGN_END = new Date('2026-07-01T15:00:00.000Z'); // ended 5pm CET 1 July 2026
+const CAMPAIGN_END = new Date('2026-08-15T00:00:00.000Z');
 
 export interface BlinkAdminUserStatus {
   privyUserId: string;
@@ -64,7 +64,7 @@ export class BlinkCampaignService {
       {
         key: 'setup_passkeys',
         label: 'Set up Blink with passkeys',
-        description: 'Create your Blink account and secure it with passkeys.',
+        description: 'Go to your balance, tap Top up, and deposit with Blink — this creates your Blink account and passkeys.',
         completed: hasPasskeys,
       },
       {
