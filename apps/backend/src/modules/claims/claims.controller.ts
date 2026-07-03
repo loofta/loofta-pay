@@ -6,6 +6,7 @@ import {
   Body,
   Param,
   Req,
+  Headers,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -13,6 +14,7 @@ import {
   ServiceUnavailableException,
   UnauthorizedException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -36,6 +38,8 @@ import { Claim, ClaimIntent } from './entities/claim.entity';
 @ApiTags('claims')
 @Controller('claims')
 export class ClaimsController {
+  private readonly logger = new Logger(ClaimsController.name);
+
   constructor(
     private readonly claimsService: ClaimsService,
     private readonly depositService: DepositService,
@@ -485,7 +489,22 @@ export class ClaimsController {
   @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
   async signAndBroadcastSponsored(
     @Body() body: { transaction: string; network?: string },
+    @Headers('x-loofta-internal') internalKey: string | undefined,
   ): Promise<{ signature: string }> {
+    // Require the request to have come through our Next.js BFF, not directly.
+    // The secret is only known to our server (LOOFTA_INTERNAL_SECRET env var).
+    const expectedSecret =
+      this.configService.get<string>('LOOFTA_INTERNAL_SECRET') ??
+      process.env.LOOFTA_INTERNAL_SECRET;
+    if (expectedSecret) {
+      if (!internalKey || internalKey !== expectedSecret) {
+        this.logger.warn('ClaimsController[sign-and-broadcast]: blocked direct call — missing/invalid X-Loofta-Internal');
+        throw new ForbiddenException('Direct API access not permitted');
+      }
+    } else {
+      this.logger.warn('ClaimsController[sign-and-broadcast]: LOOFTA_INTERNAL_SECRET not set — skipping internal-key check (set it in Railway to enable protection)');
+    }
+
     if (!body?.transaction || typeof body.transaction !== 'string') {
       throw new BadRequestException('Missing or invalid transaction');
     }
