@@ -4,7 +4,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import nacl from 'tweetnacl';
-import { Keypair, PublicKey, Transaction, TransactionInstruction, SystemProgram, Connection } from '@solana/web3.js';
+import { Keypair, PublicKey, Transaction, TransactionInstruction, SystemProgram, Connection, ComputeBudgetProgram } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
   getAccount,
@@ -1163,6 +1163,13 @@ export class ClaimsService {
    * Send a transaction and confirm it with blockhash-expiry-aware retries.
    * If the blockhash window expires before confirmation, re-signs with a fresh blockhash and retries.
    * The transaction must have its instructions already set; blockhash/feePayer/signatures are managed here.
+   *
+   * Every attempt also (re)prepends a priority fee, escalating each retry. Without this, every
+   * attempt went out at the network's default (effectively zero) priority — under any real
+   * congestion a transaction can sit unconfirmed for the entire ~60-90s blockhash window before
+   * the expiry check above even fires, then retry at the *same* fee and stall again. This is why
+   * production sweeps were observed taking 60s+ and multiple attempts even for a single simple
+   * transfer: it wasn't bad luck, it was structurally underpriced every single time.
    */
   private async sendAndConfirmWithRebuild(
     conn: Connection,
@@ -1172,14 +1179,28 @@ export class ClaimsService {
     label: string,
     maxAttempts = 3,
   ): Promise<string> {
+    const BASE_PRIORITY_FEE_MICROLAMPORTS = 20_000;
+    // Covers a transfer (~5k CU) plus an optional ATA-creation instruction (~25-30k CU) with
+    // comfortable headroom, without setting the limit so high it inflates the fee for no reason.
+    const COMPUTE_UNIT_LIMIT = 60_000;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // Drop any compute-budget instructions from a prior attempt before adding this attempt's
+      // (escalated) ones — otherwise they'd stack up across retries.
+      tx.instructions = tx.instructions.filter((ix) => !ix.programId.equals(ComputeBudgetProgram.programId));
+      const priorityFeeMicroLamports = BASE_PRIORITY_FEE_MICROLAMPORTS * 2 ** (attempt - 1);
+      tx.instructions.unshift(
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFeeMicroLamports }),
+        ComputeBudgetProgram.setComputeUnitLimit({ units: COMPUTE_UNIT_LIMIT }),
+      );
       const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
       tx.recentBlockhash = blockhash;
       tx.feePayer = feePayer;
       tx.signatures = [];
       for (const signer of signers) tx.partialSign(signer);
       const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 2 });
-      this.logger.log(`[${label}] attempt ${attempt}/${maxAttempts} sent ${sig.slice(0, 8)}… (validUntilBlock=${lastValidBlockHeight})`);
+      this.logger.log(
+        `[${label}] attempt ${attempt}/${maxAttempts} sent ${sig.slice(0, 8)}… (validUntilBlock=${lastValidBlockHeight}, priorityFee=${priorityFeeMicroLamports}µLamports/CU)`,
+      );
       const confirmed = await this.pollUntilConfirmedOrExpired(conn, sig, lastValidBlockHeight);
       if (confirmed) {
         this.logger.log(`[${label}] confirmed: ${sig.slice(0, 8)}…`);

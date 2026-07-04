@@ -60,6 +60,30 @@ export class UsersService {
   }
 
   /**
+   * Fast-path identity columns from our own DB — populated immediately (no external round-trip)
+   * whenever the frontend links/sets an account (see save-twitter-username, setup-username).
+   * Used by verifyRecipientIdentityForSendPayment as a first check before falling back to a
+   * live Privy API call, which can lag behind Privy's own eventual consistency right after a
+   * user links a new account.
+   */
+  async findIdentityByPrivyId(
+    privyUserId: string,
+  ): Promise<{ email: string | null; twitterUsername: string | null } | null> {
+    if (!privyUserId || !privyUserId.includes('did:privy:')) {
+      return null;
+    }
+    const { data: user, error } = await this.supabaseService.appUsers
+      .select('email, twitter_username')
+      .eq('privy_user_id', privyUserId)
+      .maybeSingle();
+
+    if (error || !user) {
+      return null;
+    }
+    return { email: user.email ?? null, twitterUsername: user.twitter_username ?? null };
+  }
+
+  /**
    * Get current user's email by Privy user ID (for recipient-check: compare to PENDING_EMAIL claim)
    */
   async getEmailByPrivyId(privyUserId: string): Promise<string | null> {
@@ -311,6 +335,19 @@ export class UsersService {
       const uname = (row?.username || '').replace(/^@/, '').toLowerCase().trim();
       return Boolean(uname && uname === normalized);
     }
+
+    // Fast path: our own DB, populated immediately (no external round-trip) whenever the
+    // frontend links/sets an account. Checked first because the live Privy API call below can
+    // briefly lag right after a user links a new account (Privy's own eventual consistency) —
+    // this fast path is what actually fixes that, not another layer of client-side retrying.
+    const identity = await this.findIdentityByPrivyId(privyUserId);
+    if (recipientType === 'email' && identity?.email) {
+      if (identity.email.toLowerCase().trim() === normalized) return true;
+    }
+    if (recipientType === 'twitter' && identity?.twitterUsername) {
+      if (identity.twitterUsername.replace(/^@/, '').toLowerCase().trim() === normalized) return true;
+    }
+
     const user = await this.getPrivyUser(privyUserId);
     if (!user) return false;
 

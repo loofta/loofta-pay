@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { getVerifiedUserId } from "@/lib/serverAuth";
+import { redisDel } from "@/lib/redis-cache";
+
+function userPrefsKey(uid: string) { return `user:prefs:${uid}`; }
 
 /**
  * Switch active username between loo_username and twitter_username.
@@ -59,6 +62,10 @@ export async function POST(request: NextRequest) {
       }
       return NextResponse.json({ error: "Failed to switch username" }, { status: 500 });
     }
+
+    // Without this, /api/users/check keeps serving the pre-switch cached username (up to 24h),
+    // so the header reverts to the old value on the next reload/new tab.
+    await redisDel(userPrefsKey(privyUserId));
 
     return NextResponse.json({
       success: true,

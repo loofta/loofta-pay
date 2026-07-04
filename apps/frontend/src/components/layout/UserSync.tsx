@@ -55,35 +55,54 @@ export function UserSync() {
       setUsername(null);
       return;
     }
+    // Wait for Privy to actually be ready. On a full page refresh, `authenticated`/`userId`
+    // come back true immediately from the persisted zustand store (useAuth deliberately
+    // returns cached auth state before Privy's client finishes initializing, to avoid
+    // flicker) — but getAccessToken() isn't reliable yet at that point. If this effect fired
+    // anyway, the fetch below goes out with no Authorization header, the backend 401s,
+    // `userData.user` comes back undefined, and the whole sync silently no-ops — leaving
+    // the stale persisted username on screen for the rest of the session, since nothing
+    // else re-triggers this effect (none of its other deps change on their own).
+    if (!privyReady) return;
 
     const checkUser = async () => {
       try {
-        const token = await getAccessToken();
-        const userResponse = await fetch("/api/users/check", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ email }),
-        });
-        const userData = await userResponse.json();
+        // privyReady doesn't strictly guarantee getAccessToken() resolves to a real token on
+        // the very first call right after it flips true — retry rather than silently leaving
+        // the stale persisted username on screen for the rest of the session if it doesn't.
+        let userData: { user?: Record<string, unknown> } | null = null;
+        for (const attempt of [0, 500, 1500]) {
+          if (attempt > 0) await new Promise((r) => setTimeout(r, attempt));
+          const token = await getAccessToken();
+          if (!token) continue;
+          const userResponse = await fetch("/api/users/check", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ email }),
+          });
+          if (!userResponse.ok) continue;
+          userData = await userResponse.json();
+          if (userData?.user) break;
+        }
 
-        if (userData.user) {
-          const usernameValue = userData.user.username || null;
+        if (userData?.user) {
+          const usernameValue = (userData.user.username as string | null) || null;
           setUsername(usernameValue);
-          setLooUsername(userData.user.looUsername ?? null);
-          setTwitterUsername(userData.user.twitterUsername ?? null);
-          setAtaMigrated("mainnet", userData.user.ataMigratedMainnet ?? false);
-          setAtaMigrated("devnet", userData.user.ataMigratedDevnet ?? false);
+          setLooUsername((userData.user.looUsername as string | null) ?? null);
+          setTwitterUsername((userData.user.twitterUsername as string | null) ?? null);
+          setAtaMigrated("mainnet", (userData.user.ataMigratedMainnet as boolean) ?? false);
+          setAtaMigrated("devnet", (userData.user.ataMigratedDevnet as boolean) ?? false);
           if (userData.user.email) {
             setAuth({
               authenticated: true,
               userId,
-              email: userData.user.email,
+              email: userData.user.email as string,
               username: usernameValue,
-              looUsername: userData.user.looUsername ?? null,
-              twitterUsername: userData.user.twitterUsername ?? null,
+              looUsername: (userData.user.looUsername as string | null) ?? null,
+              twitterUsername: (userData.user.twitterUsername as string | null) ?? null,
             });
           }
           // Onboarding (add-email, then welcome flow) shows after login; no separate username modal
@@ -94,7 +113,7 @@ export function UserSync() {
     };
 
     checkUser();
-  }, [authenticated, userId, email, setUsername, setAuth]);
+  }, [authenticated, userId, email, privyReady, setUsername, setAuth]);
 
   useEffect(() => {
     if (!authenticated || !userId) {

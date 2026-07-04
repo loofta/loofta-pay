@@ -523,11 +523,13 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     setConfirmUnlinkTwitter(false);
     setUnlinkingTwitter(true);
     try {
-      // If their active username is their Twitter handle, ensure a loo-username fallback exists first.
+      // Always land on the loo-username after disconnecting X — not just when the active
+      // username happens to exactly match the raw Twitter handle (usernames can drift from
+      // that, e.g. a collision suffix at signup), so this used to silently skip the switch.
       // ABORT the entire unlink if this step fails — do not leave them without a payment link.
-      const usernameIsTwitterHandle = username && twitterHandle && username.toLowerCase() === twitterHandle.toLowerCase();
-      if (usernameIsTwitterHandle) {
-        const suffix = (username ?? "").slice(0, 16);
+      const alreadyOnLooUsername = !!storeLooUsername && (username ?? "").toLowerCase() === storeLooUsername.toLowerCase();
+      if (!alreadyOnLooUsername) {
+        const suffix = (username ?? twitterHandle ?? "user").slice(0, 16);
         const looTarget = storeLooUsername ?? `loo-${suffix}`;
         if (!storeLooUsername) {
           // Create the loo-username — abort if it fails
@@ -567,6 +569,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       await unlinkOAuth.unlink({ provider: "twitter", subject: twitterSubject });
       setTwitterLinkedOptimistic(false);
       setTwitterUsername(null);
+      try {
+        const clearToken = await getAccessToken().catch(() => null);
+        await fetch("/api/users/save-twitter-username", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(clearToken ? { Authorization: `Bearer ${clearToken}` } : {}) },
+          body: JSON.stringify({ twitterUsername: null }),
+        });
+      } catch { /* non-critical — stale DB value just won't display anywhere important */ }
       try { await refreshUser(); } catch { /* non-critical */ }
       toast({ title: "Twitter disconnected", description: "Your X account has been removed from sign-in methods." });
     } catch (e: unknown) {
@@ -591,11 +601,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         toast({ variant: "destructive", title: "Could not switch username", description: data.error || "Try again." });
         return;
       }
-      setUsername(data.username);
-      if (data.looUsername !== undefined) setLooUsername(data.looUsername);
-      if (data.twitterUsername !== undefined) setTwitterUsername(data.twitterUsername);
-      setAuth({ authenticated: true, email: storeEmail, username: data.username });
-      toast({ title: "Payment link updated", description: `Your link is now @${data.username}` });
+      // Reload instead of patching the store in place — guarantees every page (header, claim
+      // pages, etc.) reflects the new username at once instead of each catching up on its own.
+      window.location.reload();
     } catch (e: unknown) {
       const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
       toast({ variant: "destructive", title: "Could not switch username", description: msg || "Try again." });
@@ -1491,28 +1499,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                   toast({ variant: "destructive", title: "Update failed", description: data.error || "Try again." });
                                   return;
                                 }
-                                // Refresh full user state from DB — response may lack looUsername/twitterUsername
-                                // if the columns are still being populated server-side
-                                const refreshToken = await getAccessToken().catch(() => null);
-                                const refreshRes = await fetch("/api/users/check", {
-                                  method: "POST",
-                                  headers: {
-                                    "Content-Type": "application/json",
-                                    ...(refreshToken ? { Authorization: `Bearer ${refreshToken}` } : {}),
-                                  },
-                                  body: JSON.stringify({ email: storeEmail }),
-                                });
-                                const refreshData = await refreshRes.json();
-                                if (refreshData.user) {
-                                  const u = refreshData.user;
-                                  setUsername(u.username ?? twitterHandle);
-                                  setLooUsername(u.looUsername ?? null);
-                                  setTwitterUsername(u.twitterUsername ?? null);
-                                  setAuth({ authenticated: true, email: storeEmail, username: u.username ?? twitterHandle, looUsername: u.looUsername ?? null, twitterUsername: u.twitterUsername ?? null });
-                                } else {
-                                  setUsername(twitterHandle);
-                                }
-                                toast({ title: "Payment link updated", description: `Your link is now @${twitterHandle}` });
+                                // Reload instead of patching the store in place — guarantees every
+                                // page reflects the new username at once instead of catching up on its own.
+                                window.location.reload();
                               } catch {
                                 toast({ variant: "destructive", title: "Update failed", description: "Try again." });
                               } finally {
