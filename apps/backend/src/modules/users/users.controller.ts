@@ -20,13 +20,32 @@ import {
 import { UsersService } from './users.service';
 import { PrivyAuthGuard } from '../../auth/privy-auth.guard';
 import { PrivyUser } from '../../auth/privy-user.decorator';
+import { PrivyVerificationService } from '../../auth/privy-verification.service';
 import { AdminGuard } from '@/common/guards';
 import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('users')
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly privyVerification: PrivyVerificationService,
+  ) {}
+
+  /**
+   * Bust the cached Privy user record for the caller. Call right after linking a new
+   * account (email/X/etc) via Privy so identity-gated reads (e.g. claim recipient
+   * checks) see it immediately instead of waiting out the cache TTL.
+   */
+  @Post('refresh-privy-cache')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Invalidate the caller's cached Privy user record" })
+  @ApiResponse({ status: 200, schema: { properties: { ok: { type: 'boolean' } } } })
+  async refreshPrivyCache(@PrivyUser() user: { id: string }) {
+    await this.privyVerification.invalidatePrivyUserCache(user.id);
+    return { ok: true };
+  }
 
   /**
    * Verify auth token and return the caller's Privy user ID.

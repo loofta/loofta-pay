@@ -395,6 +395,7 @@ export function BalanceModal({
   const [depositPollAddr, setDepositPollAddr] = useState<string | null>(null);
   const [depositQuoteOut, setDepositQuoteOut] = useState<string | null>(null);
   const depositPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoExpiredRef = useRef<Set<string>>(new Set());
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -1230,6 +1231,22 @@ export function BalanceModal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depositPollAddr]);
+
+  // Auto-cancel pending deposits/withdrawals older than 1 hour
+  const ONE_HOUR_MS = 60 * 60 * 1000;
+  useEffect(() => {
+    const now = Date.now();
+    dbDeposits.forEach((dep) => {
+      if (dep.status === "pending" && !autoExpiredRef.current.has(dep.id)) {
+        const age = now - new Date(dep.created_at).getTime();
+        if (age > ONE_HOUR_MS) {
+          autoExpiredRef.current.add(dep.id);
+          patchDeposit(dep.id, { status: "cancelled" });
+        }
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbDeposits]);
 
   // Reset token selection and address when withdraw method changes
   useEffect(() => {
@@ -2523,11 +2540,18 @@ export function BalanceModal({
                   <ul className="space-y-2">
                     {/* Deposits saved to DB */}
                     {dbDeposits.map((dep) => {
-                      const isPending = dep.status === "pending";
-                      const isComplete = dep.status === "complete";
-                      const statusColor = isComplete ? "text-emerald-400" : dep.status === "failed" ? "text-red-400" : "text-blue-400";
+                      const ageMs = Date.now() - new Date(dep.created_at).getTime();
+                      const effectiveStatus = (dep.status === "pending" && ageMs > ONE_HOUR_MS) ? "cancelled" : dep.status;
+                      const isPending = effectiveStatus === "pending";
+                      const isComplete = effectiveStatus === "complete";
+                      const isCancelled = effectiveStatus === "cancelled";
+                      const statusColor = isComplete ? "text-emerald-400"
+                        : effectiveStatus === "failed" ? "text-red-400"
+                        : isCancelled ? (dark ? "text-slate-500" : "text-gray-400")
+                        : "text-blue-400";
                       const statusLabel = isComplete ? "Complete"
-                        : dep.status === "failed" ? "Failed"
+                        : effectiveStatus === "failed" ? "Failed"
+                        : isCancelled ? "Cancelled"
                         : dep.type === "near-intents" ? (dep.bridge_status ? bridgeStatusLabel(dep.bridge_status) : "Bridging…")
                         : "Check your wallet";
                       return (
@@ -2594,7 +2618,9 @@ export function BalanceModal({
                     })}
                     {/* Regular withdrawals (direct USDC / Near Intents) */}
                     {recentWithdrawals.map((item) => {
-                      const isInProgress = item.isNearIntents && !item.nearIntentsComplete;
+                      const withdrawAgeMs = Date.now() - item.createdAt;
+                      const isStaleWithdraw = item.isNearIntents && !item.nearIntentsComplete && withdrawAgeMs > ONE_HOUR_MS;
+                      const isInProgress = item.isNearIntents && !item.nearIntentsComplete && !isStaleWithdraw;
                       return (
                         <li key={item.id}>
                           <div className={`rounded-lg border p-3 transition-colors ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
@@ -2621,6 +2647,8 @@ export function BalanceModal({
                                     <Loader2 className="h-3 w-3 animate-spin" />
                                     Bridging
                                   </span>
+                                ) : isStaleWithdraw ? (
+                                  <span className={`text-base font-medium ${dark ? "text-slate-500" : "text-gray-400"}`}>Cancelled</span>
                                 ) : item.nearIntentsComplete && item.nearIntentsStatus ? (
                                   <span className={`text-base font-medium ${SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "text-emerald-400" : "text-amber-400"}`}>
                                     {SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "Completed" : item.nearIntentsStatus}

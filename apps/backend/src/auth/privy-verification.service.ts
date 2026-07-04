@@ -113,6 +113,17 @@ export class PrivyVerificationService {
   }
 
   /**
+   * Bust the cached Privy user record (linked_accounts etc). Call this right after
+   * a client links a new account (email/X/etc) so identity-gated reads — e.g. claim
+   * recipient checks — see the new linked account immediately instead of waiting out
+   * the 5-minute TTL.
+   */
+  async invalidatePrivyUserCache(userId: string): Promise<void> {
+    if (!userId?.includes('did:privy:')) return;
+    await this.redis.del(`privy:user:data:${userId}`);
+  }
+
+  /**
    * Raw HTTP fallback used when SDK is not initialized (e.g. during module init).
    */
   private async fetchPrivyUserHttp(userId: string): Promise<{ linked_accounts: any[] } | null> {
