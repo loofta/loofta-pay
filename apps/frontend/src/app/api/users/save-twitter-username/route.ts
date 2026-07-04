@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { getVerifiedUserId } from "@/lib/serverAuth";
+import { redisDel } from "@/lib/redis-cache";
+
+function userPrefsKey(uid: string) { return `user:prefs:${uid}`; }
 
 /**
- * Save (or update) the twitter_username column for the authenticated user.
- * Called when a user links their Twitter/X account via Privy.
+ * Save, update, or clear the twitter_username column for the authenticated user.
+ * Called when a user links their Twitter/X account via Privy (set), or disconnects it (clear).
  * POST /api/users/save-twitter-username
- * Body: { twitterUsername: string }
+ * Body: { twitterUsername: string | null } — null clears the column.
  */
 export async function POST(request: NextRequest) {
   const privyUserId = await getVerifiedUserId(request);
@@ -14,13 +17,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const { twitterUsername } = await request.json() as { twitterUsername: string };
-    if (!twitterUsername || typeof twitterUsername !== "string") {
-      return NextResponse.json({ error: "twitterUsername is required" }, { status: 400 });
-    }
-    const handle = twitterUsername.replace(/^@/, "").toLowerCase().trim();
-    if (!handle || handle.length < 1) {
-      return NextResponse.json({ error: "Invalid handle" }, { status: 400 });
+    const { twitterUsername } = await request.json() as { twitterUsername: string | null };
+
+    let handle: string | null = null;
+    if (twitterUsername !== null) {
+      if (!twitterUsername || typeof twitterUsername !== "string") {
+        return NextResponse.json({ error: "twitterUsername is required" }, { status: 400 });
+      }
+      handle = twitterUsername.replace(/^@/, "").toLowerCase().trim();
+      if (!handle) {
+        return NextResponse.json({ error: "Invalid handle" }, { status: 400 });
+      }
     }
 
     const supabase = getSupabaseAdmin();
@@ -35,6 +42,10 @@ export async function POST(request: NextRequest) {
       console.error("[save-twitter-username] error:", error);
       return NextResponse.json({ error: "Failed to save" }, { status: 500 });
     }
+
+    // Without this, /api/users/check keeps serving the pre-change cached twitter_username
+    // (up to 24h) even though the DB is already correct.
+    await redisDel(userPrefsKey(privyUserId));
 
     return NextResponse.json({
       success: true,

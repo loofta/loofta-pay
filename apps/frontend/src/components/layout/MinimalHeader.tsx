@@ -249,7 +249,7 @@ export function MinimalHeader() {
       >
         <div className="w-full max-w-7xl mx-auto px-4 md:px-8 flex items-center justify-between">
           <div className="flex items-center min-w-0">
-            <LooftaPayLogoLink imageWidth={120} imageHeight={36} imageClassName="h-9 w-auto" badgeVariant="on-dark" isMainnet={networkMode === "mainnet"} />
+            <LooftaPayLogoLink imageWidth={120} imageHeight={36} imageClassName="h-9 w-auto" />
           </div>
 
           <div className="flex items-center shrink-0 gap-2">
