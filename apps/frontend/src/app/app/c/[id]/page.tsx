@@ -631,6 +631,23 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const storeUsername = useAuthStore((s) => s.username ?? null);
 
   const { linkTwitter, linkEmail } = useLinkAccount({
+    onSuccess: async () => {
+      // Identity just changed. The backend caches the Privy user record (linked_accounts)
+      // for 5 min, so the claim-fetch recipient check (checkIsRecipient) would keep seeing
+      // the pre-link identity — bust that cache before refetching or "not found" won't clear.
+      try {
+        const token = await getAccessToken();
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+        await fetch(`${backendUrl}/users/refresh-privy-cache`, {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+      } catch {
+        // best-effort — the cache will expire on its own within 5 min regardless
+      }
+      void claimQuery.refetch();
+      void recipientCheckQuery.refetch();
+    },
     onError: (error) => {
       toast({ variant: "destructive", title: "Couldn't connect", description: String(error) });
     },
@@ -854,6 +871,17 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   }, [id, isPendingRecipientClaim, burnerAddr]);
 
   const queryClient = useQueryClient();
+  /** Retry balance refresh 5× at 2s intervals — RPC indexing can lag after a claim sweep. */
+  const refreshWalletBalances = () => {
+    for (let i = 1; i <= 5; i++) {
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+        queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
+        queryClient.refetchQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+        queryClient.refetchQueries({ queryKey: ["solanaPaymentBalance"] });
+      }, i * 2000);
+    }
+  };
   const claimAsRecipientMutation = useMutation({
     mutationFn: async () => {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -948,23 +976,16 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     onSuccess: (data: { claimed?: boolean; sweepTxHash?: string; sweptAmount?: string; swept?: boolean } | undefined, _vars, context) => {
       setClaimCompleted(true);
       setStatus("SUCCESS");
-      setShowBalanceUpdating(true);
-      setTimeout(() => setShowBalanceUpdating(false), 10000);
       useClaimPayStore.getState().setClaimed(id, true);
       queryClient.setQueryData(["claim", id, "recipient-check", user?.id], { isRecipient: true });
-      // Refetch real paid_at from DB once the sweep completes.
-      queryClient.invalidateQueries({ queryKey: ["claim", id] });
-      queryClient.refetchQueries({ queryKey: ["claim", id] });
+      // Refetch real paid_at from DB once the sweep completes. exact: true matters here —
+      // without it this fuzzy-matches ["claim", id, "recipient-check", user?.id] too, which
+      // flips isCheckingRecipient back to true and collapses the whole page to the loading
+      // skeleton mid-celebration (the "flicker between success and skeleton" bug).
+      queryClient.invalidateQueries({ queryKey: ["claim", id], exact: true });
+      queryClient.refetchQueries({ queryKey: ["claim", id], exact: true });
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
-      // Retry balance refresh 5× at 2s intervals — RPC indexing can lag after sweep.
-      for (let i = 1; i <= 5; i++) {
-        setTimeout(() => {
-          queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
-          queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
-          queryClient.refetchQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
-          queryClient.refetchQueries({ queryKey: ["solanaPaymentBalance"] });
-        }, i * 2000);
-      }
+      refreshWalletBalances();
     },
     onError: (error: unknown, _vars, context: any) => {
       // Roll back optimistic claim data.
@@ -991,14 +1012,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [claimCompleted, setClaimCompleted] = useState(false);
   const confettiFiredRef = React.useRef(false);
   const [optimisticClaimedAt, setOptimisticClaimedAt] = useState<string | null>(null);
-  const [showBalanceUpdating, setShowBalanceUpdating] = useState(false);
 
   // Poll claim status while mutation is pending (catches cases where HTTP response is lost
   // but the backend already processed the claim and balance has updated).
   useEffect(() => {
     if (!claimInitiated || !claimAsRecipientMutation.isPending || claimCompleted) return;
     const interval = setInterval(() => {
-      queryClient.refetchQueries({ queryKey: ["claim", id] });
+      // exact: true — a fuzzy match here also refetches the recipient-check subquery,
+      // which flips isCheckingRecipient true and flashes the loading skeleton every 4s.
+      queryClient.refetchQueries({ queryKey: ["claim", id], exact: true });
     }, 4000);
     return () => clearInterval(interval);
   }, [claimInitiated, claimAsRecipientMutation.isPending, claimCompleted, id, queryClient]);
@@ -1023,14 +1045,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       confetti({ particleCount: 6, angle: 120, spread: 55, origin: { x: 1 }, colors });
       if (Date.now() < end) requestAnimationFrame(frame);
     })();
-    for (let i = 1; i <= 5; i++) {
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
-        queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
-        queryClient.refetchQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
-        queryClient.refetchQueries({ queryKey: ["solanaPaymentBalance"] });
-      }, i * 2000);
-    }
+    refreshWalletBalances();
   }, [claimCompleted, queryClient]);
 
   useEffect(() => {
@@ -1119,7 +1134,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         toast({ title: "No funds to sweep", description: "Burner currently has no USDC in ATA. For private PER payments, funds may still be in PER state." });
       }
       await runBurnerTroubleshoot();
-      queryClient.invalidateQueries({ queryKey: ["claim", id] });
+      queryClient.invalidateQueries({ queryKey: ["claim", id], exact: true });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Could not retry sweep";
       toast({ variant: "destructive", title: "Retry sweep failed", description: msg });
@@ -1149,7 +1164,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       }
       toast({ title: "Withdraw/reclaim sent", description: "We attempted PER withdraw and return to your wallet." });
       await runBurnerTroubleshoot();
-      queryClient.invalidateQueries({ queryKey: ["claim", id] });
+      queryClient.invalidateQueries({ queryKey: ["claim", id], exact: true });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Could not reclaim funds";
       toast({ variant: "destructive", title: "Reclaim failed", description: msg });
@@ -1180,6 +1195,22 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [quote, setQuote] = useState<{ amountInFormatted?: string; usd?: number; est?: number } | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+
+  // Covers the plain "already claimed" view (isRecipient + SUCCESS, no pending flags) —
+  // reachable directly via optimistic status updates or a fresh page load without ever
+  // passing through the claimCompleted branch above, so it needs its own refresh trigger.
+  const staticSuccessBalanceRefreshedRef = React.useRef(false);
+  useEffect(() => {
+    const alreadyClaimedStatically =
+      isRecipient &&
+      !claim?.recipient_pending_email &&
+      !claim?.recipient_pending_username &&
+      String(status || claim?.status || "").toUpperCase() === "SUCCESS";
+    if (!alreadyClaimedStatically || staticSuccessBalanceRefreshedRef.current) return;
+    staticSuccessBalanceRefreshedRef.current = true;
+    refreshWalletBalances();
+  }, [isRecipient, claim?.recipient_pending_email, claim?.recipient_pending_username, status, claim?.status]);
+
   const [statusData, setStatusData] = useState<any>(null);
   const [paidFeeUsdc, setPaidFeeUsdc] = useState<number | null>(null);
   const [paidFeeBreakdown, setPaidFeeBreakdown] = useState<{ looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number } | null>(null);
@@ -2963,17 +2994,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         </div>
                       )}
                     </motion.div>
-                    {showBalanceUpdating && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="mb-4 flex items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2"
-                      >
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-500" />
-                        <span className="text-base md:text-sm text-emerald-700 font-medium">Balance updating…</span>
-                      </motion.div>
-                    )}
                     {claim?.is_private && (
                       <div className="mb-6 flex items-start gap-3 rounded-xl border border-orange-500/20 bg-gradient-to-b from-white/[0.08] to-white/[0.03] backdrop-blur-sm px-4 py-3 shadow-[0_0_16px_0_rgba(255,80,0,0.12)]">
                         <span className="mt-0.5 text-base">🔒</span>
@@ -4281,11 +4301,32 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             </div>
             <h3 className="text-xl font-semibold text-white mb-2">Payment not found</h3>
             <p className="text-slate-400 text-base mb-6 max-w-xs">
-              Oops — this link may have expired, been cancelled, or never existed.
+              {!hasTwitterLinked || !hasEmailLinked
+                ? "It might be waiting on an email or X handle you haven't added to your account yet."
+                : "This link may have expired, been cancelled, or never existed."}
             </p>
-            <p className="text-slate-500 text-base mb-6 max-w-xs">
-              If it was sent to your email or X handle, make sure you've added it to your profile first.
-            </p>
+            {(!hasTwitterLinked || !hasEmailLinked) && (
+              <div className="flex flex-wrap justify-center gap-3 mb-6">
+                {!hasTwitterLinked && (
+                  <button
+                    type="button"
+                    onClick={() => linkTwitter()}
+                    className="inline-flex items-center justify-center h-11 rounded-lg bg-white/10 text-white px-5 text-base font-semibold hover:bg-white/20 transition-colors"
+                  >
+                    Connect X
+                  </button>
+                )}
+                {!hasEmailLinked && (
+                  <button
+                    type="button"
+                    onClick={() => linkEmail()}
+                    className="inline-flex items-center justify-center h-11 rounded-lg bg-white/10 text-white px-5 text-base font-semibold hover:bg-white/20 transition-colors"
+                  >
+                    Add email
+                  </button>
+                )}
+              </div>
+            )}
             <Link
               href={from === "history" ? "/history" : "/"}
               className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors"

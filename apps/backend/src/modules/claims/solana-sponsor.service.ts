@@ -22,7 +22,7 @@ const bs58 = bs58Module?.default ?? bs58Module;
 const ALLOWED_SPONSOR_PROGRAMS = new Set([
   '11111111111111111111111111111111',               // System Program
   'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',  // SPL Token
-  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bsn', // Associated Token Program
+  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL', // Associated Token Program
   'ComputeBudget111111111111111111111111111111',    // Compute Budget
   'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo',  // Memo v1
   'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr',  // Memo v2
@@ -34,7 +34,7 @@ const USDC_MINT_SET = new Set([
   '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', // USDC devnet (Helius)
 ]);
 
-const ATA_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bsn';
+const ATA_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
 
 /** Read env var from .env.local on disk when ConfigService doesn't have it (e.g. run from monorepo root). */
 function getEnvFromFile(varName: string): string | null {

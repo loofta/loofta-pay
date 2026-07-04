@@ -127,7 +127,11 @@ export class ClaimsService {
       throw new BadRequestException('Missing required fields');
     }
 
-    const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
+    // Server config is the source of truth for mainnet vs devnet.
+    // In mainnet mode, reject any client-supplied cluster override — prevents creating
+    // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
+    const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
+    const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
     const shortId = generateShortId();
     const { data, error } = await this.supabaseService.payments
       .insert({
@@ -163,7 +167,11 @@ export class ClaimsService {
    */
   async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; short_id: string | null; link: string }> {
     const { username, amount, userId, isPrivate = false, description, cluster } = dto;
-    const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
+    // Server config is the source of truth for mainnet vs devnet.
+    // In mainnet mode, reject any client-supplied cluster override — prevents creating
+    // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
+    const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
+    const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
     const cleanUsername = username.replace(/^@/, '').toLowerCase();
 
     let recipientAddress: string;
@@ -536,7 +544,11 @@ export class ClaimsService {
    */
   async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; short_id: string | null; link: string }> {
     const { email, amount, userId, isPrivate = false, description, cluster } = dto;
-    const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
+    // Server config is the source of truth for mainnet vs devnet.
+    // In mainnet mode, reject any client-supplied cluster override — prevents creating
+    // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
+    const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
+    const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
     const cleanEmail = email.trim().toLowerCase();
 
     let recipientAddress: string;
