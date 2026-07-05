@@ -356,6 +356,7 @@ export function BalanceModal({
   const [showFiatOnrampPicker, setShowFiatOnrampPicker] = useState(false);
   const [moonpayOfframpLoading, setMoonpayOfframpLoading] = useState(false);
   const [moonpayOnrampLoading, setMoonpayOnrampLoading] = useState(false);
+  const [stripeOnrampLoading, setStripeOnrampLoading] = useState(false);
 
   // Peer offramp state
   const [peerPlatformId, setPeerPlatformId] = useState<string | null>(null);
@@ -653,6 +654,30 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "MoonPay error", description: msg });
     } finally {
       setMoonpayOnrampLoading(false);
+    }
+  };
+
+  // Stripe Onramp: buy USDC via Privy's fund wallet, bypassing the method picker
+  const handleStripeOnramp = async () => {
+    if (!solanaAddress) return;
+    setStripeOnrampLoading(true);
+    try {
+      recordDeposit("stripe", "pending");
+      await privyFundWallet({
+        address: solanaAddress,
+        options: {
+          asset: 'USDC',
+          defaultFundingMethod: 'card',
+          // Privy's shipped types only list 'coinbase' | 'moonpay', but the SDK's fiat onramp
+          // modal already supports 'stripe' at runtime once it's enabled in the Privy dashboard.
+          card: { preferredProvider: 'stripe' as 'coinbase' },
+        },
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not open Stripe.";
+      toast({ variant: "destructive", title: "Stripe error", description: msg });
+    } finally {
+      setStripeOnrampLoading(false);
     }
   };
 
@@ -2282,7 +2307,7 @@ export function BalanceModal({
                     <div className="w-12 h-12 shrink-0 flex items-center justify-center">
                       {coinbaseLoading
                         ? <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-                        : <img src="/images/icons/coinbase-logo.svg" alt="Coinbase" className="w-10 h-10 object-contain" />
+                        : <img src="/images/icons/coinbase-logo.png" alt="Coinbase" className="w-10 h-10 object-contain" />
                       }
                     </div>
                     <div className="min-w-0 flex-1">
@@ -2313,6 +2338,31 @@ export function BalanceModal({
                     <div className="min-w-0 flex-1">
                       <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>MoonPay</p>
                       <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Card · Apple Pay · Google Pay</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+
+                  {/* Stripe */}
+                  <button
+                    type="button"
+                    disabled={!solanaAddress || stripeOnrampLoading}
+                    onClick={handleStripeOnramp}
+                    className={cn(
+                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                      dark
+                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      {stripeOnrampLoading
+                        ? <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
+                        : <img src="/images/icons/stripe-logo.svg" alt="Stripe" className="rounded-[6px] h-7 w-7" />
+                      }
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Stripe</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Card · bank transfer</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
@@ -2906,7 +2956,7 @@ export function BalanceModal({
                 <div className="w-12 h-12 shrink-0 flex items-center justify-center">
                   {coinbaseOfframpLoading
                     ? <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-                    : <img src="/images/icons/coinbase-logo.svg" alt="Coinbase" className="w-10 h-10 object-contain" />
+                    : <img src="/images/icons/coinbase-logo.png" alt="Coinbase" className="w-10 h-10 object-contain" />
                   }
                 </div>
                 <div className="min-w-0 flex-1">
