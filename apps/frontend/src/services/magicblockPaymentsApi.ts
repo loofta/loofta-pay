@@ -20,16 +20,16 @@ export function formatMagicblockPrivateDelayLogMs(apiCluster: "devnet" | "mainne
   return "0–0";
 }
 
+/**
+ * Shape returned by our own backend's build-private-transfer endpoints — deliberately trimmed
+ * server-side to just what the client needs to sign/broadcast + display a fee. It does NOT
+ * include MagicBlock's internal routing details (requiredSigners/validator/recentBlockhash/etc)
+ * — those never leave the backend, see toClientResponse in magicblock-private-transfer.ts.
+ */
 export interface MagicblockTxResponse {
-  kind: string;
   version: "legacy" | "v0";
   transactionBase64: string;
   sendTo: "base" | "ephemeral";
-  recentBlockhash: string;
-  lastValidBlockHeight: number;
-  instructionCount: number;
-  requiredSigners: string[];
-  validator: string;
   feeAmountUsdc?: number;
   feeBreakdown?: {
     looftaBpsUsdc: number;
@@ -37,8 +37,6 @@ export interface MagicblockTxResponse {
     solLamports: number;
     solPriceUsd: number;
   };
-  /** Jupiter USDC→SOL swap tx to sign & send before the private transfer (mainnet only, when sender SOL balance is low). */
-  solSwapTransactionBase64?: string;
 }
 
 /** Private `/v1/spl/transfer` is built on the backend so the recipient is not exposed in the browser network tab. */
