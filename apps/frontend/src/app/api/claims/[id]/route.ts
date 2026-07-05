@@ -156,22 +156,37 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   }
   // from_recipient: public payment request — anyone can view, no access control needed
 
-  // Run creator username lookup and intent fetch in parallel
+  // Run creator + recipient username lookups and intent fetch in parallel
   const creatorUsernamePromise = createdBy.includes('did:privy:')
     ? supabase.from("app_users").select("username").eq("privy_user_id", createdBy).maybeSingle()
+    : Promise.resolve({ data: null });
+
+  // recipient_username is only populated when the payment was created by resolving a
+  // username/email — a payment sent by resolving a wallet address directly can still have a
+  // known registered recipient_user_id with no recipient_username on the row. Resolve it the
+  // same way creator_username is resolved, so the recipient's name still shows up.
+  const recipientUserId = String((rawPayment as Record<string, unknown> | null)?.recipient_user_id ?? "");
+  const recipientUsernamePromise = (!rawPayment?.recipient_username && recipientUserId.includes('did:privy:'))
+    ? supabase.from("app_users").select("username").eq("privy_user_id", recipientUserId).maybeSingle()
     : Promise.resolve({ data: null });
 
   const intentPromise = isLegacy
     ? supabase.from("claim_intents").select("deposit_address, memo, deadline, time_estimate, quote_id, status, deposit_received_at").eq("claim_id", params.id).order("created_at", { ascending: false }).limit(1).maybeSingle()
     : supabase.from("payment_intents").select("deposit_address, memo, deadline, time_estimate, quote_id, status").eq("payment_id", params.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
 
-  const [{ data: appUser }, { data: intentData }] = await Promise.all([creatorUsernamePromise, intentPromise]);
+  const [{ data: appUser }, { data: recipientAppUser }, { data: intentData }] = await Promise.all([
+    creatorUsernamePromise,
+    recipientUsernamePromise,
+    intentPromise,
+  ]);
 
   const creator_username: string | null = (appUser as { username?: string } | null)?.username ?? null;
+  const resolvedRecipientUsername: string | null = (recipientAppUser as { username?: string } | null)?.username ?? null;
 
   const claim: Record<string, unknown> = {
     ...rawPayment,
     creator_username: creator_username ?? null,
+    recipient_username: (rawPayment?.recipient_username as string | null | undefined) ?? resolvedRecipientUsername ?? null,
   };
 
   // Mask recipient wallet — never expose the real address to the public
