@@ -813,22 +813,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     },
   });
 
-  // Re-check recipient status the first time this page sees you as signed in (covers both a
-  // fresh login and signing back in after being logged out) — otherwise a stale cached/
-  // pre-login snapshot can make an already-matching account keep showing as "not the
-  // recipient". Fires AT MOST ONCE per page load: `hasFiredRef` only ever gets set, never
-  // reset, so if `authenticated` itself flickers (Privy re-validating its session in the
-  // background) this can't re-trigger and silently reload the page out from under you. No
-  // reload here (unlike confirmIdentityThenReload) — this covers routine sign-ins, which
-  // happen on every visit, not just the rare deliberate actions below.
-  const authRecheckFiredRef = useRef(false);
-  useEffect(() => {
-    if (authenticated && !authRecheckFiredRef.current) {
-      authRecheckFiredRef.current = true;
-      void recheckRecipientUntilResolved();
-    }
-  }, [authenticated]);
-
   const useTwitterHandleAsUsername = async (handle: string) => {
     setUpdatingUsernameToTwitter(true);
     try {
@@ -1443,6 +1427,33 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const privateRequired = requiresPrivate;
   const privatePayActive = requiresPrivate;
   const isCreatorView = !!user?.id && claim?.created_by === user.id;
+
+  // True only once both queries have settled AND this render is actually showing (or would
+  // show) the "Payment not found" empty state — mirrors the two PaymentNotFoundNotice render
+  // conditions below: claim is null (genuine 404), or claim loaded but this viewer isn't its
+  // recognized recipient (and isn't the creator, and this isn't a Pay Now/payment-request view).
+  const isPaymentNotFoundView =
+    !loadingClaim &&
+    !isCheckingRecipient &&
+    (!claim || (!isCreatorView && !isRecipient && claim?.direction !== "from_recipient"));
+
+  // Re-check recipient status the first time this page is actually showing "Payment not
+  // found" while signed in — otherwise a stale cached/pre-login snapshot can make an
+  // already-matching account keep showing as "not the recipient". Gated on
+  // isPaymentNotFoundView so this never runs on Pay Now / creator / already-resolved views,
+  // where isRecipient can never become true and the loop would just poll fetchClaim for the
+  // full 30s timeout for nothing. Fires AT MOST ONCE per page load: `authRecheckFiredRef`
+  // only ever gets set, never reset, so flapping of `authenticated` or `isPaymentNotFoundView`
+  // (e.g. Privy re-validating its session) can't re-trigger and silently reload the page out
+  // from under you. No reload here (unlike confirmIdentityThenReload) — this covers routine
+  // sign-ins, which happen on every visit, not just the rare deliberate actions below.
+  const authRecheckFiredRef = useRef(false);
+  useEffect(() => {
+    if (!authenticated || authRecheckFiredRef.current) return;
+    if (!isPaymentNotFoundView) return;
+    authRecheckFiredRef.current = true;
+    void recheckRecipientUntilResolved();
+  }, [authenticated, isPaymentNotFoundView]);
   const isSenderPendingFundedView =
     isCreatorView &&
     isPendingRecipientClaim &&
@@ -3040,6 +3051,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                   )}
                 </div>
+                {claim?.created_at && Date.now() - new Date(claim.created_at).getTime() < 11 * 60_000 && (
+                  <div className="flex items-start gap-2 text-base md:text-sm text-gray-500 mb-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-amber-500 shrink-0 mt-0.5" />
+                    <span>{privatePaymentFundsAppearCopy()}</span>
+                  </div>
+                )}
               </div>
             ) : user?.id && claimAsRecipientMutation.isPending && !claimCompleted ? (
               (() => {
