@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { MAGICBLOCK_GAS_SOL, MAGICBLOCK_GAS_USDC, estimateMagicblockGrossUp, decodeActualSenderDebit, type MagicblockPrivateTransferClientResponse } from '@/common/magicblock-private-transfer';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
@@ -31,6 +32,24 @@ const bs58 = bs58Module?.default ?? bs58Module;
 const DECIMALS = 6;
 /** SOL for burner to cover claim/reclaim gas (sent to burner, not fee payer). */
 const BURNER_SOL_LAMPORTS = 500_000;
+
+// Same generator as ClaimsService/TwitterPaymentsService — duplicated rather than shared per
+// this codebase's existing convention (see claims.service.ts, twitter-payments.service.ts).
+const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SHORT_ID_MAX_VALID = Math.floor(256 / SHORT_ID_ALPHABET.length) * SHORT_ID_ALPHABET.length;
+
+function generateShortId(length = 8): string {
+  let result = '';
+  while (result.length < length) {
+    const bytes = randomBytes(length - result.length + 4);
+    for (const byte of bytes) {
+      if (byte < SHORT_ID_MAX_VALID && result.length < length) {
+        result += SHORT_ID_ALPHABET[byte % SHORT_ID_ALPHABET.length];
+      }
+    }
+  }
+  return result;
+}
 
 @Injectable()
 export class SendPaymentService {
@@ -1227,7 +1246,7 @@ export class SendPaymentService {
     dto: BuildMultiSendDto,
   ): Promise<{
     payment_ids: string[];
-    links: Array<{ id: string; link: string; recipient_identifier: string; amount: string }>;
+    links: Array<{ id: string; link: string; short_id: string; recipient_identifier: string; amount: string }>;
     fee_items: Array<{ payment_id: string; recipient_identifier: string; amount: string; fee_usdc: number }>;
     total_amount_usdc: number;
     total_fee_usdc: number;
@@ -1250,7 +1269,7 @@ export class SendPaymentService {
     const PENDING_USERNAME_PREFIX = 'PENDING_USERNAME:';
 
     const payment_ids: string[] = [];
-    const links: Array<{ id: string; link: string; recipient_identifier: string; amount: string }> = [];
+    const links: Array<{ id: string; link: string; short_id: string; recipient_identifier: string; amount: string }> = [];
     const fee_items: Array<{ payment_id: string; recipient_identifier: string; amount: string; fee_usdc: number }> = [];
     let total_amount_usdc = 0;
     let total_fee_usdc = 0;
@@ -1259,6 +1278,7 @@ export class SendPaymentService {
       const normalizedId = this.normalizeIdentifier(recipient.recipient_type, recipient.recipient_identifier);
       const amountStr = String(recipient.amount);
       const amountUsd = parseFloat(amountStr);
+      const shortId = generateShortId();
 
       let resolvedPubkey: string | null = null;
       let recipientUserId: string | null = null;
@@ -1299,6 +1319,7 @@ export class SendPaymentService {
           to_chain: 'solana',
           to_token: 'USDC',
           is_devnet: isDevnet,
+          short_id: shortId,
         };
       } else {
         const burner = Keypair.generate();
@@ -1320,6 +1341,7 @@ export class SendPaymentService {
           to_chain: 'solana',
           to_token: 'USDC',
           is_devnet: isDevnet,
+          short_id: shortId,
           recipient_was_unregistered: true,
           burner_address: burner.publicKey.toBase58(),
           burner_encrypted_secret: burnerEncryptedSecret,
@@ -1336,7 +1358,7 @@ export class SendPaymentService {
       }
 
       const paymentId = (data as { id: string }).id;
-      const linkUrl = `${this.baseUrl}/c/${paymentId}`;
+      const linkUrl = `${this.baseUrl}/c/${shortId}`;
 
       // Fee estimate (no actual MagicBlock call — estimated from formula)
       const baseUnits = Math.round(amountUsd * 1_000_000);
@@ -1348,7 +1370,7 @@ export class SendPaymentService {
       );
 
       payment_ids.push(paymentId);
-      links.push({ id: paymentId, link: linkUrl, recipient_identifier: normalizedId, amount: amountStr });
+      links.push({ id: paymentId, link: linkUrl, short_id: shortId, recipient_identifier: normalizedId, amount: amountStr });
       fee_items.push({ payment_id: paymentId, recipient_identifier: normalizedId, amount: amountStr, fee_usdc: feeUsdc });
       total_amount_usdc += amountUsd;
       total_fee_usdc += feeUsdc;
