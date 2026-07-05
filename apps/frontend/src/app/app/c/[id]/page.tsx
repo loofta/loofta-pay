@@ -1016,11 +1016,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const solPrice = solPriceQuery.data ?? 0;
 
   const estimatePrivateTotal = (usd: number) => {
-    // No gross-up: MagicBlock delivers `amount` unchanged, so the only real cost is its flat
-    // gasless relay fee. protocolFee kept at 0 for backwards-compat with callers.
+    // Sender's real cost = MagicBlock's flat gasless relay fee + MagicBlock's own ~10bps
+    // (grossed up internally via exactOut — see estimateMagicblockGrossUp server-side).
     const gasFee = 0.20; // flat USDC relay fee charged by MagicBlock
-    const feeEstimate = gasFee;
-    return { total: usd + feeEstimate, protocolFee: 0, gasFee, feeEstimate };
+    const magicblockFeeBps = 10; // mirrors MAGICBLOCK_VOLUME_FEE_BPS in magicblock-private-transfer.ts
+    const protocolFee = (usd * magicblockFeeBps) / 10_000;
+    const feeEstimate = gasFee + protocolFee;
+    return { total: usd + feeEstimate, protocolFee, gasFee, feeEstimate };
   };
 
   useEffect(() => {
@@ -3536,7 +3538,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             </div>
                             {paidFeeUsdc != null && paidFeeUsdc > 0 && (
                               <div className="flex items-center justify-between">
-                                <span className="text-base md:text-sm text-gray-500">Platform fee</span>
+                                <span className="text-base md:text-sm text-gray-500">Privacy fee</span>
                                 <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
                               </div>
                             )}
@@ -3553,7 +3555,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           <>
                             {paidFeeUsdc != null && paidFeeUsdc > 0 && (
                               <div className="flex items-center justify-between">
-                                <span className="text-base md:text-sm text-gray-500">Platform fee (deducted)</span>
+                                <span className="text-base md:text-sm text-gray-500">Privacy fee (deducted)</span>
                                 <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
                               </div>
                             )}
@@ -3842,7 +3844,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             <span className="font-semibold font-sans text-gray-900">${claimAmountUSD.toFixed(2)}</span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="text-gray-600">Platform fee</span>
+                            <span className="text-gray-600">Privacy fee</span>
                             <span className="font-medium text-gray-700">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
                           </div>
                           <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
@@ -3857,7 +3859,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             <span className="font-semibold font-sans text-gray-900">${claimAmountUSD.toFixed(2)}</span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="text-gray-600">Platform fee (deducted)</span>
+                            <span className="text-gray-600">Privacy fee (deducted)</span>
                             <span className="font-medium text-gray-700">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
                           </div>
                           <div className="pt-2 border-t border-gray-200 flex items-center justify-between">

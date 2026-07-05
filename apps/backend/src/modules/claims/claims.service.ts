@@ -29,7 +29,7 @@ import {
   estimateMagicblockGrossUp,
   requestMagicblockPrivateTransfer,
   decodeActualSenderDebit,
-  type MagicblockPrivateTransferTxResponse,
+  type MagicblockPrivateTransferClientResponse,
 } from '@/common/magicblock-private-transfer';
 
 const DEPOSIT_SEED = 'deposit';
@@ -790,8 +790,8 @@ export class ClaimsService {
     senderWallet: string,
     requestCluster?: 'devnet' | 'mainnet',
     gasless = true,
-  ): Promise<MagicblockPrivateTransferTxResponse> {
-    const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
+  ): Promise<MagicblockPrivateTransferClientResponse> {
+    const { requestMagicblockPrivateTransfer, toClientResponse } = await import('@/common/magicblock-private-transfer');
     const claim = await this.findOneRaw(claimId);
     const row = claim as Claim & { claim_burner_address?: string | null };
     const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
@@ -866,8 +866,7 @@ export class ClaimsService {
       : estimatedFeeUnits;
     this.logger.log(`[PrivatePay] claim=${claimId} decoded relay=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits} (${actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits ? 'actual-relay' : 'estimated'})`);
 
-    return {
-      ...txResponse,
+    return toClientResponse(txResponse, {
       feeAmountUsdc: feeUnits / 1_000_000,
       feeBreakdown: {
         looftaBpsUsdc: estimatedMbVolumeFeeUnits / 1_000_000,
@@ -875,7 +874,7 @@ export class ClaimsService {
         solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
         solPriceUsd: 0,
       },
-    };
+    });
   }
 
   /** Resolve the correct Solana connection and USDC mint for a claim based on its is_devnet flag.

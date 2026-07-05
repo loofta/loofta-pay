@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { MAGICBLOCK_GAS_SOL, MAGICBLOCK_GAS_USDC, estimateMagicblockGrossUp, decodeActualSenderDebit, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import { MAGICBLOCK_GAS_SOL, MAGICBLOCK_GAS_USDC, estimateMagicblockGrossUp, decodeActualSenderDebit, type MagicblockPrivateTransferClientResponse } from '@/common/magicblock-private-transfer';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
@@ -109,8 +109,8 @@ export class SendPaymentService {
     linkId: string,
     privyUserId: string,
     senderWallet: string,
-  ): Promise<MagicblockPrivateTransferTxResponse> {
-    const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
+  ): Promise<MagicblockPrivateTransferClientResponse> {
+    const { requestMagicblockPrivateTransfer, toClientResponse } = await import('@/common/magicblock-private-transfer');
     const link = await this.getOne(linkId);
     if (link.sender_user_id !== privyUserId) {
       throw new ForbiddenException('Not the sender of this link');
@@ -160,8 +160,7 @@ export class SendPaymentService {
       : estimatedFeeUnits;
     this.logger.log(`[SendPayment] decoded relay=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits} (${actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits ? 'actual-relay' : 'estimated'})`);
 
-    return {
-      ...txResponse,
+    return toClientResponse(txResponse, {
       feeAmountUsdc: feeUnits / 1_000_000,
       feeBreakdown: {
         looftaBpsUsdc: mbVolumeFeeUnits / 1_000_000,
@@ -169,7 +168,7 @@ export class SendPaymentService {
         solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
         solPriceUsd: 0,
       },
-    };
+    });
   }
 
   /**

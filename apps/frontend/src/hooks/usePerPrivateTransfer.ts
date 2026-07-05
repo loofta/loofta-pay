@@ -102,7 +102,7 @@ export function usePerPrivateTransfer() {
           ? new Connection(ephemeralRpc, "confirmed")
           : connection;
       console.info(
-        `[PrivatePay] MB tx built | kind=${txData.kind} sendTo=${txData.sendTo} rpc=${broadcastRpc} ix=${txData.instructionCount} signers=${txData.requiredSigners.join(",")} feeUsdc=${txData.feeAmountUsdc}`,
+        `[PrivatePay] MB tx built | sendTo=${txData.sendTo} rpc=${broadcastRpc} feeUsdc=${txData.feeAmountUsdc}`,
       );
 
       const rawTxBytes = Buffer.from(txData.transactionBase64, "base64");
@@ -115,7 +115,7 @@ export function usePerPrivateTransfer() {
         // Privy path: MB validator is fee payer (pre-signed server-side).
         // Use sign-only so Privy doesn't run a gas-policy SOL-balance preflight check.
         // We broadcast directly after signing with our RPC.
-        console.info(`[PrivatePay] Privy sign path | bytes=${rawTxBytes.length} version=${txData.version} sendTo=${txData.sendTo} signers=${txData.requiredSigners.join(",")}`);
+        console.info(`[PrivatePay] Privy sign path | bytes=${rawTxBytes.length} version=${txData.version} sendTo=${txData.sendTo}`);
         signature = await privySignAndSend(rawTxBytes);
         console.info(`[PrivatePay] Privy sign complete | sig=${signature.slice(0, 12)}…`);
       } else {
