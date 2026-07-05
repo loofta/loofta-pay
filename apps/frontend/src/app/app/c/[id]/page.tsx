@@ -38,8 +38,9 @@ import { useAuthStore } from "@/store/auth";
 import { TokenIcon } from "@/components/TokenIcon";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Share2 } from "lucide-react";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check } from "lucide-react";
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
+import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
@@ -241,21 +242,8 @@ function ClaimPageSenderShareView({
     }
   };
 
-  const handleShare = () => {
-    const who = recipientLabel ? ` (${recipientLabel})` : "";
-    if (navigator.share) {
-      navigator
-        .share({
-          title: "Payment for you",
-          text: `You have a payment of $${amount.toFixed(2)} to claim${who}. Sign in or sign up on Loofta to claim it.`,
-          url: claimLink,
-        })
-        .then(() => toast({ title: "Shared!" }))
-        .catch(() => handleCopy());
-    } else {
-      handleCopy();
-    }
-  };
+  const shareRecipientSuffix = recipientLabel ? ` (${recipientLabel})` : "";
+  const shareText = `You have a payment of $${amount.toFixed(2)} to claim${shareRecipientSuffix}. Sign in or sign up on Loofta to claim it.`;
 
   return (
     <div className="mt-6 text-center py-12">
@@ -285,14 +273,12 @@ function ClaimPageSenderShareView({
             {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 !text-slate-900" />}
           </Button>
         </div>
-        <Button
-          type="button"
-          onClick={handleShare}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90 shrink-0"
-        >
-          <Share2 className="h-5 w-5" />
-          Share
-        </Button>
+        <ShareLinkMenu
+          url={claimLink}
+          title="Payment for you"
+          text={shareText}
+          triggerClassName="px-6 py-3"
+        />
       </div>
       {/* Reclaim only on localhost, when not cancelled, creator is logged in, and burner has balance */}
       {isLocalhost && !isCancelled && userId && canReclaim === true && (
@@ -3464,18 +3450,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       toast({ variant: "destructive", title: "Copy failed" });
                     }
                   };
-                  const handleShare = () => {
-                    const who = recipientLabel ? ` to ${recipientLabel}` : "";
-                    if (navigator.share) {
-                      navigator.share({
-                        title: "Payment sent",
-                        text: `$${parseFloat(claim.amount || "0").toFixed(2)} sent${who} via Loofta.`,
-                        url: claimLink,
-                      }).catch(() => handleCopyLink());
-                    } else {
-                      handleCopyLink();
-                    }
-                  };
+                  const shareToSuffix = recipientLabel ? ` to ${recipientLabel}` : "";
+                  const shareText = `$${parseFloat(claim.amount || "0").toFixed(2)} sent${shareToSuffix} via Loofta.`;
                   return (
                     <>
                       {/* Hero */}
@@ -3515,22 +3491,20 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               {paymentCompleteCopied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
                             </Button>
                           </div>
-                          <Button
-                            type="button"
-                            onClick={handleShare}
-                            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-5 py-2 text-white font-semibold hover:opacity-90 shrink-0"
-                          >
-                            <Share2 className="h-4 w-4" />
-                            Share
-                          </Button>
+                          <ShareLinkMenu
+                            url={claimLink}
+                            title="Payment sent"
+                            text={shareText}
+                            triggerClassName="px-5 py-2"
+                          />
                         </div>
                       </div>
                       {/* Summary */}
                       <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-2">
                         {!requiresPrivate ? (
                           <div className="flex items-center justify-between">
-                            <span className="text-sm text-gray-500">Recipient receives</span>
-                            <span className="text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
+                            <span className="text-base md:text-sm text-gray-500">Recipient receives</span>
+                            <span className="text-base md:text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
                               <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
                               ${parseFloat(claim.amount || "0").toFixed(2)}
                             </span>
@@ -3538,22 +3512,22 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         ) : isFeeOnSender ? (
                           <>
                             <div className="flex items-center justify-between">
-                              <span className="text-sm text-gray-500">Recipient receives</span>
-                              <span className="text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
+                              <span className="text-base md:text-sm text-gray-500">Recipient receives</span>
+                              <span className="text-base md:text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
                                 <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
                                 ${parseFloat(claim.amount || "0").toFixed(2)}
                               </span>
                             </div>
                             {paidFeeUsdc != null && paidFeeUsdc > 0 && (
                               <div className="flex items-center justify-between">
-                                <span className="text-sm text-gray-500">Platform fee</span>
-                                <span className="text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
+                                <span className="text-base md:text-sm text-gray-500">Platform fee</span>
+                                <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
                               </div>
                             )}
                             {paidFeeUsdc != null && (
                               <div className="flex items-center justify-between border-t border-gray-200 pt-2">
-                                <span className="text-sm font-medium text-gray-500">You paid</span>
-                                <span className="text-sm font-semibold text-gray-900">
+                                <span className="text-base md:text-sm font-medium text-gray-500">You paid</span>
+                                <span className="text-base md:text-sm font-semibold text-gray-900">
                                   ${(parseFloat(claim.amount || "0") + paidFeeUsdc).toFixed(4)}
                                 </span>
                               </div>
@@ -3563,13 +3537,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           <>
                             {paidFeeUsdc != null && paidFeeUsdc > 0 && (
                               <div className="flex items-center justify-between">
-                                <span className="text-sm text-gray-500">Platform fee (deducted)</span>
-                                <span className="text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
+                                <span className="text-base md:text-sm text-gray-500">Platform fee (deducted)</span>
+                                <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
                               </div>
                             )}
                             <div className="flex items-center justify-between">
-                              <span className="text-sm text-gray-500">Recipient receives</span>
-                              <span className="text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
+                              <span className="text-base md:text-sm text-gray-500">Recipient receives</span>
+                              <span className="text-base md:text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
                                 <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
                                 ${(parseFloat(claim.amount || "0") - (paidFeeUsdc ?? 0)).toFixed(2)}
                               </span>
@@ -3578,14 +3552,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         )}
                         {recipientLabel && (
                           <div className="flex items-center justify-between border-t border-gray-200 pt-2">
-                            <span className="text-sm text-gray-500">Sent to</span>
-                            <span className="text-sm font-medium text-gray-900">{recipientLabel}</span>
+                            <span className="text-base md:text-sm text-gray-500">Sent to</span>
+                            <span className="text-base md:text-sm font-medium text-gray-900">{recipientLabel}</span>
                           </div>
                         )}
                         {claim.paid_at && (
                           <div className="flex items-center justify-between">
-                            <span className="text-sm text-gray-500">Paid</span>
-                            <span className="text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
+                            <span className="text-base md:text-sm text-gray-500">Paid</span>
+                            <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
                           </div>
                         )}
                       </div>
