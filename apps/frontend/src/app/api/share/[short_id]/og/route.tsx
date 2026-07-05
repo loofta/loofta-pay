@@ -284,9 +284,15 @@ export async function GET(
 
   if (error) {
     console.error("[share/og] Failed to upload generated image:", error);
-    // Still return the freshly rendered image so the OG tag isn't broken even if storage failed.
-    return new NextResponse(new Uint8Array(buffer), { headers: { "Content-Type": "image/png" } });
   }
 
-  return NextResponse.redirect(publicUrl, { status: 302 });
+  // Serve the freshly rendered bytes directly instead of redirecting to the storage URL. Link-
+  // preview crawlers (X/Twitter in particular) have a short fetch timeout for og:image and don't
+  // reliably follow a cross-domain redirect (pay.loofta.xyz -> supabase.co) on this first-ever,
+  // slowest-possible request for a short_id — that redirect is what caused a real tweet to show
+  // no image. Later requests still hit the fast HEAD-check path above and redirect straight to
+  // the now-cached file, which is same-origin-trusted and doesn't have this cold-start problem.
+  return new NextResponse(new Uint8Array(buffer), {
+    headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=31536000, immutable" },
+  });
 }
