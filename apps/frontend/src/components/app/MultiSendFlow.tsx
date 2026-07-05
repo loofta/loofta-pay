@@ -796,16 +796,16 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       </div>
 
       <div className="flex items-center gap-3">
-        <div className="h-px flex-1 bg-white/10" />
-        <span className="text-slate-400 text-base shrink-0">or add manually</span>
-        <div className="h-px flex-1 bg-white/10" />
+        <div className="h-px flex-1 bg-white/15" />
+        <span className="text-slate-300 text-base font-medium shrink-0">or add manually</span>
+        <div className="h-px flex-1 bg-white/15" />
       </div>
 
       <div className="space-y-3">
         {rows.map((row, idx) => (
           <div key={row.id} className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="text-slate-300 text-lg font-semibold">Recipient {idx + 1}</span>
+              <span className="text-slate-300 text-base font-semibold">Recipient {idx + 1}</span>
               {rows.length > 2 && (
                 <button
                   type="button"
@@ -860,7 +860,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                 onGifChange={(url) => updateRow(row.id, "gif", url ?? "")}
                 placeholder="Optional note"
                 maxLength={500}
-                className="mt-1 [&_input]:h-10 [&_input]:bg-white/5 [&_input]:border-white/10 [&_input]:text-white [&_input]:placeholder:text-slate-400 [&_input]:text-base [&_input]:md:text-base"
+                className="mt-1 [&_input]:h-10 [&_input]:bg-white/5 [&_input]:border-white/10 [&_input]:text-white [&_input]:placeholder:text-slate-400 [&_input]:text-base"
               />
             </div>
           </div>
