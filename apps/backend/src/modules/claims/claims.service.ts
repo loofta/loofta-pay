@@ -26,7 +26,7 @@ import {
   MAGICBLOCK_GAS_USDC,
   MAGICBLOCK_VOLUME_FEE_BPS,
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
-  grossUpForMagicblockFee,
+  estimateMagicblockGrossUp,
   requestMagicblockPrivateTransfer,
   decodeActualSenderDebit,
   type MagicblockPrivateTransferTxResponse,
@@ -812,7 +812,8 @@ export class ClaimsService {
       throw new BadRequestException('Minimum payment amount is $5.00 USDC.');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
-    // fee_on_sender=true (Exact out): gross up so recipient receives exactly baseUnits, fees added on top.
+    // fee_on_sender=true (Exact out): MagicBlock's own exactOut grosses up the sender's debit
+    //   internally so the recipient receives exactly baseUnits — no manual gross-up on our side.
     // fee_on_sender=false (Exact in): send baseUnits directly, MB deducts its fee from the amount, recipient gets less.
     const feeOnSender = (row as any).fee_on_sender !== false;
     const cluster = requestCluster
@@ -830,12 +831,13 @@ export class ClaimsService {
 
     // MagicBlock cost = 10 BPS volume fee + flat 0.2 USDC gasless relay fee.
     const relayFeeUnits = gasless ? Math.round(MAGICBLOCK_GAS_USDC * 1_000_000) : 0;
-    const grossUnits = grossUpForMagicblockFee(baseUnits);
-    // Exact out: sender pays grossUnits + relay → recipient gets exactly baseUnits.
-    // Exact in:  sender pays (baseUnits - relay) + relay = baseUnits total. MB deducts 10 BPS from (baseUnits - relay) before delivery.
-    const transferUnits = feeOnSender ? grossUnits : baseUnits - relayFeeUnits;
+    // Exact out: pass the clean amount with exactOut:true — MagicBlock grosses up the sender's
+    //   debit internally and guarantees the recipient nets exactly baseUnits.
+    // Exact in:  sender pays (baseUnits - relay) + relay = baseUnits total, MB deducts its fee
+    //   from (baseUnits - relay) before delivery, recipient gets less.
+    const transferUnits = feeOnSender ? baseUnits : baseUnits - relayFeeUnits;
     const estimatedMbVolumeFeeUnits = feeOnSender
-      ? (grossUnits - baseUnits)
+      ? (estimateMagicblockGrossUp(baseUnits) - baseUnits)
       : Math.ceil((baseUnits - relayFeeUnits) * MAGICBLOCK_VOLUME_FEE_BPS / 10_000);
 
     this.logger.log(
@@ -849,6 +851,7 @@ export class ClaimsService {
       mint: effectiveMint.toBase58(),
       amount: transferUnits,
       cluster,
+      exactOut: feeOnSender,
       ...(gasless ? { gasless: true } : {}),
     });
 
@@ -1269,26 +1272,31 @@ export class ClaimsService {
 
     const amountUsd = parseFloat(String(claim.amount || '0'));
     const requestedBaseUnits = Math.round(amountUsd * 1_000_000);
-    const transferUnits = grossUpForMagicblockFee(requestedBaseUnits);
+    // Balance check needs a rough estimate of MagicBlock's real (internal) gross debit — the
+    // actual transfer below sends the clean amount with exactOut:true and lets MagicBlock
+    // compute its own gross-up, so this estimate is only used to decide if it's safe to proceed.
+    const estimatedGrossUnits = estimateMagicblockGrossUp(requestedBaseUnits);
     const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost'
       : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
 
     this.logger.log(
-      `[CrossChain] ${claimId}: balance=${balance} transferUnits=${transferUnits} cluster=${cluster} recipient=${wallet.slice(0, 8)}…`,
+      `[CrossChain] ${claimId}: balance=${balance} requestedBaseUnits=${requestedBaseUnits} estimatedGrossUnits=${estimatedGrossUnits} cluster=${cluster} recipient=${wallet.slice(0, 8)}…`,
     );
 
-    if (BigInt(transferUnits) > balance) {
-      this.logger.warn(`[CrossChain] ${claimId}: balance ${balance} < transferUnits ${transferUnits} — aborting, intent may not be complete`);
+    if (BigInt(estimatedGrossUnits) > balance) {
+      this.logger.warn(`[CrossChain] ${claimId}: balance ${balance} < estimatedGrossUnits ${estimatedGrossUnits} — aborting, intent may not be complete`);
       return {};
     }
 
-    // Build PER private transfer from burner to recipient
+    // Build PER private transfer from burner to recipient — clean amount, exactOut:true lets
+    // MagicBlock gross up its own internal debit so the recipient nets exactly requestedBaseUnits.
     const txResponse = await requestMagicblockPrivateTransfer({
       from: burnerKeypair.publicKey.toBase58(),
       to: wallet.trim(),
       mint: this.usdcMint.toBase58(),
-      amount: transferUnits,
+      amount: requestedBaseUnits,
       cluster,
+      exactOut: true,
     });
 
     // Auto-sign with burner keypair (and fee payer for ATA rent)
