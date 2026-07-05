@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ImageResponse } from "next/og";
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { getSharePreview } from "@/lib/sharePreview";
 
@@ -273,24 +273,32 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  await ensureBucket();
   const image = await renderImage(preview);
   const buffer = Buffer.from(await image.arrayBuffer());
 
-  const supabase = getSupabaseAdmin();
-  const { error } = await supabase.storage
-    .from(BUCKET)
-    .upload(objectPath, buffer, { contentType: "image/png", upsert: true });
+  // Cache the render for future requests in the background, *after* the response is sent — a
+  // cold-start measurement against production showed the render itself already takes ~3s, and
+  // link-preview crawlers (X/Twitter in particular) have a short fetch timeout for og:image.
+  // Waiting on top of that for a Storage upload (plus a bucket-existence check on every cold
+  // Lambda instance) was pure added latency on exactly the request that can least afford it.
+  // `after()` keeps the function alive to finish this without delaying the response.
+  after(async () => {
+    const supabase = getSupabaseAdmin();
+    const { error } = await supabase.storage
+      .from(BUCKET)
+      .upload(objectPath, buffer, { contentType: "image/png", upsert: true });
+    if (error?.message?.toLowerCase().includes("bucket not found")) {
+      await ensureBucket();
+      await supabase.storage.from(BUCKET).upload(objectPath, buffer, { contentType: "image/png", upsert: true });
+    } else if (error) {
+      console.error("[share/og] Failed to upload generated image:", error);
+    }
+  });
 
-  if (error) {
-    console.error("[share/og] Failed to upload generated image:", error);
-  }
-
-  // Serve the freshly rendered bytes directly instead of redirecting to the storage URL. Link-
-  // preview crawlers (X/Twitter in particular) have a short fetch timeout for og:image and don't
-  // reliably follow a cross-domain redirect (pay.loofta.xyz -> supabase.co) on this first-ever,
-  // slowest-possible request for a short_id — that redirect is what caused a real tweet to show
-  // no image. Later requests still hit the fast HEAD-check path above and redirect straight to
+  // Serve the freshly rendered bytes directly instead of redirecting to the storage URL. A
+  // cross-domain redirect (pay.loofta.xyz -> supabase.co) on this first-ever, slowest-possible
+  // request for a short_id is what caused a real tweet to show no image — crawlers don't reliably
+  // follow it. Later requests still hit the fast HEAD-check path above and redirect straight to
   // the now-cached file, which is same-origin-trusted and doesn't have this cold-start problem.
   return new NextResponse(new Uint8Array(buffer), {
     headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=31536000, immutable" },
