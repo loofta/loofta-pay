@@ -197,8 +197,8 @@ function ClaimPageSenderShareView({
   const shareId = shortCode || claimId;
   const claimLink =
     typeof window !== "undefined"
-      ? `${window.location.origin}/c/${shareId}`
-      : `https://pay.loofta.xyz/c/${shareId}`;
+      ? `${window.location.origin}/share/${shareId}`
+      : `https://pay.loofta.xyz/share/${shareId}`;
 
   const handleReclaim = async () => {
     if (!userId) {
@@ -1032,12 +1032,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const solPrice = solPriceQuery.data ?? 0;
 
   const estimatePrivateTotal = (usd: number) => {
-    const net = Math.round(usd * 1_000_000);
-    const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
-    const mbFee = (mbGross - net) / 1_000_000;
+    // No gross-up: MagicBlock delivers `amount` unchanged, so the only real cost is its flat
+    // gasless relay fee. protocolFee kept at 0 for backwards-compat with callers.
     const gasFee = 0.20; // flat USDC relay fee charged by MagicBlock
-    const feeEstimate = Math.ceil((mbFee + gasFee) * 100) / 100;
-    return { total: usd + feeEstimate, protocolFee: mbFee, gasFee, feeEstimate };
+    const feeEstimate = gasFee;
+    return { total: usd + feeEstimate, protocolFee: 0, gasFee, feeEstimate };
   };
 
   useEffect(() => {
@@ -3438,8 +3437,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             : null;
                   const shareId = (claim as any)?.short_id || claim?.id;
                   const claimLink = typeof window !== "undefined"
-                    ? `${window.location.origin}/c/${shareId}`
-                    : `https://pay.loofta.xyz/c/${shareId}`;
+                    ? `${window.location.origin}/share/${shareId}`
+                    : `https://pay.loofta.xyz/share/${shareId}`;
                   const handleCopyLink = async () => {
                     try {
                       await navigator.clipboard.writeText(claimLink);
