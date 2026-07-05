@@ -69,6 +69,25 @@ export function ShareLinkMenu({
     setCanNativeShare(typeof navigator !== "undefined" && !!navigator.share);
   }, []);
 
+  // Pre-warm the OG image the moment this share UI appears (i.e. right when the payment
+  // succeeds) rather than waiting for a link-preview crawler to trigger cold generation under
+  // its own tight timeout. Cold rendering measured ~1.7-3s in production — fine for a person
+  // sharing a few seconds later, but a real gamble against X's crawler timeout specifically
+  // (WhatsApp's is more lenient, which is why it showed the thumbnail when X didn't). Fire-and-
+  // forget: failures here just mean the crawler falls back to generating it itself.
+  useEffect(() => {
+    try {
+      const shortId = new URL(url).pathname.split("/").filter(Boolean).pop();
+      if (shortId) {
+        const ogUrl = `${new URL(url).origin}/api/share/${shortId}/og`;
+        fetch(ogUrl).catch(() => {});
+      }
+    } catch {
+      // url wasn't a valid absolute URL — nothing to pre-warm
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(url);
