@@ -84,7 +84,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onUser
   const getPaymentLink = () => {
     const u = username || newUsername.trim() || "username";
     const baseUrl = typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.xyz";
-    return `${baseUrl}/link/@${u}`;
+    return `${baseUrl}/me/@${u}`;
   };
 
   const copyToClipboard = (text: string, isLink: boolean) => {

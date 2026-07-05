@@ -388,7 +388,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     const baseUrl = typeof window !== "undefined"
       ? window.location.origin
       : process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.xyz";
-    return `${baseUrl}/link/@${username}`;
+    return `${baseUrl}/me/@${username}`;
   };
 
   // Fetch user preferences when modal opens

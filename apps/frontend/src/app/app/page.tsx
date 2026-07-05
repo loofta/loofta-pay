@@ -530,12 +530,12 @@ export default function Home() {
                         </p>
                         <div className="flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5">
                           <span className="flex-1 text-base sm:text-sm font-mono text-white truncate">
-                            {typeof window !== "undefined" ? `${window.location.origin}/link/@${username}` : `/link/@${username}`}
+                            {typeof window !== "undefined" ? `${window.location.origin}/me/@${username}` : `/me/@${username}`}
                           </span>
                           <button
                             type="button"
                             onClick={() => {
-                              const link = typeof window !== "undefined" ? `${window.location.origin}/link/@${username}` : "";
+                              const link = typeof window !== "undefined" ? `${window.location.origin}/me/@${username}` : "";
                               navigator.clipboard.writeText(link);
                               setLinkCopied(true);
                               setTimeout(() => setLinkCopied(false), 2000);
