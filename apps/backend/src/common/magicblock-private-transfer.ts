@@ -11,11 +11,16 @@ import type { Connection } from '@solana/web3.js';
 const log = new Logger('MagicblockPrivateTransfer');
 
 /**
- * CONFIRMED fee mechanics (from live devnet test):
- *  - `amount` = gross USDC taken from sender. MagicBlock deducts 10 BPS before routing to recipient.
- *  - 0.002 SOL flat fee is charged as USDC from the sender via a gasless relay instruction.
- *
- * Gross-up formula: to ensure recipient gets exactly N units, send ceil(N * 10000 / 9990).
+ * CONFIRMED fee mechanics (verified against MagicBlock's own web app and the official `one/`
+ * reference implementation):
+ *  - Pass the clean, exact intended amount as `amount` plus `exactOut: true` — MagicBlock grosses
+ *    up the sender's debit INTERNALLY (its own two-hop routing: sender → MagicBlock-controlled
+ *    intermediate account for the gross amount, then a second transfer delivers the net amount to
+ *    the recipient) and guarantees the recipient nets exactly `amount`. Never gross up `amount`
+ *    ourselves — without exactOut, MagicBlock has no reason to run its fee-taking second hop and
+ *    just moves whatever `amount` you send in full, so a manual gross-up is pure overpayment with
+ *    nothing collected in return (this was a real bug — see git history on grossUpForMagicblockFee).
+ *  - 0.002 SOL flat fee is charged as USDC from the sender via a separate gasless relay instruction.
  */
 export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // deducted from USDC amount by MagicBlock
 export const MAGICBLOCK_GAS_SOL = 0.002;     // actual MagicBlock SOL charge (documented)
@@ -78,12 +83,12 @@ export async function fetchSolPriceUsd(): Promise<number | null> {
 }
 
 /**
- * Gross-up USDC base units so the recipient receives exactly `netBaseUnits` after
- * MagicBlock deducts their 10 BPS volume fee from `amount`.
- * The 0.002 SOL flat fee is charged in native SOL by MagicBlock — not included here.
+ * Estimated gross debit for UI display only — NOT what's sent as `amount` to MagicBlock.
+ * The real transfer always sends the clean `netBaseUnits` with `exactOut: true` and lets
+ * MagicBlock compute its own gross-up internally (see requestMagicblockPrivateTransfer).
+ * This just approximates that internal math so a "platform fee" line has something to show.
  */
-export function grossUpForMagicblockFee(netBaseUnits: number): number {
-  // +1 extra unit ($0.000001) as a rounding buffer in case MagicBlock rounds their fee up.
+export function estimateMagicblockGrossUp(netBaseUnits: number): number {
   return Math.ceil((netBaseUnits * 10_000) / (10_000 - MAGICBLOCK_VOLUME_FEE_BPS)) + 1;
 }
 
@@ -149,6 +154,11 @@ export async function requestMagicblockPrivateTransfer(params: {
   /** When true, MagicBlock uses the configured sponsor as fee payer and prepends a fixed
    *  relay-fee USDC transfer (sender → sponsor ATA) to cover SOL gas. No SOL needed from sender. */
   gasless?: boolean;
+  /** When true, `amount` is what the destination receives net — MagicBlock grosses up the
+   *  sender's debit internally to cover its own fee. This is the official reference pattern
+   *  (confirmed against MagicBlock's own web app and the payments-demo `one/` reference repo):
+   *  never gross up `amount` ourselves, just pass the clean intended amount with exactOut: true. */
+  exactOut?: boolean;
 }): Promise<MagicblockPrivateTransferTxResponse> {
   const { minDelayMs, maxDelayMs } = magicblockPrivateDelayForCluster(params.cluster);
   const body: Record<string, unknown> = {
@@ -167,6 +177,7 @@ export async function requestMagicblockPrivateTransfer(params: {
     maxDelayMs,
     ...(params.cluster === 'mainnet' ? { split: 2 + (Math.floor(params.amount / 1_000_000) % 3) } : {}),
     ...(params.gasless ? { gasless: true } : {}),
+    ...(params.exactOut !== undefined ? { exactOut: params.exactOut } : {}),
   };
   log.log(`POST https://payments.magicblock.app/v1/spl/transfer payload=${JSON.stringify(body)}`);
 

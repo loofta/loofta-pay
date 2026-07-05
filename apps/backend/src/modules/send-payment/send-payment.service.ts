@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { MAGICBLOCK_GAS_SOL, MAGICBLOCK_GAS_USDC, grossUpForMagicblockFee, decodeActualSenderDebit, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import { MAGICBLOCK_GAS_SOL, MAGICBLOCK_GAS_USDC, estimateMagicblockGrossUp, decodeActualSenderDebit, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
@@ -133,9 +133,10 @@ export class SendPaymentService {
     // MagicBlock gasless: flat 0.2 USDC relay fee charged via a prepended instruction.
     const relayFeeUnits = Math.round(MAGICBLOCK_GAS_USDC * 1_000_000);
 
-    const grossUnits = grossUpForMagicblockFee(baseUnits);
+    // Clean amount + exactOut:true — MagicBlock grosses up the sender's debit internally and
+    // guarantees the recipient nets exactly baseUnits. Never gross up `amount` ourselves.
     this.logger.log(
-      `[SendPayment] amount=${amountUsd} grossUnits=${grossUnits} relayFeeUnits=${relayFeeUnits}` +
+      `[SendPayment] amount=${amountUsd} baseUnits=${baseUnits} relayFeeUnits=${relayFeeUnits}` +
       ` cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… (gasless)`,
     );
 
@@ -143,12 +144,13 @@ export class SendPaymentService {
       from: senderWallet.trim(),
       to,
       mint: effectiveMint.toBase58(),
-      amount: grossUnits,
+      amount: baseUnits,
       cluster,
+      exactOut: true,
       gasless: true,
     });
 
-    const mbVolumeFeeUnits = grossUnits - baseUnits;
+    const mbVolumeFeeUnits = estimateMagicblockGrossUp(baseUnits) - baseUnits;
     const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, senderWallet.trim(), effectiveMint, this.connection);
     const estimatedFeeUnits = mbVolumeFeeUnits + relayFeeUnits;
     // For private transfers the main instruction is confidential; actualDebitUnits ≈ relay fee only.
@@ -997,7 +999,7 @@ export class SendPaymentService {
       allRows.map((row) => {
         const amountUsd = parseFloat(String(row.amount || '0'));
         const baseUnits = Math.round(amountUsd * 1_000_000);
-        const grossUnits = grossUpForMagicblockFee(baseUnits);
+        const grossUnits = estimateMagicblockGrossUp(baseUnits);
         const computed = (grossUnits - baseUnits + Math.round(MAGICBLOCK_GAS_USDC * 1_000_000)) / 1_000_000;
         // Prefer frontend-passed value when available (may be more precise), otherwise fall back to estimate
         return [row.id as string, feeUsdc ?? computed];
@@ -1183,18 +1185,20 @@ export class SendPaymentService {
       const linkUrl = `${this.baseUrl}/c/${paymentId}`;
 
       const baseUnits = Math.round(amountUsd * 1_000_000);
-      const grossUnits = grossUpForMagicblockFee(baseUnits);
+      // Clean amount + exactOut:true — MagicBlock grosses up its own internal debit so the
+      // recipient nets exactly baseUnits. Never gross up `amount` ourselves.
       const txResponse = await requestMagicblockPrivateTransfer({
         from: dto.sender_wallet.trim(),
         to: toPubkey,
         mint: effectiveMint.toBase58(),
-        amount: grossUnits,
+        amount: baseUnits,
         cluster: cluster === 'localhost' ? 'devnet' : cluster,
+        exactOut: true,
         gasless: true,
       });
 
       const relayFeeUnits = Math.round(MAGICBLOCK_GAS_USDC * 1_000_000);
-      const feeAmountUsdc = (grossUnits - baseUnits + relayFeeUnits) / 1_000_000;
+      const feeAmountUsdc = (estimateMagicblockGrossUp(baseUnits) - baseUnits + relayFeeUnits) / 1_000_000;
       this.logger.log(`[MultiSendPrivate] payment=${paymentId} recipient=${normalizedId} amount=${amountStr} sendTo=${txResponse.sendTo}`);
 
       transactions.push({
@@ -1337,7 +1341,7 @@ export class SendPaymentService {
 
       // Fee estimate (no actual MagicBlock call — estimated from formula)
       const baseUnits = Math.round(amountUsd * 1_000_000);
-      const grossUnits = grossUpForMagicblockFee(baseUnits);
+      const grossUnits = estimateMagicblockGrossUp(baseUnits);
       const feeUsdc = (grossUnits - baseUnits + Math.round(MAGICBLOCK_GAS_USDC * 1_000_000)) / 1_000_000;
 
       this.logger.log(
