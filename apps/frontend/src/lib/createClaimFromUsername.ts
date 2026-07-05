@@ -1,6 +1,6 @@
 /**
  * Create a claim from a recipient username (wallet resolved server-side).
- * Used by /link/[username] page and in-app SendFlowInApp.
+ * Used by /me/[username] page and in-app SendFlowInApp.
  */
 
 export async function createClaimFromUsername(input: {
