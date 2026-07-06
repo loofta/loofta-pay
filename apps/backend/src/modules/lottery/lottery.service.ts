@@ -17,7 +17,7 @@ import { SendPaymentEncryptionService } from '../send-payment/encryption.service
 import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI } from './megapot.service';
 import { RhinestoneService } from './rhinestone.service';
 import { LifiService } from './lifi.service';
-import { requestMagicblockPrivateTransfer, grossUpForMagicblockFee, MAGICBLOCK_GAS_USDC } from '@/common/magicblock-private-transfer';
+import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC } from '@/common/magicblock-private-transfer';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const TICKET_PRICE_USDC = 1;
@@ -175,7 +175,9 @@ export class LotteryService {
     // Then gross up the bridged amount for MagicBlock's 10 BPS + gas so the burner receives the bridged amount.
     const LIFI_FEE_BPS = 100; // 1% buffer
     const bridgeUnits = Math.ceil(costUsdc * 1_000_000 * 10_000 / (10_000 - LIFI_FEE_BPS));
-    const grossAmount = grossUpForMagicblockFee(bridgeUnits); // user sends this; burner receives bridgeUnits
+    // Estimate only, for the fee breakdown display — the real transfer sends the clean
+    // bridgeUnits with exactOut:true and lets MagicBlock gross up the sender's debit internally.
+    const grossAmount = estimateMagicblockGrossUp(bridgeUnits);
     const magicblockFeeUsdc = parseFloat(((grossAmount - bridgeUnits) / 1_000_000 + MAGICBLOCK_GAS_USDC).toFixed(6));
     const lifiBridgeFeeUsdc = parseFloat(((bridgeUnits - costUsdc * 1_000_000) / 1_000_000).toFixed(6));
     const totalUsdc = costUsdc + magicblockFeeUsdc + lifiBridgeFeeUsdc;
@@ -188,8 +190,9 @@ export class LotteryService {
         from: userSolanaAddress,
         to: burnerAddress,
         mint: USDC_MINT.toBase58(),
-        amount: grossAmount,
+        amount: bridgeUnits,
         cluster,
+        exactOut: true,
         gasless: true,
         minDelayMs: 3_000,
         maxDelayMs: 30_000,
