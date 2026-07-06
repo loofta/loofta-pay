@@ -411,7 +411,7 @@ export default function HistoryPage() {
                       return (
                         <li key={`${type}-${claim.id}`}>
                           <Link
-                            href={`/c/${claim.short_id || claim.id}?from=history`}
+                            href={`/c/${claim.id}?from=history`}
                             className="block rounded-xl border border-white/10 bg-white/5 p-3 hover:bg-white/10 transition-colors"
                           >
                             <div className="flex items-center justify-between gap-2">

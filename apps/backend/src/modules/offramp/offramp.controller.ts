@@ -67,6 +67,14 @@ export class OfframpController {
     return this.offramp.getPendingForUser(req.user.id);
   }
 
+  @Get('history')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Get last 10 offramp requests for the current user' })
+  async getHistory(@Req() req: any) {
+    return this.offramp.getUserOfframps(req.user.id);
+  }
+
   @Get(':id')
   @UseGuards(AuthGuard)
   @ApiSecurity('privy-auth')

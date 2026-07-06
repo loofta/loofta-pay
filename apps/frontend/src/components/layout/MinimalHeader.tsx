@@ -53,7 +53,6 @@ function MobileMenu({
   const navLinks = [
     { href: "/", label: "Send & Receive", description: "Send and receive payments" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
-    { href: "/waitlist", label: t('waitlist'), description: t('requestAccess') },
   ];
 
   return (
@@ -154,13 +153,8 @@ function MobileMenu({
           <div className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-white/8 transition-colors">
             <div className="flex flex-col min-w-0">
               <span className="text-base text-slate-300">
-                {networkMode === "mainnet"
-                  ? (mainnetAccess ? t('mainnetBeta') : t('mainnetViewOnly'))
-                  : t('devnet')}
+                {t('mainnetBeta')}
               </span>
-              {networkMode === "mainnet" && !mainnetAccess && (
-                <span className="text-sm text-amber-400/80 leading-tight">{t('paymentsDisabled')}</span>
-              )}
             </div>
             <Switch
               checked={networkMode === "mainnet"}
@@ -255,7 +249,7 @@ export function MinimalHeader() {
       >
         <div className="w-full max-w-7xl mx-auto px-4 md:px-8 flex items-center justify-between">
           <div className="flex items-center min-w-0">
-            <LooftaPayLogoLink imageWidth={120} imageHeight={36} imageClassName="h-9 w-auto" badgeVariant="on-dark" isMainnet={networkMode === "mainnet"} />
+            <LooftaPayLogoLink imageWidth={120} imageHeight={36} imageClassName="h-9 w-auto" />
           </div>
 
           <div className="flex items-center shrink-0 gap-2">
@@ -286,19 +280,6 @@ export function MinimalHeader() {
                   ].join(" ")}
                 >
                   <span>{t('rewards')}</span>
-                </Link>
-
-                {/* Desktop: Waitlist link */}
-                <Link
-                  href="/waitlist"
-                  className={[
-                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    pathname === "/waitlist"
-                      ? "text-green-300 bg-green-500/10"
-                      : "text-slate-300 hover:text-white hover:bg-white/10",
-                  ].join(" ")}
-                >
-                  <span>{t('waitlist')}</span>
                 </Link>
 
                 {/* Desktop: Balance button */}

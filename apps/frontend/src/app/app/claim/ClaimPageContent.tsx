@@ -46,20 +46,25 @@ function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
   );
 }
 
-async function createClaim(formData: {
-  amount: string;
-  toSel: TokenSelection;
-  recipient: string;
-  userId?: string;
-  direction?: "from_sender" | "from_recipient";
-  description?: string;
-  cluster?: 'devnet' | 'mainnet';
-  isPrivate?: boolean;
-  feeOnSender?: boolean;
-}): Promise<{ id: string; link: string }> {
+async function createClaim(
+  formData: {
+    amount: string;
+    toSel: TokenSelection;
+    recipient: string;
+    userId?: string;
+    direction?: "from_sender" | "from_recipient";
+    description?: string;
+    cluster?: 'devnet' | 'mainnet';
+    isPrivate?: boolean;
+    feeOnSender?: boolean;
+  },
+  accessToken?: string | null,
+): Promise<{ id: string; link: string }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
   const r = await fetch("/api/claims/create", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(formData),
   });
   if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || "Failed to create claim");
@@ -86,7 +91,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const { authenticated, email: userEmail, userId, login, ready } = useAuth();
-  const { login: privyLogin } = usePrivy();
+  const { login: privyLogin, getAccessToken } = usePrivy();
   const { wallets: solanaWallets } = useSolanaWallets();
   const { toast } = useToast();
 
@@ -296,6 +301,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         amountUsdStr = toFixedTrim(usd, 2);
       }
       const combinedDescription = [message.trim(), gifUrl].filter(Boolean).join(" ").trim() || undefined;
+      const accessToken = authenticated ? await getAccessToken() : null;
       const res = await createClaim({
         amount: amountUsdStr,
         toSel: { symbol: finalToSel.symbol, chain: finalToSel.chain },
@@ -306,7 +312,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         cluster: networkMode === "mainnet" ? "mainnet" : "devnet",
         isPrivate: true,
         feeOnSender,
-      });
+      }, accessToken);
       setCreatedLink(res.link);
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 2500);

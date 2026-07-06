@@ -2,14 +2,13 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { usePrivy, useUser, useWallets, useLinkAccount } from "@privy-io/react-auth";
+
+import { usePrivy, useUser, useWallets, useLinkAccount, useUnlinkOAuth, useUnlinkEmail } from "@privy-io/react-auth";
 import { useExportWallet } from "@privy-io/react-auth/solana";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
 import { useAuthStore } from "@/store/auth";
-import { getCachedMainnetAccess, setCachedMainnetAccess } from "@/lib/mainnetAccessCache";
 import { TIERS, getTierForVolume } from "@/lib/tiers";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -21,10 +20,11 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Settings } from "lucide-react";
+import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Wallet, Info } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
+import { ChangeUsernameModal } from "@/components/ChangeUsernameModal";
 /** Privy uses type "twitter_oauth" for Twitter (not "twitter" or "x"). */
 const TWITTER_TYPES = ["twitter_oauth", "twitter", "x"] as const;
 
@@ -47,26 +47,68 @@ function formatVolume(n: number): string {
 }
 
 function TierBadge({ volumeUsd, dark }: { volumeUsd: number; dark: boolean }) {
+  const [showTiers, setShowTiers] = useState(false);
   const info = getTierForVolume(volumeUsd);
   const nextTier = TIERS.find((t) => t.minVolume > volumeUsd);
   return (
     <div className={`mt-2 pt-2 pb-1 border-t ${dark ? "border-white/10" : "border-gray-200"}`}>
-      <div className="flex items-center justify-between mb-1.5">
-        <span className={`text-sm font-medium ${dark ? "text-gray-400" : "text-gray-500"}`}>Status</span>
+      {/* Status row */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5">
+          <span className={`text-sm font-medium ${dark ? "text-gray-400" : "text-gray-500"}`}>Status</span>
+          <button
+            type="button"
+            onClick={() => setShowTiers(v => !v)}
+            className={`rounded-full p-0.5 transition-colors ${dark ? "text-gray-600 hover:text-gray-300" : "text-gray-400 hover:text-gray-600"}`}
+            title="About tiers"
+          >
+            <Info className="w-3.5 h-3.5" />
+          </button>
+        </div>
         <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${info.color} ${info.bg}`}>
           {info.label}
         </span>
       </div>
-      <div className="flex items-center justify-between">
-        <span className={`text-sm ${dark ? "text-gray-500" : "text-gray-400"}`}>
-          {formatVolume(volumeUsd)} sent &amp; received
-        </span>
-        {nextTier && (
-          <span className={`text-sm ${dark ? "text-gray-600" : "text-gray-400"}`}>
-            {formatVolume(nextTier.minVolume - volumeUsd)} to {nextTier.label}
+
+      {/* Volume stats */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col">
+          <span className={`text-sm font-semibold ${dark ? "text-gray-100" : "text-gray-800"}`}>
+            {formatVolume(volumeUsd)}
           </span>
+          <span className={`text-xs ${dark ? "text-gray-500" : "text-gray-400"}`}>sent &amp; received</span>
+        </div>
+        {nextTier && (
+          <div className="flex flex-col items-end">
+            <span className={`text-sm font-semibold ${dark ? "text-gray-100" : "text-gray-800"}`}>
+              {formatVolume(nextTier.minVolume - volumeUsd)}
+            </span>
+            <span className={`text-xs ${dark ? "text-gray-500" : "text-gray-400"}`}>to {nextTier.label}</span>
+          </div>
         )}
       </div>
+
+      {/* Tier info panel */}
+      {showTiers && (
+        <div className={`mt-3 rounded-xl border p-3 ${dark ? "bg-white/[0.04] border-white/[0.07]" : "bg-gray-50 border-gray-200"}`}>
+          <p className={`text-xs font-semibold uppercase tracking-widest mb-2 ${dark ? "text-gray-500" : "text-gray-400"}`}>All tiers</p>
+          <div className="space-y-1">
+            {TIERS.map((t) => (
+              <div
+                key={t.key}
+                className={`flex items-center justify-between rounded-lg px-2 py-1.5 ${info.key === t.key ? (dark ? "bg-white/[0.07]" : "bg-white shadow-sm") : ""}`}
+              >
+                <span className={`text-sm font-medium ${t.color}`}>{t.label}</span>
+                <span className={`text-xs tabular-nums ${dark ? "text-gray-500" : "text-gray-400"}`}>
+                  {t.maxVolume
+                    ? `$${t.minVolume.toLocaleString()} – $${t.maxVolume.toLocaleString()}`
+                    : `$${t.minVolume.toLocaleString()}+`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -83,18 +125,19 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   // Get email and username from store as fallback (always persistent)
   const storeEmail = useAuthStore((s) => s.email);
   const storeUsername = useAuthStore((s) => s.username ?? null);
+  const storeLooUsername = useAuthStore((s) => s.looUsername ?? null);
+  const storeTwitterUsername = useAuthStore((s) => s.twitterUsername ?? null);
   const usernameResolved = useAuthStore((s) => s.username !== undefined);
   const setAuth = useAuthStore((s) => s.setAuth);
   const setUsername = useAuthStore((s) => s.setUsername);
+  const setLooUsername = useAuthStore((s) => s.setLooUsername);
+  const setTwitterUsername = useAuthStore((s) => s.setTwitterUsername);
 
   // Use props if available, otherwise fallback to store
   const username = usernameProp ?? storeUsername;
   const email = emailProp ?? storeEmail;
 
-  const mainnetAccess = useAuthStore((s) => s.mainnetAccess);
-  const networkMode = useAuthStore((s) => s.networkMode);
   const setMainnetAccess = useAuthStore((s) => s.setMainnetAccess);
-  const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
   const tier = useAuthStore((s) => s.tier);
   const totalVolumeUsd = useAuthStore((s) => s.totalVolumeUsd);
   const setTier = useAuthStore((s) => s.setTier);
@@ -103,6 +146,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const setOpenShareModal = useAuthStore((s) => s.setOpenShareModal);
   const openSettingsModalFromStore = useAuthStore((s) => s.openSettingsModal);
   const setOpenSettingsModal = useAuthStore((s) => s.setOpenSettingsModal);
+  const setIsOnboardingOpen = useAuthStore((s) => s.setIsOnboardingOpen);
 
   // Sync props to store to ensure persistence
   useEffect(() => {
@@ -155,11 +199,16 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [updatingToTwitter, setUpdatingToTwitter] = useState(false);
   const [twitterLinkedOptimistic, setTwitterLinkedOptimistic] = useState(false);
   const [linkingMethod, setLinkingMethod] = useState<"twitter" | "email" | null>(null);
+  const [unlinkingTwitter, setUnlinkingTwitter] = useState(false);
+  const [confirmUnlinkTwitter, setConfirmUnlinkTwitter] = useState(false);
+  const [unlinkingEmail, setUnlinkingEmail] = useState(false);
+  const [switchingUsername, setSwitchingUsername] = useState(false);
+  const [showChangeUsername, setShowChangeUsername] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
   const { refreshUser } = useUser();
   const { linkTwitter, linkEmail } = useLinkAccount({
-    onSuccess: async (arg: { linkedAccount?: { type?: string }; linkMethod?: string } | undefined) => {
+    onSuccess: async (arg: any) => {
       const linkedType = arg?.linkedAccount?.type;
       const didLinkTwitter =
         linkedType === "twitter_oauth" ||
@@ -169,6 +218,20 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         linkingMethod === "twitter";
       if (didLinkTwitter) {
         setTwitterLinkedOptimistic(true);
+        // Persist Twitter handle to DB so the username toggle works
+        const raw = arg?.linkedAccount?.username ?? arg?.linkedAccount?.name ?? "";
+        const handle = String(raw).replace(/^@/, "").toLowerCase().trim();
+        if (handle.length >= 1) {
+          try {
+            const token = await getAccessToken().catch(() => null);
+            const res = await fetch("/api/users/save-twitter-username", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+              body: JSON.stringify({ twitterUsername: handle }),
+            });
+            if (res.ok) setTwitterUsername(handle);
+          } catch { /* non-critical */ }
+        }
       }
       setLinkingMethod(null);
       // Force Privy to re-fetch the user so linkedAccounts is immediately up to date.
@@ -193,6 +256,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     },
   });
   const { exportWallet } = useExportWallet();
+  const unlinkOAuth = useUnlinkOAuth();
+  const unlinkEmailHook = useUnlinkEmail();
 
   const { wallets } = useWallets();
   const { toast } = useToast();
@@ -208,6 +273,12 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     return acc && "address" in acc ? (acc as { address: string }).address : null;
   }, [linkedAccounts]);
   const canUpdateToTwitter = usernameResolved && hasTwitterLinked && twitterHandle && username?.toLowerCase() !== twitterHandle;
+  const twitterAccount = useMemo(() =>
+    linkedAccounts.find((a) => a.type && TWITTER_TYPES.includes(a.type as typeof TWITTER_TYPES[number])),
+    [linkedAccounts]
+  );
+  const twitterSubject = (twitterAccount as { subject?: string } | undefined)?.subject ?? null;
+  const totalMethods = [hasEmail, hasTwitterLinked].filter(Boolean).length;
 
   // Get Solana wallet address from Privy
   // Use linkedAccounts - these are wallets tied to user (what shows in Privy dashboard)
@@ -317,7 +388,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     const baseUrl = typeof window !== "undefined"
       ? window.location.origin
       : process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.xyz";
-    return `${baseUrl}/link/@${username}`;
+    return `${baseUrl}/me/@${username}`;
   };
 
   // Fetch user preferences when modal opens
@@ -350,30 +421,10 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     }
   }, [showShareModal, authenticated, getAccessToken, privyUser?.id]);
 
-  // Fetch mainnet access on every login/mount — always re-fetch so newly granted access is picked up immediately.
-  // Apply cached value first for instant UI, then overwrite with fresh API response.
+  // Mainnet is open to everyone — always grant access on login.
   useEffect(() => {
-    if (!authenticated || !getAccessToken || !privyUser?.id) return;
-    const userId = privyUser.id;
-    const cached = getCachedMainnetAccess(userId);
-    if (cached !== null) {
-      setMainnetAccess(cached);
-    }
-    const check = async () => {
-      try {
-        const token = await getAccessToken();
-        const res = await fetch("/api/users/mainnet-access", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const { mainnetAccess: access } = await res.json();
-          setMainnetAccess(!!access);
-          setCachedMainnetAccess(userId, !!access);
-        }
-      } catch { /* non-critical */ }
-    };
-    check();
-  }, [authenticated, privyUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (authenticated) setMainnetAccess(true);
+  }, [authenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch user tier (volume-based status) on mount
   useEffect(() => {
@@ -467,6 +518,115 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     }
   };
 
+  const handleUnlinkTwitter = async () => {
+    if (!twitterSubject) return;
+    setConfirmUnlinkTwitter(false);
+    setUnlinkingTwitter(true);
+    try {
+      // Always land on the loo-username after disconnecting X — not just when the active
+      // username happens to exactly match the raw Twitter handle (usernames can drift from
+      // that, e.g. a collision suffix at signup), so this used to silently skip the switch.
+      // ABORT the entire unlink if this step fails — do not leave them without a payment link.
+      const alreadyOnLooUsername = !!storeLooUsername && (username ?? "").toLowerCase() === storeLooUsername.toLowerCase();
+      if (!alreadyOnLooUsername) {
+        const suffix = (username ?? twitterHandle ?? "user").slice(0, 16);
+        const looTarget = storeLooUsername ?? `loo-${suffix}`;
+        if (!storeLooUsername) {
+          // Create the loo-username — abort if it fails
+          const token = await getAccessToken().catch(() => null);
+          const res = await fetch("/api/users/setup-username", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({ username: looTarget }),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body?.error ?? "Could not create a backup username. Disconnection aborted.");
+          }
+          const data = await res.json();
+          const saved = data.user?.username ?? looTarget;
+          setUsername(saved);
+          setLooUsername(data.user?.looUsername ?? saved);
+          if (data.user?.twitterUsername) setTwitterUsername(data.user.twitterUsername);
+          setAuth({ authenticated: true, email: storeEmail, username: saved, looUsername: data.user?.looUsername ?? saved });
+        } else {
+          // Switch active username to the already-saved loo-username
+          const token = await getAccessToken().catch(() => null);
+          const res = await fetch("/api/users/switch-username", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({ use: "loo" }),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body?.error ?? "Could not switch to backup username. Disconnection aborted.");
+          }
+          const data = await res.json();
+          setUsername(data.username ?? storeLooUsername);
+          setAuth({ authenticated: true, email: storeEmail, username: data.username ?? storeLooUsername });
+        }
+      }
+      await unlinkOAuth.unlink({ provider: "twitter", subject: twitterSubject });
+      setTwitterLinkedOptimistic(false);
+      setTwitterUsername(null);
+      try {
+        const clearToken = await getAccessToken().catch(() => null);
+        await fetch("/api/users/save-twitter-username", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(clearToken ? { Authorization: `Bearer ${clearToken}` } : {}) },
+          body: JSON.stringify({ twitterUsername: null }),
+        });
+      } catch { /* non-critical — stale DB value just won't display anywhere important */ }
+      try { await refreshUser(); } catch { /* non-critical */ }
+      toast({ title: "Twitter disconnected", description: "Your X account has been removed from sign-in methods." });
+    } catch (e: unknown) {
+      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
+      toast({ variant: "destructive", title: "Could not disconnect", description: msg || "Try again." });
+    } finally {
+      setUnlinkingTwitter(false);
+    }
+  };
+
+  const handleSwitchUsername = async (use: "loo" | "twitter") => {
+    setSwitchingUsername(true);
+    try {
+      const token = await getAccessToken().catch(() => null);
+      const res = await fetch("/api/users/switch-username", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ use }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ variant: "destructive", title: "Could not switch username", description: data.error || "Try again." });
+        return;
+      }
+      // Reload instead of patching the store in place — guarantees every page (header, claim
+      // pages, etc.) reflects the new username at once instead of each catching up on its own.
+      window.location.reload();
+    } catch (e: unknown) {
+      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
+      toast({ variant: "destructive", title: "Could not switch username", description: msg || "Try again." });
+    } finally {
+      setSwitchingUsername(false);
+    }
+  };
+
+  const handleUnlinkEmail = async () => {
+    if (!linkedEmailAddress) return;
+    setUnlinkingEmail(true);
+    try {
+      await unlinkEmailHook.unlink({ address: linkedEmailAddress });
+      try { await refreshUser(); } catch { /* non-critical */ }
+      toast({ title: "Email disconnected", description: "Your email has been removed from sign-in methods." });
+    } catch (e: unknown) {
+      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
+      toast({ variant: "destructive", title: "Could not disconnect", description: msg || "Try again." });
+    } finally {
+      setUnlinkingEmail(false);
+    }
+  };
+
   return (
     <div className="relative" ref={menuRef}>
       {/* Username Button */}
@@ -501,14 +661,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       {/* Dropdown Menu */}
       {isOpen && (
         <div
-          className={`absolute right-0 top-full mt-2 w-64 rounded-xl shadow-lg border z-50 ${isDarkPage
-            ? "bg-gray-900 border-gray-700"
+          className={`absolute right-0 top-full mt-2 w-64 rounded-xl shadow-2xl border z-50 ${isDarkPage
+            ? "bg-[#0d0d14]/90 backdrop-blur-2xl border-white/[0.08]"
             : "bg-white border-gray-200"
             }`}
         >
           <div className="p-2">
             {/* User Info Section */}
-            <div className={`px-3 py-2 rounded-lg mb-1 ${isDarkPage ? "bg-gray-800" : "bg-gray-50"
+            <div className={`px-3 py-2 rounded-lg mb-1 ${isDarkPage ? "bg-white/[0.05]" : "bg-gray-50"
               }`}>
               {username && (
                 <div className="mb-2">
@@ -566,7 +726,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             </div>
 
             {/* Divider */}
-            <div className={`h-px my-2 ${isDarkPage ? "bg-gray-700" : "bg-gray-200"
+            <div className={`h-px my-2 ${isDarkPage ? "bg-white/[0.07]" : "bg-gray-200"
               }`}></div>
 
             {/* Share Payment Link Section */}
@@ -603,22 +763,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
 
 
 
-            {/* Rewards */}
-            <div className="mb-2">
-              <Link
-                href="/sparks"
-                onClick={() => setIsOpen(false)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-base md:text-sm transition-colors flex items-center gap-2 ${isDarkPage
-                  ? "text-amber-400 hover:bg-amber-400/10"
-                  : "text-amber-600 hover:bg-amber-50"
-                  }`}
-              >
-                <span>⚡</span>
-                {t('sparks')}
-              </Link>
-            </div>
-
-            {/* Settings - opens modal with wallet address & export private keys */}
+{/* Settings - opens modal with wallet address & export private keys */}
             <div className="mb-2">
               <button
                 onClick={() => {
@@ -626,7 +771,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   setShowSettingsModal(true);
                 }}
                 className={`w-full text-left px-3 py-2 rounded-lg text-base md:text-sm transition-colors flex items-center gap-2 ${isDarkPage
-                  ? "text-gray-300 hover:bg-gray-800"
+                  ? "text-gray-300 hover:bg-white/[0.07]"
                   : "text-gray-700 hover:bg-gray-100"
                   }`}
               >
@@ -635,29 +780,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               </button>
             </div>
 
-            {/* Network toggle — visible to all; non-mainnetAccess users get view-only mainnet */}
-            <div className="mb-2">
-              <div className={`flex items-center justify-between px-3 py-2 rounded-lg ${isDarkPage ? "hover:bg-gray-800" : "hover:bg-gray-100"}`}>
-                <div className="flex flex-col min-w-0">
-                  <span className={`text-base md:text-sm ${isDarkPage ? "text-gray-300" : "text-gray-700"}`}>
-                    {networkMode === "mainnet"
-                      ? (mainnetAccess ? t('mainnetBeta') : t('mainnetViewOnly'))
-                      : t('devnet')}
-                  </span>
-                  {networkMode === "mainnet" && !mainnetAccess && (
-                    <span className="text-base md:text-sm text-amber-400/80 leading-tight">{t('paymentsDisabled')}</span>
-                  )}
-                </div>
-                <Switch
-                  checked={networkMode === "mainnet"}
-                  onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
-                />
-              </div>
-            </div>
-
             {/* Divider */}
             {username && (
-              <div className={`h-px my-2 ${isDarkPage ? "bg-gray-700" : "bg-gray-200"
+              <div className={`h-px my-2 ${isDarkPage ? "bg-white/[0.07]" : "bg-gray-200"
                 }`}></div>
             )}
 
@@ -990,7 +1115,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 20 }}
-              className="bg-[#0f0f12] sm:border sm:border-white/10 sm:rounded-2xl w-full sm:max-w-sm shadow-2xl flex flex-col h-full sm:h-auto overflow-hidden"
+              className="bg-[#0f0f12] sm:border sm:border-white/10 sm:rounded-2xl w-full sm:max-w-lg shadow-2xl flex flex-col h-full sm:h-auto overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Scrollable content */}
@@ -1008,13 +1133,13 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </div>
                         <p className="text-white font-semibold text-lg mb-1">New wallet ready</p>
                         {newWalletAddress && (
-                          <p className="text-slate-400 text-xs mb-3 font-mono">{newWalletAddress.slice(0, 8)}…{newWalletAddress.slice(-6)}</p>
+                          <p className="text-slate-400 text-base mb-3 font-mono">{newWalletAddress.slice(0, 8)}…{newWalletAddress.slice(-6)}</p>
                         )}
-                        <p className="text-slate-400 text-sm mb-6">Your new wallet is now active. The previous address is no longer used by Loofta.</p>
+                        <p className="text-slate-400 text-base mb-6">Your new wallet is now active. The previous address is no longer used by Loofta.</p>
                         <button
                           type="button"
                           onClick={() => { setShowRotateConfirm(false); setRotateState("idle"); setNewWalletAddress(""); }}
-                          className="w-full py-3 rounded-xl text-sm font-semibold bg-white/10 hover:bg-white/15 text-white transition-colors"
+                          className="w-full py-3 rounded-xl text-base font-semibold bg-white/10 hover:bg-white/15 text-white transition-colors"
                         >
                           Done
                         </button>
@@ -1027,17 +1152,17 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           </svg>
                         </div>
                         <p className="text-white font-semibold text-lg mb-2">Generate new wallet?</p>
-                        <p className="text-slate-400 text-sm mb-1">A new Solana wallet will be created and used for all future payments on Loofta.</p>
-                        <p className="text-slate-500 text-xs mb-6">Your previous wallet stays in Privy but won&apos;t be used by Loofta anymore.</p>
+                        <p className="text-slate-400 text-base mb-1">A new Solana wallet will be created and used for all future payments on Loofta.</p>
+                        <p className="text-slate-500 text-base mb-6">Your previous wallet stays in Privy but won&apos;t be used by Loofta anymore.</p>
                         {rotateState === "error" && (
-                          <p className="text-red-400 text-xs mb-3">{rotateError}</p>
+                          <p className="text-red-400 text-base mb-3">{rotateError}</p>
                         )}
                         <div className="flex gap-3 w-full">
                           <button
                             type="button"
                             disabled={rotateState === "loading"}
                             onClick={() => { setShowRotateConfirm(false); setRotateState("idle"); setRotateError(""); }}
-                            className="flex-1 py-3 rounded-xl text-sm font-semibold bg-white/10 hover:bg-white/15 text-white transition-colors disabled:opacity-50"
+                            className="flex-1 py-3 rounded-xl text-base font-semibold bg-white/10 hover:bg-white/15 text-white transition-colors disabled:opacity-50"
                           >
                             Cancel
                           </button>
@@ -1079,7 +1204,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                 setRotateState("error");
                               }
                             }}
-                            className="flex-1 py-3 rounded-xl text-sm font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+                            className="flex-1 py-3 rounded-xl text-base font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
                           >
                             {rotateState === "loading" ? (
                               <span className="flex items-center justify-center gap-2">
@@ -1097,164 +1222,313 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   </div>
                 ) : (
                   <>
-
-                    {/* Header */}
-                    <div className="text-center mb-6">
-                      <div className="mb-3 flex justify-center">
-                        <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center">
-                          <Settings className="w-6 h-6 text-white" />
-                        </div>
-                      </div>
-                      <h2 className="text-2xl font-bold text-white mb-1">{t('settingsTitle')}</h2>
-                      <p className="text-base md:text-sm text-gray-400">{t('settingsSubtitle')}</p>
-                    </div>
-
-                    <div className="space-y-4">
-                      {/* Network toggle — visible to all */}
-                      <div>
-                        <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">{t('network')}</Label>
-                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
-                          <div className="flex flex-col min-w-0">
-                            <span className="text-base md:text-sm text-white/90">
-                              {networkMode === "mainnet"
-                                ? (mainnetAccess ? t('mainnetBeta') : t('mainnetViewOnly'))
-                                : t('devnet')}
-                            </span>
-                            {networkMode === "mainnet" && !mainnetAccess && (
-                              <span className="text-base md:text-sm text-amber-400/80 mt-0.5">{t('balanceWithdrawOnly')}</span>
-                            )}
+                    {/* Hero header */}
+                    <div className="text-center mb-6 pt-1">
+                      <div className="mb-4 flex justify-center">
+                        <div className="relative">
+                          <div
+                            className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                            style={{
+                              background: "linear-gradient(135deg, rgba(255,74,38,0.18) 0%, rgba(225,160,65,0.18) 100%)",
+                              border: "1px solid rgba(255,122,42,0.25)",
+                              boxShadow: "0 0 32px rgba(255,122,42,0.12)",
+                            }}
+                          >
+                            <Settings className="w-7 h-7 text-orange-400" />
                           </div>
-                          <Switch
-                            checked={networkMode === "mainnet"}
-                            onCheckedChange={(checked) => setNetworkMode(checked ? "mainnet" : "devnet")}
+                          <div
+                            className="absolute inset-0 rounded-2xl blur-2xl opacity-20 -z-10"
+                            style={{ background: "linear-gradient(135deg, #FF4A26, #E1A041)" }}
                           />
                         </div>
                       </div>
+                      <h2 className="text-xl font-bold text-white mb-1">{t('settingsTitle')}</h2>
+                      <p className="text-base text-slate-500">{t('settingsSubtitle')}</p>
+                    </div>
 
-                      {/* Sign-in methods - show connected first, then Add buttons */}
-                      <div>
-                        <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">{t('signInMethods')}</Label>
-                        {/* Always show what's already connected */}
-                        {(hasEmail || hasTwitterLinked) && (
-                          <div className="mb-3 p-3 rounded-xl bg-white/5 border border-white/10 space-y-2">
-                            <p className="text-base md:text-sm font-medium text-gray-400 mb-1.5">{t('connected')}</p>
-                            {hasEmail && linkedEmailAddress && (
-                              <div className="flex items-center gap-2 text-base md:text-sm text-white/90">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-gray-400">
-                                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
-                                  <polyline points="22,6 12,13 2,6"></polyline>
-                                </svg>
-                                <span className="truncate">{linkedEmailAddress}</span>
-                              </div>
-                            )}
-                            {hasTwitterLinked && twitterHandle && (
-                              <div className="flex items-center gap-2 text-base md:text-sm text-white/90">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="shrink-0 text-gray-400">
-                                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                                </svg>
-                                <span>@{twitterHandle}</span>
-                              </div>
-                            )}
+                    <div className="space-y-3">
+
+                      {/* Sign-in methods card */}
+                      <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
+                        <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-3 border-b border-white/[0.06]">
+                          <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
+                            <Shield className="w-3.5 h-3.5 text-slate-300" />
                           </div>
-                        )}
-                        <p className="text-base md:text-sm text-gray-400 mb-3">
-                          {t('addSecondMethod')}
-                        </p>
-                        <div className="space-y-1">
-                          {!hasTwitterLinked && (
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                setShowSettingsModal(false);
-                                setLinkingMethod("twitter");
-                                try {
-                                  await linkTwitter();
-                                } catch {
-                                  // Errors are surfaced via useLinkAccount onError.
-                                }
-                              }}
-                              title="You'll be redirected to Twitter to login"
-                              className="w-full text-left px-3 py-2.5 rounded-xl text-base md:text-sm font-medium transition-colors flex items-center gap-3 text-orange-400 hover:bg-orange-400/10"
-                            >
-                              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
-                                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                              </svg>
-                              {t('addTwitter')}
-                            </button>
-                          )}
-                          {!hasEmail && (
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                setLinkingMethod("email");
-                                try {
-                                  await linkEmail();
-                                } catch {
-                                  // Errors are surfaced via useLinkAccount onError.
-                                }
-                              }}
-                              className="w-full text-left px-3 py-2.5 rounded-xl text-base md:text-sm font-medium transition-colors flex items-center gap-3 text-gray-300 hover:bg-white/10 hover:text-white"
-                            >
-                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
-                                <polyline points="22,6 12,13 2,6"></polyline>
-                              </svg>
-                              {t('addEmail')}
-                            </button>
-                          )}
+                          <span className="text-base font-semibold text-white">{t('signInMethods')}</span>
                         </div>
-                        {canUpdateToTwitter && twitterHandle && (
-                          <div className="mt-3 p-3 rounded-xl bg-white/5 border border-white/10">
-                            <p className="text-base md:text-sm font-medium text-gray-300 mb-1">{t('paymentLink')}</p>
-                            <p className="text-base md:text-sm text-gray-400 mb-2">
-                              {t('useTwitterAsLink', { handle: twitterHandle })}
-                            </p>
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="rounded-xl bg-white/10 text-white border-0 hover:bg-white/20"
-                              disabled={updatingToTwitter || !privyUser?.id}
-                              onClick={async () => {
-                                if (!privyUser?.id || !twitterHandle) return;
-                                setUpdatingToTwitter(true);
-                                try {
-                                  const token = await getAccessToken().catch(() => null);
-                                  const res = await fetch("/api/users/setup-username", {
-                                    method: "POST",
-                                    headers: {
-                                      "Content-Type": "application/json",
-                                      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                                    },
-                                    body: JSON.stringify({ username: twitterHandle }),
-                                  });
-                                  const data = await res.json();
-                                  if (!res.ok) {
-                                    toast({ variant: "destructive", title: "Update failed", description: data.error || "Try again." });
-                                    return;
-                                  }
-                                  const newUsername = data.user?.username ?? twitterHandle;
-                                  setUsername(newUsername);
-                                  setAuth({ authenticated: true, email: storeEmail, username: newUsername });
-                                  toast({ title: "Payment link updated", description: `Your link is now @${newUsername}` });
-                                } catch (e) {
-                                  toast({ variant: "destructive", title: "Update failed", description: "Try again." });
-                                } finally {
-                                  setUpdatingToTwitter(false);
-                                }
-                              }}
-                            >
-                              {updatingToTwitter ? t('updating') : t('useHandle', { handle: twitterHandle })}
-                            </Button>
+
+                        <div className="px-4 pt-3 pb-4 space-y-2.5">
+                          {/* Connected accounts */}
+                          {(hasEmail || hasTwitterLinked) && (
+                            <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] overflow-hidden">
+                              <div className="divide-y divide-white/[0.05]">
+                                {hasEmail && linkedEmailAddress && (
+                                  <div className="flex items-center gap-3 px-3 py-2.5">
+                                    <div className="w-7 h-7 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400">
+                                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                                        <polyline points="22,6 12,13 2,6" />
+                                      </svg>
+                                    </div>
+                                    <span className="flex-1 text-base text-white/80 truncate">{linkedEmailAddress}</span>
+                                    {totalMethods > 1 ? (
+                                      <button
+                                        type="button"
+                                        onClick={handleUnlinkEmail}
+                                        disabled={unlinkingEmail}
+                                        className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-500 hover:text-slate-300 hover:bg-white/8 transition-colors disabled:opacity-40"
+                                      >
+                                        {unlinkingEmail ? <Loader2 className="w-3 h-3 animate-spin" /> : "Remove"}
+                                      </button>
+                                    ) : (
+                                      <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
+                                    )}
+                                  </div>
+                                )}
+                                {hasTwitterLinked && twitterHandle && (
+                                  <div className="flex flex-col gap-0 px-3 py-2.5">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-7 h-7 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-slate-400">
+                                          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                                        </svg>
+                                      </div>
+                                      <span className="flex-1 text-base text-white/80">@{twitterHandle}</span>
+                                      {totalMethods > 1 ? (
+                                        confirmUnlinkTwitter ? (
+                                          <div className="flex items-center gap-1 shrink-0">
+                                            <button
+                                              type="button"
+                                              onClick={() => setConfirmUnlinkTwitter(false)}
+                                              className="px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/8 transition-colors"
+                                            >
+                                              Cancel
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={handleUnlinkTwitter}
+                                              disabled={unlinkingTwitter}
+                                              className="px-2 py-1 rounded-lg text-base text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+                                            >
+                                              {unlinkingTwitter ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes, remove"}
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={() => setConfirmUnlinkTwitter(true)}
+                                            disabled={unlinkingTwitter}
+                                            className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-500 hover:text-slate-300 hover:bg-white/8 transition-colors disabled:opacity-40"
+                                          >
+                                            Remove
+                                          </button>
+                                        )
+                                      ) : (
+                                        <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
+                                      )}
+                                    </div>
+                                    {confirmUnlinkTwitter && (
+                                      <div className="mt-2 ml-10 px-3 py-2 rounded-xl bg-amber-500/[0.08] border border-amber-500/20">
+                                        <p className="text-base text-amber-300/90 leading-snug">
+                                          {username?.toLowerCase() === twitterHandle.toLowerCase()
+                                            ? `Your payment link will switch to @${storeLooUsername ?? `loo-${username?.slice(0, 16)}`}.`
+                                            : "Your payment link username stays the same."}
+                                          {" "}Are you sure?
+                                        </p>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Recovery warning */}
+                          {totalMethods < 2 && (
+                            <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/[0.08] border border-amber-500/20">
+                              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                              <p className="text-base text-amber-300/90 leading-snug">{t('addSecondMethod')}</p>
+                            </div>
+                          )}
+
+                          {/* Add methods */}
+                          <div className="space-y-1.5">
+                            {!hasTwitterLinked && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setShowSettingsModal(false);
+                                  setLinkingMethod("twitter");
+                                  try { await linkTwitter(); } catch { /* surfaced via onError */ }
+                                }}
+                                title="You'll be redirected to Twitter to log in"
+                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-base text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors border border-white/[0.05]"
+                              >
+                                <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-slate-500">
+                                    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                                  </svg>
+                                </div>
+                                <span className="flex-1 text-left">{t('addTwitter')}</span>
+                                <span className="text-slate-600 text-base leading-none">+</span>
+                              </button>
+                            )}
+                            {!hasEmail && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setLinkingMethod("email");
+                                  try { await linkEmail(); } catch { /* surfaced via onError */ }
+                                }}
+                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-base text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors border border-white/[0.05]"
+                              >
+                                <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-500">
+                                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                                    <polyline points="22,6 12,13 2,6" />
+                                  </svg>
+                                </div>
+                                <span className="flex-1 text-left">{t('addEmail')}</span>
+                                <span className="text-slate-600 text-base leading-none">+</span>
+                              </button>
+                            )}
                           </div>
-                        )}
+                        </div>
                       </div>
+
+                      {/* Payment link username toggle */}
+                      {(storeLooUsername || storeTwitterUsername) ? (
+                        <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
+                          <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-3 border-b border-white/[0.06]">
+                            <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300">
+                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                              </svg>
+                            </div>
+                            <span className="text-base font-semibold text-white">Payment link</span>
+                          </div>
+                          <div className="px-4 pt-3 pb-4 space-y-2">
+                            <p className="text-base text-slate-500">Choose which username your payment link uses.</p>
+                            <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] overflow-hidden divide-y divide-white/[0.05]">
+                              {storeLooUsername && (
+                                <div className="flex items-center gap-3 px-3 py-2.5">
+                                  <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
+                                    <span className="text-base font-bold text-slate-400 leading-none">L</span>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-base text-white/80 truncate">@{storeLooUsername}</p>
+                                    <p className="text-base text-slate-600">Your Loofta username</p>
+                                  </div>
+                                  {username === storeLooUsername ? (
+                                    <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSwitchUsername("loo")}
+                                      disabled={switchingUsername}
+                                      className="shrink-0 px-3 py-1 rounded-lg text-base text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-40"
+                                    >
+                                      {switchingUsername ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Use"}
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowChangeUsername(true)}
+                                    className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors"
+                                  >
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              )}
+                              {storeTwitterUsername && hasTwitterLinked && (
+                                <div className="flex items-center gap-3 px-3 py-2.5">
+                                  <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-slate-400">
+                                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                                    </svg>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-base text-white/80 truncate">@{storeTwitterUsername}</p>
+                                    <p className="text-base text-slate-600">Your X username</p>
+                                  </div>
+                                  {username === storeTwitterUsername ? (
+                                    <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSwitchUsername("twitter")}
+                                      disabled={switchingUsername || !hasTwitterLinked}
+                                      className="shrink-0 px-3 py-1 rounded-lg text-base text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-40"
+                                      title={!hasTwitterLinked ? "Re-link X to use this username" : undefined}
+                                    >
+                                      {switchingUsername ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Use"}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ) : canUpdateToTwitter && twitterHandle ? (
+                        <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-4 py-3.5 flex items-center justify-between gap-3">
+                          <span className="text-base text-slate-300">
+                            Use <span className="font-semibold text-white">@{twitterHandle}</span> as your payment link
+                          </span>
+                          <button
+                            type="button"
+                            disabled={updatingToTwitter || !privyUser?.id}
+                            onClick={async () => {
+                              if (!privyUser?.id || !twitterHandle) return;
+                              setUpdatingToTwitter(true);
+                              try {
+                                const token = await getAccessToken().catch(() => null);
+                                const res = await fetch("/api/users/setup-username", {
+                                  method: "POST",
+                                  headers: {
+                                    "Content-Type": "application/json",
+                                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                                  },
+                                  body: JSON.stringify({ username: twitterHandle }),
+                                });
+                                const data = await res.json();
+                                if (!res.ok) {
+                                  toast({ variant: "destructive", title: "Update failed", description: data.error || "Try again." });
+                                  return;
+                                }
+                                // Reload instead of patching the store in place — guarantees every
+                                // page reflects the new username at once instead of catching up on its own.
+                                window.location.reload();
+                              } catch {
+                                toast({ variant: "destructive", title: "Update failed", description: "Try again." });
+                              } finally {
+                                setUpdatingToTwitter(false);
+                              }
+                            }}
+                            className="shrink-0 inline-flex items-center justify-center rounded-lg bg-white text-black px-3 py-1.5 text-sm font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
+                          >
+                            {updatingToTwitter ? "Setting…" : "Set username"}
+                          </button>
+                        </div>
+                      ) : null}
+
+
+                      {/* Wallet card */}
                       {walletAddress ? (
-                        <>
-                          <div>
-                            <Label className="text-base md:text-sm font-medium mb-2 block text-gray-300">{t('walletAddress')}</Label>
-                            <div className="flex items-center gap-2 p-3 rounded-xl bg-white/5 border border-white/10">
+                        <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
+                          <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-3 border-b border-white/[0.06]">
+                            <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
+                              <Wallet className="w-3.5 h-3.5 text-slate-300" />
+                            </div>
+                            <span className="text-base font-semibold text-white">{t('walletAddress')}</span>
+                          </div>
+                          <div className="px-4 pt-3 pb-4 space-y-2">
+                            <div className="flex items-center gap-2 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                               <p
-                                className="flex-1 text-base md:text-sm font-mono break-all cursor-pointer text-white/90 hover:opacity-80"
+                                className="flex-1 text-base font-mono break-all cursor-pointer text-white/70 hover:text-white/90 transition-colors"
                                 onClick={() => {
                                   setShowFullAddress(!showFullAddress);
                                   if (!showFullAddress) copyToClipboard(walletAddress, false);
@@ -1265,112 +1539,64 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                               </p>
                               <button
                                 onClick={() => copyToClipboard(walletAddress, false)}
-                                className="p-2 rounded-lg hover:bg-white/10 shrink-0 text-gray-400 hover:text-white"
+                                className="p-1.5 rounded-lg hover:bg-white/10 shrink-0 text-slate-500 hover:text-white transition-colors"
                                 title={copied ? t('copied') : t('copyLink')}
                               >
                                 {copied ? (
-                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-400">
-                                    <polyline points="20 6 9 17 4 12"></polyline>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400">
+                                    <polyline points="20 6 9 17 4 12" />
                                   </svg>
                                 ) : (
-                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                                   </svg>
                                 )}
                               </button>
                             </div>
-                            <p className="text-base md:text-sm text-gray-500 mt-1">{showFullAddress ? t('clickToHide') : t('clickToCopy')}</p>
-                          </div>
+                            <p className="text-base text-slate-500">{showFullAddress ? t('clickToHide') : t('clickToCopy')}</p>
 
-                          <div className="space-y-1">
-
-                            {/* Rotate embedded wallet — dev only */}
-                            {walletAddress && isLocalhost && (
-                              <div className="pt-2 border-t border-white/10">
-                                <div className="flex items-center justify-between gap-3">
-                                  <div>
-                                    <p className="text-base md:text-sm font-medium text-gray-300">New wallet address</p>
-                                    {balanceUSD >= 0.1 && (
-                                      <p className="text-xs text-amber-400/80 mt-0.5">Withdraw below $0.10 first</p>
-                                    )}
-                                  </div>
-                                  <button
-                                    type="button"
-                                    disabled={balanceUSD >= 0.1}
-                                    onClick={() => setShowRotateConfirm(true)}
-                                    className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-white/10 hover:bg-white/15 text-white"
-                                  >
-                                    Generate new
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                          <div className="space-y-1">
                             <button
                               onClick={() => {
                                 setShowSettingsModal(false);
                                 window.open(`https://solscan.io/account/${walletAddress}`, '_blank');
                               }}
-                              className="w-full text-left px-3 py-2 rounded-xl text-base md:text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
+                              className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-base text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors"
                             >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                                <polyline points="15 3 21 3 21 9"></polyline>
-                                <line x1="10" y1="14" x2="21" y2="3"></line>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                                <polyline points="15 3 21 3 21 9" />
+                                <line x1="10" y1="14" x2="21" y2="3" />
                               </svg>
                               {t('viewOnSolscan')}
                             </button>
-                            {/* Export Private Key button — temporarily hidden
-                  <button
-                    onClick={async () => {
-                      setShowSettingsModal(false);
-                      try {
-                        if (!walletAddress) {
-                          toast({
-                            variant: "destructive",
-                            title: "Wallet not found",
-                            description: "Could not find your embedded wallet to export.",
-                          });
-                          return;
-                        }
-                        const result = await exportWallet({ address: walletAddress });
-                        if (typeof result === 'string') {
-                          setExportedPrivateKey(result);
-                          setShowExportModal(true);
-                        } else {
-                          toast({
-                            title: "Export initiated",
-                            description: "Please follow the prompts to export your wallet private key.",
-                          });
-                        }
-                      } catch (error: any) {
-                        toast({
-                          variant: "destructive",
-                          title: "Export failed",
-                          description: error?.message || "Failed to export wallet. Please try again.",
-                        });
-                      }
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-xl text-base md:text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                      <polyline points="17 8 12 3 7 8"></polyline>
-                      <line x1="12" y1="3" x2="12" y2="15"></line>
-                    </svg>
-                    Export Private Key
-                  </button>
-                  */}
+
+                            {walletAddress && isLocalhost && (
+                              <div className="flex items-center justify-between gap-3 pt-2 border-t border-white/[0.06]">
+                                <div>
+                                  <p className="text-base text-slate-400">New wallet address</p>
+                                  {balanceUSD >= 0.1 && (
+                                    <p className="text-base text-amber-400/80 mt-0.5">Withdraw below $0.10 first</p>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  disabled={balanceUSD >= 0.1}
+                                  onClick={() => setShowRotateConfirm(true)}
+                                  className="shrink-0 px-3 py-1.5 rounded-lg text-base font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-white/10 hover:bg-white/15 text-white"
+                                >
+                                  Generate new
+                                </button>
+                              </div>
+                            )}
                           </div>
-                        </>
+                        </div>
                       ) : (
-                        <div className="py-4 text-center">
+                        <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-4 py-5 text-center">
                           {!privyReady ? (
-                            <p className="text-base md:text-sm text-gray-400">{t('loadingWallet')}</p>
+                            <p className="text-base text-slate-500">{t('loadingWallet')}</p>
                           ) : (
-                            <p className="text-base md:text-sm text-gray-400">{t('walletAutoCreated')}</p>
+                            <p className="text-base text-slate-500">{t('walletAutoCreated')}</p>
                           )}
                         </div>
                       )}
@@ -1395,6 +1621,20 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         </AnimatePresence>,
         document.body
       )}
+
+      {/* Change Username Modal */}
+      <ChangeUsernameModal
+        open={showChangeUsername}
+        onClose={() => setShowChangeUsername(false)}
+        currentUsername={username ?? null}
+        storeLooUsername={storeLooUsername}
+        storeTwitterUsername={storeTwitterUsername}
+        onSaved={(newUsername, looUsername, twitterUsername) => {
+          setUsername(newUsername);
+          setLooUsername(looUsername ?? null);
+          if (twitterUsername !== null) setTwitterUsername(twitterUsername);
+        }}
+      />
 
       {/* Export Wallet Modal */}
       <Dialog open={showExportModal} onOpenChange={setShowExportModal}>

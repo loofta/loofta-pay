@@ -8,6 +8,8 @@ import confetti from "canvas-confetti";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 const MAGICBLOCK_SPARKS_THRESHOLD = 3000;
+// Campaign ended July 1 2026 at 18:00 CET (CEST = UTC+2) = 16:00 UTC
+const SPARKS_CUTOFF = new Date("2026-07-01T16:00:00.000Z");
 
 type TaskKey =
   | "connect_email"
@@ -447,9 +449,22 @@ export default function SparksPage() {
     );
   }
 
+  const campaignEnded = new Date() >= SPARKS_CUTOFF;
+
   return (
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
       <div className="max-w-lg mx-auto px-4 py-6 pb-24">
+        {/* Campaign ended banner */}
+        {campaignEnded && (
+          <div className="mb-5 rounded-2xl border border-white/15 bg-white/5 px-4 py-3 flex items-center gap-3">
+            <span className="text-xl">⚡</span>
+            <div>
+              <p className="text-base font-semibold text-white leading-tight">Campaign ended</p>
+              <p className="text-sm text-slate-400 mt-0.5">Sparks collection closed on July 1. Your earned sparks are saved.</p>
+            </div>
+          </div>
+        )}
+
         {/* Page header */}
         <div className="flex items-center justify-between mb-5">
           <div>
@@ -458,6 +473,11 @@ export default function SparksPage() {
               <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/25">
                 Devnet
               </span>
+              {campaignEnded && (
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-white/10 text-slate-400 border border-white/15">
+                  Ended
+                </span>
+              )}
             </div>
             <p className="text-base text-slate-400 mt-0.5">
               Complete missions on devnet, earn Sparks

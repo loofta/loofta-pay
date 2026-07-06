@@ -156,22 +156,37 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   }
   // from_recipient: public payment request — anyone can view, no access control needed
 
-  // Run creator username lookup and intent fetch in parallel
+  // Run creator + recipient username lookups and intent fetch in parallel
   const creatorUsernamePromise = createdBy.includes('did:privy:')
     ? supabase.from("app_users").select("username").eq("privy_user_id", createdBy).maybeSingle()
+    : Promise.resolve({ data: null });
+
+  // recipient_username is only populated when the payment was created by resolving a
+  // username/email — a payment sent by resolving a wallet address directly can still have a
+  // known registered recipient_user_id with no recipient_username on the row. Resolve it the
+  // same way creator_username is resolved, so the recipient's name still shows up.
+  const recipientUserId = String((rawPayment as Record<string, unknown> | null)?.recipient_user_id ?? "");
+  const recipientUsernamePromise = (!rawPayment?.recipient_username && recipientUserId.includes('did:privy:'))
+    ? supabase.from("app_users").select("username").eq("privy_user_id", recipientUserId).maybeSingle()
     : Promise.resolve({ data: null });
 
   const intentPromise = isLegacy
     ? supabase.from("claim_intents").select("deposit_address, memo, deadline, time_estimate, quote_id, status, deposit_received_at").eq("claim_id", params.id).order("created_at", { ascending: false }).limit(1).maybeSingle()
     : supabase.from("payment_intents").select("deposit_address, memo, deadline, time_estimate, quote_id, status").eq("payment_id", params.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
 
-  const [{ data: appUser }, { data: intentData }] = await Promise.all([creatorUsernamePromise, intentPromise]);
+  const [{ data: appUser }, { data: recipientAppUser }, { data: intentData }] = await Promise.all([
+    creatorUsernamePromise,
+    recipientUsernamePromise,
+    intentPromise,
+  ]);
 
   const creator_username: string | null = (appUser as { username?: string } | null)?.username ?? null;
+  const resolvedRecipientUsername: string | null = (recipientAppUser as { username?: string } | null)?.username ?? null;
 
   const claim: Record<string, unknown> = {
     ...rawPayment,
     creator_username: creator_username ?? null,
+    recipient_username: (rawPayment?.recipient_username as string | null | undefined) ?? resolvedRecipientUsername ?? null,
   };
 
   // Mask recipient wallet — never expose the real address to the public
@@ -300,9 +315,15 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     if (!useLegacy) {
       const ep = existingPayment as { created_by?: string | null; direction?: string; sender_user_id?: string | null; recipient_user_id?: string | null };
 
-      // Ownership check — private payments (from_sender) can only be updated by a payment party.
-      // from_recipient payment requests are public-facing: any authenticated payer may update them.
-      if (ep.direction !== "from_recipient") {
+      // Ownership check
+      if (ep.direction === "from_recipient") {
+        // Payment request link: any authenticated user may pay (sender_user_id is null).
+        // Once a sender is assigned, only they or the creator may update further.
+        if (ep.sender_user_id && ep.sender_user_id !== userId && ep.created_by !== userId) {
+          return NextResponse.json({ error: "Not authorized to update this payment" }, { status: 403 });
+        }
+      } else {
+        // from_sender: only creator/sender/recipient
         const isCreator   = !!ep.created_by && ep.created_by === userId;
         const isSender    = !!ep.sender_user_id && ep.sender_user_id === userId;
         const isRecipient = !!ep.recipient_user_id && ep.recipient_user_id === userId;

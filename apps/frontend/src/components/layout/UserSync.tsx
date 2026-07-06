@@ -20,7 +20,10 @@ export function UserSync() {
   const username = useAuthStore((s) => s.username ?? null);
   const setUsername = useAuthStore((s) => s.setUsername);
   const setAuth = useAuthStore((s) => s.setAuth);
+  const setLooUsername = useAuthStore((s) => s.setLooUsername);
+  const setTwitterUsername = useAuthStore((s) => s.setTwitterUsername);
   const setAtaMigrated = useAuthStore((s) => s.setAtaMigrated);
+  const isOnboardingOpen = useAuthStore((s) => s.isOnboardingOpen);
   const setIsOnboardingOpen = useAuthStore((s) => s.setIsOnboardingOpen);
   const walletCreatedRef = useRef(false);
   const [showUsernameModal, setShowUsernameModal] = useState(false);
@@ -29,6 +32,7 @@ export function UserSync() {
   const welcomeDismissedRef = useRef(false);
 
   const welcomeSessionDismissedKey = (uid: string) => `loofta_welcome_onboarding_dismissed_${uid}`;
+  const welcomePermanentDismissedKey = (uid: string) => `loofta_onboarding_done_${uid}`;
 
   // Ensure the user has a Solana embedded wallet. Privy's createOnLogin config handles new logins,
   // but users who signed up before Solana wallets were enabled land here with no wallet.
@@ -51,31 +55,54 @@ export function UserSync() {
       setUsername(null);
       return;
     }
+    // Wait for Privy to actually be ready. On a full page refresh, `authenticated`/`userId`
+    // come back true immediately from the persisted zustand store (useAuth deliberately
+    // returns cached auth state before Privy's client finishes initializing, to avoid
+    // flicker) — but getAccessToken() isn't reliable yet at that point. If this effect fired
+    // anyway, the fetch below goes out with no Authorization header, the backend 401s,
+    // `userData.user` comes back undefined, and the whole sync silently no-ops — leaving
+    // the stale persisted username on screen for the rest of the session, since nothing
+    // else re-triggers this effect (none of its other deps change on their own).
+    if (!privyReady) return;
 
     const checkUser = async () => {
       try {
-        const token = await getAccessToken();
-        const userResponse = await fetch("/api/users/check", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ email }),
-        });
-        const userData = await userResponse.json();
+        // privyReady doesn't strictly guarantee getAccessToken() resolves to a real token on
+        // the very first call right after it flips true — retry rather than silently leaving
+        // the stale persisted username on screen for the rest of the session if it doesn't.
+        let userData: { user?: Record<string, unknown> } | null = null;
+        for (const attempt of [0, 500, 1500]) {
+          if (attempt > 0) await new Promise((r) => setTimeout(r, attempt));
+          const token = await getAccessToken();
+          if (!token) continue;
+          const userResponse = await fetch("/api/users/check", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ email }),
+          });
+          if (!userResponse.ok) continue;
+          userData = await userResponse.json();
+          if (userData?.user) break;
+        }
 
-        if (userData.user) {
-          const usernameValue = userData.user.username || null;
+        if (userData?.user) {
+          const usernameValue = (userData.user.username as string | null) || null;
           setUsername(usernameValue);
-          setAtaMigrated("mainnet", userData.user.ataMigratedMainnet ?? false);
-          setAtaMigrated("devnet", userData.user.ataMigratedDevnet ?? false);
+          setLooUsername((userData.user.looUsername as string | null) ?? null);
+          setTwitterUsername((userData.user.twitterUsername as string | null) ?? null);
+          setAtaMigrated("mainnet", (userData.user.ataMigratedMainnet as boolean) ?? false);
+          setAtaMigrated("devnet", (userData.user.ataMigratedDevnet as boolean) ?? false);
           if (userData.user.email) {
             setAuth({
               authenticated: true,
               userId,
-              email: userData.user.email,
+              email: userData.user.email as string,
               username: usernameValue,
+              looUsername: (userData.user.looUsername as string | null) ?? null,
+              twitterUsername: (userData.user.twitterUsername as string | null) ?? null,
             });
           }
           // Onboarding (add-email, then welcome flow) shows after login; no separate username modal
@@ -86,7 +113,7 @@ export function UserSync() {
     };
 
     checkUser();
-  }, [authenticated, userId, email, setUsername, setAuth]);
+  }, [authenticated, userId, email, privyReady, setUsername, setAuth]);
 
   useEffect(() => {
     if (!authenticated || !userId) {
@@ -95,8 +122,17 @@ export function UserSync() {
     }
     welcomeDismissedRef.current =
       typeof window !== "undefined" &&
-      sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1";
+      (sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1" ||
+        localStorage.getItem(welcomePermanentDismissedKey(userId)) === "1");
   }, [authenticated, userId]);
+
+  // Allow external callers (e.g. "Change username" in settings) to re-open onboarding via store flag
+  useEffect(() => {
+    if (isOnboardingOpen && !showWelcomeOnboarding) {
+      welcomeDismissedRef.current = false;
+      setShowWelcomeOnboarding(true);
+    }
+  }, [isOnboardingOpen]);
 
   // Show onboarding right after login (add-email, then welcome flow). Don't wait for Solana wallet.
   useEffect(() => {
@@ -109,11 +145,17 @@ export function UserSync() {
 
     const run = async () => {
       try {
-        if (typeof window !== "undefined" && sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1") {
-          welcomeDismissedRef.current = true;
-          return;
+        // Fastest gate: localStorage is permanent and device-local — check before any network call.
+        // Users who completed onboarding (current or any prior session on this device) stop here.
+        if (typeof window !== "undefined") {
+          if (
+            localStorage.getItem(welcomePermanentDismissedKey(userId)) === "1" ||
+            sessionStorage.getItem(welcomeSessionDismissedKey(userId)) === "1"
+          ) {
+            welcomeDismissedRef.current = true;
+            return;
+          }
         }
-        if (welcomeDismissedRef.current) return;
 
         const token = await getAccessToken();
         const userResponse = await fetch("/api/users/check", {
@@ -125,11 +167,20 @@ export function UserSync() {
           body: JSON.stringify({ email }),
         });
         const userData = await userResponse.json();
-        if (cancelled || userData.exists !== false || userData.user?.skipOnboarding) return;
-        if (welcomeDismissedRef.current) return;
+        if (cancelled || userData.user?.skipOnboarding) return;
+
+        const isNewUser = userData.exists === false;
+        // Returning users with a username already set have already been through onboarding
+        if (!isNewUser && userData.user?.username) return;
+
+        // New users always see onboarding — bypass all dismissal caches
+        if (!isNewUser) {
+          if (welcomeDismissedRef.current) return;
+        }
 
         timer = setTimeout(() => {
-          if (!cancelled && !welcomeDismissedRef.current) {
+          if (!cancelled) {
+            welcomeDismissedRef.current = false;
             setShowWelcomeOnboarding(true);
             setIsOnboardingOpen(true);
           }
@@ -160,6 +211,8 @@ export function UserSync() {
       });
       const data = await r.json();
       if (data.user?.username) setUsername(data.user.username);
+      if (data.user?.looUsername !== undefined) setLooUsername(data.user.looUsername ?? null);
+      if (data.user?.twitterUsername !== undefined) setTwitterUsername(data.user.twitterUsername ?? null);
     } catch (e) {
       console.error("[UserSync] Error refreshing user:", e);
     }
@@ -181,11 +234,12 @@ export function UserSync() {
       {userId && (
         <WelcomeOnboarding
           open={showWelcomeOnboarding}
-          onClose={(_dontShowAgain) => {
+          onClose={() => {
             welcomeDismissedRef.current = true;
             if (typeof window !== "undefined") {
               try {
                 sessionStorage.setItem(welcomeSessionDismissedKey(userId), "1");
+                localStorage.setItem(welcomePermanentDismissedKey(userId), "1");
               } catch {
                 /* ignore quota / private mode */
               }
@@ -198,7 +252,11 @@ export function UserSync() {
           }}
           username={username ?? null}
           privyUserId={userId}
-          onEditUsername={refreshUser}
+          onUsernameSaved={(newUsername, looUsername, twitterUsername) => {
+            setUsername(newUsername);
+            if (looUsername !== undefined) setLooUsername(looUsername ?? null);
+            if (twitterUsername !== undefined) setTwitterUsername(twitterUsername ?? null);
+          }}
         />
       )}
     </>

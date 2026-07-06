@@ -10,8 +10,7 @@ import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
-// TODO: restore to 2026-07-01T13:00:00.000Z before launch
-const BLINK_START_DATE = new Date("2026-06-01T00:00:00.000Z"); // testing: always active
+const BLINK_START_DATE = new Date("2026-07-02T12:00:00.000Z");
 const BLINK_END_DATE = new Date("2026-08-15T00:00:00.000Z");
 
 type BlinkTaskKey = "setup_passkeys" | "two_deposits" | "two_private_payments";
@@ -30,8 +29,8 @@ interface BlinkCampaignData {
   qualified: boolean;
 }
 
-const TASK_META: Record<BlinkTaskKey, { icon: string }> = {
-  setup_passkeys: { icon: "🔑" },
+const TASK_META: Record<BlinkTaskKey, { icon: string; demoLink?: string }> = {
+  setup_passkeys: { icon: "🔑", demoLink: "https://x.com/looftapay/status/2072671554010264051" },
   two_deposits: { icon: "💳" },
   two_private_payments: { icon: "🔒" },
 };
@@ -117,6 +116,16 @@ function TaskCard({ task }: { task: BlinkTaskStatus }) {
             <p className="text-base text-slate-400 mt-0.5 leading-snug">
               {task.description}
             </p>
+            {meta.demoLink && (
+              <a
+                href={meta.demoLink}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 mt-1.5 text-sm text-[#F7C948]/70 hover:text-[#F7C948] transition-colors"
+              >
+                Watch demo →
+              </a>
+            )}
             {showProgress && (
               <ProgressBar value={task.progress!} max={task.total!} />
             )}
@@ -309,9 +318,9 @@ export default function BlinkCampaignPage() {
           <div className="space-y-3">
             {(
               [
-                { key: "setup_passkeys", label: "Set up Blink with passkeys", description: "Create your Blink account and secure it with passkeys." },
-                { key: "two_deposits", label: "Make at least 2 deposits with Blink", description: "Deposit funds into your Blink wallet twice during the campaign." },
-                { key: "two_private_payments", label: "Send 2 mainnet private payments", description: "Send at least 2 private payments on Loofta mainnet." },
+                { key: "setup_passkeys", label: "Set up Blink with passkeys", description: "Go to your balance, tap Top up, and deposit with Blink — this creates your Blink account and passkeys." },
+                { key: "two_deposits", label: "Make at least 2 deposits with Blink", description: "Deposit funds into your Blink wallet twice during the campaign. Make sure you have enough to cover private payments." },
+                { key: "two_private_payments", label: "Send 2 mainnet private payments", description: "Send at least 2 private payments on Loofta mainnet (min $5 each)" },
               ] as { key: BlinkTaskKey; label: string; description: string }[]
             ).map((task) => (
               <div

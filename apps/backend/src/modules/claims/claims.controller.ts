@@ -6,6 +6,7 @@ import {
   Body,
   Param,
   Req,
+  Headers,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -13,6 +14,7 @@ import {
   ServiceUnavailableException,
   UnauthorizedException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -21,7 +23,8 @@ import {
   ApiSecurity,
   ApiParam,
 } from '@nestjs/swagger';
-import { AuthGuard, OptionalAuthGuard, CronGuard } from '@/common/guards';
+import { AuthGuard, OptionalAuthGuard, CronGuard, RateLimitGuard } from '@/common/guards';
+import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 
 // All payment-mutating endpoints require authentication (create, pay, status, tx-hash).
 // Read-only claim endpoints (GET /:id, /:id/latest-intent) remain public via OptionalAuthGuard.
@@ -29,17 +32,21 @@ import { ClaimsService } from './claims.service';
 import { ConfigService } from '@nestjs/config';
 import { DepositService, DepositResult } from './deposit.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
+import { UsersService } from '../users/users.service';
 import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto, RequestDepositDto } from './dto';
 import { Claim, ClaimIntent } from './entities/claim.entity';
 
 @ApiTags('claims')
 @Controller('claims')
 export class ClaimsController {
+  private readonly logger = new Logger(ClaimsController.name);
+
   constructor(
     private readonly claimsService: ClaimsService,
     private readonly depositService: DepositService,
     private readonly solanaSponsor: SolanaSponsorService,
     private readonly configService: ConfigService,
+    private readonly usersService: UsersService,
   ) {}
 
   /**
@@ -47,7 +54,8 @@ export class ClaimsController {
    * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
   @Post('create')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'claims:create')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Create a new payment claim' })
   @ApiResponse({
@@ -73,7 +81,8 @@ export class ClaimsController {
    * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
   @Post('create-from-username')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'claims:create')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Create claim from username (wallet address stays server-side)' })
   @ApiResponse({
@@ -99,7 +108,8 @@ export class ClaimsController {
    * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
   @Post('create-from-email')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'claims:create')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Create claim from email (recipient may not have an account yet)' })
   @ApiResponse({
@@ -190,7 +200,8 @@ export class ClaimsController {
    */
   @Post(':id/claim')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(5, 60, 'claims:claim')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Claim a pending payment as the recipient' })
   @ApiParam({ name: 'id', description: 'Claim UUID' })
@@ -224,7 +235,8 @@ export class ClaimsController {
 
   @Post(':id/build-private-transfer')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'claims:build-transfer')
   @ApiSecurity('privy-auth')
   @ApiOperation({
     summary:
@@ -288,7 +300,8 @@ export class ClaimsController {
    * Get claim by ID
    */
   @Get(':id')
-  @UseGuards(OptionalAuthGuard)
+  @UseGuards(OptionalAuthGuard, RateLimitGuard)
+  @RateLimit(120, 60, 'claims:get')
   @ApiOperation({ summary: 'Get claim details' })
   @ApiParam({ name: 'id', description: 'Claim UUID' })
   @ApiResponse({ status: 200, description: 'Claim details', type: Claim })
@@ -302,7 +315,8 @@ export class ClaimsController {
    * Get claim with latest intent
    */
   @Get(':id/latest-intent')
-  @UseGuards(OptionalAuthGuard)
+  @UseGuards(OptionalAuthGuard, RateLimitGuard)
+  @RateLimit(120, 60, 'claims:get')
   @ApiOperation({ summary: 'Get claim with latest intent' })
   @ApiParam({ name: 'id', description: 'Claim UUID' })
   @ApiResponse({
@@ -428,7 +442,8 @@ export class ClaimsController {
    */
   @Post('solana-sponsor/prepare')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'claims:sponsor-prepare')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Prepare unsigned Solana transaction with sponsor fee payer' })
   @ApiResponse({
@@ -463,7 +478,8 @@ export class ClaimsController {
    */
   @Post('solana-sponsor/sign-and-broadcast')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(15, 60, 'claims:sponsor-broadcast')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Sign and broadcast sponsored Solana transaction' })
   @ApiResponse({
@@ -475,13 +491,47 @@ export class ClaimsController {
   @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
   async signAndBroadcastSponsored(
     @Body() body: { transaction: string; network?: string },
+    @Headers('x-loofta-internal') internalKey: string | undefined,
+    @Req() req: { user?: { id: string } },
   ): Promise<{ signature: string }> {
+    // Require the request to have come through our Next.js BFF, not directly.
+    const expectedSecret =
+      this.configService.get<string>('LOOFTA_INTERNAL_SECRET') ??
+      process.env.LOOFTA_INTERNAL_SECRET;
+    if (expectedSecret) {
+      if (!internalKey || internalKey !== expectedSecret) {
+        this.logger.warn('ClaimsController[sign-and-broadcast]: blocked direct call — missing/invalid X-Loofta-Internal');
+        throw new ForbiddenException('Direct API access not permitted');
+      }
+    } else {
+      this.logger.warn('ClaimsController[sign-and-broadcast]: LOOFTA_INTERNAL_SECRET not set — skipping internal-key check (set it in Railway to enable protection)');
+    }
+
     if (!body?.transaction || typeof body.transaction !== 'string') {
       throw new BadRequestException('Missing or invalid transaction');
     }
     if (!this.solanaSponsor.isAvailable()) {
       throw new ServiceUnavailableException('Solana fee sponsorship is not configured');
     }
+
+    // Verify every non-fee-payer signer in the transaction belongs to the authenticated user.
+    // Prevents an authenticated user from submitting a transaction signed by someone else's wallet.
+    const userId = req.user?.id;
+    if (userId) {
+      const userSigners = this.solanaSponsor.getRequiredUserSigners(body.transaction);
+      if (userSigners.length > 0) {
+        const checks = await Promise.all(
+          userSigners.map((addr) => this.usersService.isSolanaAddressInLinkedAccounts(userId, addr)),
+        );
+        if (!checks.some(Boolean)) {
+          this.logger.warn(
+            `ClaimsController[sign-and-broadcast]: userId=${userId} submitted tx with unlinked signer(s): ${userSigners.map((a) => a.slice(0, 8)).join(', ')}…`,
+          );
+          throw new ForbiddenException('Transaction signer does not match your account');
+        }
+      }
+    }
+
     try {
       return await this.solanaSponsor.signAndBroadcast(body.transaction, body.network);
     } catch (e: any) {
@@ -499,14 +549,15 @@ export class ClaimsController {
    */
   @Post('solana-sponsor/per/sign-and-broadcast')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(15, 60, 'claims:per-broadcast')
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Countersign and broadcast a user-signed MagicBlock PER transaction' })
   @ApiResponse({ status: 200, description: 'Transaction signature', schema: { properties: { signature: { type: 'string' } } } })
   @ApiResponse({ status: 400, description: 'Invalid transaction' })
   @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
   async signAndBroadcastPER(
-    @Body() body: { transaction: string; cluster?: 'devnet' | 'mainnet' },
+    @Body() body: { transaction: string },
   ): Promise<{ signature: string }> {
     if (!body?.transaction || typeof body.transaction !== 'string') {
       throw new BadRequestException('Missing or invalid transaction');
@@ -515,12 +566,7 @@ export class ClaimsController {
       throw new ServiceUnavailableException('Solana fee sponsorship is not configured');
     }
     try {
-      const { Connection } = await import('@solana/web3.js');
-      const heliusKey = this.configService.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
-      const conn = body.cluster === 'mainnet'
-        ? new Connection(heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com', 'confirmed')
-        : undefined;
-      return await this.solanaSponsor.signAndBroadcastPER(body.transaction, conn);
+      return await this.solanaSponsor.signAndBroadcastPER(body.transaction);
     } catch (e: any) {
       if (e?.message?.includes('not configured')) {
         throw new ServiceUnavailableException('Solana sponsorship is not configured');

@@ -5,14 +5,12 @@
     "history": "History",
     "profile": "Profile"
   },
-
   "AppShell": {
     "bannerMainnet": "Mainnet beta — send and receive private payments with real USDC. Pay anyone by email, X username, or Loofta username.",
     "bannerDevnet": "Send and receive private payments with MagicBlock PER — devnet. Pay anyone by email, X username, or Loofta username.",
     "bannerContact": "Questions? Contact us on Telegram",
     "dismissBanner": "Dismiss banner"
   },
-
   "MinimalHeader": {
     "balance": "Balance",
     "sparks": "Sparks",
@@ -30,7 +28,6 @@
     "earnSparks": "Earn Sparks for your activity",
     "requestAccess": "Request mainnet early access"
   },
-
   "SettingsPage": {
     "title": "Profile",
     "username": "Username",
@@ -42,7 +39,6 @@
     "signInPrompt": "Sign in to view your profile.",
     "goToHome": "Go to home"
   },
-
   "HistoryPage": {
     "title": "Payment history",
     "amountSent": "Amount sent",
@@ -73,7 +69,6 @@
       "EXPIRED": "Expired"
     }
   },
-
   "HomePage": {
     "send": "Send",
     "to": "To",
@@ -148,7 +143,6 @@
       }
     }
   },
-
   "MarketingPage": {
     "nav": {
       "payReceive": "Pay & Receive",
@@ -302,7 +296,6 @@
       "brand": "Brand"
     }
   },
-
   "UserMenu": {
     "username": "Username",
     "email": "Email",
@@ -350,7 +343,6 @@
     "loadingWallet": "Loading wallet...",
     "walletAutoCreated": "Wallet will be created automatically when needed."
   },
-
   "Footer": {
     "forYou": "For you",
     "forBusiness": "For business",
@@ -367,7 +359,6 @@
     "language": "Language",
     "currency": "Currency"
   },
-
   "WaitlistPage": {
     "eyebrow": "Mainnet Early Access",
     "headline1": "Most people will wait.",
@@ -393,18 +384,51 @@
       "shapeDesc": "Your workflow becomes the product roadmap. Early users decide priorities."
     },
     "steps": {
-      "name": { "question": "What's your name, or how do you want to be called?", "hint": "A nickname is totally fine." },
-      "email": { "question": "What's your email address?", "hint": "We'll send your early access details here." },
-      "telegram": { "question": "What's your Telegram handle?", "hint": "e.g. @yourhandle — leave blank to skip." },
-      "twitter": { "question": "What's your Twitter / X username?", "hint": "e.g. @yourname — leave blank to skip." },
-      "comms": { "question": "How do you prefer we reach out?" },
-      "age": { "question": "What's your age range?" },
-      "occupation": { "question": "How would you describe yourself?", "hint": "Pick the one that fits best." },
-      "volume": { "question": "How much in payments do you plan to receive monthly?" },
-      "paymentType": { "question": "Which payment style interests you most?", "hint": "Loofta supports both standard and fully private (shielded) payments." },
-      "fiatToCrypto": { "question": "Interested in letting people pay you in fiat and receiving in crypto?", "hint": "e.g. someone pays in USD via card, you receive USDC on-chain." },
-      "withdrawalRails": { "question": "Which withdrawal rails will you use?", "hint": "e.g. USDC, Revolut, Venmo, SEPA, BTC — be as specific as you like." },
-      "earn": { "question": "Are you interested in our Earn product?", "hint": "Earn yield on your balance while it sits in Loofta." }
+      "name": {
+        "question": "What's your name, or how do you want to be called?",
+        "hint": "A nickname is totally fine."
+      },
+      "email": {
+        "question": "What's your email address?",
+        "hint": "We'll send your early access details here."
+      },
+      "telegram": {
+        "question": "What's your Telegram handle?",
+        "hint": "e.g. @yourhandle — leave blank to skip."
+      },
+      "twitter": {
+        "question": "What's your Twitter / X username?",
+        "hint": "e.g. @yourname — leave blank to skip."
+      },
+      "comms": {
+        "question": "How do you prefer we reach out?"
+      },
+      "age": {
+        "question": "What's your age range?"
+      },
+      "occupation": {
+        "question": "How would you describe yourself?",
+        "hint": "Pick the one that fits best."
+      },
+      "volume": {
+        "question": "How much in payments do you plan to receive monthly?"
+      },
+      "paymentType": {
+        "question": "Which payment style interests you most?",
+        "hint": "Loofta supports both standard and fully private (shielded) payments."
+      },
+      "fiatToCrypto": {
+        "question": "Interested in letting people pay you in fiat and receiving in crypto?",
+        "hint": "e.g. someone pays in USD via card, you receive USDC on-chain."
+      },
+      "withdrawalRails": {
+        "question": "Which withdrawal rails will you use?",
+        "hint": "e.g. USDC, Revolut, Venmo, SEPA, BTC — be as specific as you like."
+      },
+      "earn": {
+        "question": "Are you interested in our Earn product?",
+        "hint": "Earn yield on your balance while it sits in Loofta."
+      }
     },
     "options": {
       "comms": {
@@ -474,7 +498,6 @@
       "perk4": "Direct line to the founding team"
     }
   },
-
   "RewardsPage": {
     "title": "Rewards",
     "subtitle": "Earn by completing campaigns",

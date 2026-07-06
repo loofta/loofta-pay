@@ -8,14 +8,17 @@ import { MinimalHeader } from "./MinimalHeader";
 import { UserSync } from "./UserSync";
 import dynamic from "next/dynamic";
 const UpdateJun26Modal = dynamic(() => import("@/components/UpdateJun26Modal").then(m => ({ default: m.UpdateJun26Modal })), { ssr: false });
+const MainnetLaunchCelebration = dynamic(() => import("@/components/MainnetLaunchCelebration").then(m => ({ default: m.MainnetLaunchCelebration })), { ssr: false });
 import { usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
 import { useTranslations } from "next-intl";
+import { useUpdateJun26 } from "@/hooks/useUpdateJun26";
 
 function ShellContent({ children }: { children: ReactNode }) {
   const t = useTranslations('AppShell');
   const pathname = usePathname();
   const networkMode = useAuthStore((s) => s.networkMode);
+  const { show: updateShow, resolved: updateResolved } = useUpdateJun26();
   const [bannerDismissed, setBannerDismissed] = useState(false);
   useEffect(() => {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
@@ -25,10 +28,9 @@ function ShellContent({ children }: { children: ReactNode }) {
   const showBottomNav = !isCheckoutPage && (
     pathname === '/' || pathname === '/app' ||
     pathname === '/history' || pathname === '/app/history' ||
-    pathname === '/settings' || pathname === '/app/settings' ||
+    pathname === '/settings' || pathname === '/app/settings' || pathname === '/app/profile' ||
     pathname?.startsWith('/c/') || pathname?.startsWith('/app/c/') ||
-    pathname === '/sparks' || pathname === '/app/sparks' ||
-    pathname === '/waitlist' || pathname === '/app/waitlist'
+    pathname === '/sparks' || pathname === '/app/sparks'
   );
   const showMinimalHeader = !isCheckoutPage;
   const showBanner = showMinimalHeader && !bannerDismissed;
@@ -50,7 +52,8 @@ function ShellContent({ children }: { children: ReactNode }) {
   return (
     <>
       <UserSync />
-      <UpdateJun26Modal />
+      <UpdateJun26Modal show={updateShow} />
+      <MainnetLaunchCelebration blockedByUpdate={!updateResolved || updateShow} />
       {showBanner && (
         <div className="relative w-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-3 mb-3 flex items-center text-white overflow-hidden">
           {/* Mobile: single-line scrolling ticker */}
