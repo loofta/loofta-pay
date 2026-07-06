@@ -189,10 +189,14 @@ export class MegapotService {
   }
 
   private normalizeRound(raw: any): MegapotRound {
+    // prize_pool.amount is in base units (decimals, e.g. 6 for USDC) — convert to a dollar value.
+    const prizePool = raw.prize_pool?.amount != null
+      ? String(Number(raw.prize_pool.amount) / 10 ** (raw.prize_pool.decimals ?? 6))
+      : raw.prizePool ?? null;
     return {
       ...raw,
       drawTime: raw.ended_at ?? raw.draw_time ?? raw.drawTime ?? null,
-      prizePool: raw.prize_pool?.amount ?? raw.prizePool ?? null,
+      prizePool,
       ticketsSold: raw.ticket_count ?? raw.ticketsSold ?? 0,
     };
   }
