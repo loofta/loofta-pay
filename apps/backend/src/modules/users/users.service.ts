@@ -2,6 +2,13 @@ import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common'
 import { SupabaseService } from '@/database/supabase.service';
 import { ConfigService } from '@nestjs/config';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
+import { MAINNET_WALLET_UPDATE_ID } from '@/common/force-update';
+import { RedisService } from '@/redis/redis.service';
+
+const FORCE_UPDATE_TTL = 60 * 60 * 24 * 7; // 7 days — completed state is permanent
+function forceUpdateKey(privyUserId: string, updateId: string) {
+  return `force-update:${privyUserId}:${updateId}`;
+}
 
 const SEARCH_CACHE_TTL_MS = 60 * 1000; // 1 min
 
@@ -31,6 +38,7 @@ export class UsersService {
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
     @Optional() private readonly privyVerification: PrivyVerificationService | null,
+    @Optional() private readonly redisService: RedisService | null,
   ) {}
 
   /**
@@ -49,6 +57,30 @@ export class UsersService {
       return null;
     }
     return { username: user.username ?? null };
+  }
+
+  /**
+   * Fast-path identity columns from our own DB — populated immediately (no external round-trip)
+   * whenever the frontend links/sets an account (see save-twitter-username, setup-username).
+   * Used by verifyRecipientIdentityForSendPayment as a first check before falling back to a
+   * live Privy API call, which can lag behind Privy's own eventual consistency right after a
+   * user links a new account.
+   */
+  async findIdentityByPrivyId(
+    privyUserId: string,
+  ): Promise<{ email: string | null; twitterUsername: string | null } | null> {
+    if (!privyUserId || !privyUserId.includes('did:privy:')) {
+      return null;
+    }
+    const { data: user, error } = await this.supabaseService.appUsers
+      .select('email, twitter_username')
+      .eq('privy_user_id', privyUserId)
+      .maybeSingle();
+
+    if (error || !user) {
+      return null;
+    }
+    return { email: user.email ?? null, twitterUsername: user.twitter_username ?? null };
   }
 
   /**
@@ -303,6 +335,19 @@ export class UsersService {
       const uname = (row?.username || '').replace(/^@/, '').toLowerCase().trim();
       return Boolean(uname && uname === normalized);
     }
+
+    // Fast path: our own DB, populated immediately (no external round-trip) whenever the
+    // frontend links/sets an account. Checked first because the live Privy API call below can
+    // briefly lag right after a user links a new account (Privy's own eventual consistency) —
+    // this fast path is what actually fixes that, not another layer of client-side retrying.
+    const identity = await this.findIdentityByPrivyId(privyUserId);
+    if (recipientType === 'email' && identity?.email) {
+      if (identity.email.toLowerCase().trim() === normalized) return true;
+    }
+    if (recipientType === 'twitter' && identity?.twitterUsername) {
+      if (identity.twitterUsername.replace(/^@/, '').toLowerCase().trim() === normalized) return true;
+    }
+
     const user = await this.getPrivyUser(privyUserId);
     if (!user) return false;
 
@@ -466,12 +511,39 @@ export class UsersService {
   }
 
   async getForceUpdateStatus(privyUserId: string, updateId: string): Promise<{ completed: boolean }> {
+    const cacheKey = forceUpdateKey(privyUserId, updateId);
+    if (this.redisService) {
+      const cached = await this.redisService.get(cacheKey).catch(() => null);
+      if (cached === '1') return { completed: true };
+    }
+
     const { data } = await this.supabaseService.forceUpdate
       .select('user_id')
       .eq('user_id', privyUserId)
       .eq('update_id', updateId)
       .maybeSingle();
-    return { completed: !!data };
+    const completed = !!data;
+    if (completed && this.redisService) {
+      await this.redisService.set(cacheKey, '1', FORCE_UPDATE_TTL).catch(() => {});
+    }
+    return { completed };
+  }
+
+  /** True once the recipient has completed the mandatory mainnet wallet-migration update.
+   *  Users created after 2026-06-29 were born on mainnet and are always considered complete. */
+  async hasCompletedMainnetWalletUpdate(privyUserId: string): Promise<boolean> {
+    const { completed } = await this.getForceUpdateStatus(privyUserId, MAINNET_WALLET_UPDATE_ID);
+    if (completed) return true;
+
+    // New users (after the migration was shipped) never had old ATAs to migrate.
+    const MIGRATION_CUTOFF = new Date('2026-06-28T00:00:00Z');
+    const { data: user } = await this.supabaseService.appUsers
+      .select('created_at')
+      .eq('privy_user_id', privyUserId)
+      .maybeSingle();
+    if (user?.created_at && new Date(user.created_at) >= MIGRATION_CUTOFF) return true;
+
+    return false;
   }
 
   async markForceUpdateComplete(privyUserId: string, updateId: string): Promise<void> {
@@ -480,6 +552,10 @@ export class UsersService {
     if (error) {
       this.logger.error('markForceUpdateComplete error:', error);
       throw new Error('Failed to mark update complete');
+    }
+    // Cache immediately so the next check from any device skips the DB
+    if (this.redisService) {
+      await this.redisService.set(forceUpdateKey(privyUserId, updateId), '1', FORCE_UPDATE_TTL).catch(() => {});
     }
   }
 }

@@ -1,16 +1,14 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { getSolanaCluster } from "@/lib/solanaCluster";
-
-// On devnet deployments, default to devnet mode so cross-chain options stay hidden.
-const CLUSTER_DEFAULT_NETWORK_MODE: "devnet" | "mainnet" =
-	getSolanaCluster() === "mainnet-beta" ? "mainnet" : "devnet";
+const CLUSTER_DEFAULT_NETWORK_MODE: "devnet" | "mainnet" = "mainnet";
 
 type AuthState = {
 	authenticated: boolean;
 	userId?: string;
 	email?: string;
 	username?: string | null;
+	looUsername?: string | null;
+	twitterUsername?: string | null;
 	mainnetAccess: boolean;
 	networkMode: "devnet" | "mainnet";
 	openShareModal: boolean;
@@ -21,8 +19,10 @@ type AuthState = {
 	ataMigratedMainnet: boolean | null; // null = not yet loaded from DB
 	ataMigratedDevnet: boolean | null;
 	setAtaMigrated: (network: "mainnet" | "devnet", value: boolean) => void;
-	setAuth: (v: { authenticated: boolean; userId?: string; email?: string; username?: string | null }) => void;
+	setAuth: (v: { authenticated: boolean; userId?: string; email?: string; username?: string | null; looUsername?: string | null; twitterUsername?: string | null }) => void;
 	setUsername: (username: string | null) => void;
+	setLooUsername: (v: string | null) => void;
+	setTwitterUsername: (v: string | null) => void;
 	setMainnetAccess: (access: boolean) => void;
 	setNetworkMode: (mode: "devnet" | "mainnet") => void;
 	setOpenShareModal: (open: boolean) => void;
@@ -43,11 +43,6 @@ function getAuthStorage() {
 	return localStorage;
 }
 
-function loadUserNetworkMode(userId: string): "devnet" | "mainnet" | null {
-	if (typeof window === "undefined") return null;
-	const v = localStorage.getItem(`loofta.net.${userId}`);
-	return v === "devnet" || v === "mainnet" ? v : null;
-}
 
 export const useAuthStore = create<AuthState>()(
 	persist(
@@ -56,7 +51,9 @@ export const useAuthStore = create<AuthState>()(
 			userId: undefined,
 			email: undefined,
 			username: undefined,
-			mainnetAccess: false,
+			looUsername: undefined,
+			twitterUsername: undefined,
+			mainnetAccess: true,
 			networkMode: CLUSTER_DEFAULT_NETWORK_MODE,
 			openShareModal: false,
 			openSettingsModal: false,
@@ -79,7 +76,9 @@ export const useAuthStore = create<AuthState>()(
 							userId: undefined,
 							email: undefined,
 							username: null,
-							mainnetAccess: false,
+							looUsername: null,
+							twitterUsername: null,
+							mainnetAccess: true,
 							networkMode: CLUSTER_DEFAULT_NETWORK_MODE,
 							tier: 'noob',
 							totalVolumeUsd: 0,
@@ -88,17 +87,20 @@ export const useAuthStore = create<AuthState>()(
 						};
 					}
 					const newUserId = v.userId ?? state.userId;
-					// Load per-user network preference (on login and on refresh with same user)
-					const savedMode = newUserId ? loadUserNetworkMode(newUserId) : null;
 					return {
 						authenticated: true,
 						userId: newUserId,
+						networkMode: "mainnet",
+						mainnetAccess: true,
 						email: v.email ?? state.email,
 						...(v.username !== undefined && { username: v.username }),
-						...(savedMode !== null && { networkMode: savedMode }),
+						...(v.looUsername !== undefined && { looUsername: v.looUsername }),
+						...(v.twitterUsername !== undefined && { twitterUsername: v.twitterUsername }),
 					};
 				}),
 			setUsername: (username) => set({ username }),
+			setLooUsername: (looUsername) => set({ looUsername }),
+			setTwitterUsername: (twitterUsername) => set({ twitterUsername }),
 			setMainnetAccess: (access) => set({ mainnetAccess: access }),
 			setNetworkMode: (mode) =>
 				set((state) => {
@@ -122,14 +124,11 @@ export const useAuthStore = create<AuthState>()(
 				mainnetAccess: state.mainnetAccess,
 				// networkMode is NOT persisted here — per-user preference lives in loofta.net.${userId}.
 			}),
-			// On rehydration, userId is restored synchronously. Use it to immediately load the
-			// per-user networkMode so the first render shows the correct network (no flash).
+			// Devnet retired: always force mainnet on rehydration regardless of any stored preference.
 			onRehydrateStorage: () => (state) => {
-				if (!state?.userId || typeof window === "undefined") return;
-				const saved = localStorage.getItem(`loofta.net.${state.userId}`);
-				if (saved === "mainnet" || saved === "devnet") {
-					state.networkMode = saved;
-				}
+				if (!state) return;
+				state.networkMode = "mainnet";
+				state.mainnetAccess = true;
 			},
 		}
 	)

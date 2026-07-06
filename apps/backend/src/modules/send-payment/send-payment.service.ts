@@ -5,7 +5,8 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { MAGICBLOCK_GAS_SOL, MAGICBLOCK_GAS_USDC, grossUpForMagicblockFee, decodeActualSenderDebit, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import { randomBytes } from 'crypto';
+import { MAGICBLOCK_GAS_SOL, MAGICBLOCK_GAS_USDC, estimateMagicblockGrossUp, decodeActualSenderDebit, type MagicblockPrivateTransferClientResponse } from '@/common/magicblock-private-transfer';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
@@ -31,6 +32,24 @@ const bs58 = bs58Module?.default ?? bs58Module;
 const DECIMALS = 6;
 /** SOL for burner to cover claim/reclaim gas (sent to burner, not fee payer). */
 const BURNER_SOL_LAMPORTS = 500_000;
+
+// Same generator as ClaimsService/TwitterPaymentsService — duplicated rather than shared per
+// this codebase's existing convention (see claims.service.ts, twitter-payments.service.ts).
+const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SHORT_ID_MAX_VALID = Math.floor(256 / SHORT_ID_ALPHABET.length) * SHORT_ID_ALPHABET.length;
+
+function generateShortId(length = 8): string {
+  let result = '';
+  while (result.length < length) {
+    const bytes = randomBytes(length - result.length + 4);
+    for (const byte of bytes) {
+      if (byte < SHORT_ID_MAX_VALID && result.length < length) {
+        result += SHORT_ID_ALPHABET[byte % SHORT_ID_ALPHABET.length];
+      }
+    }
+  }
+  return result;
+}
 
 @Injectable()
 export class SendPaymentService {
@@ -109,9 +128,8 @@ export class SendPaymentService {
     linkId: string,
     privyUserId: string,
     senderWallet: string,
-    requestCluster?: 'devnet' | 'mainnet',
-  ): Promise<MagicblockPrivateTransferTxResponse> {
-    const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
+  ): Promise<MagicblockPrivateTransferClientResponse> {
+    const { requestMagicblockPrivateTransfer, toClientResponse } = await import('@/common/magicblock-private-transfer');
     const link = await this.getOne(linkId);
     if (link.sender_user_id !== privyUserId) {
       throw new ForbiddenException('Not the sender of this link');
@@ -126,8 +144,7 @@ export class SendPaymentService {
       throw new BadRequestException('Invalid amount');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
-    const cluster = requestCluster
-      ?? (isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet');
+    const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
     const effectiveMint = cluster === 'mainnet'
       ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
       : new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || this.usdcMint.toBase58());
@@ -135,9 +152,10 @@ export class SendPaymentService {
     // MagicBlock gasless: flat 0.2 USDC relay fee charged via a prepended instruction.
     const relayFeeUnits = Math.round(MAGICBLOCK_GAS_USDC * 1_000_000);
 
-    const grossUnits = grossUpForMagicblockFee(baseUnits);
+    // Clean amount + exactOut:true — MagicBlock grosses up the sender's debit internally and
+    // guarantees the recipient nets exactly baseUnits. Never gross up `amount` ourselves.
     this.logger.log(
-      `[SendPayment] amount=${amountUsd} grossUnits=${grossUnits} relayFeeUnits=${relayFeeUnits}` +
+      `[SendPayment] amount=${amountUsd} baseUnits=${baseUnits} relayFeeUnits=${relayFeeUnits}` +
       ` cluster=${cluster} mint=${effectiveMint.toBase58().slice(0, 8)}… (gasless)`,
     );
 
@@ -145,12 +163,13 @@ export class SendPaymentService {
       from: senderWallet.trim(),
       to,
       mint: effectiveMint.toBase58(),
-      amount: grossUnits,
+      amount: baseUnits,
       cluster,
+      exactOut: true,
       gasless: true,
     });
 
-    const mbVolumeFeeUnits = grossUnits - baseUnits;
+    const mbVolumeFeeUnits = estimateMagicblockGrossUp(baseUnits) - baseUnits;
     const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, senderWallet.trim(), effectiveMint, this.connection);
     const estimatedFeeUnits = mbVolumeFeeUnits + relayFeeUnits;
     // For private transfers the main instruction is confidential; actualDebitUnits ≈ relay fee only.
@@ -160,8 +179,7 @@ export class SendPaymentService {
       : estimatedFeeUnits;
     this.logger.log(`[SendPayment] decoded relay=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits} (${actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits ? 'actual-relay' : 'estimated'})`);
 
-    return {
-      ...txResponse,
+    return toClientResponse(txResponse, {
       feeAmountUsdc: feeUnits / 1_000_000,
       feeBreakdown: {
         looftaBpsUsdc: mbVolumeFeeUnits / 1_000_000,
@@ -169,7 +187,7 @@ export class SendPaymentService {
         solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
         solPriceUsd: 0,
       },
-    };
+    });
   }
 
   /**
@@ -771,7 +789,7 @@ export class SendPaymentService {
       );
     }
 
-    const isDevnet = dto.cluster === 'mainnet' ? false : dto.cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
+    const isDevnet = isSolanaDevnetFromConfig(this.configService);
     const senderPubkey = new PublicKey(dto.sender_wallet.trim());
     const senderAta = await getAssociatedTokenAddress(this.usdcMint, senderPubkey);
 
@@ -999,7 +1017,7 @@ export class SendPaymentService {
       allRows.map((row) => {
         const amountUsd = parseFloat(String(row.amount || '0'));
         const baseUnits = Math.round(amountUsd * 1_000_000);
-        const grossUnits = grossUpForMagicblockFee(baseUnits);
+        const grossUnits = estimateMagicblockGrossUp(baseUnits);
         const computed = (grossUnits - baseUnits + Math.round(MAGICBLOCK_GAS_USDC * 1_000_000)) / 1_000_000;
         // Prefer frontend-passed value when available (may be more precise), otherwise fall back to estimate
         return [row.id as string, feeUsdc ?? computed];
@@ -1087,9 +1105,8 @@ export class SendPaymentService {
     recipientCount: number;
   }> {
     const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
-    const isDevnet = dto.cluster === 'mainnet' ? false : dto.cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
-    const cluster: 'devnet' | 'mainnet' | 'localhost' = dto.cluster
-      ?? (isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet');
+    const isDevnet = isSolanaDevnetFromConfig(this.configService);
+    const cluster: 'devnet' | 'mainnet' | 'localhost' = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isDevnet ? 'devnet' : 'mainnet';
     const effectiveMint = cluster === 'mainnet'
       ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
       : new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || this.usdcMint.toBase58());
@@ -1186,18 +1203,20 @@ export class SendPaymentService {
       const linkUrl = `${this.baseUrl}/c/${paymentId}`;
 
       const baseUnits = Math.round(amountUsd * 1_000_000);
-      const grossUnits = grossUpForMagicblockFee(baseUnits);
+      // Clean amount + exactOut:true — MagicBlock grosses up its own internal debit so the
+      // recipient nets exactly baseUnits. Never gross up `amount` ourselves.
       const txResponse = await requestMagicblockPrivateTransfer({
         from: dto.sender_wallet.trim(),
         to: toPubkey,
         mint: effectiveMint.toBase58(),
-        amount: grossUnits,
+        amount: baseUnits,
         cluster: cluster === 'localhost' ? 'devnet' : cluster,
+        exactOut: true,
         gasless: true,
       });
 
       const relayFeeUnits = Math.round(MAGICBLOCK_GAS_USDC * 1_000_000);
-      const feeAmountUsdc = (grossUnits - baseUnits + relayFeeUnits) / 1_000_000;
+      const feeAmountUsdc = (estimateMagicblockGrossUp(baseUnits) - baseUnits + relayFeeUnits) / 1_000_000;
       this.logger.log(`[MultiSendPrivate] payment=${paymentId} recipient=${normalizedId} amount=${amountStr} sendTo=${txResponse.sendTo}`);
 
       transactions.push({
@@ -1227,13 +1246,13 @@ export class SendPaymentService {
     dto: BuildMultiSendDto,
   ): Promise<{
     payment_ids: string[];
-    links: Array<{ id: string; link: string; recipient_identifier: string; amount: string }>;
+    links: Array<{ id: string; link: string; short_id: string; recipient_identifier: string; amount: string }>;
     fee_items: Array<{ payment_id: string; recipient_identifier: string; amount: string; fee_usdc: number }>;
     total_amount_usdc: number;
     total_fee_usdc: number;
     recipient_count: number;
   }> {
-    const isDevnet = dto.cluster === 'mainnet' ? false : dto.cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
+    const isDevnet = isSolanaDevnetFromConfig(this.configService);
 
     if (!isDevnet) {
       const { data: waitlistRow } = await this.supabaseService.mainnetWaitlist
@@ -1250,7 +1269,7 @@ export class SendPaymentService {
     const PENDING_USERNAME_PREFIX = 'PENDING_USERNAME:';
 
     const payment_ids: string[] = [];
-    const links: Array<{ id: string; link: string; recipient_identifier: string; amount: string }> = [];
+    const links: Array<{ id: string; link: string; short_id: string; recipient_identifier: string; amount: string }> = [];
     const fee_items: Array<{ payment_id: string; recipient_identifier: string; amount: string; fee_usdc: number }> = [];
     let total_amount_usdc = 0;
     let total_fee_usdc = 0;
@@ -1259,6 +1278,7 @@ export class SendPaymentService {
       const normalizedId = this.normalizeIdentifier(recipient.recipient_type, recipient.recipient_identifier);
       const amountStr = String(recipient.amount);
       const amountUsd = parseFloat(amountStr);
+      const shortId = generateShortId();
 
       let resolvedPubkey: string | null = null;
       let recipientUserId: string | null = null;
@@ -1299,6 +1319,7 @@ export class SendPaymentService {
           to_chain: 'solana',
           to_token: 'USDC',
           is_devnet: isDevnet,
+          short_id: shortId,
         };
       } else {
         const burner = Keypair.generate();
@@ -1320,6 +1341,7 @@ export class SendPaymentService {
           to_chain: 'solana',
           to_token: 'USDC',
           is_devnet: isDevnet,
+          short_id: shortId,
           recipient_was_unregistered: true,
           burner_address: burner.publicKey.toBase58(),
           burner_encrypted_secret: burnerEncryptedSecret,
@@ -1336,11 +1358,11 @@ export class SendPaymentService {
       }
 
       const paymentId = (data as { id: string }).id;
-      const linkUrl = `${this.baseUrl}/c/${paymentId}`;
+      const linkUrl = `${this.baseUrl}/c/${shortId}`;
 
       // Fee estimate (no actual MagicBlock call — estimated from formula)
       const baseUnits = Math.round(amountUsd * 1_000_000);
-      const grossUnits = grossUpForMagicblockFee(baseUnits);
+      const grossUnits = estimateMagicblockGrossUp(baseUnits);
       const feeUsdc = (grossUnits - baseUnits + Math.round(MAGICBLOCK_GAS_USDC * 1_000_000)) / 1_000_000;
 
       this.logger.log(
@@ -1348,7 +1370,7 @@ export class SendPaymentService {
       );
 
       payment_ids.push(paymentId);
-      links.push({ id: paymentId, link: linkUrl, recipient_identifier: normalizedId, amount: amountStr });
+      links.push({ id: paymentId, link: linkUrl, short_id: shortId, recipient_identifier: normalizedId, amount: amountStr });
       fee_items.push({ payment_id: paymentId, recipient_identifier: normalizedId, amount: amountStr, fee_usdc: feeUsdc });
       total_amount_usdc += amountUsd;
       total_fee_usdc += feeUsdc;

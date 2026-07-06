@@ -11,11 +11,16 @@ import type { Connection } from '@solana/web3.js';
 const log = new Logger('MagicblockPrivateTransfer');
 
 /**
- * CONFIRMED fee mechanics (from live devnet test):
- *  - `amount` = gross USDC taken from sender. MagicBlock deducts 10 BPS before routing to recipient.
- *  - 0.002 SOL flat fee is charged as USDC from the sender via a gasless relay instruction.
- *
- * Gross-up formula: to ensure recipient gets exactly N units, send ceil(N * 10000 / 9990).
+ * CONFIRMED fee mechanics (verified against MagicBlock's own web app and the official `one/`
+ * reference implementation):
+ *  - Pass the clean, exact intended amount as `amount` plus `exactOut: true` — MagicBlock grosses
+ *    up the sender's debit INTERNALLY (its own two-hop routing: sender → MagicBlock-controlled
+ *    intermediate account for the gross amount, then a second transfer delivers the net amount to
+ *    the recipient) and guarantees the recipient nets exactly `amount`. Never gross up `amount`
+ *    ourselves — without exactOut, MagicBlock has no reason to run its fee-taking second hop and
+ *    just moves whatever `amount` you send in full, so a manual gross-up is pure overpayment with
+ *    nothing collected in return (this was a real bug — see git history on grossUpForMagicblockFee).
+ *  - 0.002 SOL flat fee is charged as USDC from the sender via a separate gasless relay instruction.
  */
 export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // deducted from USDC amount by MagicBlock
 export const MAGICBLOCK_GAS_SOL = 0.002;     // actual MagicBlock SOL charge (documented)
@@ -78,12 +83,12 @@ export async function fetchSolPriceUsd(): Promise<number | null> {
 }
 
 /**
- * Gross-up USDC base units so the recipient receives exactly `netBaseUnits` after
- * MagicBlock deducts their 10 BPS volume fee from `amount`.
- * The 0.002 SOL flat fee is charged in native SOL by MagicBlock — not included here.
+ * Estimated gross debit for UI display only — NOT what's sent as `amount` to MagicBlock.
+ * The real transfer always sends the clean `netBaseUnits` with `exactOut: true` and lets
+ * MagicBlock compute its own gross-up internally (see requestMagicblockPrivateTransfer).
+ * This just approximates that internal math so a "platform fee" line has something to show.
  */
-export function grossUpForMagicblockFee(netBaseUnits: number): number {
-  // +1 extra unit ($0.000001) as a rounding buffer in case MagicBlock rounds their fee up.
+export function estimateMagicblockGrossUp(netBaseUnits: number): number {
   return Math.ceil((netBaseUnits * 10_000) / (10_000 - MAGICBLOCK_VOLUME_FEE_BPS)) + 1;
 }
 
@@ -119,6 +124,19 @@ export function magicblockPrivateDelayForCluster(cluster: 'devnet' | 'mainnet' |
   return { minDelayMs: '0', maxDelayMs: '0' };
 }
 
+/**
+ * Picks the delivery split count for a private transfer. Randomized (not a pure function of
+ * amount) so identical dollar amounts don't always produce the same split count — a formula like
+ * `2 + floor(amount) % 3` is itself a fingerprint once an observer notices the pattern. Still
+ * loosely scales with amount (larger transfers get a wider band) since bigger payments benefit
+ * from more mixing surface anyway.
+ */
+export function computeSplitForAmount(baseUnits: number): number {
+  const amountUsd = baseUnits / 1_000_000;
+  const [min, max] = amountUsd >= 500 ? [5, 10] : amountUsd >= 50 ? [4, 8] : amountUsd >= 20 ? [3, 6] : [2, 5];
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
 export interface MagicblockPrivateTransferTxResponse {
   kind: string;
   version: 'legacy' | 'v0';
@@ -140,6 +158,41 @@ export interface MagicblockPrivateTransferTxResponse {
   solSwapTransactionBase64?: string;
 }
 
+/**
+ * What actually goes to the browser for a private-transfer build. Deliberately NOT the raw
+ * MagicBlock response — `kind`, `recentBlockhash`, `lastValidBlockHeight`, `instructionCount`,
+ * `requiredSigners` (includes MagicBlock's own relay/crank address) and `validator` are all
+ * internal routing details the client doesn't need to sign or broadcast the transaction, and
+ * spreading the raw upstream object (as the old code did) leaks whatever MagicBlock includes,
+ * documented or not — same goal as this file's original "keeps recipient out of the browser
+ * network tab" design, just applied to the rest of the payload too.
+ */
+export interface MagicblockPrivateTransferClientResponse {
+  transactionBase64: string;
+  version: 'legacy' | 'v0';
+  sendTo: 'base' | 'ephemeral';
+  feeAmountUsdc?: number;
+  feeBreakdown?: {
+    looftaBpsUsdc: number;
+    solRecoveryUsdc: number;
+    solLamports: number;
+    solPriceUsd: number;
+  };
+}
+
+export function toClientResponse(
+  txResponse: MagicblockPrivateTransferTxResponse,
+  overrides: { feeAmountUsdc: number; feeBreakdown: MagicblockPrivateTransferClientResponse['feeBreakdown'] },
+): MagicblockPrivateTransferClientResponse {
+  return {
+    transactionBase64: txResponse.transactionBase64,
+    version: txResponse.version,
+    sendTo: txResponse.sendTo,
+    feeAmountUsdc: overrides.feeAmountUsdc,
+    feeBreakdown: overrides.feeBreakdown,
+  };
+}
+
 export async function requestMagicblockPrivateTransfer(params: {
   from: string;
   to: string;
@@ -153,6 +206,11 @@ export async function requestMagicblockPrivateTransfer(params: {
   minDelayMs?: number;
   /** Override cluster-default max delay (ms). Pass 0 for instant. */
   maxDelayMs?: number;
+  /** When true, `amount` is what the destination receives net — MagicBlock grosses up the
+   *  sender's debit internally to cover its own fee. This is the official reference pattern
+   *  (confirmed against MagicBlock's own web app and the payments-demo `one/` reference repo):
+   *  never gross up `amount` ourselves, just pass the clean intended amount with exactOut: true. */
+  exactOut?: boolean;
 }): Promise<MagicblockPrivateTransferTxResponse> {
   const defaults = magicblockPrivateDelayForCluster(params.cluster);
   const minDelayMs = params.minDelayMs !== undefined ? String(params.minDelayMs) : defaults.minDelayMs;
@@ -171,7 +229,9 @@ export async function requestMagicblockPrivateTransfer(params: {
     initVaultIfMissing: false,
     minDelayMs,
     maxDelayMs,
+    ...(params.cluster === 'mainnet' ? { split: computeSplitForAmount(params.amount) } : {}),
     ...(params.gasless ? { gasless: true } : {}),
+    ...(params.exactOut !== undefined ? { exactOut: params.exactOut } : {}),
   };
   log.log(`POST https://payments.magicblock.app/v1/spl/transfer payload=${JSON.stringify(body)}`);
 
@@ -270,3 +330,13 @@ export async function decodeActualSenderDebit(
     return null;
   }
 }
+
+// NOTE: an earlier version of this file appended a Loofta fee instruction directly onto
+// MagicBlock's built transaction (decompile -> push instruction -> recompile -> re-serialize).
+// That broke real payments: gasless transfers have MagicBlock's own relay/crank account as a
+// REQUIRED CO-SIGNER (confirmed via requiredSigners in production), and it's presigned
+// server-side before the transaction reaches us. Rebuilding the message invalidates that
+// existing signature, so the tx fails "did not pass signature verification" once the sender
+// signs their part. Any future attempt at appending a Loofta-collected fee needs either a
+// genuinely separate transaction (extra signature prompt) or a MagicBlock API param that lets
+// them build our instruction in — not post-hoc modification of their returned transaction.

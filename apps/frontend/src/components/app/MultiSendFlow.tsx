@@ -427,7 +427,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           ${phase.totalUsdc.toFixed(2)} USDC sent to {phase.recipientCount} recipient{phase.recipientCount > 1 ? "s" : ""}.
         </p>
         {!!phase.failedCount && (
-          <p className="text-amber-400 text-base md:text-sm">
+          <p className="text-amber-400 text-base">
             {phase.failedCount} payment{phase.failedCount > 1 ? "s" : ""} failed to confirm on-chain. The funds were not deducted for those.
           </p>
         )}
@@ -438,7 +438,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-white text-base font-medium truncate">{item.recipient_identifier}</p>
-                  <p className="text-slate-400 text-base md:text-sm">${parseFloat(item.amount).toFixed(2)} USDC</p>
+                  <p className="text-slate-400 text-base">${parseFloat(item.amount).toFixed(2)} USDC</p>
                 </div>
                 <a
                   href={item.link}
@@ -453,7 +453,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
               <button
                 type="button"
                 onClick={() => navigator.clipboard.writeText(item.link)}
-                className="w-full flex items-center justify-center gap-1.5 text-base md:text-sm text-slate-400 hover:text-white hover:bg-white/10 border border-white/10 rounded-lg py-1.5 transition-colors"
+                className="w-full flex items-center justify-center gap-1.5 text-base text-slate-400 hover:text-white hover:bg-white/10 border border-white/10 rounded-lg py-1.5 transition-colors"
               >
                 <Copy className="w-3.5 h-3.5" />
                 Copy link
@@ -512,7 +512,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
         <div className="space-y-1">
           {/* Header */}
-          <div className="flex justify-between text-slate-500 text-base px-1 pb-1">
+          <div className="flex justify-between text-slate-400 text-base px-1 pb-1">
             <span>Recipient</span>
             <span className="flex gap-5 shrink-0">
               <span>Amount</span>
@@ -527,17 +527,17 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
             return (
               <div key={row.id} className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2.5 gap-2">
                 <div className="min-w-0">
-                  <p className="text-slate-400 text-base md:text-sm">Recipient {idx + 1}</p>
+                  <p className="text-slate-400 text-base">Recipient {idx + 1}</p>
                   <p className="text-white text-base font-medium truncate">
                     {row.recipient.trim().replace(/^@/, "")}
                   </p>
                   {row.message.trim() && (
-                    <p className="text-slate-500 text-base md:text-sm truncate">{row.message.trim()}</p>
+                    <p className="text-slate-400 text-base truncate">{row.message.trim()}</p>
                   )}
                 </div>
                 <span className="flex gap-5 text-right shrink-0">
-                  <span className="text-white text-base md:text-sm">${amt.toFixed(2)}</span>
-                  <span className="text-slate-400 text-base md:text-sm">+${fee.toFixed(2)}</span>
+                  <span className="text-white text-base">${amt.toFixed(2)}</span>
+                  <span className="text-slate-400 text-base">+${fee.toFixed(2)}</span>
                 </span>
               </div>
             );
@@ -562,7 +562,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           })()}
         </div>
 
-        <p className="text-slate-500 text-base md:text-sm">
+        <p className="text-slate-400 text-base">
           Fees are estimated. Exact breakdown confirmed before payment.
         </p>
 
@@ -585,7 +585,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                   </svg>
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-white text-base">Loofta wallet</div>
-                    <div className="text-base md:text-sm text-amber-400 mt-0.5">
+                    <div className="text-base text-amber-400 mt-0.5">
                       ${solanaPayment.balanceUSD.toFixed(2)} available — ${reviewTotalWithFees.toFixed(2)} needed (incl. fees)
                     </div>
                   </div>
@@ -636,7 +636,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                     {phase.kind === "awaiting_signature" && "Approve in your wallet"}
                     {phase.kind === "broadcasting" && "Finishing on-chain steps"}
                   </DialogTitle>
-                  <p className="pt-2 text-base md:text-sm text-center text-muted-foreground max-w-sm">
+                  <p className="pt-2 text-base text-center text-muted-foreground max-w-sm">
                     {(phase.kind === "creating" || phase.kind === "building") &&
                       "Setting up transactions. Please keep this window open."}
                     {phase.kind === "awaiting_signature" && (
@@ -652,7 +652,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                       "Broadcasting to Solana. Confirmations can take a few seconds each."}
                   </p>
                 </DialogHeader>
-                <div className="rounded-lg border border-amber-200 bg-amber-50/90 p-3 text-center text-base md:text-sm text-amber-950">
+                <div className="rounded-lg border border-amber-200 bg-amber-50/90 p-3 text-center text-base text-amber-950">
                   Stay on this page until the payment completes.
                 </div>
               </>
@@ -662,7 +662,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
             {phase.kind === "error" && (
               <>
                 <DialogTitle className="text-white text-lg font-semibold mb-1">Payment failed</DialogTitle>
-                <p className="text-red-400 text-base md:text-sm pt-2">{phase.message}</p>
+                <p className="text-red-400 text-base pt-2">{phase.message}</p>
                 <div className="flex gap-2 mt-4">
                   <Button
                     variant="ghost"
@@ -727,26 +727,26 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
               : "border-white/15 hover:border-white/30 hover:bg-white/5"
           }`}
         >
-          <UploadCloud className={`w-6 h-6 mx-auto mb-2 transition-colors ${isDragOver ? "text-orange-400" : "text-slate-500"}`} />
-          <p className="text-white text-sm font-semibold">Import from CSV</p>
-          <p className="text-slate-500 text-sm mt-0.5">Drag & drop or click to browse</p>
-          <p className="text-slate-600 text-sm font-mono mt-2">recipient, amount, message</p>
+          <UploadCloud className={`w-6 h-6 mx-auto mb-2 transition-colors ${isDragOver ? "text-orange-400" : "text-slate-400"}`} />
+          <p className="text-white text-base font-semibold">Import from CSV</p>
+          <p className="text-slate-400 text-base mt-0.5">Drag & drop or click to browse</p>
+          <p className="text-slate-400 text-base font-mono mt-2">recipient, amount, message</p>
         </div>
 
         <div className="flex items-center justify-center gap-4">
           <button
             type="button"
             onClick={downloadExample}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-white text-sm transition-colors"
+            className="flex items-center gap-1.5 text-slate-400 hover:text-white text-base transition-colors"
           >
             <FileDown className="w-3.5 h-3.5" />
             Download example
           </button>
-          <span className="text-slate-700 text-sm">·</span>
+          <span className="text-slate-500 text-base">·</span>
           <button
             type="button"
             onClick={() => { setShowPaste((v) => !v); setCsvErrors([]); }}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-white text-sm transition-colors"
+            className="flex items-center gap-1.5 text-slate-400 hover:text-white text-base transition-colors"
           >
             <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
               <rect x="5" y="1" width="9" height="12" rx="1.5" />
@@ -759,12 +759,12 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
         {showPaste && (
           <div className="rounded-xl border border-white/15 bg-white/5 p-3 space-y-2">
-            <p className="text-slate-400 text-sm">Paste CSV or spreadsheet rows — comma or tab separated</p>
+            <p className="text-slate-400 text-base">Paste CSV or spreadsheet rows — comma or tab separated</p>
             <textarea
               autoFocus
               rows={5}
               placeholder={"alice@email.com, 100, Thanks!\nbob_username, 50\ncarol@email.com, 200, Invoice #42"}
-              className="w-full rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-slate-600 text-sm font-mono p-2.5 resize-none focus:outline-none focus:border-white/30"
+              className="w-full rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-slate-500 text-base font-mono p-2.5 resize-none focus:outline-none focus:border-white/30"
               onPaste={(e) => {
                 const text = e.clipboardData.getData("text");
                 if (!text.trim()) return;
@@ -786,7 +786,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         {csvErrors.length > 0 && (
           <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 space-y-1">
             {csvErrors.map((err, i) => (
-              <p key={i} className="text-red-400 text-sm flex items-start gap-1.5">
+              <p key={i} className="text-red-400 text-base flex items-start gap-1.5">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                 {err}
               </p>
@@ -796,16 +796,16 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       </div>
 
       <div className="flex items-center gap-3">
-        <div className="h-px flex-1 bg-white/10" />
-        <span className="text-slate-500 text-sm shrink-0">or add manually</span>
-        <div className="h-px flex-1 bg-white/10" />
+        <div className="h-px flex-1 bg-white/15" />
+        <span className="text-slate-300 text-base font-medium shrink-0">or add manually</span>
+        <div className="h-px flex-1 bg-white/15" />
       </div>
 
       <div className="space-y-3">
         {rows.map((row, idx) => (
           <div key={row.id} className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="text-slate-400 text-base font-medium">Recipient {idx + 1}</span>
+              <span className="text-slate-300 text-base font-semibold">Recipient {idx + 1}</span>
               {rows.length > 2 && (
                 <button
                   type="button"
@@ -819,17 +819,17 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
             </div>
 
             <div>
-              <Label className="text-slate-400 text-base md:text-sm">To (username or email)</Label>
+              <Label className="text-slate-400 text-base">To (username or email)</Label>
               <Input
                 value={row.recipient}
                 onChange={(e) => updateRow(row.id, "recipient", e.target.value)}
                 placeholder="alice or alice@email.com"
-                className="mt-1 h-10 bg-white/5 border-white/10 text-white placeholder:text-slate-500 text-base"
+                className="mt-1 h-10 bg-white/5 border-white/10 text-white placeholder:text-slate-400 text-base md:text-base"
               />
             </div>
 
             <div>
-              <Label className="text-slate-400 text-base md:text-sm">Amount (USD)</Label>
+              <Label className="text-slate-400 text-base">Amount (USD)</Label>
               <Input
                 type="text"
                 inputMode="numeric"
@@ -844,15 +844,15 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                   updateRow(row.id, "amount", cleaned);
                 }}
                 placeholder="100"
-                className="mt-1 h-10 bg-white/5 border-white/10 text-white placeholder:text-slate-500 text-base"
+                className="mt-1 h-10 bg-white/5 border-white/10 text-white placeholder:text-slate-400 text-base md:text-base"
               />
               {row.amount && parseFloat(row.amount) > 0 && parseFloat(row.amount) < MIN_AMOUNT && (
-                <p className="text-amber-400 text-base md:text-sm mt-0.5">Min $5</p>
+                <p className="text-amber-400 text-base mt-0.5">Min $5</p>
               )}
             </div>
 
             <div>
-              <Label className="text-slate-400 text-base md:text-sm">Message (optional)</Label>
+              <Label className="text-slate-400 text-base">Message (optional)</Label>
               <MessageInput
                 value={row.message}
                 onChange={(v) => updateRow(row.id, "message", v)}
@@ -860,7 +860,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                 onGifChange={(url) => updateRow(row.id, "gif", url ?? "")}
                 placeholder="Optional note"
                 maxLength={500}
-                className="mt-1 [&_input]:h-10 [&_input]:bg-white/5 [&_input]:border-white/10 [&_input]:text-white [&_input]:placeholder:text-slate-500"
+                className="mt-1 [&_input]:h-10 [&_input]:bg-white/5 [&_input]:border-white/10 [&_input]:text-white [&_input]:placeholder:text-slate-400 [&_input]:text-base"
               />
             </div>
           </div>
@@ -872,7 +872,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           <button
             type="button"
             onClick={addRow}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-white text-base md:text-sm font-medium transition-colors"
+            className="flex items-center gap-1.5 text-slate-400 hover:text-white text-base font-medium transition-colors"
           >
             <PlusIcon className="w-4 h-4" />
             Add recipient
@@ -882,7 +882,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           <button
             type="button"
             onClick={() => { setRows(defaultRows()); setCsvErrors([]); setShowPaste(false); }}
-            className="text-slate-500 hover:text-red-400 text-base md:text-sm transition-colors"
+            className="text-slate-500 hover:text-red-400 text-base transition-colors"
           >
             Clear all
           </button>
@@ -895,7 +895,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       </div>
 
       {filledRows.length === 1 && (
-        <p className="text-amber-400 text-base md:text-sm text-center">Multi-send requires at least 2 recipients</p>
+        <p className="text-amber-400 text-base text-center">Multi-send requires at least 2 recipients</p>
       )}
 
       <Button
@@ -906,7 +906,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         {!authenticated ? "Sign in to continue" : "Continue to pay"}
       </Button>
 
-      <p className="text-slate-500 text-base md:text-sm text-center">
+      <p className="text-slate-400 text-base text-center">
         All transfers are private MagicBlock payments. Each recipient gets their own payment link.
       </p>
     </div>

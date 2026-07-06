@@ -38,14 +38,15 @@ import { useAuthStore } from "@/store/auth";
 import { TokenIcon } from "@/components/TokenIcon";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Share2 } from "lucide-react";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check } from "lucide-react";
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
+import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 const EVM_CHAIN_SET = new Set(["eth", "ethereum", "arb", "arbitrum", "base", "op", "optimism", "bsc", "avax", "avalanche", "polygon", "matic", "fantom", "ftm", "gnosis", "linea", "scroll", "zksync", "zk", "blast", "pol"]);
 function isEvmChainId(chain?: string): boolean { return EVM_CHAIN_SET.has(String(chain || "").toLowerCase()); }
-import { usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
+import { usePrivy, useWallets as useEvmWallets, useLinkAccount } from "@privy-io/react-auth";
 import {
   useWallets as useSolanaWallets,
   useSignTransaction as usePrivySolanaSignTransaction,
@@ -67,7 +68,6 @@ import {
   privatePaymentFundsAppearCopy,
   privatePaymentWaitingAfterSenderCopy,
 } from "@/lib/privatePaymentCopy";
-import { getCachedMainnetAccess, setCachedMainnetAccess } from "@/lib/mainnetAccessCache";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
@@ -197,8 +197,8 @@ function ClaimPageSenderShareView({
   const shareId = shortCode || claimId;
   const claimLink =
     typeof window !== "undefined"
-      ? `${window.location.origin}/c/${shareId}`
-      : `https://pay.loofta.xyz/c/${shareId}`;
+      ? `${window.location.origin}/share/${shareId}`
+      : `https://pay.loofta.xyz/share/${shareId}`;
 
   const handleReclaim = async () => {
     if (!userId) {
@@ -242,21 +242,8 @@ function ClaimPageSenderShareView({
     }
   };
 
-  const handleShare = () => {
-    const who = recipientLabel ? ` (${recipientLabel})` : "";
-    if (navigator.share) {
-      navigator
-        .share({
-          title: "Payment for you",
-          text: `You have a payment of $${amount.toFixed(2)} to claim${who}. Sign in or sign up on Loofta to claim it.`,
-          url: claimLink,
-        })
-        .then(() => toast({ title: "Shared!" }))
-        .catch(() => handleCopy());
-    } else {
-      handleCopy();
-    }
-  };
+  const shareRecipientSuffix = recipientLabel ? ` (${recipientLabel})` : "";
+  const shareText = `You have a payment of $${amount.toFixed(2)} to claim${shareRecipientSuffix}. Sign in or sign up on Loofta to claim it.`;
 
   return (
     <div className="mt-6 text-center py-12">
@@ -286,14 +273,12 @@ function ClaimPageSenderShareView({
             {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 !text-slate-900" />}
           </Button>
         </div>
-        <Button
-          type="button"
-          onClick={handleShare}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90 shrink-0"
-        >
-          <Share2 className="h-5 w-5" />
-          Share
-        </Button>
+        <ShareLinkMenu
+          url={claimLink}
+          title="Payment for you"
+          text={shareText}
+          triggerClassName="px-6 py-3"
+        />
       </div>
       {/* Reclaim only on localhost, when not cancelled, creator is logged in, and burner has balance */}
       {isLocalhost && !isCancelled && userId && canReclaim === true && (
@@ -398,8 +383,14 @@ async function fetchClaim(id: string, authToken?: string | null) {
   const authHeaders: Record<string, string> = authToken ? { Authorization: `Bearer ${authToken}` } : {};
   const r = await fetch(`/api/claims/${id}`, { headers: authHeaders });
   if (!r.ok) {
-    const errorData = await r.json().catch(() => ({}));
-    throw new Error(errorData?.error || errorData?.message || "Claim not found");
+    // Not finding this claim (or not being recognized as its recipient) is a normal, expected
+    // outcome for this page — wrong identity, expired link, genuinely nonexistent id — not a
+    // network/server failure. Resolving with claim: null (instead of throwing) keeps this query
+    // in React Query's real "success" state, so it never re-enters isPending on a retry. Before
+    // this, every attempt of the background recheck loop briefly flipped isLoading back to true
+    // (since a thrown/errored query is still "pending" until it actually gets data), collapsing
+    // the whole page back to the loading skeleton on every single poll.
+    return { claim: null, latestIntent: null };
   }
   const data = await r.json();
   const c = data.claim || {};
@@ -577,8 +568,10 @@ function ClaimDescriptionMessageBox({ description }: { description?: string | nu
   return (
     <div className="mb-4 space-y-3">
       {textOnly && (
-        <div className="px-4 py-3 rounded-xl bg-gray-50 border border-gray-200">
-          <p className="text-base text-gray-700 italic leading-relaxed">"{textOnly}"</p>
+        <div className="relative pl-5 pr-4 py-4 rounded-xl bg-white/[0.06] overflow-hidden">
+          <span className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-[#FF1301] to-[#EAB308]" />
+          <span className="absolute top-1 left-4 text-4xl font-serif text-white/10 select-none leading-none">"</span>
+          <p className="relative text-lg font-medium text-white italic leading-relaxed pl-3">{textOnly}</p>
         </div>
       )}
       {resolvedGifUrl && (
@@ -591,6 +584,89 @@ function ClaimDescriptionMessageBox({ description }: { description?: string | nu
             style={{ maxHeight: "220px", objectFit: "cover" }}
           />
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Shared "Payment not found" empty state — used both when a claim genuinely doesn't resolve
+ * (404) and when it resolves but the viewer isn't the recognized recipient. Previously these
+ * were two independently hand-styled blocks that drifted apart; this is the one design.
+ */
+function PaymentNotFoundNotice({
+  message,
+  hint,
+  showLinkButtons,
+  hasTwitterLinked,
+  hasEmailLinked,
+  onConnectTwitter,
+  onConnectEmail,
+  isConfirmingIdentity,
+  backHref,
+  backLabel,
+}: {
+  message: string;
+  hint?: string | null;
+  showLinkButtons: boolean;
+  hasTwitterLinked: boolean;
+  hasEmailLinked: boolean;
+  onConnectTwitter: () => void;
+  onConnectEmail: () => void;
+  /** True while confirmIdentityThenReload() is running after Connect X/email — the page is
+   *  about to reload once this resolves, so show that something is actively happening instead
+   *  of leaving the stale "not found" state sitting there looking frozen/broken for a few
+   *  seconds while the backend genuinely catches up. */
+  isConfirmingIdentity?: boolean;
+  backHref?: string;
+  backLabel?: string;
+}) {
+  return (
+    <div className="py-16 flex flex-col items-center text-center">
+      <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-4xl select-none">
+        🔍
+      </div>
+      <h3 className="text-xl font-semibold text-white mb-3">Payment not found</h3>
+      <div className="space-y-2 mb-8 max-w-xs">
+        <p className="text-slate-300 text-base">{message}</p>
+        {hint && <p className="text-slate-300 text-base">{hint}</p>}
+      </div>
+      {isConfirmingIdentity ? (
+        <p className="mb-6 flex items-center gap-2 text-base text-slate-300">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Confirming your account…
+        </p>
+      ) : (
+        showLinkButtons && (!hasTwitterLinked || !hasEmailLinked) && (
+          <div className="flex flex-wrap justify-center gap-3 mb-6">
+            {!hasTwitterLinked && (
+              <button
+                type="button"
+                onClick={onConnectTwitter}
+                className="inline-flex items-center justify-center h-11 rounded-lg bg-white/10 text-white px-5 text-base font-semibold hover:bg-white/20 transition-colors"
+              >
+                Connect X
+              </button>
+            )}
+            {!hasEmailLinked && (
+              <button
+                type="button"
+                onClick={onConnectEmail}
+                className="inline-flex items-center justify-center h-11 rounded-lg bg-white/10 text-white px-5 text-base font-semibold hover:bg-white/20 transition-colors"
+              >
+                Add email
+              </button>
+            )}
+          </div>
+        )
+      )}
+      {backHref && (
+        <Link
+          href={backHref}
+          className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors"
+        >
+          {backLabel}
+        </Link>
       )}
     </div>
   );
@@ -610,44 +686,160 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const { toast } = useToast();
   const { user, logout, login, authenticated, ready: privyReady, getAccessToken } = usePrivy();
 
+  // Twitter/X handle from Privy linked accounts — used to nudge recipients whose Loofta
+  // username doesn't match their X handle into syncing it (see backend X-handle fallback
+  // matching in claims.service.ts checkIsRecipient).
+  const twitterHandle = useMemo(() => {
+    const linkedAccounts = (user?.linkedAccounts || []) as Array<{ type?: string; username?: string; name?: string; subject?: string }>;
+    const tw = linkedAccounts.find((a) => a.type === "twitter_oauth" || a.type === "twitter" || a.type === "x");
+    const raw = tw?.username || tw?.name || tw?.subject || null;
+    return raw ? raw.replace(/^@/, "") : null;
+  }, [user?.linkedAccounts]);
+  const hasTwitterLinked = !!twitterHandle;
+  const hasEmailLinked = useMemo(
+    () => ((user?.linkedAccounts || []) as Array<{ type?: string }>).some((a) => a.type === "email"),
+    [user?.linkedAccounts],
+  );
+  const [updatingUsernameToTwitter, setUpdatingUsernameToTwitter] = useState(false);
+
+  // ---------------------------------------------------------------------------------------
+  // Recipient-identity recheck: runs silently in the background after sign-in or linking a
+  // new account, until the claim + recipient-check genuinely confirm this user (or it times
+  // out) — no button, no visible loading state, the page just updates itself once resolved.
+  //
+  // Why this exists: the backend caches each user's Privy record (linked_accounts) for 5 min
+  // (privy-verification.service.ts), and the recipient-identity check (checkIsRecipient) reads
+  // from that cache. So right after linking an account or signing in, "payment not found" /
+  // "not the recipient" can be stale even though the account now genuinely matches — busting
+  // the cache once and refetching once isn't reliable because of a real race: getAccessToken()
+  // can resolve before Privy's session is fully settled, and even a fresh backend call can hit
+  // Privy's own API before it has indexed the just-linked account. So this polls (busting the
+  // cache each attempt) on an interval up to a real ceiling instead of guessing a fixed count.
+  // `recheckInFlightRef` blocks overlapping loops if sign-in and link-success fire close together.
+  const RECIPIENT_RECHECK_TIMEOUT_MS = 30_000;
+  const RECIPIENT_RECHECK_INTERVAL_MS = 3_000;
+  const recheckInFlightRef = useRef(false);
+
+  const bustPrivyCacheOnce = async () => {
+    const token = await getAccessToken();
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+    await fetch(`${backendUrl}/users/refresh-privy-cache`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  };
+
+  /** Resolves true once the claim + recipient-check both confirm this user, false if it timed out. */
+  const recheckRecipientUntilResolved = async (): Promise<boolean> => {
+    if (recheckInFlightRef.current) return false;
+    recheckInFlightRef.current = true;
+    const deadline = Date.now() + RECIPIENT_RECHECK_TIMEOUT_MS;
+    try {
+      let first = true;
+      while (Date.now() < deadline) {
+        if (!first) await new Promise((r) => setTimeout(r, RECIPIENT_RECHECK_INTERVAL_MS));
+        first = false;
+        try {
+          await bustPrivyCacheOnce();
+        } catch {
+          // best-effort — the recheck itself is what actually matters
+        }
+        const [claimResult, recipientResult] = await Promise.all([
+          claimQuery.refetch(),
+          recipientCheckQuery.refetch(),
+        ]);
+        const resolved = !!claimResult.data?.claim && recipientResult.data?.isRecipient === true;
+        if (resolved) return true;
+      }
+      return false;
+    } finally {
+      recheckInFlightRef.current = false;
+    }
+  };
+
+  // True only while confirmIdentityThenReload is actively running — drives a visible
+  // "Confirming your account…" state so the few seconds of real backend/Privy propagation lag
+  // don't just look like a frozen "Payment not found" screen with nothing happening.
+  const [isConfirmingIdentity, setIsConfirmingIdentity] = useState(false);
+
+  /**
+   * The one place identity-driven actions on this page end: verify the recheck actually
+   * converged, then reload. A reload before confirming just relocates the race (see
+   * recheckRecipientUntilResolved's own doc comment); confirming first means the page that
+   * comes back after reload should be correct on its very first fetch.
+   */
+  const confirmIdentityThenReload = async () => {
+    setIsConfirmingIdentity(true);
+    try {
+      await recheckRecipientUntilResolved();
+    } finally {
+      // Only matters if it timed out without resolving — a successful resolve reloads the
+      // page right after this, tearing all component state down anyway.
+      setIsConfirmingIdentity(false);
+    }
+    window.location.reload();
+  };
+
+  const { linkTwitter, linkEmail } = useLinkAccount({
+    onSuccess: ({ linkedAccount }) => {
+      void (async () => {
+        // Push what Privy's client SDK just confirmed straight into our own DB before
+        // rechecking — this is data we already have zero-latency, verified proof of (Privy
+        // wouldn't have fired onSuccess otherwise), so there's no reason to wait on our
+        // backend's separate live call to Privy's API to independently rediscover it. That
+        // live call is exactly what's still subject to Privy's own eventual consistency; this
+        // fast path (checked first in verifyRecipientIdentityForSendPayment) sidesteps it for
+        // the case where the client already knows the answer.
+        const acct = linkedAccount as { type?: string; username?: string | null; name?: string | null };
+        const isTwitter = acct?.type === "twitter_oauth" || acct?.type === "twitter" || acct?.type === "x";
+        const handle = (acct?.username || acct?.name || "").replace(/^@/, "").trim();
+        if (isTwitter && handle) {
+          try {
+            const token = await getAccessToken().catch(() => null);
+            await fetch("/api/users/save-twitter-username", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+              body: JSON.stringify({ twitterUsername: handle }),
+            });
+          } catch {
+            // best-effort — the recheck loop below still falls back to the live Privy check
+          }
+        }
+        await confirmIdentityThenReload();
+      })();
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Couldn't connect", description: String(error) });
+    },
+  });
+
+  const useTwitterHandleAsUsername = async (handle: string) => {
+    setUpdatingUsernameToTwitter(true);
+    try {
+      const token = await getAccessToken().catch(() => null);
+      const res = await fetch("/api/users/setup-username", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ username: handle }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({ variant: "destructive", title: "Update failed", description: data?.error || "Try again." });
+        return;
+      }
+      await confirmIdentityThenReload();
+    } catch {
+      toast({ variant: "destructive", title: "Update failed", description: "Try again." });
+    } finally {
+      setUpdatingUsernameToTwitter(false);
+    }
+  };
+
   const networkMode = useAuthStore((s) => s.networkMode);
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
   const isOnboardingOpen = useAuthStore((s) => s.isOnboardingOpen);
-  const [hasMainnetAccess, setHasMainnetAccess] = useState(false);
-  const [mainnetAccessChecked, setMainnetAccessChecked] = useState(false);
-  useEffect(() => {
-    if (!privyReady) return;
-    if (!authenticated || !user) {
-      // Privy loaded but not signed in — no access, safe to render
-      setMainnetAccessChecked(true);
-      return;
-    }
-    const userId = user.id;
-    const cached = getCachedMainnetAccess(userId);
-    if (cached !== null) {
-      setHasMainnetAccess(cached);
-      setMainnetAccessChecked(true);
-      return;
-    }
-    setMainnetAccessChecked(false);
-    getAccessToken().then((token) => {
-      fetch("/api/users/mainnet-access", {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
-        .then((r) => r.json())
-        .then((d) => {
-          const access = !!d?.mainnetAccess;
-          setHasMainnetAccess(access);
-          setCachedMainnetAccess(userId, access);
-        })
-        .catch(() => { })
-        .finally(() => setMainnetAccessChecked(true));
-    });
-  }, [authenticated, user, privyReady, getAccessToken]);
-
   const hideAlternateTokenPay = false;
-  /** User is viewing mainnet but cannot send payments (no beta access). Balance/withdraw still works. */
-  const mainnetViewOnly = mainnetAccessChecked && networkMode === "mainnet" && !hasMainnetAccess;
+  const mainnetViewOnly = false;
   const { data: tokensRaw = [], isLoading } = useTokensQuery();
   /** Devnet mode: inject devnet USDC mint so Pay with + selection resolve correctly. */
   const tokens = useMemo(() => {
@@ -696,6 +888,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   });
   const claimData = claimQuery.data as any;
   const claim = claimData?.claim;
+  // Safe to use isLoading again now that fetchClaim() resolves with claim: null instead of
+  // throwing on a 404/403 — "not found" is real success data, not an error state, so isLoading
+  // (isPending && isFetching) is only ever true on the genuine first load, not on every
+  // subsequent refetch attempt of the background recheck loop.
   const loadingClaim = claimQuery.isLoading;
   /** The network this claim was created on, derived from is_devnet once the claim has loaded. */
   const claimExpectedNetwork: "devnet" | "mainnet" | null = (() => {
@@ -758,6 +954,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const isRecipient = recipientCheckQuery.data?.isRecipient === true;
   // True while we're still checking — hide the pay form until we know the user is NOT the recipient.
   const isCheckingRecipient = recipientCheckQuery.isLoading || recipientCheckQuery.isFetching;
+  // True only for the very first check (no data yet) — unlike isCheckingRecipient, this stays
+  // false during background refetches (e.g. the retry loop after linking an account), so those
+  // silent rechecks don't collapse the whole page back to the skeleton once content is showing.
+  const isInitialRecipientCheck = recipientCheckQuery.isLoading;
 
   // Registered recipients now also route through a burner — treat them the same as pending
   // recipients so the burner-balance poller and claim UI are activated.
@@ -770,15 +970,24 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const burnerAddr = (claim as { claim_burner_address?: string | null } | null)?.claim_burner_address ?? null;
   /** Network the claim was created on — drives burner polling and sweep RPC. Overrides user's global networkMode for claim-specific ops. */
   const claimNetworkMode = (claim as { is_devnet?: boolean } | null)?.is_devnet === false ? "mainnet" : networkMode;
+  // Private (MagicBlock) transfers can arrive in parts rather than atomically — the burner ATA
+  // can show a real, positive, but partial balance while the rest is still in transit. Gating
+  // "ready" on balance > 0 let the Claim button light up on a partial deposit, which then made
+  // the actual claim sit for up to 90s server-side (claimAsRecipientMutation.mutate() ->
+  // pollBurnerAtaUntilPositive) waiting for the rest to land — with the click already committed
+  // and no obvious feedback loop tying that wait back to this button. Comparing against the
+  // claim's expected amount instead means the button simply doesn't enable until delivery is
+  // actually complete, matching what "Claim" should mean.
+  const claimExpectedBaseUnits = Math.round(parseFloat(claim?.amount || "0") * 1_000_000);
   const burnerReadyQuery = useQuery({
-    queryKey: ["burner-ready", burnerAddr, claimNetworkMode],
+    queryKey: ["burner-ready", burnerAddr, claimNetworkMode, claimExpectedBaseUnits],
     queryFn: async (): Promise<{ balance: number; isReady: boolean }> => {
       if (!burnerAddr) return { balance: 0, isReady: false };
       const balance = await getUsdcAtaBalanceBaseUnits(burnerAddr, claimNetworkMode);
       console.info(
-        `[BurnerReady] claimId=${id} usdcBaseUnits=${balance} (ATA may be missing until first deposit)`,
+        `[BurnerReady] claimId=${id} usdcBaseUnits=${balance} expected=${claimExpectedBaseUnits} (ATA may be missing until first deposit)`,
       );
-      return { balance, isReady: balance > 0 };
+      return { balance, isReady: claimExpectedBaseUnits > 0 && balance >= claimExpectedBaseUnits };
     },
     enabled: !!burnerAddr && !!user?.id && isPendingRecipientClaim,
     refetchInterval: 15_000,
@@ -807,12 +1016,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const solPrice = solPriceQuery.data ?? 0;
 
   const estimatePrivateTotal = (usd: number) => {
-    const net = Math.round(usd * 1_000_000);
-    const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
-    const mbFee = (mbGross - net) / 1_000_000;
+    // Sender's real cost = MagicBlock's flat gasless relay fee + MagicBlock's own ~10bps
+    // (grossed up internally via exactOut — see estimateMagicblockGrossUp server-side).
     const gasFee = 0.20; // flat USDC relay fee charged by MagicBlock
-    const feeEstimate = Math.ceil((mbFee + gasFee) * 100) / 100;
-    return { total: usd + feeEstimate, protocolFee: mbFee, gasFee, feeEstimate };
+    const magicblockFeeBps = 10; // mirrors MAGICBLOCK_VOLUME_FEE_BPS in magicblock-private-transfer.ts
+    const protocolFee = (usd * magicblockFeeBps) / 10_000;
+    const feeEstimate = gasFee + protocolFee;
+    return { total: usd + feeEstimate, protocolFee, gasFee, feeEstimate };
   };
 
   useEffect(() => {
@@ -825,6 +1035,21 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   }, [id, isPendingRecipientClaim, burnerAddr]);
 
   const queryClient = useQueryClient();
+  /**
+   * Retry the header/pay-modal balance query on a growing backoff after a claim sweep.
+   * Private (MagicBlock PER) transfers can take up to PRIVATE_PAYMENT_MAX_WAIT_MINUTES to
+   * land on-chain — the header's own 5s refetchInterval alone doesn't help if it silently
+   * pauses (e.g. embedded wallet re-init), so we drive it explicitly out to ~2min.
+   */
+  const refreshWalletBalances = () => {
+    const delaysMs = [2_000, 5_000, 10_000, 20_000, 35_000, 55_000, 80_000, 110_000];
+    for (const delay of delaysMs) {
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+        queryClient.refetchQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+      }, delay);
+    }
+  };
   const claimAsRecipientMutation = useMutation({
     mutationFn: async () => {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -917,24 +1142,18 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       return { prevClaim, prevHistories };
     },
     onSuccess: (data: { claimed?: boolean; sweepTxHash?: string; sweptAmount?: string; swept?: boolean } | undefined, _vars, context) => {
+      setClaimCompleted(true);
       setStatus("SUCCESS");
-      setShowBalanceUpdating(true);
-      setTimeout(() => setShowBalanceUpdating(false), 10000);
       useClaimPayStore.getState().setClaimed(id, true);
       queryClient.setQueryData(["claim", id, "recipient-check", user?.id], { isRecipient: true });
-      // Refetch real paid_at from DB once the sweep completes.
-      queryClient.invalidateQueries({ queryKey: ["claim", id] });
-      queryClient.refetchQueries({ queryKey: ["claim", id] });
+      // Refetch real paid_at from DB once the sweep completes. exact: true matters here —
+      // without it this fuzzy-matches ["claim", id, "recipient-check", user?.id] too, which
+      // flips isCheckingRecipient back to true and collapses the whole page to the loading
+      // skeleton mid-celebration (the "flicker between success and skeleton" bug).
+      queryClient.invalidateQueries({ queryKey: ["claim", id], exact: true });
+      queryClient.refetchQueries({ queryKey: ["claim", id], exact: true });
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
-      // Retry balance refresh 5× at 2s intervals — RPC indexing can lag after sweep.
-      for (let i = 1; i <= 5; i++) {
-        setTimeout(() => {
-          queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
-          queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
-          queryClient.refetchQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
-          queryClient.refetchQueries({ queryKey: ["solanaPaymentBalance"] });
-        }, i * 2000);
-      }
+      refreshWalletBalances();
     },
     onError: (error: unknown, _vars, context: any) => {
       // Roll back optimistic claim data.
@@ -958,11 +1177,49 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [retrySweepLoading, setRetrySweepLoading] = useState(false);
   const [reclaimingSenderFunds, setReclaimingSenderFunds] = useState(false);
   const [claimInitiated, setClaimInitiated] = useState(false);
+  const [claimCompleted, setClaimCompleted] = useState(false);
+  const confettiFiredRef = React.useRef(false);
   const [optimisticClaimedAt, setOptimisticClaimedAt] = useState<string | null>(null);
-  const [showBalanceUpdating, setShowBalanceUpdating] = useState(false);
+
+  // Poll claim status while mutation is pending (catches cases where HTTP response is lost
+  // but the backend already processed the claim and balance has updated).
+  useEffect(() => {
+    if (!claimInitiated || !claimAsRecipientMutation.isPending || claimCompleted) return;
+    const interval = setInterval(() => {
+      // exact: true — a fuzzy match here also refetches the recipient-check subquery,
+      // which flips isCheckingRecipient true and flashes the loading skeleton every 4s.
+      queryClient.refetchQueries({ queryKey: ["claim", id], exact: true });
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [claimInitiated, claimAsRecipientMutation.isPending, claimCompleted, id, queryClient]);
+
+  // Auto-detect success from polled claim status.
+  useEffect(() => {
+    if (!claimInitiated || !claimAsRecipientMutation.isPending || claimCompleted) return;
+    const currentStatus = String(claim?.status || "").toUpperCase();
+    if (["SUCCESS", "CLAIMED"].includes(currentStatus)) {
+      setClaimCompleted(true);
+    }
+  }, [claim?.status, claimInitiated, claimAsRecipientMutation.isPending, claimCompleted]);
+
+  // Trigger balance refetch and confetti whenever claimCompleted first becomes true.
+  useEffect(() => {
+    if (!claimCompleted || confettiFiredRef.current) return;
+    confettiFiredRef.current = true;
+    const end = Date.now() + 2200;
+    const colors = ["#FF1301", "#EAB308", "#22c55e", "#a855f7", "#3b82f6"];
+    (function frame() {
+      confetti({ particleCount: 6, angle: 60, spread: 55, origin: { x: 0 }, colors });
+      confetti({ particleCount: 6, angle: 120, spread: 55, origin: { x: 1 }, colors });
+      if (Date.now() < end) requestAnimationFrame(frame);
+    })();
+    refreshWalletBalances();
+  }, [claimCompleted, queryClient]);
 
   useEffect(() => {
     if (!claimAsRecipientMutation.isSuccess) return;
+    if (confettiFiredRef.current) return;
+    confettiFiredRef.current = true;
     const end = Date.now() + 2200;
     const colors = ["#FF1301", "#EAB308", "#22c55e", "#a855f7", "#3b82f6"];
     (function frame() {
@@ -1045,7 +1302,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         toast({ title: "No funds to sweep", description: "Burner currently has no USDC in ATA. For private PER payments, funds may still be in PER state." });
       }
       await runBurnerTroubleshoot();
-      queryClient.invalidateQueries({ queryKey: ["claim", id] });
+      queryClient.invalidateQueries({ queryKey: ["claim", id], exact: true });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Could not retry sweep";
       toast({ variant: "destructive", title: "Retry sweep failed", description: msg });
@@ -1075,7 +1332,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       }
       toast({ title: "Withdraw/reclaim sent", description: "We attempted PER withdraw and return to your wallet." });
       await runBurnerTroubleshoot();
-      queryClient.invalidateQueries({ queryKey: ["claim", id] });
+      queryClient.invalidateQueries({ queryKey: ["claim", id], exact: true });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Could not reclaim funds";
       toast({ variant: "destructive", title: "Reclaim failed", description: msg });
@@ -1106,6 +1363,22 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [quote, setQuote] = useState<{ amountInFormatted?: string; usd?: number; est?: number } | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+
+  // Covers the plain "already claimed" view (isRecipient + SUCCESS, no pending flags) —
+  // reachable directly via optimistic status updates or a fresh page load without ever
+  // passing through the claimCompleted branch above, so it needs its own refresh trigger.
+  const staticSuccessBalanceRefreshedRef = React.useRef(false);
+  useEffect(() => {
+    const alreadyClaimedStatically =
+      isRecipient &&
+      !claim?.recipient_pending_email &&
+      !claim?.recipient_pending_username &&
+      String(status || claim?.status || "").toUpperCase() === "SUCCESS";
+    if (!alreadyClaimedStatically || staticSuccessBalanceRefreshedRef.current) return;
+    staticSuccessBalanceRefreshedRef.current = true;
+    refreshWalletBalances();
+  }, [isRecipient, claim?.recipient_pending_email, claim?.recipient_pending_username, status, claim?.status]);
+
   const [statusData, setStatusData] = useState<any>(null);
   const [paidFeeUsdc, setPaidFeeUsdc] = useState<number | null>(null);
   const [paidFeeBreakdown, setPaidFeeBreakdown] = useState<{ looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number } | null>(null);
@@ -1156,6 +1429,33 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const privateRequired = requiresPrivate;
   const privatePayActive = requiresPrivate;
   const isCreatorView = !!user?.id && claim?.created_by === user.id;
+
+  // True only once both queries have settled AND this render is actually showing (or would
+  // show) the "Payment not found" empty state — mirrors the two PaymentNotFoundNotice render
+  // conditions below: claim is null (genuine 404), or claim loaded but this viewer isn't its
+  // recognized recipient (and isn't the creator, and this isn't a Pay Now/payment-request view).
+  const isPaymentNotFoundView =
+    !loadingClaim &&
+    !isCheckingRecipient &&
+    (!claim || (!isCreatorView && !isRecipient && claim?.direction !== "from_recipient"));
+
+  // Re-check recipient status the first time this page is actually showing "Payment not
+  // found" while signed in — otherwise a stale cached/pre-login snapshot can make an
+  // already-matching account keep showing as "not the recipient". Gated on
+  // isPaymentNotFoundView so this never runs on Pay Now / creator / already-resolved views,
+  // where isRecipient can never become true and the loop would just poll fetchClaim for the
+  // full 30s timeout for nothing. Fires AT MOST ONCE per page load: `authRecheckFiredRef`
+  // only ever gets set, never reset, so flapping of `authenticated` or `isPaymentNotFoundView`
+  // (e.g. Privy re-validating its session) can't re-trigger and silently reload the page out
+  // from under you. No reload here (unlike confirmIdentityThenReload) — this covers routine
+  // sign-ins, which happen on every visit, not just the rare deliberate actions below.
+  const authRecheckFiredRef = useRef(false);
+  useEffect(() => {
+    if (!authenticated || authRecheckFiredRef.current) return;
+    if (!isPaymentNotFoundView) return;
+    authRecheckFiredRef.current = true;
+    void recheckRecipientUntilResolved();
+  }, [authenticated, isPaymentNotFoundView]);
   const isSenderPendingFundedView =
     isCreatorView &&
     isPendingRecipientClaim &&
@@ -2595,7 +2895,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             </div>
           </div>
         )}
-        {loadingClaim || !privyReady || (authenticated && isCheckingRecipient) ? (
+        {loadingClaim || !privyReady || (authenticated && isInitialRecipientCheck) ? (
           <div className="space-y-5 animate-pulse">
             <div className="flex items-center gap-3">
               <Skeleton className="h-10 w-10 rounded-full" />
@@ -2627,21 +2927,22 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         ) : claim ? (
           <>
             {!isCreatorView && !isRecipient && claim?.direction !== 'from_recipient' ? (
-              <div className="py-16 flex flex-col items-center text-center">
-                <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-5 text-4xl select-none">
-                  🔍
-                </div>
-                <h3 className="text-xl font-semibold text-white mb-2">Payment not found</h3>
-                <p className="text-slate-400 text-base mb-6 max-w-xs">
-                  Oops — this link may not be addressed to you or may no longer exist.
-                </p>
-                <Link
-                  href={from === "history" ? "/history" : "/"}
-                  className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors"
-                >
-                  {from === "history" ? "← Back to History" : "← Back to Send"}
-                </Link>
-              </div>
+              <PaymentNotFoundNotice
+                message="This link may not be addressed to you, or may no longer exist."
+                hint={
+                  claim?.recipient_pending_email || claim?.recipient_pending_username
+                    ? "It might also be waiting on an email or X handle you haven't added to your account yet."
+                    : null
+                }
+                showLinkButtons={!!(claim?.recipient_pending_email || claim?.recipient_pending_username)}
+                hasTwitterLinked={hasTwitterLinked}
+                hasEmailLinked={hasEmailLinked}
+                onConnectTwitter={() => linkTwitter()}
+                onConnectEmail={() => linkEmail()}
+                isConfirmingIdentity={isConfirmingIdentity}
+                backHref={from === "history" ? "/history" : "/"}
+                backLabel={from === "history" ? "← Back to History" : "← Back to Send"}
+              />
             ) : isRecipient &&
               !claim?.recipient_pending_email &&
               !claim?.recipient_pending_username &&
@@ -2657,30 +2958,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                 </div>
                 <ClaimDescriptionMessageBox description={claim?.description} />
-                <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200 space-y-2">
-                  {claim?.created_at && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-600 text-base md:text-sm">Created</span>
-                      <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.created_at)}</span>
-                    </div>
-                  )}
-                  {claim?.paid_at && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-600 text-base md:text-sm">
-                        {claim?.recipient_pending_email || claim?.recipient_pending_username ? "Paid" : "Claimed"}
-                      </span>
-                      <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
-                    </div>
-                  )}
-                </div>
-                {claim?.is_private && (
-                  <div className="mb-6 flex items-start gap-3 rounded-xl border border-orange-500/20 bg-gradient-to-b from-white/[0.08] to-white/[0.03] backdrop-blur-sm px-4 py-3 shadow-[0_0_16px_0_rgba(255,80,0,0.12)]">
-                    <span className="mt-0.5 text-base">🔒</span>
-                    <p className="text-base md:text-sm text-white/70 leading-snug">
-                      This is a private payment. It may take <span className="font-medium text-white/90">a few minutes</span> for the balance to reflect and become available to withdraw.
-                    </p>
-                  </div>
-                )}
+                {/* Troubleshoot payment (localhost-only debug panel) — disabled for now, keep for later.
                 {isClaimPageLocalhost &&
                   !!(claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.claim_burner_address) && (
                     <div className="mt-4 rounded-xl border border-amber-300/60 bg-amber-50/40 p-4">
@@ -2758,8 +3036,31 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       )}
                     </div>
                   )}
+                */}
+                <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200 space-y-2">
+                  {claim?.created_at && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-600 text-base md:text-sm">Created</span>
+                      <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.created_at)}</span>
+                    </div>
+                  )}
+                  {claim?.paid_at && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-600 text-base md:text-sm">
+                        {claim?.recipient_pending_email || claim?.recipient_pending_username ? "Paid" : "Claimed"}
+                      </span>
+                      <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
+                    </div>
+                  )}
+                </div>
+                {claim?.created_at && Date.now() - new Date(claim.created_at).getTime() < 11 * 60_000 && (
+                  <div className="flex items-start gap-2 text-base md:text-sm text-gray-500 mb-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-amber-500 shrink-0 mt-0.5" />
+                    <span>{privatePaymentFundsAppearCopy()}</span>
+                  </div>
+                )}
               </div>
-            ) : user?.id && claimAsRecipientMutation.isPending ? (
+            ) : user?.id && claimAsRecipientMutation.isPending && !claimCompleted ? (
               (() => {
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
                 return (
@@ -2801,7 +3102,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                 );
               })()
-            ) : user?.id && (claimInitiated || claimAsRecipientMutation.isSuccess) ? (
+            ) : user?.id && (claimCompleted || claimInitiated || claimAsRecipientMutation.isSuccess) ? (
               (() => {
                 const senderLabel =
                   claim?.creator_username ? `@${claim.creator_username}` : (claim?.creator_email || null);
@@ -2862,25 +3163,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         </div>
                       )}
                     </motion.div>
-                    {showBalanceUpdating && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="mb-4 flex items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2"
-                      >
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-500" />
-                        <span className="text-base md:text-sm text-emerald-700 font-medium">Balance updating…</span>
-                      </motion.div>
-                    )}
-                    {claim?.is_private && (
-                      <div className="mb-6 flex items-start gap-3 rounded-xl border border-orange-500/20 bg-gradient-to-b from-white/[0.08] to-white/[0.03] backdrop-blur-sm px-4 py-3 shadow-[0_0_16px_0_rgba(255,80,0,0.12)]">
-                        <span className="mt-0.5 text-base">🔒</span>
-                        <p className="text-base md:text-sm text-white/70 leading-snug">
-                          This is a private payment. It may take <span className="font-medium text-white/90">a few minutes</span> for the balance to reflect and become available to withdraw.
-                        </p>
-                      </div>
-                    )}
                   </motion.div>
                 );
               })()
@@ -2903,14 +3185,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       )}
                     </div>
                     <ClaimDescriptionMessageBox description={claim?.description} />
-                    {claim?.is_private && (
-                      <div className="mb-6 flex items-start gap-3 rounded-xl border border-orange-500/20 bg-gradient-to-b from-white/[0.08] to-white/[0.03] backdrop-blur-sm px-4 py-3 shadow-[0_0_16px_0_rgba(255,80,0,0.12)]">
-                        <span className="mt-0.5 text-base">🔒</span>
-                        <p className="text-base md:text-sm text-white/70 leading-snug">
-                          This is a private payment. It may take <span className="font-medium text-white/90">a few minutes</span> for the balance to reflect and become available to withdraw.
-                        </p>
-                      </div>
-                    )}
                   </div>
                 );
               })()
@@ -3041,6 +3315,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <div className="text-left max-w-md mx-auto">
                         <ClaimDescriptionMessageBox description={claim?.description} />
                       </div>
+
+
                       <div className="flex items-center justify-center gap-2 text-base md:text-sm mb-4">
                         {burnerIsChecking ? (
                           <>
@@ -3180,8 +3456,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             : null;
                   const shareId = (claim as any)?.short_id || claim?.id;
                   const claimLink = typeof window !== "undefined"
-                    ? `${window.location.origin}/c/${shareId}`
-                    : `https://pay.loofta.xyz/c/${shareId}`;
+                    ? `${window.location.origin}/share/${shareId}`
+                    : `https://pay.loofta.xyz/share/${shareId}`;
                   const handleCopyLink = async () => {
                     try {
                       await navigator.clipboard.writeText(claimLink);
@@ -3192,18 +3468,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       toast({ variant: "destructive", title: "Copy failed" });
                     }
                   };
-                  const handleShare = () => {
-                    const who = recipientLabel ? ` to ${recipientLabel}` : "";
-                    if (navigator.share) {
-                      navigator.share({
-                        title: "Payment sent",
-                        text: `$${parseFloat(claim.amount || "0").toFixed(2)} sent${who} via Loofta.`,
-                        url: claimLink,
-                      }).catch(() => handleCopyLink());
-                    } else {
-                      handleCopyLink();
-                    }
-                  };
+                  const shareToSuffix = recipientLabel ? ` to ${recipientLabel}` : "";
+                  const shareText = `$${parseFloat(claim.amount || "0").toFixed(2)} sent${shareToSuffix} via Loofta.`;
                   return (
                     <>
                       {/* Hero */}
@@ -3243,22 +3509,20 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               {paymentCompleteCopied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
                             </Button>
                           </div>
-                          <Button
-                            type="button"
-                            onClick={handleShare}
-                            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-5 py-2 text-white font-semibold hover:opacity-90 shrink-0"
-                          >
-                            <Share2 className="h-4 w-4" />
-                            Share
-                          </Button>
+                          <ShareLinkMenu
+                            url={claimLink}
+                            title="Payment sent"
+                            text={shareText}
+                            triggerClassName="px-5 py-2"
+                          />
                         </div>
                       </div>
                       {/* Summary */}
                       <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-2">
                         {!requiresPrivate ? (
                           <div className="flex items-center justify-between">
-                            <span className="text-sm text-gray-500">Recipient receives</span>
-                            <span className="text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
+                            <span className="text-base md:text-sm text-gray-500">Recipient receives</span>
+                            <span className="text-base md:text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
                               <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
                               ${parseFloat(claim.amount || "0").toFixed(2)}
                             </span>
@@ -3266,22 +3530,22 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         ) : isFeeOnSender ? (
                           <>
                             <div className="flex items-center justify-between">
-                              <span className="text-sm text-gray-500">Recipient receives</span>
-                              <span className="text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
+                              <span className="text-base md:text-sm text-gray-500">Recipient receives</span>
+                              <span className="text-base md:text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
                                 <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
                                 ${parseFloat(claim.amount || "0").toFixed(2)}
                               </span>
                             </div>
                             {paidFeeUsdc != null && paidFeeUsdc > 0 && (
                               <div className="flex items-center justify-between">
-                                <span className="text-sm text-gray-500">Platform fee</span>
-                                <span className="text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
+                                <span className="text-base md:text-sm text-gray-500">Privacy fee</span>
+                                <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
                               </div>
                             )}
                             {paidFeeUsdc != null && (
                               <div className="flex items-center justify-between border-t border-gray-200 pt-2">
-                                <span className="text-sm font-medium text-gray-500">You paid</span>
-                                <span className="text-sm font-semibold text-gray-900">
+                                <span className="text-base md:text-sm font-medium text-gray-500">You paid</span>
+                                <span className="text-base md:text-sm font-semibold text-gray-900">
                                   ${(parseFloat(claim.amount || "0") + paidFeeUsdc).toFixed(4)}
                                 </span>
                               </div>
@@ -3291,13 +3555,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           <>
                             {paidFeeUsdc != null && paidFeeUsdc > 0 && (
                               <div className="flex items-center justify-between">
-                                <span className="text-sm text-gray-500">Platform fee (deducted)</span>
-                                <span className="text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
+                                <span className="text-base md:text-sm text-gray-500">Privacy fee (deducted)</span>
+                                <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
                               </div>
                             )}
                             <div className="flex items-center justify-between">
-                              <span className="text-sm text-gray-500">Recipient receives</span>
-                              <span className="text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
+                              <span className="text-base md:text-sm text-gray-500">Recipient receives</span>
+                              <span className="text-base md:text-sm font-semibold text-gray-900 inline-flex items-center gap-1">
                                 <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
                                 ${(parseFloat(claim.amount || "0") - (paidFeeUsdc ?? 0)).toFixed(2)}
                               </span>
@@ -3306,20 +3570,21 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         )}
                         {recipientLabel && (
                           <div className="flex items-center justify-between border-t border-gray-200 pt-2">
-                            <span className="text-sm text-gray-500">Sent to</span>
-                            <span className="text-sm font-medium text-gray-900">{recipientLabel}</span>
+                            <span className="text-base md:text-sm text-gray-500">Sent to</span>
+                            <span className="text-base md:text-sm font-medium text-gray-900">{recipientLabel}</span>
                           </div>
                         )}
                         {claim.paid_at && (
                           <div className="flex items-center justify-between">
-                            <span className="text-sm text-gray-500">Paid</span>
-                            <span className="text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
+                            <span className="text-base md:text-sm text-gray-500">Paid</span>
+                            <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
                           </div>
                         )}
                       </div>
                     </>
                   );
                 })()}
+                {/* Troubleshoot payment (localhost-only debug panel) — disabled for now, keep for later.
                 {isClaimPageLocalhost &&
                   !!(claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.claim_burner_address) && (
                     <div className="mt-4 rounded-xl border border-amber-300/60 bg-amber-50/40 p-4">
@@ -3397,6 +3662,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       )}
                     </div>
                   )}
+                */}
                 {String(status || "").toUpperCase() !== "SUCCESS" && (
                   <div className="mt-6">
                     <PaymentStatusTracker
@@ -3578,7 +3844,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             <span className="font-semibold font-sans text-gray-900">${claimAmountUSD.toFixed(2)}</span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="text-gray-600">Platform fee</span>
+                            <span className="text-gray-600">Privacy fee</span>
                             <span className="font-medium text-gray-700">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
                           </div>
                           <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
@@ -3593,7 +3859,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             <span className="font-semibold font-sans text-gray-900">${claimAmountUSD.toFixed(2)}</span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="text-gray-600">Platform fee (deducted)</span>
+                            <span className="text-gray-600">Privacy fee (deducted)</span>
                             <span className="font-medium text-gray-700">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
                           </div>
                           <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
@@ -4147,21 +4413,20 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             ))}
           </>
         ) : (
-          <div className="py-16 flex flex-col items-center text-center">
-            <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-5 text-4xl select-none">
-              🔍
-            </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Payment not found</h3>
-            <p className="text-slate-400 text-base mb-6 max-w-xs">
-              Oops — this link may have expired, been cancelled, or never existed.
-            </p>
-            <Link
-              href={from === "history" ? "/history" : "/"}
-              className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors"
-            >
-              {from === "history" ? "← Back to History" : "← Back to Send"}
-            </Link>
-          </div>
+          <PaymentNotFoundNotice
+            message="This link may have expired, been cancelled, or never existed."
+            hint={
+              !hasTwitterLinked || !hasEmailLinked
+                ? "It might also be waiting on an email or X handle you haven't added to your account yet."
+                : null
+            }
+            showLinkButtons
+            hasTwitterLinked={hasTwitterLinked}
+            hasEmailLinked={hasEmailLinked}
+            onConnectTwitter={() => linkTwitter()}
+            onConnectEmail={() => linkEmail()}
+            isConfirmingIdentity={isConfirmingIdentity}
+          />
         )}
       </ClaimPayLayout>
 

@@ -25,6 +25,7 @@ const logger = new Logger('KmsSecrets');
 const KMS_SECRETS = [
   'SOLANA_FEE_PAYER_PRIVATE_KEY',
   'SEND_PAYMENT_ENC_KEY',
+  'SEND_PAYMENT_ENC_KEY_OLD',
 ] as const;
 
 export async function loadKmsSecrets(): Promise<void> {

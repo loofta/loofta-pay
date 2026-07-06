@@ -38,7 +38,7 @@ export async function fetchSolanaFeePayerAddress(privyUserId?: string | null, ac
   if (!privyUserId) return null;
   try {
     const r = await fetch(`${BACKEND_URL}/claims/solana-sponsor/fee-payer`, {
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : { "x-privy-user-id": privyUserId },
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
     });
     if (!r.ok) return null;
     const j = (await r.json()) as { feePayerAddress?: string | null };
@@ -64,7 +64,7 @@ export async function prepareSponsoredTransaction(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : { "x-privy-user-id": privyUserId }),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     body: JSON.stringify({
       transaction: uint8ArrayToBase64(unsignedTransactionBytes),
@@ -118,11 +118,14 @@ export async function signAndBroadcastSponsoredTx(
   console.info(
     `[PER sponsor] POST /sign-and-broadcast start (${label}) bytes=${signedTransactionBytes.length}`,
   );
-  const r = await fetch(`${BACKEND_URL}/claims/solana-sponsor/sign-and-broadcast`, {
+  // Route through our Next.js BFF so the backend can verify the request
+  // came from our own server (X-Loofta-Internal secret) rather than directly
+  // from an attacker who found the backend URL.
+  const r = await fetch(`/api/payments/solana-sign-broadcast`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : { "x-privy-user-id": privyUserId }),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     body: JSON.stringify({
       transaction: uint8ArrayToBase64(signedTransactionBytes),

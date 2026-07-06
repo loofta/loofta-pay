@@ -4,7 +4,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import nacl from 'tweetnacl';
-import { Keypair, PublicKey, Transaction, TransactionInstruction, SystemProgram, Connection } from '@solana/web3.js';
+import { Keypair, PublicKey, Transaction, TransactionInstruction, SystemProgram, Connection, ComputeBudgetProgram } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
   getAccount,
@@ -26,10 +26,10 @@ import {
   MAGICBLOCK_GAS_USDC,
   MAGICBLOCK_VOLUME_FEE_BPS,
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
-  grossUpForMagicblockFee,
+  estimateMagicblockGrossUp,
   requestMagicblockPrivateTransfer,
   decodeActualSenderDebit,
-  type MagicblockPrivateTransferTxResponse,
+  type MagicblockPrivateTransferClientResponse,
 } from '@/common/magicblock-private-transfer';
 
 const DEPOSIT_SEED = 'deposit';
@@ -127,7 +127,11 @@ export class ClaimsService {
       throw new BadRequestException('Missing required fields');
     }
 
-    const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
+    // Server config is the source of truth for mainnet vs devnet.
+    // In mainnet mode, reject any client-supplied cluster override — prevents creating
+    // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
+    const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
+    const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
     const shortId = generateShortId();
     const { data, error } = await this.supabaseService.payments
       .insert({
@@ -163,7 +167,11 @@ export class ClaimsService {
    */
   async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; short_id: string | null; link: string }> {
     const { username, amount, userId, isPrivate = false, description, cluster } = dto;
-    const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
+    // Server config is the source of truth for mainnet vs devnet.
+    // In mainnet mode, reject any client-supplied cluster override — prevents creating
+    // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
+    const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
+    const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
     const cleanUsername = username.replace(/^@/, '').toLowerCase();
 
     let recipientAddress: string;
@@ -172,6 +180,11 @@ export class ClaimsService {
 
     try {
       const user = await this.usersService.findByUsername(cleanUsername);
+      if (!isDevnet && !(await this.usersService.hasCompletedMainnetWalletUpdate(user.privyUserId))) {
+        throw new BadRequestException(
+          "This recipient is registered but hasn't updated Loofta to mainnet yet. Ask them to open Loofta and complete the update, then try sending again.",
+        );
+      }
       requiresPrivate = user.requirePrivatePayments || false;
       finalIsPrivate = requiresPrivate ? true : isPrivate;
       if (requiresPrivate && !isPrivate) {
@@ -531,7 +544,11 @@ export class ClaimsService {
    */
   async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; short_id: string | null; link: string }> {
     const { email, amount, userId, isPrivate = false, description, cluster } = dto;
-    const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isSolanaDevnetFromConfig(this.configService);
+    // Server config is the source of truth for mainnet vs devnet.
+    // In mainnet mode, reject any client-supplied cluster override — prevents creating
+    // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
+    const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
+    const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
     const cleanEmail = email.trim().toLowerCase();
 
     let recipientAddress: string;
@@ -539,6 +556,11 @@ export class ClaimsService {
 
     try {
       const user = await this.usersService.findByEmail(cleanEmail);
+      if (!isDevnet && !(await this.usersService.hasCompletedMainnetWalletUpdate(user.privyUserId))) {
+        throw new BadRequestException(
+          "This recipient is registered but hasn't updated Loofta to mainnet yet. Ask them to open Loofta and complete the update, then try sending again.",
+        );
+      }
       requiresPrivate = user.requirePrivatePayments || false;
       if (requiresPrivate && !isPrivate) {
         throw new BadRequestException(
@@ -768,8 +790,8 @@ export class ClaimsService {
     senderWallet: string,
     requestCluster?: 'devnet' | 'mainnet',
     gasless = true,
-  ): Promise<MagicblockPrivateTransferTxResponse> {
-    const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
+  ): Promise<MagicblockPrivateTransferClientResponse> {
+    const { requestMagicblockPrivateTransfer, toClientResponse } = await import('@/common/magicblock-private-transfer');
     const claim = await this.findOneRaw(claimId);
     const row = claim as Claim & { claim_burner_address?: string | null };
     const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
@@ -790,7 +812,8 @@ export class ClaimsService {
       throw new BadRequestException('Minimum payment amount is $5.00 USDC.');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
-    // fee_on_sender=true (Exact out): gross up so recipient receives exactly baseUnits, fees added on top.
+    // fee_on_sender=true (Exact out): MagicBlock's own exactOut grosses up the sender's debit
+    //   internally so the recipient receives exactly baseUnits — no manual gross-up on our side.
     // fee_on_sender=false (Exact in): send baseUnits directly, MB deducts its fee from the amount, recipient gets less.
     const feeOnSender = (row as any).fee_on_sender !== false;
     const cluster = requestCluster
@@ -808,12 +831,13 @@ export class ClaimsService {
 
     // MagicBlock cost = 10 BPS volume fee + flat 0.2 USDC gasless relay fee.
     const relayFeeUnits = gasless ? Math.round(MAGICBLOCK_GAS_USDC * 1_000_000) : 0;
-    const grossUnits = grossUpForMagicblockFee(baseUnits);
-    // Exact out: sender pays grossUnits + relay → recipient gets exactly baseUnits.
-    // Exact in:  sender pays (baseUnits - relay) + relay = baseUnits total. MB deducts 10 BPS from (baseUnits - relay) before delivery.
-    const transferUnits = feeOnSender ? grossUnits : baseUnits - relayFeeUnits;
+    // Exact out: pass the clean amount with exactOut:true — MagicBlock grosses up the sender's
+    //   debit internally and guarantees the recipient nets exactly baseUnits.
+    // Exact in:  sender pays (baseUnits - relay) + relay = baseUnits total, MB deducts its fee
+    //   from (baseUnits - relay) before delivery, recipient gets less.
+    const transferUnits = feeOnSender ? baseUnits : baseUnits - relayFeeUnits;
     const estimatedMbVolumeFeeUnits = feeOnSender
-      ? (grossUnits - baseUnits)
+      ? (estimateMagicblockGrossUp(baseUnits) - baseUnits)
       : Math.ceil((baseUnits - relayFeeUnits) * MAGICBLOCK_VOLUME_FEE_BPS / 10_000);
 
     this.logger.log(
@@ -827,6 +851,7 @@ export class ClaimsService {
       mint: effectiveMint.toBase58(),
       amount: transferUnits,
       cluster,
+      exactOut: feeOnSender,
       ...(gasless ? { gasless: true } : {}),
     });
 
@@ -841,8 +866,7 @@ export class ClaimsService {
       : estimatedFeeUnits;
     this.logger.log(`[PrivatePay] claim=${claimId} decoded relay=${actualDebitUnits ?? 'n/a'} feeUnits=${feeUnits} (${actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits ? 'actual-relay' : 'estimated'})`);
 
-    return {
-      ...txResponse,
+    return toClientResponse(txResponse, {
       feeAmountUsdc: feeUnits / 1_000_000,
       feeBreakdown: {
         looftaBpsUsdc: estimatedMbVolumeFeeUnits / 1_000_000,
@@ -850,7 +874,7 @@ export class ClaimsService {
         solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
         solPriceUsd: 0,
       },
-    };
+    });
   }
 
   /** Resolve the correct Solana connection and USDC mint for a claim based on its is_devnet flag.
@@ -903,9 +927,21 @@ export class ClaimsService {
     }
     if (recipientAddress.startsWith(ClaimsService.PENDING_USERNAME_PREFIX)) {
       const pendingUsername = recipientAddress.slice(ClaimsService.PENDING_USERNAME_PREFIX.length).trim().toLowerCase();
+      if (!pendingUsername) return { isRecipient: false };
       const creator = await this.usersService.findByPrivyId(privyUserId);
       const userUsername = creator?.username?.toLowerCase() ?? '';
-      return { isRecipient: !!pendingUsername && userUsername === pendingUsername };
+      if (userUsername === pendingUsername) {
+        return { isRecipient: true };
+      }
+      // Fallback: match against the claimant's connected X/Twitter handle. Covers the case
+      // where a payment was sent to someone's X handle but their Loofta username (set at
+      // signup, e.g. a "loo-" prefixed default) doesn't match it 1:1.
+      const matchesTwitter = await this.usersService.verifyRecipientIdentityForSendPayment(
+        privyUserId,
+        'twitter',
+        pendingUsername,
+      );
+      return { isRecipient: matchesTwitter };
     }
     try {
       const userWallet = await this.usersService.getSolanaWalletAddress(privyUserId);
@@ -949,7 +985,12 @@ export class ClaimsService {
       throw new BadRequestException('No Solana wallet linked to your account. Please add a wallet in settings.');
     }
 
-    // For pending claims we need to record the real wallet; for registered recipients it's already set.
+    // Attempt sweep before writing recipient_address — if sweep throws (e.g. fee payer has no SOL)
+    // we must not have overwritten the PENDING_EMAIL/PENDING_USERNAME address, otherwise the user
+    // cannot retry because the pending-claim detection no longer matches.
+    const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
+
+    // Sweep didn't throw — safe to commit the resolved wallet to DB.
     if (isPendingEmail || isPendingUsername) {
       const { error } = await this.updateRow(
         claimId,
@@ -962,7 +1003,6 @@ export class ClaimsService {
       }
     }
 
-    const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
     if (sweepTxHash) {
       await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
       this.notifyRecipientAfterPayment(claimId);
@@ -1024,12 +1064,13 @@ export class ClaimsService {
     }, BURNER_INBOUND_POLL_MS);
   }
 
-  /** Poll on-chain burner USDC ATA until balance &gt; 0 or timeout (payer→burner delivery). */
+  /** Poll on-chain burner USDC ATA until balance >= minUnits or timeout (payer→burner delivery). */
   private async pollBurnerAtaUntilPositive(
     claimId: string,
     conn: Connection,
     burnerAta: PublicKey,
     maxWaitMs: number,
+    minUnits: bigint = BigInt(1),
   ): Promise<bigint> {
     const deadline = Date.now() + maxWaitMs;
     let attempt = 0;
@@ -1037,11 +1078,16 @@ export class ClaimsService {
       attempt += 1;
       try {
         const acc = await getAccount(conn, burnerAta);
-        if (acc.amount > BigInt(0)) {
+        if (acc.amount >= minUnits) {
           this.logger.log(
-            `Claim ${claimId}: burner ATA credited ${acc.amount} base units (poll attempt ${attempt}, waited ≤${maxWaitMs}ms)`,
+            `Claim ${claimId}: burner ATA credited ${acc.amount} base units (≥${minUnits} expected, poll attempt ${attempt}, waited ≤${maxWaitMs}ms)`,
           );
           return acc.amount;
+        }
+        if (acc.amount > BigInt(0)) {
+          this.logger.log(
+            `Claim ${claimId}: burner ATA partially funded ${acc.amount}/${minUnits} base units (split in transit, attempt ${attempt})`,
+          );
         }
       } catch {
         /* ATA missing or not funded yet */
@@ -1119,6 +1165,13 @@ export class ClaimsService {
    * Send a transaction and confirm it with blockhash-expiry-aware retries.
    * If the blockhash window expires before confirmation, re-signs with a fresh blockhash and retries.
    * The transaction must have its instructions already set; blockhash/feePayer/signatures are managed here.
+   *
+   * Every attempt also (re)prepends a priority fee, escalating each retry. Without this, every
+   * attempt went out at the network's default (effectively zero) priority — under any real
+   * congestion a transaction can sit unconfirmed for the entire ~60-90s blockhash window before
+   * the expiry check above even fires, then retry at the *same* fee and stall again. This is why
+   * production sweeps were observed taking 60s+ and multiple attempts even for a single simple
+   * transfer: it wasn't bad luck, it was structurally underpriced every single time.
    */
   private async sendAndConfirmWithRebuild(
     conn: Connection,
@@ -1128,14 +1181,28 @@ export class ClaimsService {
     label: string,
     maxAttempts = 3,
   ): Promise<string> {
+    const BASE_PRIORITY_FEE_MICROLAMPORTS = 20_000;
+    // Covers a transfer (~5k CU) plus an optional ATA-creation instruction (~25-30k CU) with
+    // comfortable headroom, without setting the limit so high it inflates the fee for no reason.
+    const COMPUTE_UNIT_LIMIT = 60_000;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // Drop any compute-budget instructions from a prior attempt before adding this attempt's
+      // (escalated) ones — otherwise they'd stack up across retries.
+      tx.instructions = tx.instructions.filter((ix) => !ix.programId.equals(ComputeBudgetProgram.programId));
+      const priorityFeeMicroLamports = BASE_PRIORITY_FEE_MICROLAMPORTS * 2 ** (attempt - 1);
+      tx.instructions.unshift(
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFeeMicroLamports }),
+        ComputeBudgetProgram.setComputeUnitLimit({ units: COMPUTE_UNIT_LIMIT }),
+      );
       const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
       tx.recentBlockhash = blockhash;
       tx.feePayer = feePayer;
       tx.signatures = [];
       for (const signer of signers) tx.partialSign(signer);
       const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 2 });
-      this.logger.log(`[${label}] attempt ${attempt}/${maxAttempts} sent ${sig.slice(0, 8)}… (validUntilBlock=${lastValidBlockHeight})`);
+      this.logger.log(
+        `[${label}] attempt ${attempt}/${maxAttempts} sent ${sig.slice(0, 8)}… (validUntilBlock=${lastValidBlockHeight}, priorityFee=${priorityFeeMicroLamports}µLamports/CU)`,
+      );
       const confirmed = await this.pollUntilConfirmedOrExpired(conn, sig, lastValidBlockHeight);
       if (confirmed) {
         this.logger.log(`[${label}] confirmed: ${sig.slice(0, 8)}…`);
@@ -1189,11 +1256,13 @@ export class ClaimsService {
   ): Promise<{ sweepTxHash?: string; sweptAmount?: string }> {
     const burnerAta = await getAssociatedTokenAddress(this.usdcMint, burnerKeypair.publicKey);
 
-    // Wait for NEAR intent USDC delivery
+    // Wait for NEAR intent USDC delivery — full amount must arrive before forwarding
+    const amountUsdCrossChain = parseFloat(String(claim.amount || '0'));
+    const expectedUnitsCrossChain = BigInt(Math.round(amountUsdCrossChain * 1_000_000));
     let balance = BigInt(0);
     try { balance = (await getAccount(conn, burnerAta)).amount; } catch { /* not yet */ }
-    if (balance === BigInt(0)) {
-      balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS);
+    if (balance < expectedUnitsCrossChain) {
+      balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS, expectedUnitsCrossChain);
     }
     if (balance === BigInt(0)) {
       this.logger.log(`[CrossChain] ${claimId}: USDC not yet in burner — funds still in flight`);
@@ -1202,26 +1271,31 @@ export class ClaimsService {
 
     const amountUsd = parseFloat(String(claim.amount || '0'));
     const requestedBaseUnits = Math.round(amountUsd * 1_000_000);
-    const transferUnits = grossUpForMagicblockFee(requestedBaseUnits);
+    // Balance check needs a rough estimate of MagicBlock's real (internal) gross debit — the
+    // actual transfer below sends the clean amount with exactOut:true and lets MagicBlock
+    // compute its own gross-up, so this estimate is only used to decide if it's safe to proceed.
+    const estimatedGrossUnits = estimateMagicblockGrossUp(requestedBaseUnits);
     const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost'
       : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
 
     this.logger.log(
-      `[CrossChain] ${claimId}: balance=${balance} transferUnits=${transferUnits} cluster=${cluster} recipient=${wallet.slice(0, 8)}…`,
+      `[CrossChain] ${claimId}: balance=${balance} requestedBaseUnits=${requestedBaseUnits} estimatedGrossUnits=${estimatedGrossUnits} cluster=${cluster} recipient=${wallet.slice(0, 8)}…`,
     );
 
-    if (BigInt(transferUnits) > balance) {
-      this.logger.warn(`[CrossChain] ${claimId}: balance ${balance} < transferUnits ${transferUnits} — aborting, intent may not be complete`);
+    if (BigInt(estimatedGrossUnits) > balance) {
+      this.logger.warn(`[CrossChain] ${claimId}: balance ${balance} < estimatedGrossUnits ${estimatedGrossUnits} — aborting, intent may not be complete`);
       return {};
     }
 
-    // Build PER private transfer from burner to recipient
+    // Build PER private transfer from burner to recipient — clean amount, exactOut:true lets
+    // MagicBlock gross up its own internal debit so the recipient nets exactly requestedBaseUnits.
     const txResponse = await requestMagicblockPrivateTransfer({
       from: burnerKeypair.publicKey.toBase58(),
       to: wallet.trim(),
       mint: this.usdcMint.toBase58(),
-      amount: transferUnits,
+      amount: requestedBaseUnits,
       cluster,
+      exactOut: true,
     });
 
     // Auto-sign with burner keypair (and fee payer for ATA rent)
@@ -1318,6 +1392,8 @@ export class ClaimsService {
         conn,
         String(claim.amount || '0'),
       );
+      const amountUsdForSweep = parseFloat(String(claim.amount || '0'));
+      const expectedUnits = BigInt(Math.round(amountUsdForSweep * 1_000_000));
       const burnerAta = await getAssociatedTokenAddress(claimMint, burnerKeypair.publicKey);
       let balance = BigInt(0);
       try {
@@ -1326,16 +1402,16 @@ export class ClaimsService {
       } catch {
         // ATA may not exist yet
       }
-      if (balance === BigInt(0)) {
+      if (balance < expectedUnits) {
         this.logger.log(
-          `Claim ${claimId}: burner ATA empty after PER step — polling for payer→burner delivery (up to ${BURNER_INBOUND_INLINE_MAX_MS}ms)…`,
+          `Claim ${claimId}: burner ATA balance=${balance} < expected=${expectedUnits} — polling for full delivery (up to ${BURNER_INBOUND_INLINE_MAX_MS}ms)…`,
         );
-        balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS);
+        balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS, expectedUnits);
       }
       this.logger.log(
-        `Claim ${claimId}: [MONEY] burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} balance=${balance} perAttempted=${perWithdraw.attempted} perSuccess=${perWithdraw.success} -> recipient ${wallet.slice(0, 8)}...`,
+        `Claim ${claimId}: [MONEY] burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} balance=${balance} expected=${expectedUnits} perAttempted=${perWithdraw.attempted} perSuccess=${perWithdraw.success} -> recipient ${wallet.slice(0, 8)}...`,
       );
-      if (balance > BigInt(0)) {
+      if (balance >= expectedUnits) {
         // Direct SPL sweep: burner → recipient (public). Payer→burner was already private via MagicBlock.
         const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
         const recipientPubkey = new PublicKey(wallet.trim());
@@ -1361,9 +1437,10 @@ export class ClaimsService {
         // Guard: fee payer must have SOL or the tx will be silently dropped (causes "timed out" not "failed").
         const feePayerSolBalance = await conn.getBalance(feePayerPubkey).catch(() => 0);
         if (feePayerSolBalance < 10_000) {
-          throw new Error(
-            `Fee payer ${feePayerPubkey.toBase58().slice(0, 8)}… has insufficient SOL (${feePayerSolBalance} lamports). Please top up the fee payer wallet.`,
+          this.logger.warn(
+            `Claim ${claimId}: fee payer ${feePayerPubkey.toBase58()} has insufficient SOL (${feePayerSolBalance} lamports) — cannot sweep`,
           );
+          throw new Error('Network fee sponsorship is temporarily unavailable');
         }
         this.logger.log(
           `Claim ${claimId}: [SWEEP] direct SPL burner->recipient ${balance} base units (burner ${burnerKeypair.publicKey.toBase58().slice(0, 8)} → ${wallet.slice(0, 8)}) feePayer=${feePayerPubkey.toBase58().slice(0, 8)} sol=${feePayerSolBalance}`,

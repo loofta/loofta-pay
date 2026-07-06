@@ -20,7 +20,7 @@ export interface BlinkCampaignData {
   qualified: boolean;
 }
 
-const CAMPAIGN_START = new Date('2026-07-01T00:00:00.000Z');
+const CAMPAIGN_START = new Date('2026-07-02T12:00:00.000Z');
 const CAMPAIGN_END = new Date('2026-08-15T00:00:00.000Z');
 
 export interface BlinkAdminUserStatus {
@@ -64,13 +64,13 @@ export class BlinkCampaignService {
       {
         key: 'setup_passkeys',
         label: 'Set up Blink with passkeys',
-        description: 'Create your Blink account and secure it with passkeys.',
+        description: 'Go to your balance, tap Top up, and deposit with Blink — this creates your Blink account and passkeys.',
         completed: hasPasskeys,
       },
       {
         key: 'two_deposits',
         label: 'Make at least 2 deposits with Blink',
-        description: 'Deposit funds into your Blink wallet twice during the campaign.',
+        description: 'Deposit funds into your Blink wallet twice during the campaign (min $5 each). Make sure you have enough to cover private payments.',
         completed: hasTwoDeposits,
         progress: Math.min(blinkDeposits, 2),
         total: 2,
@@ -78,7 +78,7 @@ export class BlinkCampaignService {
       {
         key: 'two_private_payments',
         label: 'Send 2 mainnet private payments',
-        description: 'Send at least 2 private payments on Loofta mainnet during the campaign.',
+        description: 'Send at least 2 private payments on Loofta mainnet during the campaign (min $5 each).',
         completed: hasTwoPrivatePayments,
         progress: Math.min(privatePaymentsCount, 2),
         total: 2,

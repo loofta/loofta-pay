@@ -5,9 +5,10 @@ import Image from "next/image";
 import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 
-const SPARKS_END_DATE = new Date("2026-07-01T00:00:00.000Z");
-// Blink campaign: July 1 at 3pm CET (UTC+2 in summer = UTC 13:00)
-const BLINK_START_DATE = new Date("2026-07-01T13:00:00.000Z");
+// Campaign ended July 1 2026 at 18:00 CET (CEST = UTC+2) = 16:00 UTC
+const SPARKS_END_DATE = new Date("2026-07-01T16:00:00.000Z");
+// Blink campaign: July 2 at 2pm CET (UTC+2 in summer = UTC 12:00)
+const BLINK_START_DATE = new Date("2026-07-02T12:00:00.000Z");
 const BLINK_END_DATE = new Date("2026-08-15T00:00:00.000Z");
 
 function getDaysLeft(endDate: Date): number {
@@ -112,22 +113,18 @@ const BLINK_BG = `data:image/svg+xml,${encodeURIComponent(BLINK_BG_SVG)}`;
 export default function RewardsPage() {
   const t = useTranslations("RewardsPage");
 
-  const [sparksLeft, setSparksLeft] = useState<number | null>(null);
-  const [blinkDaysUntil, setBlinkDaysUntil] = useState<number | null>(null);
+  const [sparksEnded, setSparksEnded] = useState(false);
   const [blinkDaysLeft, setBlinkDaysLeft] = useState<number | null>(null);
   const [blinkActive, setBlinkActive] = useState(false);
   const [isLocalhost, setIsLocalhost] = useState(false);
 
   useEffect(() => {
     const now = new Date();
-    setSparksLeft(getDaysLeft(SPARKS_END_DATE));
-    setBlinkDaysUntil(getDaysUntil(BLINK_START_DATE));
+    setSparksEnded(now >= SPARKS_END_DATE);
     setBlinkDaysLeft(getDaysLeft(BLINK_END_DATE));
     setBlinkActive(now >= BLINK_START_DATE);
     setIsLocalhost(window.location.hostname === "localhost");
   }, []);
-
-  const sparksIsEnding = sparksLeft !== null && sparksLeft <= 3;
 
   return (
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
@@ -144,175 +141,149 @@ export default function RewardsPage() {
           {t("activeCampaigns")}
         </p>
 
-        {/* Sparks Campaign */}
-        <Link href="/app/rewards/sparks" className="block group">
+        {/* Blink Campaign */}
+        {(() => {
+          const blinkClickable = blinkActive || isLocalhost;
+          const blinkCard = (
           <div
-            className="relative rounded-2xl overflow-hidden border border-amber-500/25 group-hover:border-amber-500/45 transition-all duration-200 group-hover:shadow-[0_0_32px_rgba(245,158,11,0.12)]"
-            style={{ backgroundImage: `url("${SPARKS_BG}")`, backgroundSize: "cover", backgroundPosition: "center" }}
+            className="relative rounded-2xl overflow-hidden border border-[#F7C948]/20 group-hover:border-[#F7C948]/40 transition-all duration-200 group-hover:shadow-[0_0_32px_rgba(247,201,72,0.10)]"
+            style={{ backgroundImage: `url("${BLINK_BG}")`, backgroundSize: "cover", backgroundPosition: "center" }}
           >
-            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/25 to-black/10" />
+            {/* Gradient overlay */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/15" />
+
+            {/* Blink icon watermark — top right */}
+            <div className="absolute top-4 right-4 w-28 h-28 opacity-[0.12] pointer-events-none select-none">
+              <Image
+                src="/images/blink/icon-yellow.png"
+                alt=""
+                fill
+                priority
+                className="object-contain"
+              />
+            </div>
+
             <div className="relative z-10 p-6">
-              <div className="flex items-center gap-2 mb-7">
-                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
-                  Devnet
+              {/* Badges */}
+              <div className="flex items-center gap-2 mb-6">
+                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-[#F7C948]/15 text-[#F7C948] border border-[#F7C948]/25">
+                  Mainnet
                 </span>
-                {sparksLeft !== null && (
-                  sparksLeft === 0 ? (
-                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-red-500/25 text-red-400 border border-red-500/30">
-                      {t("endsToday")}
-                    </span>
-                  ) : (
-                    <span
-                      className={[
-                        "text-xs font-bold px-2.5 py-1 rounded-full border",
-                        sparksIsEnding
-                          ? "bg-red-500/20 text-red-400 border-red-500/25"
-                          : "bg-black/30 text-slate-300 border-white/15",
-                      ].join(" ")}
-                    >
-                      {t("daysLeft", { days: sparksLeft })}
-                    </span>
-                  )
+                {blinkDaysLeft !== null && (
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
+                    Ends Aug 15
+                  </span>
                 )}
               </div>
-              <div className="flex items-center gap-3 mb-2">
-                <span className="text-4xl leading-none">⚡</span>
-                <h2 className="text-2xl font-bold text-white leading-tight">
-                  {t("sparksTitle")} Campaign
-                </h2>
-              </div>
-              <p className="text-base text-slate-300 mb-6 leading-relaxed">
-                {t("sparksDescription")}
-              </p>
-              <div className="flex items-end justify-between">
-                <div>
-                  <p className="text-xs font-semibold text-amber-500/70 uppercase tracking-wider mb-1">
-                    Total reward pool
-                  </p>
-                  <p className="text-3xl font-bold text-amber-400 leading-none">
-                    10,000 ⚡
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
-                  <span>View quests</span>
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
-                    <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Link>
 
-        {/* ── COMING SOON ── */}
-        <div className="mt-10">
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">
-            {t("comingSoon")}
-          </p>
-
-          {/* Blink Campaign */}
-          {(() => {
-            const blinkClickable = blinkActive || isLocalhost;
-            const blinkCard = (
-            <div
-              className="relative rounded-2xl overflow-hidden border border-[#F7C948]/20 group-hover:border-[#F7C948]/40 transition-all duration-200 group-hover:shadow-[0_0_32px_rgba(247,201,72,0.10)]"
-              style={{ backgroundImage: `url("${BLINK_BG}")`, backgroundSize: "cover", backgroundPosition: "center" }}
-            >
-              {/* Gradient overlay */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/15" />
-
-              {/* Blink icon watermark — top right */}
-              <div className="absolute top-4 right-4 w-28 h-28 opacity-[0.12] pointer-events-none select-none">
+              {/* Loofta x Blink branding */}
+              <div className="flex items-center gap-2 mb-3">
                 <Image
-                  src="/images/blink/icon-yellow.png"
-                  alt=""
-                  fill
+                  src="/loofta-white.svg"
+                  alt="Loofta"
+                  width={72}
+                  height={20}
                   priority
-                  className="object-contain"
+                  className="opacity-90"
+                />
+                <span className="text-slate-500 font-light text-lg">×</span>
+                <Image
+                  src="/images/blink/logo-white.png"
+                  alt="Blink"
+                  width={64}
+                  height={20}
+                  priority
+                  className="opacity-90 object-contain"
                 />
               </div>
 
+              {/* Campaign title */}
+              <h2 className="text-2xl font-bold text-white leading-tight mb-2">
+                Blink Campaign
+              </h2>
+
+              {/* Description */}
+              <p className="text-base text-slate-300 mb-5 leading-relaxed">
+                Complete Blink quests and earn your share of the prize pool — paid out through Loofta.
+              </p>
+
+              {/* Reward + CTA */}
+              <div className="flex items-end justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-[#F7C948]/60 uppercase tracking-wider mb-1">
+                    Total reward pool
+                  </p>
+                  <p className="text-3xl font-bold text-[#F7C948] leading-none">
+                    $2,000
+                  </p>
+                </div>
+                {blinkClickable && (
+                  <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
+                    <span>View quests</span>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
+                      <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          );
+          return blinkClickable
+            ? <Link href="/app/rewards/blink" className="block group">{blinkCard}</Link>
+            : <div className="block">{blinkCard}</div>;
+        })()}
+
+        {/* ── ENDED ── */}
+        <div className="mt-10">
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">
+            Ended
+          </p>
+
+          {/* Sparks Campaign — ended */}
+          <Link href="/app/rewards/sparks" className="block group">
+            <div
+              className="relative rounded-2xl overflow-hidden border border-white/10 group-hover:border-white/20 transition-all duration-200 opacity-70"
+              style={{ backgroundImage: `url("${SPARKS_BG}")`, backgroundSize: "cover", backgroundPosition: "center" }}
+            >
+              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-black/30" />
               <div className="relative z-10 p-6">
-                {/* Badges */}
-                <div className="flex items-center gap-2 mb-6">
-                  <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-[#F7C948]/15 text-[#F7C948] border border-[#F7C948]/25">
-                    Mainnet
+                <div className="flex items-center gap-2 mb-7">
+                  <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+                    Devnet
                   </span>
-                  {blinkDaysUntil !== null && (
-                    blinkDaysUntil === 0 ? (
-                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-green-500/20 text-green-400 border border-green-500/25">
-                        Starts today
-                      </span>
-                    ) : (
-                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-black/30 text-slate-300 border border-white/15">
-                        Starts in {blinkDaysUntil}d
-                      </span>
-                    )
-                  )}
-                  {blinkDaysLeft !== null && (
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
-                      Ends Aug 15
-                    </span>
-                  )}
+                  <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/10 text-slate-400 border border-white/15">
+                    Ended
+                  </span>
                 </div>
-
-                {/* Loofta x Blink branding */}
-                <div className="flex items-center gap-2 mb-3">
-                  <Image
-                    src="/loofta-white.svg"
-                    alt="Loofta"
-                    width={72}
-                    height={20}
-                    priority
-                    className="opacity-90"
-                  />
-                  <span className="text-slate-500 font-light text-lg">×</span>
-                  <Image
-                    src="/images/blink/logo-white.png"
-                    alt="Blink"
-                    width={64}
-                    height={20}
-                    priority
-                    className="opacity-90 object-contain"
-                  />
+                <div className="flex items-center gap-3 mb-2">
+                  <span className="text-4xl leading-none">⚡</span>
+                  <h2 className="text-2xl font-bold text-white leading-tight">
+                    {t("sparksTitle")} Campaign
+                  </h2>
                 </div>
-
-                {/* Campaign title */}
-                <h2 className="text-2xl font-bold text-white leading-tight mb-2">
-                  Blink Campaign
-                </h2>
-
-                {/* Description */}
-                <p className="text-base text-slate-300 mb-5 leading-relaxed">
-                  Complete Blink quests and earn your share of the prize pool — paid out through Loofta.
+                <p className="text-base text-slate-400 mb-6 leading-relaxed">
+                  {t("sparksDescription")}
                 </p>
-
-                {/* Reward + CTA */}
                 <div className="flex items-end justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-[#F7C948]/60 uppercase tracking-wider mb-1">
+                    <p className="text-xs font-semibold text-amber-500/50 uppercase tracking-wider mb-1">
                       Total reward pool
                     </p>
-                    <p className="text-3xl font-bold text-[#F7C948] leading-none">
-                      $2,000
+                    <p className="text-3xl font-bold text-amber-400/60 leading-none">
+                      10,000 ⚡
                     </p>
                   </div>
-                  {blinkClickable && (
-                    <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
-                      <span>View quests</span>
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
-                        <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5 text-base font-semibold text-slate-500 group-hover:text-slate-400 transition-colors pb-0.5">
+                    <span>View results</span>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
+                      <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
                 </div>
               </div>
             </div>
-            );
-            return blinkClickable
-              ? <Link href="/app/rewards/blink" className="block group">{blinkCard}</Link>
-              : <div className="block">{blinkCard}</div>;
-          })()}
+          </Link>
         </div>
 
       </div>

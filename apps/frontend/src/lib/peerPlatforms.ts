@@ -8,8 +8,8 @@ export interface PeerCurrency {
 }
 
 export const PEER_CURRENCIES: PeerCurrency[] = [
-  { code: 'USD', label: 'US Dollar',          flag: '🇺🇸', symbol: '$',  spreadPercent: 0 },
-  { code: 'EUR', label: 'Euro',               flag: '🇪🇺', symbol: '€',  spreadPercent: 0 },
+  { code: 'USD', label: 'US Dollar',          flag: '🇺🇸', symbol: '$',  spreadPercent: 2 },
+  { code: 'EUR', label: 'Euro',               flag: '🇪🇺', symbol: '€',  spreadPercent: 2 },
   { code: 'INR', label: 'Indian Rupee',       flag: '🇮🇳', symbol: '₹',  spreadPercent: 5 },
   { code: 'IDR', label: 'Indonesian Rupiah',  flag: '🇮🇩', symbol: 'Rp', spreadPercent: 5 },
   { code: 'VND', label: 'Vietnamese Dong',    flag: '🇻🇳', symbol: '₫',  spreadPercent: 5 },

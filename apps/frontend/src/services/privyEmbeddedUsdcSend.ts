@@ -1,19 +1,17 @@
 /**
  * Send USDC from Privy embedded Solana wallet.
  *
- * Mainnet: Privy handles gas sponsorship (signAndSendTransaction with sponsor: true).
+ * All paths (mainnet + devnet) route through the backend fee payer:
+ *   1. User signs the transaction with their Privy embedded wallet (client-side, required)
+ *   2. Our backend adds the fee payer signature and broadcasts
  *
- * Devnet: backend fee payer co-signs.
- *   - Same keypair as mainnet, just needs devnet SOL (airdrop to fee payer address once).
- *   - signTransaction with { uiOptions: { showWalletUIs: false } } skips Privy's preflight
- *     SOL-balance check (fee payer is the backend, not the user's wallet).
- *   - sign-and-broadcast receives network: "devnet" so the backend uses the devnet RPC.
- *   - skipPreflight: true on the backend means no simulation — tx is accepted/rejected on-chain.
+ * This eliminates the { sponsor: true } client-side Privy gas sponsorship path.
+ * Gas cost is negligible (~$0.001/tx from our fee payer SOL wallet) and fully
+ * server-controlled — external callers cannot bypass our rate limiting.
  */
 
 import type { ConnectedStandardSolanaWallet } from "@privy-io/react-auth/solana";
 import { Connection, PublicKey } from "@solana/web3.js";
-import bs58 from "bs58";
 import { getPrivySolanaChain } from "@/lib/solanaCluster";
 import { buildUSDCTransferTransaction } from "@/services/solanaTransfer";
 import {
@@ -23,13 +21,6 @@ import {
 
 type PrivySolanaChain = ReturnType<typeof getPrivySolanaChain>;
 
-type SignAndSendTransactionFn = (input: {
-  transaction: Uint8Array;
-  wallet: ConnectedStandardSolanaWallet;
-  chain?: PrivySolanaChain;
-  options?: { sponsor?: boolean; skipPreflight?: boolean };
-}) => Promise<{ signature: Uint8Array }>;
-
 type SignTransactionFn = (input: {
   transaction: Uint8Array;
   wallet: ConnectedStandardSolanaWallet;
@@ -38,51 +29,37 @@ type SignTransactionFn = (input: {
   options?: any;
 }) => Promise<{ signedTransaction: Uint8Array }>;
 
-/** Mainnet path — Privy handles gas sponsorship. */
+/**
+ * Mainnet USDC send via backend fee payer.
+ * User signs with their Privy embedded wallet; our backend co-signs and broadcasts.
+ * Kept as a named export so existing call sites don't need renaming.
+ */
 export async function sendUsdcWithPrivyEmbeddedWallet(params: {
   senderAddress: string;
   recipientAddress: string;
   amountUSDC: number;
   connection: Connection;
   wallet: ConnectedStandardSolanaWallet;
-  privyUserId?: string;
-  signAndSendTransaction: SignAndSendTransactionFn;
+  privyUserId: string;
+  signTransaction: SignTransactionFn;
   memo?: string | null;
   usdcMint?: PublicKey;
   chain?: PrivySolanaChain;
-  /** Unused — kept for call-site compatibility. */
+  accessToken?: string | null;
+  network?: "mainnet" | "devnet";
+  /** Legacy params — unused, kept for call-site compatibility */
+  signAndSendTransaction?: unknown;
   skipLooftaFeePayer?: boolean;
-  signTransaction?: unknown;
 }): Promise<string> {
-  const { senderAddress, recipientAddress, amountUSDC, connection, wallet, memo, usdcMint, signAndSendTransaction } = params;
-  const chain = params.chain ?? getPrivySolanaChain();
-
-  const unsignedTx = await buildUSDCTransferTransaction({
-    senderAddress,
-    recipientAddress: recipientAddress.trim(),
-    amountUSDC,
-    connection,
-    memo: memo ?? undefined,
-    usdcMint,
+  return sendUsdcWithBackendFeePayer({
+    ...params,
+    network: params.network ?? "mainnet",
   });
-
-  const { signature } = await signAndSendTransaction({
-    transaction: unsignedTx.serialize(),
-    wallet,
-    chain,
-    options: { sponsor: true } as never,
-  });
-  return bs58.encode(signature);
 }
 
 /**
- * Devnet path — backend fee payer co-signs so the user's embedded wallet pays no SOL.
- *
- * Requires the fee payer to have devnet SOL. Airdrop once to the fee payer address:
- *   solana airdrop 1 <FEE_PAYER_ADDRESS> --url devnet
- *
- * showWalletUIs: false skips Privy's SOL-balance preflight (fee payer is the backend).
- * network: "devnet" tells the backend's sign-and-broadcast to use the devnet RPC.
+ * Backend fee payer path — user signs, backend co-signs and broadcasts.
+ * Works for both mainnet and devnet; pass network: "devnet" for test sends.
  */
 export async function sendUsdcWithBackendFeePayer(params: {
   senderAddress: string;
@@ -126,7 +103,7 @@ export async function sendUsdcWithBackendFeePayer(params: {
     feePayerAddress,
   });
 
-  // showWalletUIs: false — skip Privy's preflight SOL-balance check.
+  // showWalletUIs: false — skip Privy's SOL-balance preflight.
   // The fee payer is the backend, not the user's wallet.
   const { signedTransaction } = await signTransaction({
     transaction: unsignedTx.serialize(),
