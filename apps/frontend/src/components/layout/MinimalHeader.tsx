@@ -53,7 +53,7 @@ function MobileMenu({
   const navLinks = [
     { href: "/", label: "Send & Receive", description: "Send and receive payments" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
-    { href: "/app/megapot", label: "Megapot", description: "Play the daily jackpot privately" },
+    { href: "/megapot", label: "Megapot", description: "Play the daily jackpot privately" },
   ];
 
   return (
@@ -286,7 +286,7 @@ export function MinimalHeader() {
 
                 {/* Desktop: Win (lottery) link */}
                 <Link
-                  href="/app/megapot"
+                  href="/megapot"
                   className={[
                     "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                     isWinActive

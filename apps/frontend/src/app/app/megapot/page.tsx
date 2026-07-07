@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
@@ -249,6 +249,10 @@ function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPoo
 // ─── Megapot tabs (desktop only — mobile uses bottom nav) ─────────────────────
 
 function MegapotTabs({ activeTab, wonCount }: { activeTab: Tab; wonCount: number }) {
+  // On pay.loofta.xyz, proxy.ts redirects any literal "/app/*" URL back to the clean path —
+  // hardcoding "/app/megapot" here turns every tab click into an extra redirect round trip.
+  const isAppPath = usePathname()?.startsWith("/app");
+  const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
   const tabBase = "group relative z-10 whitespace-nowrap rounded-xl px-4 py-2.5 inline-flex items-center justify-center gap-2 font-semibold text-[16px] tracking-[-0.01em] transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]";
   const tabText = (t: Tab) => ["relative z-10 transition-colors duration-300 font-sans font-medium text-lg", activeTab === t ? "text-slate-100" : "text-slate-400 group-hover:text-slate-200"].join(" ");
   const sliderPos = activeTab === "redeem" ? "translate-x-full" : "translate-x-0";
@@ -258,16 +262,16 @@ function MegapotTabs({ activeTab, wonCount }: { activeTab: Tab; wonCount: number
       <div className="relative grid grid-cols-2 rounded-2xl p-1 bg-white/[0.05] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] border border-white/[0.06] overflow-hidden">
         <div aria-hidden="true" className={["absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-xl transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] bg-gradient-to-b from-white/[0.08] to-white/[0.03] shadow-[0_8px_24px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.08)] border border-white/[0.08]", isHistory ? "opacity-0" : sliderPos].join(" ")} />
         <div aria-hidden="true" className={["pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-xl transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] opacity-40 bg-[radial-gradient(80%_140%_at_50%_0%,rgba(255,122,42,0.35),transparent_60%)]", isHistory ? "opacity-0" : sliderPos].join(" ")} />
-        <Link href="/app/megapot" className={tabBase}>
+        <Link href={megapotBase} className={tabBase}>
           <IconBubble active={activeTab === "buy"}><Ticket /></IconBubble>
           <span className={tabText("buy")}>Buy</span>
         </Link>
-        <Link href="/app/megapot?tab=redeem" className={tabBase}>
+        <Link href={`${megapotBase}?tab=redeem`} className={tabBase}>
           <IconBubble active={activeTab === "redeem"}><Trophy /></IconBubble>
           <span className={tabText("redeem")}>Redeem{wonCount > 0 ? ` (${wonCount})` : ""}</span>
         </Link>
       </div>
-      <Link href="/app/megapot?tab=history"
+      <Link href={`${megapotBase}?tab=history`}
         className={[
           "p-2.5 rounded-xl transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
           "border border-white/[0.06]",
@@ -1622,6 +1626,8 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
   getAccessToken: () => Promise<string | null>; onRefresh: () => void; refetch?: () => void;
   userSolanaAddress: string; loading?: boolean; nextDrawRoundId?: string | null;
 }) {
+  const isAppPath = usePathname()?.startsWith("/app");
+  const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
   const [copied, setCopied] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const syncedIds = useRef<Set<string>>(new Set());
@@ -1971,12 +1977,12 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                     {t.status === "bridging" && "Bridging from Solana to Base. This takes 5–15 minutes."}
                     {t.status === "buying" && "Funds arrived on Base — buying your tickets now."}
                   </p>
-                  <a
-                    href="/app/megapot"
+                  <Link
+                    href={megapotBase}
                     className="inline-flex items-center gap-1.5 text-sm font-medium text-[#FF7A2A] hover:text-[#FF9A5A] transition-colors"
                   >
                     View progress <ArrowUpRight className="w-3.5 h-3.5" />
-                  </a>
+                  </Link>
                   {t.depositAddress && t.status !== "buying" && (
                     <>
                       <p className="text-sm text-slate-400">Deposit address:</p>
@@ -2334,6 +2340,8 @@ function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRe
   onClose: () => void;
   onRedeem: () => void;
 }) {
+  const isAppPath = usePathname()?.startsWith("/app");
+  const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
   const anyWon = results.some(r => r.status === "won");
   const totalWon = results.reduce((sum, r) => sum + (r.winAmountUsdc ?? 0), 0);
   const [showAllTickets, setShowAllTickets] = useState(false);
@@ -2416,12 +2424,12 @@ function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRe
 
         {/* CTAs */}
         {anyWon ? (
-          <Link href="/app/megapot?tab=redeem" onClick={onRedeem}
+          <Link href={`${megapotBase}?tab=redeem`} onClick={onRedeem}
             className="flex items-center justify-center w-full h-11 rounded-xl font-semibold bg-emerald-500 hover:bg-emerald-400 text-white transition-all">
             Redeem Winnings
           </Link>
         ) : (
-          <Link href="/app/megapot" onClick={onClose}
+          <Link href={megapotBase} onClick={onClose}
             className="flex items-center justify-center w-full h-11 rounded-xl font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all">
             Buy tickets for tomorrow
           </Link>
