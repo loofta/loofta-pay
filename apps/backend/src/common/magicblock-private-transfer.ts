@@ -202,13 +202,19 @@ export async function requestMagicblockPrivateTransfer(params: {
   /** When true, MagicBlock uses the configured sponsor as fee payer and prepends a fixed
    *  relay-fee USDC transfer (sender → sponsor ATA) to cover SOL gas. No SOL needed from sender. */
   gasless?: boolean;
+  /** Override cluster-default min delay (ms). Pass 0 for instant. */
+  minDelayMs?: number;
+  /** Override cluster-default max delay (ms). Pass 0 for instant. */
+  maxDelayMs?: number;
   /** When true, `amount` is what the destination receives net — MagicBlock grosses up the
    *  sender's debit internally to cover its own fee. This is the official reference pattern
    *  (confirmed against MagicBlock's own web app and the payments-demo `one/` reference repo):
    *  never gross up `amount` ourselves, just pass the clean intended amount with exactOut: true. */
   exactOut?: boolean;
 }): Promise<MagicblockPrivateTransferTxResponse> {
-  const { minDelayMs, maxDelayMs } = magicblockPrivateDelayForCluster(params.cluster);
+  const defaults = magicblockPrivateDelayForCluster(params.cluster);
+  const minDelayMs = params.minDelayMs !== undefined ? String(params.minDelayMs) : defaults.minDelayMs;
+  const maxDelayMs = params.maxDelayMs !== undefined ? String(params.maxDelayMs) : defaults.maxDelayMs;
   const body: Record<string, unknown> = {
     from: params.from,
     to: params.to,

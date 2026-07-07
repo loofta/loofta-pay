@@ -53,6 +53,7 @@ function MobileMenu({
   const navLinks = [
     { href: "/", label: "Send & Receive", description: "Send and receive payments" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
+    { href: "/app/megapot", label: "Megapot", description: "Play the daily jackpot privately" },
   ];
 
   return (
@@ -239,6 +240,7 @@ export function MinimalHeader() {
   }, [pathname]);
 
   const isRewardsActive = pathname?.startsWith("/rewards");
+  const isWinActive = pathname?.includes("/megapot");
 
   return (
     <>
@@ -280,6 +282,19 @@ export function MinimalHeader() {
                   ].join(" ")}
                 >
                   <span>{t('rewards')}</span>
+                </Link>
+
+                {/* Desktop: Win (lottery) link */}
+                <Link
+                  href="/app/megapot"
+                  className={[
+                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    isWinActive
+                      ? "text-yellow-300 bg-yellow-500/10"
+                      : "text-slate-300 hover:text-white hover:bg-white/10",
+                  ].join(" ")}
+                >
+                  <span>Megapot</span>
                 </Link>
 
                 {/* Desktop: Balance button */}

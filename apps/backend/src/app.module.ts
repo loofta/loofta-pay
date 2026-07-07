@@ -23,6 +23,7 @@ import { RewardsModule } from './modules/rewards/rewards.module';
 import { WaitlistModule } from './modules/waitlist/waitlist.module';
 import { TwitterPaymentsModule } from './modules/twitter-payments/twitter-payments.module';
 import { OfframpModule } from './modules/offramp/offramp.module';
+import { LotteryModule } from './modules/lottery/lottery.module';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { OfframpModule } from './modules/offramp/offramp.module';
     WaitlistModule,
     TwitterPaymentsModule,
     OfframpModule,
+    LotteryModule,
   ],
   providers: [
     {

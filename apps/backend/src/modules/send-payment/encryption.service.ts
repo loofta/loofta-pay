@@ -108,7 +108,16 @@ export class SendPaymentEncryptionService {
       // v2: per-context derived key — context (burner address) is mandatory
       const raw = ciphertextBase64.slice(V2_PREFIX.length);
       const aesKey = this.deriveKey(this.key, context ?? '');
-      return this.decryptWithKey(raw, aesKey);
+      try {
+        return this.decryptWithKey(raw, aesKey);
+      } catch (primaryErr) {
+        if (this.oldKey) {
+          this.logger.warn('Primary key failed (v2); retrying with SEND_PAYMENT_ENC_KEY_OLD (rotation fallback)');
+          const oldAesKey = this.deriveKey(this.oldKey, context ?? '');
+          return this.decryptWithKey(raw, oldAesKey);
+        }
+        throw primaryErr;
+      }
     }
 
     // Legacy v1: try primary key first, then old key (rotation window)
