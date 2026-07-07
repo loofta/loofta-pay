@@ -13,7 +13,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { IsNumber, IsString, IsIn, IsArray, Min } from 'class-validator';
+import { IsNumber, IsString, IsIn, IsArray, Min, Max } from 'class-validator';
 import { AuthGuard, Public } from '@/common/guards';
 import { LotteryService, InitiatePurchaseResult, InitiatePublicPurchaseResult, LotteryDashboard, LotteryTicketSummary } from './lottery.service';
 import { LifiService } from './lifi.service';
@@ -21,6 +21,7 @@ import { LifiService } from './lifi.service';
 class BuyTicketsDto {
   @IsNumber()
   @Min(1)
+  @Max(100)
   numTickets: number;
 
   @IsString()
@@ -83,7 +84,7 @@ export class LotteryController {
   @ApiOperation({ summary: 'Get actual Li.Fi bridge fee for withdrawal amount (Base→Solana)' })
   async bridgeFee(@Query('amountUsdc') amountUsdc: string): Promise<{ feeUsd: number; receiveUsdc: number }> {
     const amount = parseFloat(amountUsdc);
-    if (!amount || amount <= 0) throw new BadRequestException('amountUsdc required');
+    if (!amount || amount <= 0 || amount > 1_000_000) throw new BadRequestException('amountUsdc must be between 0 and 1,000,000');
     return this.lifi.getWithdrawalFeeEstimate(amount);
   }
 

@@ -14,22 +14,28 @@ const MEGAPOT_REFERRAL = "https://megapot.io/r/Q3M637";
 const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
 const MAGICBLOCK_BPS = 10;
 const BRIDGE_FEE_USD_EST = 0.04; // Li.Fi (cheaper than NEAR Intents)
-const LOOFTA_TICKET_FEE_USD = 0.10; // flat fee collected on every private ticket purchase
+// Loofta per-purchase fee: $0.10 flat + 30 BPS of ticket cost (mirrors backend looftaTicketFee —
+// the proportional part covers the bridge cut Loofta absorbs on bigger purchases)
+const LOOFTA_TICKET_FEE_FLAT_USD = 0.10;
+const LOOFTA_TICKET_FEE_BPS = 30;
+function looftaFee(ticketCostUsd: number) {
+  return LOOFTA_TICKET_FEE_FLAT_USD + (ticketCostUsd * LOOFTA_TICKET_FEE_BPS) / 10_000;
+}
 const MAIN_MAX = 30;
 const MAIN_COUNT = 5;
 const BONUS_MAX = 12;
 
 const PRIZE_TIERS = [
-  { normal: 5, bonusMatch: true,  prize: "$226,165.11" },
+  { normal: 5, bonusMatch: true, prize: "$226,165.11" },
   { normal: 5, bonusMatch: false, prize: "$3,085.05" },
-  { normal: 4, bonusMatch: true,  prize: "$272.39" },
+  { normal: 4, bonusMatch: true, prize: "$272.39" },
   { normal: 4, bonusMatch: false, prize: "$25.67" },
-  { normal: 3, bonusMatch: true,  prize: "$12.30" },
-  { normal: 2, bonusMatch: true,  prize: "$3.94" },
+  { normal: 3, bonusMatch: true, prize: "$12.30" },
+  { normal: 2, bonusMatch: true, prize: "$3.94" },
   { normal: 3, bonusMatch: false, prize: "$3.05" },
-  { normal: 1, bonusMatch: true,  prize: "$2.07" },
+  { normal: 1, bonusMatch: true, prize: "$2.07" },
   { normal: 2, bonusMatch: false, prize: "Free ticket" },
-  { normal: 0, bonusMatch: true,  prize: "Free ticket" },
+  { normal: 0, bonusMatch: true, prize: "Free ticket" },
 ] as const;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -328,11 +334,11 @@ function NumberPickerModal({ ticket, onSave, onClose }: {
           <div className="flex items-center gap-1.5">
             <button onClick={() => setDraft(randomTicket())}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-slate-300 bg-white/[0.06] hover:bg-white/[0.10] transition-colors">
-              <Shuffle className="w-3.5 h-3.5" /><span className="hidden sm:inline">Shuffle</span>
+              <Shuffle className="w-3.5 h-3.5" />
             </button>
             <button onClick={() => setDraft({ main: [], bonus: 0 })}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-slate-300 bg-white/[0.06] hover:bg-white/[0.10] transition-colors">
-              <Eraser className="w-3.5 h-3.5" /><span className="hidden sm:inline">Clear</span>
+              <Eraser className="w-3.5 h-3.5" />
             </button>
             <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors">
               <X className="w-5 h-5" />
@@ -793,24 +799,23 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
   // amount for any ticket count) and grosses its own fee up from that same amount. Li.Fi's
   // bridging cost is funded from the pooled fee reserve, not charged to the user directly — see
   // backend computePurchaseAmounts / tryStartBridge.
-  const buyMbTotal = mbFee(ticketCostUsd);
-  const total = ticketCostUsd + buyMbTotal + LOOFTA_TICKET_FEE_USD;
-  // Both fees are (nearly) flat, so per-ticket cost falls fast with count — nudge small buys up
-  const feesPerTicket = (buyMbTotal + LOOFTA_TICKET_FEE_USD) / ticketCostUsd;
-  const feesPerTicketAt5 = (mbFee(5) + LOOFTA_TICKET_FEE_USD) / 5;
+  const buyFees = mbFee(ticketCostUsd) + looftaFee(ticketCostUsd);
+  const total = ticketCostUsd + buyFees;
+  // Fees are mostly flat, so per-ticket cost falls fast with count — nudge small buys up
+  const feesPerTicket = buyFees / ticketCostUsd;
+  const feesPerTicketAt5 = (mbFee(5) + looftaFee(5)) / 5;
   return (
     <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
       <div className="flex justify-between px-4 py-3.5">
         <span className="text-base text-slate-400">Tickets ({ticketCostUsd} × $1.00)</span>
         <span className="text-base text-slate-200 tabular-nums">{fmt(ticketCostUsd)}</span>
       </div>
-      <div className="flex justify-between px-4 py-3.5">
-        <span className="text-base text-slate-400">MagicBlock privacy fee</span>
-        <span className="text-base text-slate-400 tabular-nums">~{fmt(buyMbTotal)}</span>
-      </div>
-      <div className="flex justify-between px-4 py-3.5">
-        <span className="text-base text-slate-400">Loofta fee</span>
-        <span className="text-base text-slate-400 tabular-nums">{fmt(LOOFTA_TICKET_FEE_USD)}</span>
+      <div className="flex justify-between items-start px-4 py-3.5 gap-4">
+        <div className="min-w-0">
+          <p className="text-base text-slate-400">Privacy &amp; processing</p>
+          <p className="text-sm text-slate-500 mt-0.5">Private transfer, bridging &amp; service — all included</p>
+        </div>
+        <span className="text-base text-slate-400 tabular-nums shrink-0">~{fmt(buyFees)}</span>
       </div>
       <div className="flex justify-between px-4 py-3.5">
         <span className="text-base font-semibold text-white">Total from your balance</span>
@@ -820,7 +825,7 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
         <div className="flex items-start gap-2.5 px-4 py-3.5 bg-[#EAB308]/[0.07]">
           <span aria-hidden className="text-base leading-snug">💡</span>
           <p className="text-sm leading-snug text-amber-200/90">
-            Fees are flat — right now that&apos;s {fmt(feesPerTicket)} per ticket.
+            Fees barely change with size — right now that&apos;s {fmt(feesPerTicket)} per ticket.
             Buy 5 and it drops to {fmt(feesPerTicketAt5)} per ticket.
           </p>
         </div>
@@ -949,7 +954,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     pollingStartedRef.current = true;
     const nextStep: BuyStep =
       inFlight.status === "buying" ? "buying" :
-      inFlight.status === "bridging" ? "bridging" : "sent";
+        inFlight.status === "bridging" ? "bridging" : "sent";
     setStep(nextStep);
     pollStatus(inFlight.id);
   }, [activeTickets, pollStatus]);
@@ -1132,7 +1137,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
 
           <button onClick={() => handlePrivateBuy()}
             className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all">
-            {`Buy privately · ${fmt(numTickets + mbFee(numTickets) + LOOFTA_TICKET_FEE_USD)}`}
+            {`Buy privately · ${fmt(numTickets + mbFee(numTickets) + looftaFee(numTickets))}`}
           </button>
         </>
       )}
@@ -1418,9 +1423,8 @@ function TicketNumberCard({ tn, winningNumbers }: {
   const isFreeTicket = prize === "Free ticket";
 
   return (
-    <div className={`flex items-center rounded-xl border bg-white/[0.04] px-3 gap-3 relative overflow-hidden ${
-      isWin ? "border-emerald-500/30" : isFreeTicket ? "border-emerald-500/20" : "border-white/[0.08]"
-    }`} style={{ minHeight: 58 }}>
+    <div className={`flex items-center rounded-xl border bg-white/[0.04] px-3 gap-3 relative overflow-hidden ${isWin ? "border-emerald-500/30" : isFreeTicket ? "border-emerald-500/20" : "border-white/[0.08]"
+      }`} style={{ minHeight: 58 }}>
       {/* Numbers */}
       <div className="flex flex-col gap-1 flex-1 min-w-0 py-3">
         <span className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase">Numbers</span>
@@ -1440,11 +1444,10 @@ function TicketNumberCard({ tn, winningNumbers }: {
       {/* Bonus */}
       <div className="flex flex-col items-center gap-1 shrink-0 py-3">
         <span className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase">Bonus</span>
-        <span className={`w-7 h-7 rounded-full border text-xs font-bold flex items-center justify-center tabular-nums ${
-          bonusHit
-            ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-400"
-            : "border-amber-500/50 bg-amber-500/10 text-amber-400"
-        }`}>
+        <span className={`w-7 h-7 rounded-full border text-xs font-bold flex items-center justify-center tabular-nums ${bonusHit
+          ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-400"
+          : "border-amber-500/50 bg-amber-500/10 text-amber-400"
+          }`}>
           {tn.bonus}
         </span>
       </div>
@@ -1813,30 +1816,16 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                           {rescueBurnerResult[t.id]}
                         </p>
                       )}
-                      <div className="flex gap-2">
-                        <button type="button"
-                          onClick={() => handleCancel(t.id)}
-                          disabled={cancelling === t.id || rescuingBurner === t.id}
-                          className="flex-1 h-10 rounded-xl text-sm font-semibold border border-white/10 text-slate-400 hover:bg-white/[0.06] transition-all disabled:opacity-40">
-                          {cancelling === t.id ? "Cancelling..." : "Cancel"}
-                        </button>
-                        <button type="button"
-                          onClick={() => handleRescueBurner(t.id)}
-                          disabled={rescuingBurner === t.id || cancelling === t.id}
-                          className="flex-1 h-10 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40">
-                          {rescuingBurner === t.id ? "Rescuing..." : "Rescue from Solana"}
-                        </button>
-                      </div>
+                      <button type="button"
+                        onClick={() => handleRescueBurner(t.id)}
+                        disabled={rescuingBurner === t.id}
+                        className="w-full h-10 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40">
+                        {rescuingBurner === t.id ? "Rescuing..." : "Rescue from Solana"}
+                      </button>
                     </div>
                   )}
-                  {t.status === "bridging" && (
-                    <button type="button"
-                      onClick={() => handleCancel(t.id)}
-                      disabled={cancelling === t.id}
-                      className="w-full h-10 rounded-xl text-sm font-semibold border border-red-500/30 text-red-400 hover:bg-red-500/10 active:bg-red-500/20 transition-all disabled:opacity-40">
-                      {cancelling === t.id ? "Cancelling..." : "Cancel purchase"}
-                    </button>
-                  )}
+                  {/* Bridging is fully automatic and can't be safely cancelled — funds are in
+                      transit and will arrive on Base. No action needed. */}
                   {t.status === "buying" && (
                     <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-2">
                       <p className="text-sm font-semibold text-slate-400">Stuck? Try one of these:</p>
@@ -1880,172 +1869,172 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
           ))}
         </div>
       ) : completed.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? null
-      : completed.length > 0 && (
-        <div>
-          <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Tickets</p>
-          <div className="space-y-2">
-            {completed.map(t => {
-              const dateStr = (t.drawTime ? new Date(t.drawTime) : new Date(t.createdAt))
-                .toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-              const hasNumbers = t.ticketNumbers && t.ticketNumbers.length > 0 && t.ticketNumbers[0].main.length > 0;
-              const hasAllNumbers = hasNumbers && t.ticketNumbers!.length >= t.numTickets;
-              const isFailed = t.status === "failed";
-              return (
-                <div key={t.id} className={`rounded-xl border bg-white/5 overflow-hidden ${isFailed ? "border-red-500/20" : "border-white/10"}`}>
-                  {/* Main row — clickable to expand */}
-                  <button
-                    onClick={() => toggleExpand(t.id, !!hasAllNumbers)}
-                    className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.03] transition-colors"
-                  >
-                    <img src="/images/icons/ticket-icon.svg" alt="" className="w-9 h-9 shrink-0 opacity-90" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
-                          {statusLabel(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}
-                        </span>
+        : completed.length > 0 && (
+          <div>
+            <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Tickets</p>
+            <div className="space-y-2">
+              {completed.map(t => {
+                const dateStr = (t.drawTime ? new Date(t.drawTime) : new Date(t.createdAt))
+                  .toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+                const hasNumbers = t.ticketNumbers && t.ticketNumbers.length > 0 && t.ticketNumbers[0].main.length > 0;
+                const hasAllNumbers = hasNumbers && t.ticketNumbers!.length >= t.numTickets;
+                const isFailed = t.status === "failed";
+                return (
+                  <div key={t.id} className={`rounded-xl border bg-white/5 overflow-hidden ${isFailed ? "border-red-500/20" : "border-white/10"}`}>
+                    {/* Main row — clickable to expand */}
+                    <button
+                      onClick={() => toggleExpand(t.id, !!hasAllNumbers)}
+                      className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.03] transition-colors"
+                    >
+                      <img src="/images/icons/ticket-icon.svg" alt="" className="w-9 h-9 shrink-0 opacity-90" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
+                            {statusLabel(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}
+                          </span>
+                        </div>
+                        <p className="text-sm text-slate-500 mt-0.5">
+                          {t.roundId ? `Round ${t.roundId} · ` : ""}{dateStr}
+                          {t.winTier ? ` · Tier ${t.winTier}` : ""}
+                        </p>
                       </div>
-                      <p className="text-sm text-slate-500 mt-0.5">
-                        {t.roundId ? `Round ${t.roundId} · ` : ""}{dateStr}
-                        {t.winTier ? ` · Tier ${t.winTier}` : ""}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-base font-semibold font-sans">
-                        {(t.status === "won" || t.status === "withdrawn")
-                          ? <span className="text-emerald-400">+{fmt(t.winAmountUsdc ?? 0)}</span>
-                          : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
-                      </span>
-                      <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${expandedIds.has(t.id) ? "rotate-180" : ""}`} />
-                    </div>
-                  </button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-base font-semibold font-sans">
+                          {(t.status === "won" || t.status === "withdrawn")
+                            ? <span className="text-emerald-400">+{fmt(t.winAmountUsdc ?? 0)}</span>
+                            : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
+                        </span>
+                        <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${expandedIds.has(t.id) ? "rotate-180" : ""}`} />
+                      </div>
+                    </button>
 
-                  {/* Expanded details */}
-                  {expandedIds.has(t.id) && (
-                    <div className="border-t border-white/[0.06] px-3 pb-3 pt-3 space-y-3">
-                      {/* Draw info */}
-                      {t.drawTime && (
-                        <div>
-                          <p className="text-sm text-slate-500">
-                            Draw: {new Date(t.drawTime).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-                          </p>
-                        </div>
-                      )}
-                      {/* Check results button for active tickets past draw time */}
-                      {t.status === "active" && (
-                        (t.drawTime && new Date(t.drawTime) < new Date()) ||
-                        (t.roundId && nextDrawRoundId && t.roundId !== nextDrawRoundId)
-                      ) && (
-                        <div className="space-y-2">
-                          {checkResultMsg[t.id] && (
-                            <p className={`text-sm ${checkResultMsg[t.id].startsWith("Error") ? "text-red-400" : checkResultMsg[t.id].includes("Won") ? "text-emerald-400" : "text-slate-400"}`}>
-                              {checkResultMsg[t.id]}
+                    {/* Expanded details */}
+                    {expandedIds.has(t.id) && (
+                      <div className="border-t border-white/[0.06] px-3 pb-3 pt-3 space-y-3">
+                        {/* Draw info */}
+                        {t.drawTime && (
+                          <div>
+                            <p className="text-sm text-slate-500">
+                              Draw: {new Date(t.drawTime).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
                             </p>
-                          )}
-                          <button
-                            onClick={() => handleCheckResults(t.id)}
-                            disabled={checkingResult === t.id}
-                            className="w-full h-9 rounded-xl text-sm font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
-                          >
-                            {checkingResult === t.id ? "Checking…" : "Check Results"}
-                          </button>
-                        </div>
-                      )}
-                      {/* Number balls */}
-                      {hasNumbers ? (
-                        <div className="space-y-2">
-                          {!hasAllNumbers && (
-                            <p className="text-sm text-slate-500 italic">Loading {t.numTickets - t.ticketNumbers!.length} more ticket numbers…</p>
-                          )}
-                          {t.winningNumbers && (
-                            <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] px-3 py-2">
-                              <p className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase mb-1.5">Winning numbers</p>
-                              <div className="flex items-center gap-2">
-                                {t.winningNumbers.main.map(n => (
-                                  <span key={n} className="w-7 h-7 rounded-full bg-white/10 border border-white/20 text-white text-xs font-bold flex items-center justify-center tabular-nums">{n}</span>
-                                ))}
-                                <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 text-slate-300 text-xs font-bold flex items-center justify-center tabular-nums">{t.winningNumbers.bonus}</span>
-                              </div>
+                          </div>
+                        )}
+                        {/* Check results button for active tickets past draw time */}
+                        {t.status === "active" && (
+                          (t.drawTime && new Date(t.drawTime) < new Date()) ||
+                          (t.roundId && nextDrawRoundId && t.roundId !== nextDrawRoundId)
+                        ) && (
+                            <div className="space-y-2">
+                              {checkResultMsg[t.id] && (
+                                <p className={`text-sm ${checkResultMsg[t.id].startsWith("Error") ? "text-red-400" : checkResultMsg[t.id].includes("Won") ? "text-emerald-400" : "text-slate-400"}`}>
+                                  {checkResultMsg[t.id]}
+                                </p>
+                              )}
+                              <button
+                                onClick={() => handleCheckResults(t.id)}
+                                disabled={checkingResult === t.id}
+                                className="w-full h-9 rounded-xl text-sm font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                              >
+                                {checkingResult === t.id ? "Checking…" : "Check Results"}
+                              </button>
                             </div>
                           )}
-                          <p className="text-sm text-slate-600">Your tickets</p>
-                          {(() => {
-                            const matchCount = (tn: TicketNumbers) => {
-                              if (!t.winningNumbers) return 0;
-                              const m = tn.main.filter(n => t.winningNumbers!.main.includes(n)).length;
-                              const b = tn.bonus === t.winningNumbers.bonus ? 1 : 0;
-                              return m * 2 + b;
-                            };
-                            const sorted = [...t.ticketNumbers!].sort((a, b) => matchCount(b) - matchCount(a));
-                            const showAll = ticketShowAll[t.id];
-                            const visible = showAll ? sorted : sorted.slice(0, 5);
-                            return (
-                              <>
-                                {visible.map((tn, i) => (
-                                  <TicketNumberCard key={i} tn={tn} winningNumbers={t.winningNumbers} />
-                                ))}
-                                {!showAll && sorted.length > 5 && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setTicketShowAll(prev => ({ ...prev, [t.id]: true }))}
-                                    className="w-full h-9 rounded-xl text-sm font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all"
-                                  >
-                                    +{sorted.length - 5} more tickets
-                                  </button>
-                                )}
-                              </>
-                            );
-                          })()}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-slate-600 italic">Loading ticket numbers…</p>
-                      )}
-                    </div>
-                  )}
+                        {/* Number balls */}
+                        {hasNumbers ? (
+                          <div className="space-y-2">
+                            {!hasAllNumbers && (
+                              <p className="text-sm text-slate-500 italic">Loading {t.numTickets - t.ticketNumbers!.length} more ticket numbers…</p>
+                            )}
+                            {t.winningNumbers && (
+                              <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] px-3 py-2">
+                                <p className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase mb-1.5">Winning numbers</p>
+                                <div className="flex items-center gap-2">
+                                  {t.winningNumbers.main.map(n => (
+                                    <span key={n} className="w-7 h-7 rounded-full bg-white/10 border border-white/20 text-white text-xs font-bold flex items-center justify-center tabular-nums">{n}</span>
+                                  ))}
+                                  <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 text-slate-300 text-xs font-bold flex items-center justify-center tabular-nums">{t.winningNumbers.bonus}</span>
+                                </div>
+                              </div>
+                            )}
+                            <p className="text-sm text-slate-600">Your tickets</p>
+                            {(() => {
+                              const matchCount = (tn: TicketNumbers) => {
+                                if (!t.winningNumbers) return 0;
+                                const m = tn.main.filter(n => t.winningNumbers!.main.includes(n)).length;
+                                const b = tn.bonus === t.winningNumbers.bonus ? 1 : 0;
+                                return m * 2 + b;
+                              };
+                              const sorted = [...t.ticketNumbers!].sort((a, b) => matchCount(b) - matchCount(a));
+                              const showAll = ticketShowAll[t.id];
+                              const visible = showAll ? sorted : sorted.slice(0, 5);
+                              return (
+                                <>
+                                  {visible.map((tn, i) => (
+                                    <TicketNumberCard key={i} tn={tn} winningNumbers={t.winningNumbers} />
+                                  ))}
+                                  {!showAll && sorted.length > 5 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setTicketShowAll(prev => ({ ...prev, [t.id]: true }))}
+                                      className="w-full h-9 rounded-xl text-sm font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all"
+                                    >
+                                      +{sorted.length - 5} more tickets
+                                    </button>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-slate-600 italic">Loading ticket numbers…</p>
+                        )}
+                      </div>
+                    )}
 
-                  {/* Failed ticket actions — funds must be retried or rescued before the
+                    {/* Failed ticket actions — funds must be retried or rescued before the
                       ticket can be removed (RESCUED/CANCELLED = nothing left to recover) */}
-                  {isFailed && (
-                    <div className="px-3 pb-3 space-y-2 border-t border-white/[0.06] pt-3">
-                      {(retryResult[t.id] || rescueResult[t.id]) && (
-                        <p className="text-sm text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
-                      )}
-                      {t.bridgeStatus === "RESCUED" || t.bridgeStatus === "CANCELLED" ? (
-                        <button
-                          onClick={() => handleDelete(t.id)}
-                          disabled={deleting === t.id}
-                          className="w-full h-9 rounded-xl text-sm font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
-                        >
-                          {deleting === t.id ? "Removing…" : "Remove from history"}
-                        </button>
-                      ) : (
-                        <div className="flex gap-2">
+                    {isFailed && (
+                      <div className="px-3 pb-3 space-y-2 border-t border-white/[0.06] pt-3">
+                        {(retryResult[t.id] || rescueResult[t.id]) && (
+                          <p className="text-sm text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
+                        )}
+                        {t.bridgeStatus === "RESCUED" || t.bridgeStatus === "CANCELLED" ? (
                           <button
-                            type="button"
-                            onClick={() => handleRetry(t.id)}
-                            disabled={retrying === t.id || rescuing === t.id}
-                            className="flex-1 h-9 rounded-xl text-sm font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                            onClick={() => handleDelete(t.id)}
+                            disabled={deleting === t.id}
+                            className="w-full h-9 rounded-xl text-sm font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
                           >
-                            {retrying === t.id ? "Retrying…" : "Retry purchase"}
+                            {deleting === t.id ? "Removing…" : "Remove from history"}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRescue(t.id)}
-                            disabled={rescuing === t.id || retrying === t.id}
-                            className="flex-1 h-9 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
-                          >
-                            {rescuing === t.id ? "Rescuing…" : "Rescue funds"}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                        ) : (
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRetry(t.id)}
+                              disabled={retrying === t.id || rescuing === t.id}
+                              className="flex-1 h-9 rounded-xl text-sm font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                            >
+                              {retrying === t.id ? "Retrying…" : "Retry purchase"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRescue(t.id)}
+                              disabled={rescuing === t.id || retrying === t.id}
+                              className="flex-1 h-9 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
+                            >
+                              {rescuing === t.id ? "Rescuing…" : "Rescue funds"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
     </div>
   );
@@ -2055,13 +2044,24 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
 
 const FAQ_ITEMS: { question: string; answer: ReactNode }[] = [
   {
+    question: "How does a private purchase work?",
+    answer: (
+      <>
+        <p className="mb-3">You pick your tickets and confirm — that&apos;s it. Behind the scenes, four things happen automatically:</p>
+        <p className="mb-2"><span className="font-medium text-slate-300">1.</span> Your USDC leaves your Loofta balance through a <span className="font-medium text-slate-300">privacy pool</span> that breaks the link to your wallet.</p>
+        <p className="mb-2"><span className="font-medium text-slate-300">2.</span> It lands in a <span className="font-medium text-slate-300">one-time wallet</span> created just for this purchase, then bridges to Base.</p>
+        <p className="mb-2"><span className="font-medium text-slate-300">3.</span> A <span className="font-medium text-slate-300">fresh companion wallet on Base</span> buys your Megapot tickets — it has no connection to you or your other purchases.</p>
+        <p className="mb-3"><span className="font-medium text-slate-300">4.</span> Your tickets appear in the app with their numbers, usually within <span className="font-medium text-slate-300">1–2 minutes</span>.</p>
+        <p>If anything fails along the way, your money is automatically refunded or recoverable from the ticket&apos;s history entry.</p>
+      </>
+    ),
+  },
+  {
     question: "What are the fees to buy tickets?",
     answer: (
       <>
-        <p className="mb-3">Each ticket costs <span className="font-medium text-slate-300">$1 USDC</span>. On top of that:</p>
-        <p className="mb-3"><span className="font-medium text-slate-300">MagicBlock privacy fee:</span> 10 BPS (0.1%) of the ticket amount + a flat $0.20 gas relay. For 10 tickets that&apos;s about $0.21.</p>
-        <p className="mb-3"><span className="font-medium text-slate-300">Loofta fee:</span> flat $0.10 per purchase — bridging costs are covered by Loofta, not charged to you.</p>
-        <p>Both flat fees stay the same no matter how many tickets you buy, so bigger purchases cost less per ticket. Your total for 10 tickets is roughly <span className="font-medium text-slate-300">$10.31</span>.</p>
+        <p className="mb-3">Each ticket costs <span className="font-medium text-slate-300">$1 USDC</span>, plus one combined <span className="font-medium text-slate-300">privacy &amp; processing fee</span> that covers everything: the private MagicBlock transfer (0.1% + $0.20 relay), bridging to Base, and Loofta&apos;s service fee ($0.10 + 0.3%).</p>
+        <p>The fee barely changes with purchase size, so bigger purchases cost much less per ticket — about $0.31 total on 1 ticket, but only ~$0.34 total on 10 tickets (3.4¢ per ticket).</p>
       </>
     ),
   },
@@ -2069,9 +2069,9 @@ const FAQ_ITEMS: { question: string; answer: ReactNode }[] = [
     question: "How does privacy work?",
     answer: (
       <>
-        <p className="mb-3">Your Solana identity is shielded by <span className="font-medium text-slate-300">MagicBlock</span> — a privacy pool that adds a random delay (up to 2 min for ticket purchases), making on-chain timing analysis useless.</p>
-        <p className="mb-3">A fresh one-time Solana burner wallet bridges funds to Base via <span className="font-medium text-slate-300">NEAR Intents</span>, which creates a unique deposit address per transaction.</p>
-        <p>A <span className="font-medium text-slate-300">brand-new companion wallet is created for every ticket purchase</span>, so even if someone watches Base they can't link your tickets to each other or to you.</p>
+        <p className="mb-3">Your Solana identity is shielded by <span className="font-medium text-slate-300">MagicBlock</span> — a privacy pool that splits your transfer into several smaller parts and delivers each with a randomized delay, making on-chain timing and amount analysis useless.</p>
+        <p className="mb-3">The funds land in a <span className="font-medium text-slate-300">fresh one-time Solana wallet</span>, which bridges them to Base — so the bridge only ever sees a brand-new wallet, never yours.</p>
+        <p>A <span className="font-medium text-slate-300">brand-new companion wallet is created for every ticket purchase</span>, so even if someone watches Base they can&apos;t link your tickets to each other or to you.</p>
       </>
     ),
   },
@@ -2079,17 +2079,8 @@ const FAQ_ITEMS: { question: string; answer: ReactNode }[] = [
     question: "What is MagicBlock?",
     answer: (
       <>
-        <p className="mb-3">MagicBlock is a <span className="font-medium text-slate-300">Solana privacy protocol</span> that routes USDC through a shielded pool with randomized delays — up to 2 minutes for ticket purchases.</p>
-        <p>The relay fee is <span className="font-medium text-slate-300">10 BPS + 0.002 SOL gas</span>. The SOL gas cannot be set to zero — it funds the relay node that submits the transaction privately.</p>
-      </>
-    ),
-  },
-  {
-    question: "What is NEAR Intents?",
-    answer: (
-      <>
-        <p className="mb-3">NEAR Intents (OneClick SDK) is a cross-chain bridge. It generates a <span className="font-medium text-slate-300">unique deposit address per quote</span> — sending to it triggers the bridge automatically with no linking metadata.</p>
-        <p>We use it for Solana → Base (to fund ticket purchases) and Base → Solana (for private withdrawals). Each hop uses a fresh address.</p>
+        <p className="mb-3">MagicBlock is a <span className="font-medium text-slate-300">Solana privacy protocol</span> that routes USDC through a shielded pool, split into multiple parts with randomized delays.</p>
+        <p>Its fee is <span className="font-medium text-slate-300">0.1% + a flat $0.20 relay</span> — the relay is what submits the transaction privately, so it can never be zero.</p>
       </>
     ),
   },
@@ -2098,7 +2089,7 @@ const FAQ_ITEMS: { question: string; answer: ReactNode }[] = [
     answer: (
       <>
         <p className="mb-3"><span className="font-medium text-slate-300">Base wallet — free.</span> The companion wallet sends USDC directly. No fee, but creates a visible on-chain link between the companion wallet and your Base address.</p>
-        <p><span className="font-medium text-slate-300">Loofta balance (private) — ~$0.50.</span> bridge (Base→Solana, ~$0.10 est.) + MagicBlock relay (10 BPS + 0.002 SOL, ~$0.28). Fully unlinkable — worth it for meaningful winnings.</p>
+        <p><span className="font-medium text-slate-300">Loofta balance (private) — small fee.</span> A live-quoted bridge fee (Base→Solana) + the MagicBlock relay (0.1% + $0.20). Fully unlinkable — worth it for meaningful winnings.</p>
       </>
     ),
   },
