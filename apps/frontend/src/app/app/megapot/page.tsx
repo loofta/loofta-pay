@@ -1986,21 +1986,6 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                   >
                     View progress <ArrowUpRight className="w-3.5 h-3.5" />
                   </Link>
-                  {t.depositAddress && t.status !== "buying" && (
-                    <>
-                      <p className="text-sm text-slate-400">Deposit address:</p>
-                      <div className="flex items-center gap-2 bg-black/30 rounded-xl px-3 py-2.5 border border-white/10">
-                        <span className="font-mono text-sm text-slate-200 truncate flex-1">{t.depositAddress}</span>
-                        <button type="button" onClick={() => copyAddress(t.id, t.depositAddress!)}
-                          className="shrink-0 text-slate-400 hover:text-white transition-colors px-1">
-                          {copied === t.id
-                            ? <span className="text-emerald-400 text-sm font-medium">Copied!</span>
-                            : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
-                          }
-                        </button>
-                      </div>
-                    </>
-                  )}
                   {t.status === "sent" && (
                     <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-2">
                       <p className="text-sm font-semibold text-slate-400">Funds stuck in burner wallet?</p>
