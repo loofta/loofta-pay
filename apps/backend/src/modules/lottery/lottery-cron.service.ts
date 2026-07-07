@@ -24,8 +24,9 @@ export class LotteryCronService {
     );
   }
 
-  /** Every 2 minutes: check pending private withdrawals (bridge → MagicBlock) */
-  @Cron('*/2 * * * *')
+  /** Every 30 seconds: check pending private withdrawals (bridge → MagicBlock) — this cadence
+   *  IS the withdrawal latency between pipeline steps, so keep it tight (overlap-guarded). */
+  @Cron('*/30 * * * * *')
   async processWithdrawals(): Promise<void> {
     await this.lottery.processPendingWithdrawals().catch(e =>
       this.logger.error(`processPendingWithdrawals: ${e.message}`),
