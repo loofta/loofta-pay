@@ -536,6 +536,15 @@ export default function AdminDashboard() {
     waitlist_total: number;
     waitlist_granted: number;
     waitlist_with_twitter: number;
+    volume_lottery: number;
+    tx_lottery_count: number;
+    volume_deposits: number;
+    tx_deposits_count: number;
+    volume_withdrawals_devnet: number;
+    volume_withdrawals_mainnet: number;
+    tx_withdrawals_devnet_count: number;
+    tx_withdrawals_mainnet_count: number;
+    volume_total_all: number;
   };
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -1358,6 +1367,13 @@ export default function AdminDashboard() {
                 {/* Volume section */}
                 <div>
                   <h3 className="text-sm md:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Transaction Volume</h3>
+                  <div className="bg-gray-900 border border-amber-900 rounded-lg p-4 mb-3">
+                    <div className="text-[10px] text-amber-400 uppercase tracking-wider mb-1 font-medium">Total Platform Volume</div>
+                    <div className="text-3xl font-bold text-white tabular-nums">
+                      {analyticsData.volume_total_all.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC · payments + lottery + deposits + withdrawals (mainnet)</div>
+                  </div>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-orange-400 uppercase tracking-wider mb-1 font-medium">Devnet Volume</div>
@@ -1388,6 +1404,41 @@ export default function AdminDashboard() {
                       <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Mainnet Transactions</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.tx_mainnet_success.toLocaleString()}</div>
                       <div className="text-sm md:text-xs text-gray-500 mt-0.5">success · {analyticsData.tx_mainnet_total.toLocaleString()} total</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Lottery / deposits / withdrawals volume */}
+                <div>
+                  <h3 className="text-sm md:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Lottery, Deposits &amp; Withdrawals</h3>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-[10px] text-purple-400 uppercase tracking-wider mb-1 font-medium">Lottery Volume</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">
+                        {analyticsData.volume_lottery.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC · {analyticsData.tx_lottery_count.toLocaleString()} tickets</div>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-1 font-medium">Deposit Volume</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">
+                        {analyticsData.volume_deposits.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC · {analyticsData.tx_deposits_count.toLocaleString()} completed</div>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-[10px] text-orange-400 uppercase tracking-wider mb-1 font-medium">Withdraw Volume (Devnet)</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">
+                        {analyticsData.volume_withdrawals_devnet.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC · {analyticsData.tx_withdrawals_devnet_count.toLocaleString()} rows</div>
+                    </div>
+                    <div className="bg-gray-900 border border-green-900 rounded-lg p-4">
+                      <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Withdraw Volume (Mainnet)</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">
+                        {analyticsData.volume_withdrawals_mainnet.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC · {analyticsData.tx_withdrawals_mainnet_count.toLocaleString()} rows</div>
                     </div>
                   </div>
                 </div>

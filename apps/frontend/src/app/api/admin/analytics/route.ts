@@ -23,6 +23,10 @@ export async function GET(request: NextRequest) {
     waitlistTotalRes,
     waitlistGrantedRes,
     waitlistWithTwitterRes,
+    lotteryRes,
+    depositsRes,
+    withdrawalsDevnetRes,
+    withdrawalsMainnetRes,
   ] = await Promise.all([
     supabase
       .from("payments")
@@ -74,15 +78,51 @@ export async function GET(request: NextRequest) {
       .select("id", { count: "exact", head: true })
       .not("twitter_username", "is", null)
       .neq("twitter_username", ""),
+    // Lottery (Megapot) — mainnet-only feature, no devnet split. Only count tickets that
+    // actually completed a purchase (active/won/lost) — pending/bridging tickets haven't
+    // committed the spend yet, and failed tickets get refunded.
+    supabase
+      .from("lottery_tickets")
+      .select("cost_usdc")
+      .in("status", ["active", "won", "lost"])
+      .limit(100000),
+    supabase
+      .from("user_deposits")
+      .select("amount_usdc")
+      .eq("status", "complete")
+      .limit(100000),
+    supabase
+      .from("withdrawals")
+      .select("amount_usdc, is_near_intents, near_intents_complete")
+      .eq("is_devnet", true)
+      .limit(100000),
+    supabase
+      .from("withdrawals")
+      .select("amount_usdc, is_near_intents, near_intents_complete")
+      .eq("is_devnet", false)
+      .limit(100000),
   ]);
 
-  const sum = (rows: any[] | null) =>
-    (rows ?? []).reduce((acc: number, p: any) => acc + Number(p.amount), 0);
+  const sum = (rows: any[] | null, key = "amount") =>
+    (rows ?? []).reduce((acc: number, p: any) => acc + Number(p[key]), 0);
+
+  // A withdrawal row only ever exists after its on-chain send tx signed & broadcast — direct
+  // (non-bridged) withdrawals are done at that point, so they always count. Near-Intents
+  // (bridged) withdrawals aren't actually delivered until the bridge leg completes.
+  const sumCompletedWithdrawals = (rows: any[] | null) =>
+    (rows ?? [])
+      .filter((r: any) => !r.is_near_intents || r.near_intents_complete)
+      .reduce((acc: number, r: any) => acc + Number(r.amount_usdc), 0);
 
   const volume_devnet = sum(devnetSuccessRes.data);
   const volume_mainnet = sum(mainnetSuccessRes.data);
   const volume_devnet_total = sum(devnetAllAmountsRes.data);
   const volume_mainnet_total = sum(mainnetAllAmountsRes.data);
+
+  const volume_lottery = sum(lotteryRes.data, "cost_usdc");
+  const volume_deposits = sum(depositsRes.data, "amount_usdc");
+  const volume_withdrawals_devnet = sumCompletedWithdrawals(withdrawalsDevnetRes.data);
+  const volume_withdrawals_mainnet = sumCompletedWithdrawals(withdrawalsMainnetRes.data);
 
   const payload = {
     volume_devnet,
@@ -98,6 +138,17 @@ export async function GET(request: NextRequest) {
     waitlist_total: waitlistTotalRes.count ?? 0,
     waitlist_granted: waitlistGrantedRes.count ?? 0,
     waitlist_with_twitter: waitlistWithTwitterRes.count ?? 0,
+    volume_lottery,
+    tx_lottery_count: lotteryRes.data?.length ?? 0,
+    volume_deposits,
+    tx_deposits_count: depositsRes.data?.length ?? 0,
+    volume_withdrawals_devnet,
+    volume_withdrawals_mainnet,
+    tx_withdrawals_devnet_count: withdrawalsDevnetRes.data?.length ?? 0,
+    tx_withdrawals_mainnet_count: withdrawalsMainnetRes.data?.length ?? 0,
+    // Overall platform volume including lottery, deposits, and withdrawals alongside payments —
+    // matches the ask to fold lottery into the headline volume number.
+    volume_total_all: volume_mainnet + volume_lottery + volume_deposits + volume_withdrawals_mainnet,
   };
 
   return NextResponse.json(payload, {
