@@ -8,19 +8,17 @@ export class LotteryCronService {
 
   constructor(private readonly lottery: LotteryService) {}
 
-  /** Every 30 seconds: check sent tickets for USDC + start bridge */
-  @Cron('*/15 * * * * *')
+  /** Every 5 seconds: check sent tickets for USDC + start bridge (overlap-guarded in service) */
+  @Cron('*/5 * * * * *')
   async processSent(): Promise<void> {
-    this.logger.log('Cron: processing sent tickets');
     await this.lottery.processSentTickets().catch(e =>
       this.logger.error(`processSentTickets: ${e.message}`),
     );
   }
 
-  /** Every 30 seconds: check bridging tickets + buy on Megapot */
-  @Cron('*/15 * * * * *')
+  /** Every 10 seconds: check bridging tickets + buy on Megapot (overlap-guarded in service) */
+  @Cron('*/10 * * * * *')
   async processBridging(): Promise<void> {
-    this.logger.log('Cron: processing bridging tickets');
     await this.lottery.processBridgingTickets().catch(e =>
       this.logger.error(`processBridgingTickets: ${e.message}`),
     );

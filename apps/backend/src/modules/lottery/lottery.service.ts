@@ -22,7 +22,14 @@ import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const TICKET_PRICE_USDC = 1;
-const LOOFTA_TICKET_FEE_USDC = 0.10; // flat fee collected on every private ticket purchase
+// Per-purchase fee: flat component + proportional component. The proportional part exists
+// because Loofta absorbs Li.Fi's bridge cut (~25 bps of the bridged amount) — a purely flat
+// fee goes net-negative on purchases above ~35 tickets.
+const LOOFTA_TICKET_FEE_FLAT_USDC = 0.10;
+const LOOFTA_TICKET_FEE_BPS = 30;
+function looftaTicketFee(costUsdc: number): number {
+  return parseFloat((LOOFTA_TICKET_FEE_FLAT_USDC + (costUsdc * LOOFTA_TICKET_FEE_BPS) / 10_000).toFixed(6));
+}
 
 const SWAP_ROUTER_02: Address = '0x2626664c2603336E57B271c5C0b26F421741e481';
 const WETH9_BASE: Address = '0x4200000000000000000000000000000000000006';
@@ -162,7 +169,23 @@ export class LotteryService {
     userSolanaAddress: string;
   }): Promise<InitiatePurchaseResult> {
     const { userId, numTickets, userSolanaAddress } = opts;
-    if (numTickets < 1 || numTickets > 50) throw new BadRequestException('Minimum 1 ticket for private purchase');
+    if (numTickets < 1 || numTickets > 100) throw new BadRequestException('1–100 tickets per private purchase');
+
+    // Load protection: each initiation creates wallets, calls MagicBlock, and builds sponsored
+    // txs — cap unsigned purchases per user so the endpoint can't be spammed. Time-boxed to the
+    // last 15 min so abandoned-before-fee tickets (which no cron cleans up) can't lock a user
+    // out permanently.
+    const db0 = this.supabase.getClient();
+    const { count: pendingCount } = await db0
+      .from('lottery_tickets')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('status', 'pending_send')
+      .not('burner_sol_address', 'is', null)
+      .gte('created_at', new Date(Date.now() - 15 * 60_000).toISOString());
+    if ((pendingCount ?? 0) >= 3) {
+      throw new BadRequestException('You have unfinished purchases — complete or cancel them first, or retry in a few minutes.');
+    }
 
     // 1. Generate companion wallet owner key and compute its Rhinestone smart account address
     const companionPrivKey = generatePrivateKey();
@@ -183,14 +206,14 @@ export class LotteryService {
     // `costUnits` with exactOut:true and lets MagicBlock gross up the sender's debit internally.
     const grossAmount = estimateMagicblockGrossUp(costUnits);
     const magicblockFeeUsdc = parseFloat(((grossAmount - costUnits) / 1_000_000 + MAGICBLOCK_GAS_USDC).toFixed(6));
-    const looftaFeeUsdc = LOOFTA_TICKET_FEE_USDC;
+    const looftaFeeUsdc = looftaTicketFee(costUsdc);
     const totalUsdc = costUsdc + magicblockFeeUsdc + looftaFeeUsdc;
 
     // 4. Fee collection: a plain USDC transfer, user → fee wallet, BEFORE the MagicBlock
     // transfer — we can't append this as an instruction onto MagicBlock's own pre-built tx, so
     // it has to be its own transaction. The frontend signs+sends this one first.
     const { transactionBase64: feeTxBase64, feeWalletAddress } = await this.buildFeeCollectionTx(
-      userSolanaAddress, LOOFTA_TICKET_FEE_USDC,
+      userSolanaAddress, looftaFeeUsdc,
     );
 
     // 5. Build MagicBlock private transfer: user → burner. Amount is exactly costUsdc — already
@@ -208,8 +231,8 @@ export class LotteryService {
         cluster,
         exactOut: true,
         gasless: true,
-        minDelayMs: 30_000,
-        maxDelayMs: 60_000,
+        minDelayMs: 10_000,
+        maxDelayMs: 30_000,
       });
     } catch (err: any) {
       if (String(err?.message).includes('delegated to another validator')) {
@@ -250,16 +273,64 @@ export class LotteryService {
     };
   }
 
+  /**
+   * Verifies ON-CHAIN that `txHash` is a confirmed transaction that credited the fee wallet
+   * with at least `expectedUsdc` USDC. NEVER trust the client-supplied hash: a recorded-but-
+   * unpaid fee becomes a refund candidate — i.e. a forged hash would let an attacker drain the
+   * fee wallet through the refund cron. Retries because the frontend posts the hash immediately
+   * after sending, often before the tx reaches 'confirmed'.
+   */
+  private async verifyFeePaymentOnChain(txHash: string, expectedUsdc: number, retries = 5): Promise<void> {
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
+    const bs58Mod = await import('bs58');
+    const feeWallet = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey)).publicKey.toBase58();
+    const conn = await this.getSolanaConnection();
+    const usdcMint = USDC_MINT.toBase58();
+
+    for (let attempt = 0; ; attempt++) {
+      const tx = await conn.getTransaction(txHash, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
+      if (tx) {
+        if (tx.meta?.err) throw new BadRequestException('Fee transaction failed on-chain');
+        const pre = tx.meta?.preTokenBalances?.find(b => b.owner === feeWallet && b.mint === usdcMint);
+        const post = tx.meta?.postTokenBalances?.find(b => b.owner === feeWallet && b.mint === usdcMint);
+        const received = BigInt(post?.uiTokenAmount?.amount ?? '0') - BigInt(pre?.uiTokenAmount?.amount ?? '0');
+        const expectedUnits = BigInt(Math.round(expectedUsdc * 1_000_000));
+        if (received < expectedUnits) {
+          throw new BadRequestException(`Fee transaction paid ${received} units, expected ${expectedUnits}`);
+        }
+        return;
+      }
+      if (attempt >= retries) throw new BadRequestException('Fee transaction not found on-chain — wait a few seconds and retry');
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
   /** Records that the upfront fee-collection tx confirmed, before the MagicBlock tx is signed. */
   async confirmFeeCollection(opts: { ticketId: string; userId: string; feeTxHash: string }): Promise<void> {
     const db = this.supabase.getClient();
+    const { data: ticket } = await db
+      .from('lottery_tickets')
+      .select('cost_usdc, fee_tx_hash')
+      .eq('id', opts.ticketId)
+      .eq('user_id', opts.userId)
+      .single();
+    if (!ticket) throw new BadRequestException('Ticket not found');
+    if (ticket.fee_tx_hash === opts.feeTxHash) return; // idempotent retry
+    if (ticket.fee_tx_hash) throw new BadRequestException('Fee already recorded for this ticket');
+
+    const feeUsdc = looftaTicketFee(ticket.cost_usdc);
+    await this.verifyFeePaymentOnChain(opts.feeTxHash, feeUsdc);
+
+    // A unique index on fee_tx_hash backstops this in the DB — one paid tx can't be attached
+    // to a second ticket even under concurrent requests.
     const { error } = await db
       .from('lottery_tickets')
-      .update({ fee_amount_usdc: LOOFTA_TICKET_FEE_USDC, fee_tx_hash: opts.feeTxHash, updated_at: new Date().toISOString() })
+      .update({ fee_amount_usdc: feeUsdc, fee_tx_hash: opts.feeTxHash, updated_at: new Date().toISOString() })
       .eq('id', opts.ticketId)
       .eq('user_id', opts.userId);
     if (error) throw new Error(`confirmFeeCollection failed: ${error.message}`);
-    this.logger.log(`Ticket ${opts.ticketId}: fee collected, tx=${opts.feeTxHash}`);
+    this.logger.log(`Ticket ${opts.ticketId}: fee collected & verified on-chain, tx=${opts.feeTxHash}`);
   }
 
   async confirmSend(opts: { ticketId: string; userId: string; senderTxHash: string }): Promise<void> {
@@ -280,7 +351,23 @@ export class LotteryService {
       this.logger.warn(`Ticket ${ticket.id}: cannot refund fee — no user_solana_address on record`);
       return;
     }
-    const feeUnits = BigInt(Math.round((ticket.fee_amount_usdc ?? LOOFTA_TICKET_FEE_USDC) * 1_000_000));
+    const feeUsdc = ticket.fee_amount_usdc ?? looftaTicketFee(ticket.cost_usdc);
+
+    // Defense in depth: re-verify the original fee payment on-chain before sending real money
+    // back. If the recorded hash never actually paid us (any bug or bypass upstream), mark it
+    // invalid so the cron stops retrying, and refund nothing.
+    try {
+      await this.verifyFeePaymentOnChain(ticket.fee_tx_hash, feeUsdc, 0);
+    } catch (e: any) {
+      this.logger.error(`Ticket ${ticket.id}: REFUND BLOCKED — recorded fee tx failed on-chain verification (${e.message})`);
+      await this.supabase.getClient()
+        .from('lottery_tickets')
+        .update({ fee_refunded_at: new Date().toISOString(), fee_refund_tx_hash: 'INVALID_FEE_TX' })
+        .eq('id', ticket.id);
+      return;
+    }
+
+    const feeUnits = BigInt(Math.round(feeUsdc * 1_000_000));
     const sig = await this.topUpFromFeeWallet(ticket.user_solana_address, feeUnits);
     await this.supabase.getClient()
       .from('lottery_tickets')
@@ -297,7 +384,21 @@ export class LotteryService {
    *    the app / rejected the second signature)
    *  - MagicBlock silently never delivers to the burner (no on-chain revert to react to)
    */
+  private refundRunning = false;
+
   async refundOutstandingFees(): Promise<void> {
+    // Overlap guard: refunds move real money — two concurrent runs would both read
+    // fee_refunded_at=null and both pay out.
+    if (this.refundRunning) return;
+    this.refundRunning = true;
+    try {
+      await this.refundOutstandingFeesInner();
+    } finally {
+      this.refundRunning = false;
+    }
+  }
+
+  private async refundOutstandingFeesInner(): Promise<void> {
     const db = this.supabase.getClient();
     const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
     const twentyMinAgo = new Date(Date.now() - 20 * 60_000).toISOString();
@@ -404,24 +505,66 @@ export class LotteryService {
   // ─── Cron processing ───────────────────────────────────────────────────────
 
   /** Process all tickets in 'sent' status: check if burner has USDC, start bridge */
-  async processSentTickets(): Promise<void> {
-    const db = this.supabase.getClient();
-    const { data: tickets } = await db
-      .from('lottery_tickets')
-      .select('*')
-      .eq('status', 'sent')
-      .not('burner_sol_address', 'is', null)  // public tickets skip this cron
-      .order('created_at', { ascending: true })
-      .limit(20);
+  // Overlap guards: with fast cron intervals a slow run (RPC hiccup, many tickets) can outlive
+  // its interval — a second concurrent run would see the same 'sent' rows and double-bridge.
+  private processingSent = false;
+  private processingBridging = false;
 
-    for (const ticket of tickets ?? []) {
-      await this.tryStartBridge(ticket).catch(e =>
-        this.logger.warn(`processSent ${ticket.id}: ${e.message}`),
-      );
+  async processSentTickets(): Promise<void> {
+    if (this.processingSent) return;
+    this.processingSent = true;
+    try {
+      const db = this.supabase.getClient();
+      const { data: tickets } = await db
+        .from('lottery_tickets')
+        .select('*')
+        .eq('status', 'sent')
+        .not('burner_sol_address', 'is', null)  // public tickets skip this cron
+        .order('created_at', { ascending: true })
+        .limit(20);
+
+      for (const ticket of tickets ?? []) {
+        await this.tryStartBridge(ticket).catch(e =>
+          this.logger.warn(`processSent ${ticket.id}: ${e.message}`),
+        );
+      }
+
+      // Closed-tab resilience: a user can sign the MagicBlock tx but close the window before
+      // buy-confirm reaches us — the ticket then sits in pending_send and the refund cron would
+      // wrongly refund a purchase whose money is about to land. The burner balance is the
+      // ground truth: any USDC there means the transfer really was sent, so promote to 'sent'.
+      const { data: pending } = await db
+        .from('lottery_tickets')
+        .select('*')
+        .eq('status', 'pending_send')
+        .not('burner_sol_address', 'is', null)
+        .not('fee_tx_hash', 'is', null) // fee is signed before the MagicBlock tx — no fee, nothing sent
+        .gte('created_at', new Date(Date.now() - 30 * 60_000).toISOString())
+        .limit(20);
+
+      for (const ticket of pending ?? []) {
+        const balance = await this.getBurnerUsdcBalance(ticket.burner_sol_address);
+        if (balance > 0n) {
+          await db.from('lottery_tickets').update({
+            status: 'sent',
+            sender_tx_hash: 'detected-onchain',
+            updated_at: new Date().toISOString(),
+          }).eq('id', ticket.id).eq('status', 'pending_send');
+          this.logger.log(`Ticket ${ticket.id}: burner funded while still pending_send (user likely closed the tab) — promoted to sent`);
+        }
+      }
+    } finally {
+      this.processingSent = false;
     }
   }
 
   private async tryStartBridge(ticket: any): Promise<void> {
+    // No verified fee, no service: without this gate a client that skips the fee tx (calling
+    // buy-confirm directly) would still get bridging + ticket purchase for free.
+    if (!ticket.fee_tx_hash) {
+      this.logger.warn(`Ticket ${ticket.id}: no fee recorded — not bridging (funds stay rescuable from the burner)`);
+      return;
+    }
     const burnerBalance = await this.getBurnerUsdcBalance(ticket.burner_sol_address);
     const costUnits = BigInt(Math.round(ticket.cost_usdc * 1_000_000));
 
@@ -494,19 +637,25 @@ export class LotteryService {
 
   /** Process all tickets in 'bridging' or stuck 'buying' status: check bridge + buy */
   async processBridgingTickets(): Promise<void> {
-    const db = this.supabase.getClient();
-    // Also retry 'buying' tickets with no NFTs yet (e.g. Rhinestone failed last run)
-    const { data: tickets } = await db
-      .from('lottery_tickets')
-      .select('*')
-      .or(`status.eq.bridging,status.eq.buying,and(status.eq.pending_send,burner_sol_address.is.null,bridge_deposit_address.not.is.null)`)
-      .order('created_at', { ascending: true })
-      .limit(20);
+    if (this.processingBridging) return;
+    this.processingBridging = true;
+    try {
+      const db = this.supabase.getClient();
+      // Also retry 'buying' tickets with no NFTs yet (e.g. Rhinestone failed last run)
+      const { data: tickets } = await db
+        .from('lottery_tickets')
+        .select('*')
+        .or(`status.eq.bridging,status.eq.buying,and(status.eq.pending_send,burner_sol_address.is.null,bridge_deposit_address.not.is.null)`)
+        .order('created_at', { ascending: true })
+        .limit(20);
 
-    for (const ticket of tickets ?? []) {
-      await this.tryBuyTickets(ticket).catch(e =>
-        this.logger.warn(`processBridging ${ticket.id}: ${e.message}`),
-      );
+      for (const ticket of tickets ?? []) {
+        await this.tryBuyTickets(ticket).catch(e =>
+          this.logger.warn(`processBridging ${ticket.id}: ${e.message}`),
+        );
+      }
+    } finally {
+      this.processingBridging = false;
     }
   }
 
@@ -1934,15 +2083,18 @@ export class LotteryService {
       return;
     }
 
+    // Only pending_send is cancellable: once the MagicBlock tx is signed ('sent') or the bridge
+    // is in flight ('bridging'), the money WILL arrive somewhere — cancelling would orphan it
+    // on a dead ticket. Those states must resolve via the crons or an explicit rescue instead.
     const { data, error } = await db
       .from('lottery_tickets')
       .update({ status: 'failed', bridge_status: 'CANCELLED' })
       .eq('id', ticketId)
       .eq('user_id', userId)
-      .in('status', ['pending_send', 'sent', 'bridging'])
+      .eq('status', 'pending_send')
       .select('id')
       .single();
-    if (error || !data) throw new BadRequestException('Ticket cannot be cancelled — already buying or not found');
+    if (error || !data) throw new BadRequestException('Ticket cannot be cancelled — funds are already in transit. Use rescue instead if it looks stuck.');
   }
 
   async retryTicket(ticketId: string, userId: string): Promise<{ ok: boolean }> {
@@ -2079,21 +2231,29 @@ export class LotteryService {
    * ~0.002 SOL of reclaimable rent. Sweep all three back to the fee wallet; without this,
    * every purchase strands ~$0.24 and the flow loses money.
    */
-  async sweepFinishedBurners(): Promise<void> {
-    const db = this.supabase.getClient();
-    const { data: tickets } = await db
-      .from('lottery_tickets')
-      .select('*')
-      .not('burner_sol_address', 'is', null)
-      .is('burner_swept_at', null)
-      .in('bridge_status', ['DONE', 'RESCUED'])
-      .order('created_at', { ascending: true })
-      .limit(20);
+  private sweepRunning = false;
 
-    for (const ticket of tickets ?? []) {
-      await this.sweepBurner(ticket).catch(e =>
-        this.logger.warn(`sweepBurner ${ticket.id}: ${e.message}`),
-      );
+  async sweepFinishedBurners(): Promise<void> {
+    if (this.sweepRunning) return; // overlap guard — concurrent sweeps of the same burner would conflict
+    this.sweepRunning = true;
+    try {
+      const db = this.supabase.getClient();
+      const { data: tickets } = await db
+        .from('lottery_tickets')
+        .select('*')
+        .not('burner_sol_address', 'is', null)
+        .is('burner_swept_at', null)
+        .in('bridge_status', ['DONE', 'RESCUED'])
+        .order('created_at', { ascending: true })
+        .limit(20);
+
+      for (const ticket of tickets ?? []) {
+        await this.sweepBurner(ticket).catch(e =>
+          this.logger.warn(`sweepBurner ${ticket.id}: ${e.message}`),
+        );
+      }
+    } finally {
+      this.sweepRunning = false;
     }
   }
 

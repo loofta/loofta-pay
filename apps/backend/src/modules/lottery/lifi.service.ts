@@ -110,7 +110,7 @@ export class LifiService {
       fromAddress: opts.fromAddress, toAddress: opts.toAddress,
       integrator: LIFI_INTEGRATOR_NAME,
       slippage: opts.slippage,
-      order: 'RECOMMENDED',
+      order: 'RECOMMENDED', // usually both the cheapest and fastest — FASTEST can pick pricier routes for marginal gains
     });
 
     const res = await fetch(`${LIFI_API}/quote?${params}`, { headers: this.headers() });
@@ -244,7 +244,16 @@ export class LifiService {
         const priorityMessage = decompiled.compileToV0Message(lookupTableAccounts);
         const priorityTx = new VersionedTransaction(priorityMessage);
         priorityTx.sign([burnerKeypair]);
-        sig = await conn.sendRawTransaction(priorityTx.serialize(), { skipPreflight: false });
+        try {
+          sig = await conn.sendRawTransaction(priorityTx.serialize(), { skipPreflight: false });
+        } catch (sendErr: any) {
+          // A freshly gas-funded burner can hit a lagging RPC node in preflight ("no record of
+          // a prior credit") even though the funding tx is confirmed — give propagation a
+          // moment and retry once before abandoning the priority fee.
+          if (!/prior credit/i.test(String(sendErr?.message ?? ''))) throw sendErr;
+          await new Promise(r => setTimeout(r, 2000));
+          sig = await conn.sendRawTransaction(priorityTx.serialize(), { skipPreflight: false });
+        }
         this.logger.log(`Li.Fi Solana: sent with priority fee (${BRIDGE_PRIORITY_FEE_MICROLAMPORTS} microLamports/CU)`);
       } catch (priorityErr: any) {
         this.logger.warn(`Li.Fi Solana: priority-fee injection failed (${priorityErr.message}), sending original quote tx`);
