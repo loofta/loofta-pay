@@ -1737,8 +1737,20 @@ export class LotteryService {
     this.logger.log(`${W} Li.Fi bridge submitted — tool=${quote.tool} tx=${txHash} → waiting for DONE (polls every cron tick)`);
   }
 
+  private withdrawalsRunning = false;
+
   /** Cron: check pending Li.Fi bridges → trigger MagicBlock when done. */
   async processPendingWithdrawals(): Promise<void> {
+    if (this.withdrawalsRunning) return; // overlap guard — concurrent runs would double-send the MagicBlock transfer
+    this.withdrawalsRunning = true;
+    try {
+      await this.processPendingWithdrawalsInner();
+    } finally {
+      this.withdrawalsRunning = false;
+    }
+  }
+
+  private async processPendingWithdrawalsInner(): Promise<void> {
     const db = this.supabase.getClient();
 
     // Li.Fi based withdrawals (new): bridge in-flight
@@ -1750,7 +1762,7 @@ export class LotteryService {
       .not('lifi_tx_hash', 'is', null)
       .neq('bridge_status', 'done');
 
-    this.logger.log(`processPendingWithdrawals: ${lifiWithdrawals?.length ?? 0} Li.Fi in-flight`);
+    if (lifiWithdrawals?.length) this.logger.log(`processPendingWithdrawals: ${lifiWithdrawals.length} Li.Fi in-flight`);
 
     for (const w of lifiWithdrawals ?? []) {
       await this.checkLifiWithdrawal(w).catch(e =>
@@ -1954,14 +1966,8 @@ export class LotteryService {
 
   // ─── Dashboard ─────────────────────────────────────────────────────────────
 
-  async getDashboard(userId: string): Promise<LotteryDashboard> {
-    const db = this.supabase.getClient();
-    const [ticketsRes, withdrawalsRes] = await Promise.all([
-      db.from('lottery_tickets').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(100),
-      db.from('lottery_withdrawals').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(50),
-    ]);
-
-    const tickets: LotteryTicketSummary[] = (ticketsRes.data ?? []).filter((t: any) => !t.deleted_at).map((t: any) => ({
+  private mapTicketSummary(t: any): LotteryTicketSummary {
+    return {
       id: t.id,
       status: t.status,
       numTickets: t.num_tickets,
@@ -1976,7 +1982,33 @@ export class LotteryService {
       bridgeExpiresAt: t.bridge_expires_at ?? null,
       ticketNumbers: t.ticket_numbers ?? null,
       winningNumbers: t.winning_numbers ?? null,
-    }));
+    };
+  }
+
+  /** Paginated ticket history (finished tickets only), newest first. Always user-scoped. */
+  async getTicketHistory(userId: string, offset: number, limit: number): Promise<{ tickets: LotteryTicketSummary[]; total: number }> {
+    const db = this.supabase.getClient();
+    const { data, count } = await db
+      .from('lottery_tickets')
+      .select('*', { count: 'exact' })
+      .eq('user_id', userId)
+      .in('status', ['won', 'lost', 'failed', 'withdrawn'])
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    return { tickets: (data ?? []).map(t => this.mapTicketSummary(t)), total: count ?? 0 };
+  }
+
+  async getDashboard(userId: string): Promise<LotteryDashboard> {
+    const db = this.supabase.getClient();
+    const [ticketsRes, withdrawalsRes] = await Promise.all([
+      db.from('lottery_tickets').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(100),
+      db.from('lottery_withdrawals').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(50),
+    ]);
+
+    const tickets: LotteryTicketSummary[] = (ticketsRes.data ?? [])
+      .filter((t: any) => !t.deleted_at)
+      .map((t: any) => this.mapTicketSummary(t));
 
     const withdrawals: LotteryWithdrawalSummary[] = (withdrawalsRes.data ?? []).map((w: any) => ({
       id: w.id,

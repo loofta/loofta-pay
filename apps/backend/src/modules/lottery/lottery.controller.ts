@@ -150,6 +150,18 @@ export class LotteryController {
     return this.lottery.getDashboard(req.user.id);
   }
 
+  @Get('history')
+  @ApiOperation({ summary: 'Paginated ticket history for current user (finished tickets, newest first)' })
+  async history(
+    @Query('offset') offsetRaw: string,
+    @Query('limit') limitRaw: string,
+    @Request() req: any,
+  ): Promise<{ tickets: LotteryTicketSummary[]; total: number }> {
+    const offset = Math.max(0, parseInt(offsetRaw, 10) || 0);
+    const limit = Math.min(50, Math.max(1, parseInt(limitRaw, 10) || 20));
+    return this.lottery.getTicketHistory(req.user.id, offset, limit);
+  }
+
   @Delete('tickets/:ticketId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Cancel a pending_send ticket (no funds sent yet)' })

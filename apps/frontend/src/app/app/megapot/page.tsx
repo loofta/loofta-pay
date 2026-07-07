@@ -747,20 +747,19 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
 
   if (mode === "solana_private") {
     const wMb = (MAGICBLOCK_BPS / 10_000) * ticketCostUsd + MAGICBLOCK_GASLESS_RELAY_FEE_USD;
-    const bridgeFeeLabel = bridgeFeeUsd != null ? fmt(bridgeFeeUsd) : `~${fmt(BRIDGE_FEE_USD_EST)}`;
+    const totalFees = (bridgeFeeUsd ?? BRIDGE_FEE_USD_EST) + wMb;
     // Use actual Li.Fi toAmountMin if available, then subtract MagicBlock fee
     const youReceive = bridgeReceiveUsdc != null ? Math.max(0, bridgeReceiveUsdc - wMb) : null;
     return (
       <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
-        <div className="flex justify-between px-4 py-3.5">
-          <span className="text-base text-slate-400">Li.Fi bridge (Base → SOL)</span>
-          <span className="text-base text-slate-400 tabular-nums">
-            {bridgeFeeUsd === null ? <span className="opacity-40">estimating…</span> : bridgeFeeLabel}
+        <div className="flex justify-between items-start px-4 py-3.5 gap-4">
+          <div className="min-w-0">
+            <p className="text-base text-slate-400">Privacy &amp; processing</p>
+            <p className="text-sm text-slate-500 mt-0.5">Private transfer &amp; bridging — all included</p>
+          </div>
+          <span className="text-base text-slate-400 tabular-nums shrink-0">
+            {bridgeFeeUsd === null ? <span className="opacity-40">estimating…</span> : `~${fmt(totalFees)}`}
           </span>
-        </div>
-        <div className="flex justify-between px-4 py-3.5">
-          <span className="text-base text-slate-400">MagicBlock privacy relay</span>
-          <span className="text-base text-slate-400 tabular-nums">~{fmt(wMb)}</span>
         </div>
         <div className="flex justify-between px-4 py-3.5">
           <span className="text-base font-semibold text-white">You receive</span>
@@ -1149,17 +1148,40 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
 
 // ─── Withdraw tab ─────────────────────────────────────────────────────────────
 
-function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn, dashboardLoading }: {
+function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn, dashboardLoading, previewDone }: {
   wonTickets: TicketSummary[]; accessToken: string | null;
   userSolanaAddress: string; solPriceUsd: number; onWithdrawn: () => void;
   dashboardLoading?: boolean;
+  previewDone?: boolean; // dev-only: render the post-redeem state directly
 }) {
   const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(false);
-  const [doneAmount, setDoneAmount] = useState(0);
+  const [done, setDone] = useState(!!previewDone);
+  const [doneAmount, setDoneAmount] = useState(previewDone ? 272.39 : 0);
   const [error, setError] = useState("");
   const [bridgeFeeUsd, setBridgeFeeUsd] = useState<number | null>(null);
   const [bridgeReceiveUsdc, setBridgeReceiveUsdc] = useState<number | null>(null);
+  const [withdrawalIds, setWithdrawalIds] = useState<string[]>([]);
+  const [arrived, setArrived] = useState(false);
+  const [transferFailed, setTransferFailed] = useState(false);
+  const reduceMotion = useReducedMotion();
+
+  // Live progress: poll our withdrawal rows until they all complete (or one fails).
+  useEffect(() => {
+    if (!done || arrived || transferFailed || !withdrawalIds.length) return;
+    const id = setInterval(async () => {
+      try {
+        const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+        const res = await fetch("/api/lottery/dashboard", { headers });
+        if (!res.ok) return;
+        const data = await res.json();
+        const mine = (data?.withdrawals ?? []).filter((w: WithdrawalSummary) => withdrawalIds.includes(w.id));
+        if (!mine.length) return;
+        if (mine.some((w: WithdrawalSummary) => w.status === "failed")) setTransferFailed(true);
+        else if (mine.every((w: WithdrawalSummary) => w.status === "complete")) setArrived(true);
+      } catch { /* keep polling */ }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [done, arrived, transferFailed, withdrawalIds, accessToken]);
 
   const totalAmount = wonTickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
   const isBatch = wonTickets.length > 1;
@@ -1191,6 +1213,10 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
         body: JSON.stringify({ ticketIds: wonTickets.map(t => t.id), destinationAddress: userSolanaAddress }),
       });
       if (!res.ok) throw new Error((await res.json()).message ?? "Failed");
+      const data = await res.json().catch(() => null);
+      setWithdrawalIds(data?.withdrawalIds ?? []);
+      setArrived(false);
+      setTransferFailed(false);
       setDoneAmount(totalAmount);
       setDone(true); onWithdrawn();
     } catch (err: any) { setError(err.message ?? "Unknown error"); }
@@ -1207,65 +1233,157 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   );
 
   if (!wonTickets.length) return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
-      <Trophy className="w-8 h-8 text-slate-700 mx-auto mb-3" />
-      <p className="text-slate-400 text-base">No winnings to redeem yet.</p>
-      <p className="text-slate-500 text-base mt-1">Win tickets in the daily draw to redeem here.</p>
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center">
+      <Trophy className="w-10 h-10 text-slate-700 mx-auto mb-3" />
+      <p className="text-slate-300 text-lg font-medium">No winnings yet</p>
+      <p className="text-slate-500 text-base mt-1">Win the daily draw and your prize lands here, ready to redeem privately.</p>
     </div>
   );
 
   if (done) {
+    type StepState = "done" | "active" | "pending";
+    const steps: { label: string; state: StepState }[] = [
+      { label: "Redeemed", state: "done" },
+      { label: "Traveling privately", state: arrived ? "done" : "active" },
+      { label: "In your wallet", state: arrived ? "done" : "pending" },
+    ];
     return (
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center space-y-4">
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_8px_24px_rgba(255,122,42,0.25)] flex items-center justify-center mx-auto">
-          <ShieldCheck className="w-5 h-5 text-white" />
-        </div>
+      <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-emerald-500/[0.08] to-white/[0.02] p-8 text-center space-y-6">
+        <motion.div
+          className="text-5xl select-none"
+          aria-hidden="true"
+          initial={reduceMotion ? undefined : { scale: 0.5, opacity: 0 }}
+          animate={reduceMotion ? undefined : { scale: 1, opacity: 1 }}
+          transition={{ type: "spring", stiffness: 260, damping: 16 }}
+        >
+          {arrived ? "🎉" : "🛡️✨"}
+        </motion.div>
         <div>
-          <p className="text-white font-semibold">Withdrawal initiated</p>
-          <p className="text-base text-slate-400 mt-1">Routing privately to your Loofta balance — arrives in ~5 min.</p>
+          <p className="text-sm font-bold text-emerald-400 uppercase tracking-[0.2em] mb-2">
+            {arrived ? "Withdrawal complete" : "Withdrawal on its way"}
+          </p>
+          <h2 className="font-display text-4xl sm:text-5xl font-bold tracking-tight bg-gradient-to-b from-white via-slate-100 to-emerald-200 bg-clip-text text-transparent tabular-nums">
+            {fmt(doneAmount)}
+          </h2>
+          <p className="text-lg text-slate-300 mt-3 font-medium">
+            {arrived ? "is in your wallet" : "is heading to your wallet"}
+          </p>
+          <p className="text-base text-slate-400 mt-1">
+            {arrived
+              ? "Delivered privately to your Loofta balance — no on-chain link back to you."
+              : "Arrives in your Loofta balance in a few minutes. No on-chain link back to you."}
+          </p>
+          {transferFailed && (
+            <p className="text-base text-red-400 mt-3">
+              Something went wrong in transit — your funds are safe. Check the History tab or contact support.
+            </p>
+          )}
         </div>
-        <button onClick={() => { setDone(false); setDoneAmount(0); }}
-          className="text-base text-slate-500 hover:text-white underline underline-offset-2 transition-colors">
-          Withdraw another
-        </button>
+
+        {/* Progress tracker */}
+        <div className="flex items-center justify-center px-2" aria-label="Withdrawal progress: redeemed, now traveling privately to your wallet">
+          {steps.map((s, i) => (
+            <div key={s.label} className="flex items-center">
+              <div className="flex flex-col items-center gap-1.5 w-24">
+                <div className={[
+                  "w-8 h-8 rounded-full flex items-center justify-center border",
+                  s.state === "done" ? "bg-emerald-500 border-emerald-400" :
+                  s.state === "active" ? "bg-emerald-500/15 border-emerald-400/60" :
+                  "bg-white/[0.04] border-white/15",
+                ].join(" ")}>
+                  {s.state === "done" ? (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                  ) : s.state === "active" ? (
+                    <span className={`w-2.5 h-2.5 rounded-full bg-emerald-400 ${reduceMotion ? "" : "animate-pulse"}`} />
+                  ) : (
+                    <span className="w-2.5 h-2.5 rounded-full bg-white/20" />
+                  )}
+                </div>
+                <span className={["text-sm font-medium leading-tight", s.state === "pending" ? "text-slate-500" : "text-emerald-300"].join(" ")}>
+                  {s.label}
+                </span>
+              </div>
+              {i < steps.length - 1 && (
+                <div className={["h-px w-6 -mt-6 shrink-0", s.state === "done" ? "bg-emerald-400/60" : "bg-white/15"].join(" ")} />
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-2">
+          {!arrived && !transferFailed && (
+            <p className="text-sm text-slate-500">You can safely leave this page — it continues in the background.</p>
+          )}
+          <button onClick={() => { setDone(false); setDoneAmount(0); setArrived(false); setTransferFailed(false); }}
+            className="text-base text-slate-400 hover:text-white underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 rounded">
+            Back to redeem
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-5">
-      <p className="text-slate-300 text-xl font-medium font-sans">Redeem winnings</p>
+    <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-emerald-500/[0.07] via-white/[0.04] to-white/[0.02] p-6 space-y-6">
+      {/* Celebration header */}
+      <motion.div
+        className="flex flex-col items-center text-center gap-1 pt-1"
+        initial={reduceMotion ? undefined : { opacity: 0, y: 10 }}
+        animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+      >
+        <motion.div
+          className="text-5xl sm:text-6xl select-none"
+          aria-hidden="true"
+          animate={reduceMotion ? {} : { rotate: [0, -8, 8, -4, 0] }}
+          transition={{ duration: 1.2, delay: 0.15 }}
+        >
+          🏆
+        </motion.div>
+        <p className="text-sm font-bold text-emerald-400 uppercase tracking-[0.2em] mt-2">
+          {isBatch ? `${wonTickets.length} winning draws` : "You won"}
+        </p>
+        <h2 className="font-display text-5xl sm:text-6xl font-bold tracking-tight bg-gradient-to-b from-white via-emerald-50 to-emerald-300 bg-clip-text text-transparent tabular-nums">
+          {fmt(totalAmount)}
+        </h2>
+        <p className="text-base text-slate-400 mt-1">ready to redeem privately</p>
+      </motion.div>
 
-      {/* Winning ticket(s) summary */}
+      {/* Winning ticket(s) */}
       <div className="space-y-2">
-        {wonTickets.map(t => (
-          <div key={t.id} className="flex items-center justify-between px-4 py-3.5 rounded-xl border border-emerald-500/20 bg-emerald-500/5">
-            <div>
-              <p className="text-white text-base font-medium">Winning ticket{t.winTier ? ` · Tier ${t.winTier}` : ""}</p>
-              <p className="text-slate-500 text-sm mt-0.5">
-                {t.drawTime ? new Date(t.drawTime).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
-                {t.numTickets > 1 ? ` · from batch of ${t.numTickets}` : ""}
-              </p>
+        <p className="text-sm text-slate-400 uppercase tracking-wider font-semibold">Your wins</p>
+        {wonTickets.map((t, i) => (
+          <motion.div
+            key={t.id}
+            className="flex items-center justify-between px-4 py-3.5 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.07] shadow-[0_0_20px_rgba(16,185,129,0.08)]"
+            initial={reduceMotion ? undefined : { opacity: 0, y: 12, scale: 0.98 }}
+            animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.3, delay: 0.15 + i * 0.07 }}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                <Trophy className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-white text-base font-medium truncate">Winning ticket{t.winTier ? ` · Tier ${t.winTier}` : ""}</p>
+                <p className="text-slate-400 text-sm mt-0.5 truncate">
+                  {t.drawTime ? new Date(t.drawTime).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+                  {t.numTickets > 1 ? ` · from batch of ${t.numTickets}` : ""}
+                </p>
+              </div>
             </div>
-            <span className="text-emerald-400 font-bold text-lg tabular-nums">{fmt(t.winAmountUsdc ?? 0)}</span>
-          </div>
+            <span className="text-emerald-400 font-bold text-lg tabular-nums shrink-0 ml-3">+{fmt(t.winAmountUsdc ?? 0)}</span>
+          </motion.div>
         ))}
       </div>
 
-      {isBatch && (
-        <div className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.06]">
-          <span className="text-base text-slate-400">Total from {wonTickets.length} wins</span>
-          <span className="text-white font-semibold tabular-nums">{fmt(totalAmount)}</span>
-        </div>
-      )}
-
       <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 flex items-start gap-3">
-        <ShieldCheck className="w-4 h-4 text-[#FF7A2A] mt-0.5 shrink-0" />
+        <ShieldCheck className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
         <div>
           <p className="text-base text-slate-300 font-medium">
-            {isBatch ? "All wins bridge to one shared burner → single private transfer" : "Private withdrawal to Loofta balance"}
+            {isBatch ? "All your wins arrive as one private transfer" : "Arrives privately in your Loofta balance"}
           </p>
-          <p className="text-sm text-slate-500 mt-0.5">Li.Fi bridge → shared burner → MagicBlock relay</p>
+          <p className="text-sm text-slate-500 mt-0.5">No on-chain link between your winnings and your wallet</p>
         </div>
       </div>
 
@@ -1273,8 +1391,8 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
       {error && <p className="text-base text-red-400">{error}</p>}
 
       <button onClick={handleWithdraw} disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
-        className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-        {loading ? "Processing..." : bridgeFeeUsd === null ? "Estimating fees…" : "Withdraw privately"}
+        className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
+        {loading ? "Processing..." : bridgeFeeUsd === null ? "Estimating fees…" : `Redeem ${fmt(totalAmount)} privately`}
       </button>
     </div>
   );
@@ -1313,6 +1431,31 @@ const PREVIEW_TICKETS: TicketNumbers[] = [
 ];
 const PREVIEW_WINNING_NUMBERS_WON = { main: [3, 11, 19, 24, 6], bonus: 7 }; // 4 normals + bonus vs. ticket 1
 const PREVIEW_WINNING_NUMBERS_LOST = { main: [2, 6, 9, 14, 20], bonus: 4 };
+
+// Dev-only mock winning tickets for previewing the redeem tab (?preview=redeem / redeem-batch)
+const PREVIEW_WON_TICKETS: TicketSummary[] = [
+  {
+    id: "preview-won-1", status: "won", numTickets: 5, costUsdc: 5, roundId: "412",
+    drawTime: new Date(Date.now() - 12 * 3600_000).toISOString(), winAmountUsdc: 272.39, winTier: 2,
+    createdAt: new Date(Date.now() - 36 * 3600_000).toISOString(), depositAddress: null,
+    bridgeStatus: "DONE", bridgeExpiresAt: null, ticketNumbers: PREVIEW_TICKETS,
+    winningNumbers: PREVIEW_WINNING_NUMBERS_WON,
+  },
+  {
+    id: "preview-won-2", status: "won", numTickets: 1, costUsdc: 1, roundId: "411",
+    drawTime: new Date(Date.now() - 36 * 3600_000).toISOString(), winAmountUsdc: 12.5, winTier: 4,
+    createdAt: new Date(Date.now() - 60 * 3600_000).toISOString(), depositAddress: null,
+    bridgeStatus: "DONE", bridgeExpiresAt: null, ticketNumbers: PREVIEW_TICKETS.slice(0, 1),
+    winningNumbers: PREVIEW_WINNING_NUMBERS_WON,
+  },
+  {
+    id: "preview-won-3", status: "won", numTickets: 10, costUsdc: 10, roundId: "410",
+    drawTime: new Date(Date.now() - 60 * 3600_000).toISOString(), winAmountUsdc: 3.75, winTier: 5,
+    createdAt: new Date(Date.now() - 84 * 3600_000).toISOString(), depositAddress: null,
+    bridgeStatus: "DONE", bridgeExpiresAt: null, ticketNumbers: PREVIEW_TICKETS,
+    winningNumbers: PREVIEW_WINNING_NUMBERS_WON,
+  },
+];
 
 /** Returns the next UTC timestamp for 19:00:00 Europe/Paris, handling CET/CEST automatically. */
 function nextParisDrawDate(after = new Date()): Date {
@@ -1518,16 +1661,58 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
   const [checkResultMsg, setCheckResultMsg] = useState<Record<string, string>>({});
   const [ticketShowAll, setTicketShowAll] = useState<Record<string, boolean>>({});
 
+  // Pagination: the dashboard ships the newest history; older pages come from
+  // /api/lottery/history on demand. Rendering is windowed by visibleCount.
+  const HISTORY_PAGE = 20;
+  const [visibleCount, setVisibleCount] = useState(HISTORY_PAGE);
+  const [extraHistory, setExtraHistory] = useState<TicketSummary[]>([]);
+  const [serverHasMore, setServerHasMore] = useState(history.length >= HISTORY_PAGE);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const awaitingDeposit = activeTickets.filter(t => t.status === "pending_send");
   const inFlight = activeTickets.filter(t => ["sent", "bridging", "buying"].includes(t.status));
-  const completed = [...activeTickets.filter(t => t.status === "active"), ...history]
-    .filter(t => t.bridgeStatus !== "CANCELLED")
-    .sort((a, b) => {
-      // Failed tickets float to top
-      if (a.status === "failed" && b.status !== "failed") return -1;
-      if (b.status === "failed" && a.status !== "failed") return 1;
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
+  const completed = (() => {
+    const seen = new Set<string>();
+    return [...activeTickets.filter(t => t.status === "active"), ...history, ...extraHistory]
+      .filter(t => {
+        if (seen.has(t.id)) return false;
+        seen.add(t.id);
+        return t.bridgeStatus !== "CANCELLED";
+      })
+      .sort((a, b) => {
+        // Failed tickets float to top
+        if (a.status === "failed" && b.status !== "failed") return -1;
+        if (b.status === "failed" && a.status !== "failed") return 1;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+  })();
+  const visibleCompleted = completed.slice(0, visibleCount);
+  const hasMore = completed.length > visibleCount || serverHasMore;
+
+  async function handleLoadMore() {
+    if (completed.length > visibleCount) {
+      setVisibleCount(c => c + HISTORY_PAGE);
+      return;
+    }
+    if (!serverHasMore || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const token = await getAccessToken();
+      const offset = history.length + extraHistory.length;
+      const res = await fetch(`/api/lottery/history?offset=${offset}&limit=${HISTORY_PAGE}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      const fetched: TicketSummary[] = data?.tickets ?? [];
+      setExtraHistory(prev => [...prev, ...fetched]);
+      setServerHasMore(offset + fetched.length < (data?.total ?? 0));
+      setVisibleCount(c => c + HISTORY_PAGE);
+    } catch (e) {
+      console.error("Load more history failed", e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   const allForStats = [...activeTickets, ...history];
   const totalSpent = allForStats.filter(t => t.status !== "failed").reduce((s, t) => s + t.costUsdc, 0);
@@ -1873,7 +2058,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
           <div>
             <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Tickets</p>
             <div className="space-y-2">
-              {completed.map(t => {
+              {visibleCompleted.map(t => {
                 const dateStr = (t.drawTime ? new Date(t.drawTime) : new Date(t.createdAt))
                   .toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
                 const hasNumbers = t.ticketNumbers && t.ticketNumbers.length > 0 && t.ticketNumbers[0].main.length > 0;
@@ -2033,6 +2218,16 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                 );
               })}
             </div>
+            {hasMore && (
+              <button
+                type="button"
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                className="w-full h-10 mt-3 rounded-xl text-sm font-semibold border border-white/10 text-slate-300 hover:text-white hover:bg-white/[0.06] transition-all disabled:opacity-40"
+              >
+                {loadingMore ? "Loading…" : "Show more tickets"}
+              </button>
+            )}
           </div>
         )}
 
@@ -2249,6 +2444,9 @@ const DEV_PREVIEW_LINKS = [
   { label: "Good luck", href: "/app/megapot?tab=buy&preview=done" },
   { label: "Draw — Won", href: "/app/megapot?tab=buy&preview=won" },
   { label: "Draw — Lost", href: "/app/megapot?tab=buy&preview=lost" },
+  { label: "Redeem — 1 win", href: "/app/megapot?tab=redeem&preview=redeem" },
+  { label: "Redeem — batch", href: "/app/megapot?tab=redeem&preview=redeem-batch" },
+  { label: "Redeem — done", href: "/app/megapot?tab=redeem&preview=redeem-done" },
 ] as const;
 
 function DevPreviewPanel() {
@@ -2409,7 +2607,14 @@ export default function MegapotPage() {
     return () => clearInterval(id);
   }, [dashboard, fetchDashboard]);
 
-  const wonTickets = [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])].filter(t => t.status === "won");
+  // Dev-only: mock winning tickets for redeem UI preview (see DevPreviewPanel)
+  const redeemPreview = IS_LOCALHOST ? searchParams?.get("preview") : null;
+  const wonTickets = redeemPreview === "redeem" || redeemPreview === "redeem-done"
+    ? PREVIEW_WON_TICKETS.slice(0, 1)
+    : redeemPreview === "redeem-batch"
+      ? PREVIEW_WON_TICKETS
+      : [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])].filter(t => t.status === "won");
+  const isRedeemPreview = redeemPreview === "redeem" || redeemPreview === "redeem-batch" || redeemPreview === "redeem-done";
 
   return (
     <div className="bg-[#0f0f12] text-white mobile-first">
@@ -2430,7 +2635,7 @@ export default function MegapotPage() {
           </>
         )}
         {tab === "redeem" && (
-          <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} dashboardLoading={dashboardLoading} />
+          <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} dashboardLoading={isRedeemPreview ? false : dashboardLoading} previewDone={redeemPreview === "redeem-done"} />
         )}
         {tab === "history" && (
           <HistoryTab
