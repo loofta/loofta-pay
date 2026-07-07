@@ -1517,11 +1517,16 @@ function PrizePoolHero({ prizePool, drawTime, onHowToPlay, onPrizeTiers }: {
   ];
 
   return (
-    <div className="text-center pt-2 pb-7">
-      <p className="text-xs font-bold tracking-[0.22em] text-slate-500 uppercase mb-4">Prize Pool</p>
+    <div className="text-center pt-2 pb-7 px-2">
+      <p className="text-sm font-bold tracking-[0.22em] text-slate-500 uppercase mb-4">Prize Pool</p>
       <p
-        className="text-[72px] sm:text-[84px] font-black leading-none tracking-tight bg-gradient-to-b from-white via-slate-100 to-amber-200 bg-clip-text text-transparent select-none"
-        style={{ filter: "drop-shadow(0 3px 28px rgba(251,146,60,0.22))" }}
+        className="font-black leading-none tracking-tight bg-gradient-to-b from-white via-slate-100 to-amber-200 bg-clip-text text-transparent select-none"
+        style={{
+          filter: "drop-shadow(0 3px 28px rgba(251,146,60,0.22))",
+          // Fluid instead of a fixed 72px→84px breakpoint jump — the fixed size overflowed and
+          // clipped at the viewport edge on narrower phones once the pool hit 7 digits.
+          fontSize: "clamp(40px, 13vw, 84px)",
+        }}
       >
         ${amount.toLocaleString("en-US")}
       </p>
@@ -1892,7 +1897,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
       {/* Awaiting deposit */}
       {awaitingDeposit.length > 0 && (
         <div>
-          <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Awaiting deposit</p>
+          <p className="text-base font-medium text-slate-500 uppercase tracking-wider mb-2">Awaiting deposit</p>
           <div className="space-y-2">
             {awaitingDeposit.map(t => (
               <details key={t.id} className="rounded-xl border border-white/10 bg-white/5 group">
@@ -1912,7 +1917,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                       {new Date(t.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                     </p>
                     {t.bridgeExpiresAt && (
-                      <p className={`text-sm font-medium ${new Date(t.bridgeExpiresAt) > new Date() ? "text-amber-400/80" : "text-red-400"}`}>
+                      <p className={`text-base font-medium ${new Date(t.bridgeExpiresAt) > new Date() ? "text-amber-400/80" : "text-red-400"}`}>
                         {new Date(t.bridgeExpiresAt) > new Date()
                           ? `Expires ${new Date(t.bridgeExpiresAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`
                           : "Expired"}
@@ -1922,13 +1927,13 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                   {t.depositAddress ? (
                     <>
                       <div className="space-y-2">
-                        <p className="text-sm text-slate-400">Send <span className="text-white font-semibold">{fmt(t.costUsdc)}</span> USDC on Solana to:</p>
+                        <p className="text-base text-slate-400">Send <span className="text-white font-semibold">{fmt(t.costUsdc)}</span> USDC on Solana to:</p>
                         <div className="flex items-center gap-2 bg-black/30 rounded-xl px-3 py-2.5 border border-white/10">
-                          <span className="font-mono text-sm text-slate-200 truncate flex-1">{t.depositAddress}</span>
+                          <span className="font-mono text-base text-slate-200 truncate flex-1">{t.depositAddress}</span>
                           <button type="button" onClick={() => copyAddress(t.id, t.depositAddress!)}
                             className="shrink-0 text-slate-400 hover:text-white transition-colors px-1">
                             {copied === t.id
-                              ? <span className="text-emerald-400 text-sm font-medium">Copied!</span>
+                              ? <span className="text-emerald-400 text-base font-medium">Copied!</span>
                               : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
                             }
                           </button>
@@ -1936,12 +1941,12 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                       </div>
                     </>
                   ) : (
-                    <p className="text-sm text-slate-500">Deposit address unavailable.</p>
+                    <p className="text-base text-slate-500">Deposit address unavailable.</p>
                   )}
                   <button type="button"
                     onClick={() => handleCancel(t.id)}
                     disabled={cancelling === t.id}
-                    className="w-full h-10 rounded-xl text-sm font-semibold border border-red-500/30 text-red-400 hover:bg-red-500/10 active:bg-red-500/20 transition-all disabled:opacity-40">
+                    className="w-full h-10 rounded-xl text-base font-semibold border border-red-500/30 text-red-400 hover:bg-red-500/10 active:bg-red-500/20 transition-all disabled:opacity-40">
                     {cancelling === t.id ? "Cancelling..." : "Cancel purchase"}
                   </button>
                 </div>
@@ -1954,7 +1959,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
       {/* In progress */}
       {inFlight.length > 0 && (
         <div>
-          <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">In progress</p>
+          <p className="text-base font-medium text-slate-500 uppercase tracking-wider mb-2">In progress</p>
           <div className="space-y-2">
             {inFlight.map(t => (
               <details key={t.id} className="rounded-xl border border-white/10 bg-white/5 group">
@@ -1964,7 +1969,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                     <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
                       {statusLabel(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}
                     </span>
                     <ChevronDown className="w-4 h-4 text-slate-500 transition-transform duration-200 group-open:rotate-180" />
@@ -1975,30 +1980,30 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                     {new Date(t.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                     {" · "}{fmt(t.costUsdc)}
                   </p>
-                  <p className="text-sm text-slate-400">
+                  <p className="text-base text-slate-400">
                     {t.status === "sent" && "Waiting for MagicBlock private transfer to arrive in burner wallet (up to 2 min)."}
                     {t.status === "bridging" && "Bridging from Solana to Base. This takes 5–15 minutes."}
                     {t.status === "buying" && "Funds arrived on Base — buying your tickets now."}
                   </p>
                   <Link
                     href={megapotBase}
-                    className="inline-flex items-center gap-1.5 text-sm font-medium text-[#FF7A2A] hover:text-[#FF9A5A] transition-colors"
+                    className="inline-flex items-center gap-1.5 text-base font-medium text-[#FF7A2A] hover:text-[#FF9A5A] transition-colors"
                   >
                     View progress <ArrowUpRight className="w-3.5 h-3.5" />
                   </Link>
                   {t.status === "sent" && (
                     <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-2">
-                      <p className="text-sm font-semibold text-slate-400">Funds stuck in burner wallet?</p>
-                      <p className="text-xs text-slate-500">If it has been more than 2 min since you sent, rescue will return the USDC to your Loofta balance.</p>
+                      <p className="text-base font-semibold text-slate-400">Funds stuck in burner wallet?</p>
+                      <p className="text-sm text-slate-500">If it has been more than 2 min since you sent, rescue will return the USDC to your Loofta balance.</p>
                       {rescueBurnerResult[t.id] && (
-                        <p className={`text-sm font-medium ${rescueBurnerResult[t.id].startsWith("Error") || rescueBurnerResult[t.id].startsWith("Burner") ? "text-red-400" : "text-emerald-400"}`}>
+                        <p className={`text-base font-medium ${rescueBurnerResult[t.id].startsWith("Error") || rescueBurnerResult[t.id].startsWith("Burner") ? "text-red-400" : "text-emerald-400"}`}>
                           {rescueBurnerResult[t.id]}
                         </p>
                       )}
                       <button type="button"
                         onClick={() => handleRescueBurner(t.id)}
                         disabled={rescuingBurner === t.id}
-                        className="w-full h-10 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40">
+                        className="w-full h-10 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40">
                         {rescuingBurner === t.id ? "Rescuing..." : "Rescue from Solana"}
                       </button>
                     </div>
@@ -2007,21 +2012,21 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                       transit and will arrive on Base. No action needed. */}
                   {t.status === "buying" && (
                     <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-2">
-                      <p className="text-sm font-semibold text-slate-400">Stuck? Try one of these:</p>
+                      <p className="text-base font-semibold text-slate-400">Stuck? Try one of these:</p>
                       {(retryResult[t.id] || rescueResult[t.id]) && (
-                        <p className="text-sm text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
+                        <p className="text-base text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
                       )}
                       <div className="flex gap-2">
                         <button type="button"
                           onClick={() => handleRetry(t.id)}
                           disabled={retrying === t.id || rescuing === t.id}
-                          className="flex-1 h-10 rounded-xl text-sm font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40">
+                          className="flex-1 h-10 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40">
                           {retrying === t.id ? "Retrying..." : "Retry purchase"}
                         </button>
                         <button type="button"
                           onClick={() => handleRescue(t.id)}
                           disabled={rescuing === t.id || retrying === t.id}
-                          className="flex-1 h-10 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40">
+                          className="flex-1 h-10 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40">
                           {rescuing === t.id ? "Rescuing..." : "Rescue funds"}
                         </button>
                       </div>
@@ -2050,7 +2055,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
       ) : completed.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? null
         : completed.length > 0 && (
           <div>
-            <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Tickets</p>
+            <p className="text-base font-medium text-slate-500 uppercase tracking-wider mb-2">Tickets</p>
             <div className="space-y-2">
               {visibleCompleted.map(t => {
                 const dateStr = (t.drawTime ? new Date(t.drawTime) : new Date(t.createdAt))
@@ -2069,11 +2074,11 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
                             {statusLabel(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}
                           </span>
                         </div>
-                        <p className="text-sm text-slate-500 mt-0.5">
+                        <p className="text-base text-slate-500 mt-0.5">
                           {t.roundId ? `Round ${t.roundId} · ` : ""}{dateStr}
                           {t.winTier ? ` · Tier ${t.winTier}` : ""}
                         </p>
@@ -2094,7 +2099,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                         {/* Draw info */}
                         {t.drawTime && (
                           <div>
-                            <p className="text-sm text-slate-500">
+                            <p className="text-base text-slate-500">
                               Draw: {new Date(t.drawTime).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
                             </p>
                           </div>
@@ -2106,14 +2111,14 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                         ) && (
                             <div className="space-y-2">
                               {checkResultMsg[t.id] && (
-                                <p className={`text-sm ${checkResultMsg[t.id].startsWith("Error") ? "text-red-400" : checkResultMsg[t.id].includes("Won") ? "text-emerald-400" : "text-slate-400"}`}>
+                                <p className={`text-base ${checkResultMsg[t.id].startsWith("Error") ? "text-red-400" : checkResultMsg[t.id].includes("Won") ? "text-emerald-400" : "text-slate-400"}`}>
                                   {checkResultMsg[t.id]}
                                 </p>
                               )}
                               <button
                                 onClick={() => handleCheckResults(t.id)}
                                 disabled={checkingResult === t.id}
-                                className="w-full h-9 rounded-xl text-sm font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                                className="w-full h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
                               >
                                 {checkingResult === t.id ? "Checking…" : "Check Results"}
                               </button>
@@ -2123,20 +2128,20 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                         {hasNumbers ? (
                           <div className="space-y-2">
                             {!hasAllNumbers && (
-                              <p className="text-sm text-slate-500 italic">Loading {t.numTickets - t.ticketNumbers!.length} more ticket numbers…</p>
+                              <p className="text-base text-slate-500 italic">Loading {t.numTickets - t.ticketNumbers!.length} more ticket numbers…</p>
                             )}
                             {t.winningNumbers && (
                               <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] px-3 py-2">
                                 <p className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase mb-1.5">Winning numbers</p>
                                 <div className="flex items-center gap-2">
                                   {t.winningNumbers.main.map(n => (
-                                    <span key={n} className="w-7 h-7 rounded-full bg-white/10 border border-white/20 text-white text-xs font-bold flex items-center justify-center tabular-nums">{n}</span>
+                                    <span key={n} className="w-7 h-7 rounded-full bg-white/10 border border-white/20 text-white text-sm font-bold flex items-center justify-center tabular-nums">{n}</span>
                                   ))}
-                                  <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 text-slate-300 text-xs font-bold flex items-center justify-center tabular-nums">{t.winningNumbers.bonus}</span>
+                                  <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 text-slate-300 text-sm font-bold flex items-center justify-center tabular-nums">{t.winningNumbers.bonus}</span>
                                 </div>
                               </div>
                             )}
-                            <p className="text-sm text-slate-600">Your tickets</p>
+                            <p className="text-base text-slate-600">Your tickets</p>
                             {(() => {
                               const matchCount = (tn: TicketNumbers) => {
                                 if (!t.winningNumbers) return 0;
@@ -2156,7 +2161,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                                     <button
                                       type="button"
                                       onClick={() => setTicketShowAll(prev => ({ ...prev, [t.id]: true }))}
-                                      className="w-full h-9 rounded-xl text-sm font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all"
+                                      className="w-full h-9 rounded-xl text-base font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all"
                                     >
                                       +{sorted.length - 5} more tickets
                                     </button>
@@ -2166,7 +2171,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                             })()}
                           </div>
                         ) : (
-                          <p className="text-sm text-slate-600 italic">Loading ticket numbers…</p>
+                          <p className="text-base text-slate-600 italic">Loading ticket numbers…</p>
                         )}
                       </div>
                     )}
@@ -2176,16 +2181,16 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                     {isFailed && (
                       <div className="px-3 pb-3 space-y-2 border-t border-white/[0.06] pt-3">
                         {(retryResult[t.id] || rescueResult[t.id]) && (
-                          <p className="text-sm text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
+                          <p className="text-base text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
                         )}
                         {rescueBurnerResult[t.id] && (
-                          <p className="text-sm text-amber-400">{rescueBurnerResult[t.id]}</p>
+                          <p className="text-base text-amber-400">{rescueBurnerResult[t.id]}</p>
                         )}
                         {t.bridgeStatus === "RESCUED" || t.bridgeStatus === "CANCELLED" ? (
                           <button
                             onClick={() => handleDelete(t.id)}
                             disabled={deleting === t.id}
-                            className="w-full h-9 rounded-xl text-sm font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+                            className="w-full h-9 rounded-xl text-base font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
                           >
                             {deleting === t.id ? "Removing…" : "Remove from history"}
                           </button>
@@ -2196,7 +2201,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                                 type="button"
                                 onClick={() => handleRetry(t.id)}
                                 disabled={retrying === t.id || rescuing === t.id}
-                                className="flex-1 h-9 rounded-xl text-sm font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                                className="flex-1 h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
                               >
                                 {retrying === t.id ? "Retrying…" : "Retry purchase"}
                               </button>
@@ -2204,7 +2209,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                                 type="button"
                                 onClick={() => handleRescue(t.id)}
                                 disabled={rescuing === t.id || retrying === t.id}
-                                className="flex-1 h-9 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
+                                className="flex-1 h-9 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
                               >
                                 {rescuing === t.id ? "Rescuing…" : "Rescue funds (Base)"}
                               </button>
@@ -2216,7 +2221,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                               type="button"
                               onClick={() => handleRescueBurner(t.id)}
                               disabled={rescuingBurner === t.id}
-                              className="w-full h-9 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
+                              className="w-full h-9 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
                             >
                               {rescuingBurner === t.id ? "Rescuing…" : "Rescue from Solana"}
                             </button>
@@ -2233,7 +2238,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                 type="button"
                 onClick={handleLoadMore}
                 disabled={loadingMore}
-                className="w-full h-10 mt-3 rounded-xl text-sm font-semibold border border-white/10 text-slate-300 hover:text-white hover:bg-white/[0.06] transition-all disabled:opacity-40"
+                className="w-full h-10 mt-3 rounded-xl text-base font-semibold border border-white/10 text-slate-300 hover:text-white hover:bg-white/[0.06] transition-all disabled:opacity-40"
               >
                 {loadingMore ? "Loading…" : "Show more tickets"}
               </button>
