@@ -268,7 +268,7 @@ export default function RewardsPage() {
           </div>
           );
           return blinkClickable
-            ? <Link href="/app/rewards/blink" className="block group">{blinkCard}</Link>
+            ? <Link href="/rewards/blink" className="block group">{blinkCard}</Link>
             : <div className="block">{blinkCard}</div>;
         })()}
 
@@ -355,7 +355,7 @@ export default function RewardsPage() {
             </div>
             );
             return megapotClickable
-              ? <Link href="/app/rewards/megapot" className="block group">{megapotCard}</Link>
+              ? <Link href="/rewards/megapot" className="block group">{megapotCard}</Link>
               : <div className="block">{megapotCard}</div>;
           })()}
         </div>
@@ -367,7 +367,7 @@ export default function RewardsPage() {
           </p>
 
           {/* Sparks Campaign — ended */}
-          <Link href="/app/rewards/sparks" className="block group">
+          <Link href="/rewards/sparks" className="block group">
             <div
               className="relative rounded-2xl overflow-hidden border border-white/10 group-hover:border-white/20 transition-all duration-200 opacity-70"
               style={{ backgroundImage: `url("${SPARKS_BG}")`, backgroundSize: "cover", backgroundPosition: "center" }}

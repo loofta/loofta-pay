@@ -13,7 +13,7 @@ export default function RewardsBlinkPage() {
       <div className="bg-[#0f0f12]">
         <div className="max-w-lg mx-auto px-4 pt-4 pb-2">
           <Link
-            href="/app/rewards"
+            href="/rewards"
             className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors"
           >
             <ArrowLeft size={15} />

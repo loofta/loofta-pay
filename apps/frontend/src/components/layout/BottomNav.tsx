@@ -77,14 +77,20 @@ export function BottomNav() {
         if (tab === 'redeem') activeKey = 'megapot-redeem';
         else if (tab === 'history') activeKey = 'megapot-history';
 
+        // On pay.loofta.xyz, proxy.ts redirects any literal "/app/*" URL back to the clean
+        // path — hardcoding "/app/megapot" here turned every tab click into an extra
+        // redirect round trip (navigate -> 307 -> re-fetch clean path -> rewrite -> render).
+        const megapotBase = isAppPath ? '/app/megapot' : '/megapot';
+        const profileHref = isAppPath ? '/app/profile' : '/settings';
+
         return (
             <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-pb bg-[#0f0f12]/70 backdrop-blur-xl border-t border-white/10 shadow-[0_-10px_30px_rgba(0,0,0,0.35)]">
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
                 <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-1 mt-1">
-                    <NavItem href="/app/megapot" label="Buy" active={activeKey === 'megapot-buy'} icon={<Ticket />} />
-                    <NavItem href="/app/megapot?tab=redeem" label="Redeem" active={activeKey === 'megapot-redeem'} icon={<Trophy />} />
-                    <NavItem href="/app/megapot?tab=history" label="History" active={activeKey === 'megapot-history'} icon={<Clock />} />
-                    <NavItem href="/app/profile" label="Profile" active={false} icon={<Settings />} />
+                    <NavItem href={megapotBase} label="Buy" active={activeKey === 'megapot-buy'} icon={<Ticket />} />
+                    <NavItem href={`${megapotBase}?tab=redeem`} label="Redeem" active={activeKey === 'megapot-redeem'} icon={<Trophy />} />
+                    <NavItem href={`${megapotBase}?tab=history`} label="History" active={activeKey === 'megapot-history'} icon={<Clock />} />
+                    <NavItem href={profileHref} label="Profile" active={false} icon={<Settings />} />
                 </div>
             </nav>
         );
