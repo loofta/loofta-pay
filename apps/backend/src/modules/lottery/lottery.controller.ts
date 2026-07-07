@@ -35,6 +35,14 @@ class ConfirmSendDto {
   senderTxHash: string;
 }
 
+class ConfirmFeeDto {
+  @IsString()
+  ticketId: string;
+
+  @IsString()
+  feeTxHash: string;
+}
+
 class WithdrawDto {
   @IsString()
   ticketId: string;
@@ -81,7 +89,7 @@ export class LotteryController {
 
   @Post('buy')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Initiate ticket purchase — returns MagicBlock tx for user to sign' })
+  @ApiOperation({ summary: 'Initiate ticket purchase — returns fee tx + MagicBlock tx for user to sign, in that order' })
   async buy(@Body() dto: BuyTicketsDto, @Request() req: any): Promise<InitiatePurchaseResult> {
     if (!dto.numTickets || dto.numTickets < 1) throw new BadRequestException('numTickets required');
     if (!dto.userSolanaAddress) throw new BadRequestException('userSolanaAddress required');
@@ -90,6 +98,15 @@ export class LotteryController {
       numTickets: dto.numTickets,
       userSolanaAddress: dto.userSolanaAddress,
     });
+  }
+
+  @Post('buy-fee-confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Confirm the upfront fee tx signed — must be called before buy-confirm' })
+  async confirmFee(@Body() dto: ConfirmFeeDto, @Request() req: any): Promise<{ ok: boolean }> {
+    if (!dto.ticketId || !dto.feeTxHash) throw new BadRequestException('ticketId and feeTxHash required');
+    await this.lottery.confirmFeeCollection({ ticketId: dto.ticketId, userId: req.user.id, feeTxHash: dto.feeTxHash });
+    return { ok: true };
   }
 
   @Post('buy-public')

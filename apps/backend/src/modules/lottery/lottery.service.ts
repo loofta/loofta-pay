@@ -1,10 +1,11 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
-import { Keypair, PublicKey, Connection, Transaction, VersionedTransaction } from '@solana/web3.js';
+import { Keypair, PublicKey, Connection, Transaction, VersionedTransaction, TransactionMessage, SystemProgram } from '@solana/web3.js';
 import {
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
+  createCloseAccountInstruction,
   getAssociatedTokenAddress,
   getAccount,
   TOKEN_PROGRAM_ID,
@@ -21,6 +22,7 @@ import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const TICKET_PRICE_USDC = 1;
+const LOOFTA_TICKET_FEE_USDC = 0.10; // flat fee collected on every private ticket purchase
 
 const SWAP_ROUTER_02: Address = '0x2626664c2603336E57B271c5C0b26F421741e481';
 const WETH9_BASE: Address = '0x4200000000000000000000000000000000000006';
@@ -83,12 +85,16 @@ export type TicketStatus =
 
 export interface InitiatePurchaseResult {
   ticketId: string;
+  /** Sign + send this FIRST — plain USDC transfer collecting Loofta's fee upfront. */
+  feeTxBase64: string;
+  feeWalletAddress: string;
+  /** Sign + send this SECOND, after the fee tx confirms — the MagicBlock private transfer. */
   txBase64: string;
   requiredSigners: string[];
   feeBreakdown: {
     ticketCostUsdc: number;
     magicblockFeeUsdc: number;
-    lifiBridgeFeeUsdc: number;
+    looftaFeeUsdc: number;
     totalUsdc: number;
   };
 }
@@ -156,7 +162,7 @@ export class LotteryService {
     userSolanaAddress: string;
   }): Promise<InitiatePurchaseResult> {
     const { userId, numTickets, userSolanaAddress } = opts;
-    if (numTickets < 5 || numTickets > 50) throw new BadRequestException('Minimum 5 tickets for private purchase');
+    if (numTickets < 1 || numTickets > 50) throw new BadRequestException('Minimum 1 ticket for private purchase');
 
     // 1. Generate companion wallet owner key and compute its Rhinestone smart account address
     const companionPrivKey = generatePrivateKey();
@@ -171,18 +177,26 @@ export class LotteryService {
     const burnerKeyEnc = this.enc.encrypt(Buffer.from(burnerKeypair.secretKey), burnerAddress);
 
     const costUsdc = numTickets * TICKET_PRICE_USDC;
-    // Gross up 1% for Li.Fi bridge fee (actual fee ~0.3–0.8% depending on route/liquidity).
-    // Then gross up the bridged amount for MagicBlock's 10 BPS + gas so the burner receives the bridged amount.
-    const LIFI_FEE_BPS = 100; // 1% buffer
-    const bridgeUnits = Math.ceil(costUsdc * 1_000_000 * 10_000 / (10_000 - LIFI_FEE_BPS));
-    // Estimate only, for the fee breakdown display — the real transfer sends the clean
-    // bridgeUnits with exactOut:true and lets MagicBlock gross up the sender's debit internally.
-    const grossAmount = estimateMagicblockGrossUp(bridgeUnits);
-    const magicblockFeeUsdc = parseFloat(((grossAmount - bridgeUnits) / 1_000_000 + MAGICBLOCK_GAS_USDC).toFixed(6));
-    const lifiBridgeFeeUsdc = parseFloat(((bridgeUnits - costUsdc * 1_000_000) / 1_000_000).toFixed(6));
-    const totalUsdc = costUsdc + magicblockFeeUsdc + lifiBridgeFeeUsdc;
+    const costUnits = Math.round(costUsdc * 1_000_000);
 
-    // 4. Build MagicBlock private transfer: user → burner
+    // Estimate only, for the fee breakdown display — the real transfer sends the clean
+    // `costUnits` with exactOut:true and lets MagicBlock gross up the sender's debit internally.
+    const grossAmount = estimateMagicblockGrossUp(costUnits);
+    const magicblockFeeUsdc = parseFloat(((grossAmount - costUnits) / 1_000_000 + MAGICBLOCK_GAS_USDC).toFixed(6));
+    const looftaFeeUsdc = LOOFTA_TICKET_FEE_USDC;
+    const totalUsdc = costUsdc + magicblockFeeUsdc + looftaFeeUsdc;
+
+    // 4. Fee collection: a plain USDC transfer, user → fee wallet, BEFORE the MagicBlock
+    // transfer — we can't append this as an instruction onto MagicBlock's own pre-built tx, so
+    // it has to be its own transaction. The frontend signs+sends this one first.
+    const { transactionBase64: feeTxBase64, feeWalletAddress } = await this.buildFeeCollectionTx(
+      userSolanaAddress, LOOFTA_TICKET_FEE_USDC,
+    );
+
+    // 5. Build MagicBlock private transfer: user → burner. Amount is exactly costUsdc — already
+    // a whole-dollar figure for any ticket count, so no rounding is needed for the exactOut leg
+    // to avoid fingerprinting. Li.Fi's bridging cost is funded later from the fee wallet, not
+    // baked into this amount (see tryStartBridge).
     const cluster = this.getSolanaCluster();
     let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
     try {
@@ -190,12 +204,12 @@ export class LotteryService {
         from: userSolanaAddress,
         to: burnerAddress,
         mint: USDC_MINT.toBase58(),
-        amount: bridgeUnits,
+        amount: costUnits,
         cluster,
         exactOut: true,
         gasless: true,
-        minDelayMs: 3_000,
-        maxDelayMs: 30_000,
+        minDelayMs: 30_000,
+        maxDelayMs: 60_000,
       });
     } catch (err: any) {
       if (String(err?.message).includes('delegated to another validator')) {
@@ -206,12 +220,13 @@ export class LotteryService {
       throw err;
     }
 
-    // 5. Store ticket in DB
+    // 6. Store ticket in DB
     const db = this.supabase.getClient();
     const { data: ticket, error } = await db
       .from('lottery_tickets')
       .insert({
         user_id: userId,
+        user_solana_address: userSolanaAddress,
         companion_address: companionAddress,
         companion_key_enc: companionKeyEnc,
         burner_sol_address: burnerAddress,
@@ -227,10 +242,24 @@ export class LotteryService {
 
     return {
       ticketId: ticket.id,
+      feeTxBase64,
+      feeWalletAddress,
       txBase64: txResponse.transactionBase64,
       requiredSigners: txResponse.requiredSigners,
-      feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, lifiBridgeFeeUsdc, totalUsdc },
+      feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, looftaFeeUsdc, totalUsdc },
     };
+  }
+
+  /** Records that the upfront fee-collection tx confirmed, before the MagicBlock tx is signed. */
+  async confirmFeeCollection(opts: { ticketId: string; userId: string; feeTxHash: string }): Promise<void> {
+    const db = this.supabase.getClient();
+    const { error } = await db
+      .from('lottery_tickets')
+      .update({ fee_amount_usdc: LOOFTA_TICKET_FEE_USDC, fee_tx_hash: opts.feeTxHash, updated_at: new Date().toISOString() })
+      .eq('id', opts.ticketId)
+      .eq('user_id', opts.userId);
+    if (error) throw new Error(`confirmFeeCollection failed: ${error.message}`);
+    this.logger.log(`Ticket ${opts.ticketId}: fee collected, tx=${opts.feeTxHash}`);
   }
 
   async confirmSend(opts: { ticketId: string; userId: string; senderTxHash: string }): Promise<void> {
@@ -242,6 +271,58 @@ export class LotteryService {
       .eq('user_id', opts.userId);
     if (error) throw new Error(`confirmSend failed: ${error.message}`);
     this.logger.log(`Ticket ${opts.ticketId} marked sent, tx: ${opts.senderTxHash}`);
+  }
+
+  /** Refunds the upfront fee back to the user, if one was collected and not already refunded. */
+  private async refundFeeIfNeeded(ticket: any): Promise<void> {
+    if (!ticket.fee_tx_hash || ticket.fee_refunded_at) return;
+    if (!ticket.user_solana_address) {
+      this.logger.warn(`Ticket ${ticket.id}: cannot refund fee — no user_solana_address on record`);
+      return;
+    }
+    const feeUnits = BigInt(Math.round((ticket.fee_amount_usdc ?? LOOFTA_TICKET_FEE_USDC) * 1_000_000));
+    const sig = await this.topUpFromFeeWallet(ticket.user_solana_address, feeUnits);
+    await this.supabase.getClient()
+      .from('lottery_tickets')
+      .update({ fee_refunded_at: new Date().toISOString(), fee_refund_tx_hash: sig })
+      .eq('id', ticket.id);
+    this.logger.log(`Ticket ${ticket.id}: refunded ${(Number(feeUnits) / 1_000_000).toFixed(6)} USDC fee, sig=${sig}`);
+  }
+
+  /**
+   * Cron: give back the upfront fee for any purchase that didn't go through — covers every
+   * failure path in one place (rather than threading a refund call into each individual
+   * `status: 'failed'` site) plus two cases nothing else marks as failed:
+   *  - abandoned after fee payment but before the MagicBlock tx was ever confirmed (user closed
+   *    the app / rejected the second signature)
+   *  - MagicBlock silently never delivers to the burner (no on-chain revert to react to)
+   */
+  async refundOutstandingFees(): Promise<void> {
+    const db = this.supabase.getClient();
+    const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
+    const twentyMinAgo = new Date(Date.now() - 20 * 60_000).toISOString();
+
+    const [{ data: failed }, { data: abandoned }, { data: neverArrived }] = await Promise.all([
+      db.from('lottery_tickets').select('*')
+        .eq('status', 'failed').not('fee_tx_hash', 'is', null).is('fee_refunded_at', null).limit(20),
+      db.from('lottery_tickets').select('*')
+        .eq('status', 'pending_send').not('fee_tx_hash', 'is', null).is('sender_tx_hash', null)
+        .is('fee_refunded_at', null).lt('created_at', tenMinAgo).limit(20),
+      db.from('lottery_tickets').select('*')
+        .eq('status', 'sent').not('fee_tx_hash', 'is', null)
+        .is('fee_refunded_at', null).lt('created_at', twentyMinAgo).limit(20),
+    ]);
+
+    for (const ticket of [...(failed ?? []), ...(abandoned ?? []), ...(neverArrived ?? [])]) {
+      try {
+        await this.refundFeeIfNeeded(ticket);
+        if (ticket.status !== 'failed') {
+          await db.from('lottery_tickets').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', ticket.id);
+        }
+      } catch (e: any) {
+        this.logger.error(`refundOutstandingFees ${ticket.id}: ${e.message}`);
+      }
+    }
   }
 
   // ─── Public (non-private) purchase ────────────────────────────────────────
@@ -342,24 +423,56 @@ export class LotteryService {
 
   private async tryStartBridge(ticket: any): Promise<void> {
     const burnerBalance = await this.getBurnerUsdcBalance(ticket.burner_sol_address);
-    const expectedUnits = BigInt(Math.round(ticket.cost_usdc * 1_000_000));
-    if (burnerBalance < expectedUnits) {
-      this.logger.log(`Ticket ${ticket.id}: burner not yet funded (${burnerBalance} < ${expectedUnits})`);
+    const costUnits = BigInt(Math.round(ticket.cost_usdc * 1_000_000));
+
+    // MagicBlock splits mainnet transfers into several parts that land separately across the
+    // delay window — wait for the full costUsdc to arrive before touching the burner.
+    if (burnerBalance < costUnits) {
+      this.logger.log(`Ticket ${ticket.id}: burner not yet funded (${burnerBalance} < ${costUnits})`);
       return;
     }
-
-    // Li.Fi: Solana USDC (burner) → Base USDC (companion)
-    const amountUsdc = Number(burnerBalance) / 1_000_000;
-    const quote = await this.lifi.getSolToBaseQuote({
-      fromAddress: ticket.burner_sol_address,
-      toAddress: ticket.companion_address,
-      amountUsdc,
-    });
 
     const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
     if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
 
     const burnerKey = this.decryptKey(ticket.burner_sol_key_enc, ticket.burner_sol_address);
+
+    // Li.Fi: Solana USDC (burner) → Base USDC (companion). The burner only holds costUsdc — Li.Fi
+    // always takes some cut, so bridging that exact amount would land short. Top up from the fee
+    // wallet (funded by the fee collected upfront on every purchase, see initiatePurchase) to
+    // cover the gap, then bridge the corrected amount so the companion still nets exactly
+    // costUsdc — this is an internal operational transfer, not the user's payment, so it doesn't
+    // need MagicBlock privacy.
+    // Bridge the burner's full balance (costUnits normally; also reuses any top-up from an
+    // aborted earlier attempt instead of stranding it).
+    let bridgeAmountUnits = Number(burnerBalance);
+    let quote = await this.lifi.getSolToBaseQuote({
+      fromAddress: ticket.burner_sol_address,
+      toAddress: ticket.companion_address,
+      amountUsdc: bridgeAmountUnits / 1_000_000,
+    });
+
+    // Li.Fi's cut has a proportional component, so covering the exact quoted gap converges
+    // slightly short on the re-quote (real failure: companion landed at 0.999994, buy needs
+    // 1.000000). Pad each top-up and RE-CHECK the new quote until toAmountMin clears costUnits;
+    // the padding lands as recoverable dust on the companion.
+    const TOPUP_PAD_UNITS = 2_000n; // $0.002
+    let toAmountMinUnits = BigInt(quote.estimate.toAmountMin);
+    let attempts = 0;
+    while (toAmountMinUnits < costUnits) {
+      if (++attempts > 3) throw new Error(`bridge quote still short after ${attempts - 1} top-ups (toAmountMin=${toAmountMinUnits} < ${costUnits}) — will retry next cron`);
+      const shortfallUnits = costUnits - toAmountMinUnits + TOPUP_PAD_UNITS;
+      await this.topUpFromFeeWallet(ticket.burner_sol_address, shortfallUnits);
+      bridgeAmountUnits += Number(shortfallUnits);
+      quote = await this.lifi.getSolToBaseQuote({
+        fromAddress: ticket.burner_sol_address,
+        toAddress: ticket.companion_address,
+        amountUsdc: bridgeAmountUnits / 1_000_000,
+      });
+      toAmountMinUnits = BigInt(quote.estimate.toAmountMin);
+      this.logger.log(`Ticket ${ticket.id}: topped up burner by ${(Number(shortfallUnits) / 1_000_000).toFixed(6)} USDC to cover Li.Fi's cut (new toAmountMin=${toAmountMinUnits})`);
+    }
+
     const lifiTxHash = await this.lifi.executeSolanaQuote({
       burnerSecretKey: burnerKey,
       quote,
@@ -528,9 +641,16 @@ export class LotteryService {
     this.logger.log(`Ticket ${ticket.id}: private companion ${ticket.companion_address} USDC=${usdcBalance ?? '?'}`);
 
     const usdcNeeded = ticket.num_tickets * TICKET_PRICE_USDC;
-    // Allow up to 0.15 USDC shortfall — Li.Fi fees can be ~0.3–1% and may exceed NEAR Intents' 0.01 tolerance
-    if (usdcBalance === null || usdcBalance < usdcNeeded - 0.15) {
+    if (usdcBalance === null || usdcBalance < usdcNeeded * 0.9) {
       this.logger.warn(`Ticket ${ticket.id}: companion has ${usdcBalance} USDC, need ${usdcNeeded} — waiting for bridge to settle`);
+      return;
+    }
+    // The Megapot buy needs the EXACT ticket cost — attempting with even 1 unit less fails the
+    // simulation. The padded bridge top-up loop (tryStartBridge) should prevent shortfalls, but
+    // if one still lands, stay in 'buying' and log loudly: it resolves by manually sending the
+    // missing USDC to the companion on Base, then the next cron completes the buy.
+    if (usdcBalance < usdcNeeded) {
+      this.logger.warn(`Ticket ${ticket.id}: companion short ${(usdcNeeded - usdcBalance).toFixed(6)} USDC (has ${usdcBalance}, needs ${usdcNeeded}) — send the difference to ${ticket.companion_address} on Base to unblock`);
       return;
     }
 
@@ -579,8 +699,15 @@ export class LotteryService {
         }).catch(e => this.logger.warn(`Ticket ${ticket.id}: leftover sweep failed: ${e.message}`));
       }
     } catch (err: any) {
+      const msg = String(err?.message ?? '');
+      // A balance shortfall is retryable (companion top-up next cron) — marking it failed
+      // dead-ends a ticket whose funds already reached Base and triggers a fee refund.
+      if (/insufficient token balance/i.test(msg)) {
+        this.logger.warn(`Ticket ${ticket.id}: buy short on balance — staying in 'buying' to retry: ${msg}`);
+        return;
+      }
       await db.from('lottery_tickets').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', ticket.id);
-      this.logger.error(`Ticket ${ticket.id}: private buyTickets failed: ${err.message}`);
+      this.logger.error(`Ticket ${ticket.id}: private buyTickets failed: ${msg}`);
     }
   }
 
@@ -1862,6 +1989,190 @@ export class LotteryService {
 
   private decryptKey(enc: string, context: string): Buffer {
     return this.enc.decrypt(enc, context);
+  }
+
+  /**
+   * Builds the upfront fee-collection transaction: a plain (non-private) USDC transfer from
+   * the user's own wallet to the fee wallet, sponsored (fee wallet pays gas) but requiring the
+   * user's signature since they're the token authority. Returned unsigned-by-user for the
+   * frontend to sign and send BEFORE the MagicBlock transfer — we can't append this transfer as
+   * an instruction on MagicBlock's own pre-built transaction, so it has to be its own tx.
+   */
+  private async buildFeeCollectionTx(
+    fromAddress: string,
+    amountUsdc: number,
+  ): Promise<{ transactionBase64: string; feeWalletAddress: string }> {
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
+    const bs58Mod = await import('bs58');
+    const feePayerKeypair = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey));
+    const feeWalletAddress = feePayerKeypair.publicKey.toBase58();
+
+    const conn = await this.getSolanaConnection();
+    const fromPubkey = new PublicKey(fromAddress);
+    const fromAta = await getAssociatedTokenAddress(USDC_MINT, fromPubkey);
+    const toAta = await getAssociatedTokenAddress(USDC_MINT, feePayerKeypair.publicKey);
+
+    const instructions = [];
+    try {
+      await getAccount(conn, toAta);
+    } catch {
+      instructions.push(createAssociatedTokenAccountInstruction(feePayerKeypair.publicKey, toAta, feePayerKeypair.publicKey, USDC_MINT));
+    }
+    instructions.push(createTransferInstruction(fromAta, toAta, fromPubkey, Math.round(amountUsdc * 1_000_000)));
+
+    const { blockhash } = await conn.getLatestBlockhash();
+    const message = new TransactionMessage({
+      payerKey: feePayerKeypair.publicKey,
+      recentBlockhash: blockhash,
+      instructions,
+    }).compileToV0Message();
+
+    const tx = new VersionedTransaction(message);
+    tx.sign([feePayerKeypair]); // fee wallet partial-signs to sponsor gas; user signs client-side
+
+    return { transactionBase64: Buffer.from(tx.serialize()).toString('base64'), feeWalletAddress };
+  }
+
+  /**
+   * Sends USDC from the fee-payer wallet to `toAddress`, self-sponsoring its own gas.
+   * Used to top up a burner mid-bridge if the real Li.Fi execution quote comes in short of
+   * what the purchase-time estimate assumed (see tryStartBridge) — funded by the fee revenue
+   * this same wallet collects on every purchase.
+   */
+  private async topUpFromFeeWallet(toAddress: string, amount: bigint): Promise<string> {
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
+    const bs58Mod = await import('bs58');
+    const feePayerKeypair = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey));
+
+    const conn = await this.getSolanaConnection();
+    const toPubkey = new PublicKey(toAddress);
+    const sourceAccounts = await conn.getParsedTokenAccountsByOwner(feePayerKeypair.publicKey, { programId: TOKEN_PROGRAM_ID });
+    const usdcMint = USDC_MINT.toBase58();
+    const usdcAccount = sourceAccounts.value.find(a => (a.account.data as any).parsed?.info?.mint === usdcMint);
+    if (!usdcAccount) throw new Error('Fee wallet has no USDC token account — insufficient reserve to top up');
+    const feeWalletAta = new PublicKey(usdcAccount.pubkey);
+
+    const toAta = await getAssociatedTokenAddress(USDC_MINT, toPubkey);
+    const tx = new Transaction();
+    try {
+      await getAccount(conn, toAta);
+    } catch {
+      tx.add(createAssociatedTokenAccountInstruction(feePayerKeypair.publicKey, toAta, toPubkey, USDC_MINT, TOKEN_PROGRAM_ID));
+    }
+    tx.add(createTransferInstruction(feeWalletAta, toAta, feePayerKeypair.publicKey, amount));
+    tx.feePayer = feePayerKeypair.publicKey;
+    const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+    tx.sign(feePayerKeypair);
+    const sig = await conn.sendRawTransaction(tx.serialize());
+    await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+    this.logger.log(`topUpFromFeeWallet: sent ${(Number(amount) / 1_000_000).toFixed(6)} USDC → ${toAddress.slice(0, 8)}…, sig=${sig}`);
+    return sig;
+  }
+
+  /**
+   * Once the bridge has left the burner (bridge_status DONE) or its USDC was rescued back to
+   * the user (RESCUED), the burner wallet is never used again — but it still holds leftover
+   * gas SOL (~0.0009), USDC dust from quote rounding, and its USDC token account carries
+   * ~0.002 SOL of reclaimable rent. Sweep all three back to the fee wallet; without this,
+   * every purchase strands ~$0.24 and the flow loses money.
+   */
+  async sweepFinishedBurners(): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: tickets } = await db
+      .from('lottery_tickets')
+      .select('*')
+      .not('burner_sol_address', 'is', null)
+      .is('burner_swept_at', null)
+      .in('bridge_status', ['DONE', 'RESCUED'])
+      .order('created_at', { ascending: true })
+      .limit(20);
+
+    for (const ticket of tickets ?? []) {
+      await this.sweepBurner(ticket).catch(e =>
+        this.logger.warn(`sweepBurner ${ticket.id}: ${e.message}`),
+      );
+    }
+  }
+
+  private async sweepBurner(ticket: any): Promise<void> {
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
+    const bs58Mod = await import('bs58');
+    const feePayerKeypair = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey));
+    const burnerKey = this.decryptKey(ticket.burner_sol_key_enc, ticket.burner_sol_address);
+    const burnerKeypair = Keypair.fromSecretKey(burnerKey);
+
+    const conn = await this.getSolanaConnection();
+    const db = this.supabase.getClient();
+
+    const [lamports, tokenAccounts] = await Promise.all([
+      conn.getBalance(burnerKeypair.publicKey),
+      conn.getParsedTokenAccountsByOwner(burnerKeypair.publicKey, { programId: TOKEN_PROGRAM_ID }),
+    ]);
+
+    const tx = new Transaction();
+    const usdcMint = USDC_MINT.toBase58();
+    let usdcSwept = 0n;
+    let feeWalletAta: PublicKey | null = null;
+
+    for (const a of tokenAccounts.value) {
+      const info = (a.account.data as any).parsed?.info;
+      if (info?.mint !== usdcMint) continue; // only touch USDC accounts
+      const balance = BigInt(info?.tokenAmount?.amount ?? '0');
+      if (balance > 0n) {
+        if (!feeWalletAta) {
+          feeWalletAta = await getAssociatedTokenAddress(USDC_MINT, feePayerKeypair.publicKey);
+          try { await getAccount(conn, feeWalletAta); } catch {
+            tx.add(createAssociatedTokenAccountInstruction(
+              feePayerKeypair.publicKey, feeWalletAta, feePayerKeypair.publicKey, USDC_MINT, TOKEN_PROGRAM_ID,
+            ));
+          }
+        }
+        tx.add(createTransferInstruction(new PublicKey(a.pubkey), feeWalletAta, burnerKeypair.publicKey, balance));
+        usdcSwept += balance;
+      }
+      // Close the now-empty account — its rent lamports go to the fee wallet
+      tx.add(createCloseAccountInstruction(new PublicKey(a.pubkey), feePayerKeypair.publicKey, burnerKeypair.publicKey));
+    }
+
+    // The fee payer covers the tx fee, so the burner's SOL can be swept down to zero
+    if (lamports > 0) {
+      tx.add(SystemProgram.transfer({
+        fromPubkey: burnerKeypair.publicKey,
+        toPubkey: feePayerKeypair.publicKey,
+        lamports,
+      }));
+    }
+
+    if (tx.instructions.length === 0) {
+      await db.from('lottery_tickets').update({
+        burner_swept_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq('id', ticket.id);
+      this.logger.log(`Ticket ${ticket.id}: burner ${ticket.burner_sol_address.slice(0, 8)}… already empty — marked swept`);
+      return;
+    }
+
+    tx.feePayer = feePayerKeypair.publicKey;
+    const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+    tx.sign(feePayerKeypair, burnerKeypair);
+    const sig = await conn.sendRawTransaction(tx.serialize());
+    await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+
+    await db.from('lottery_tickets').update({
+      burner_swept_at: new Date().toISOString(),
+      burner_sweep_tx_hash: sig,
+      updated_at: new Date().toISOString(),
+    }).eq('id', ticket.id);
+
+    this.logger.log(
+      `Ticket ${ticket.id}: burner swept — ${(lamports / 1e9).toFixed(6)} SOL + ` +
+      `${(Number(usdcSwept) / 1_000_000).toFixed(6)} USDC dust + token-account rent → fee wallet | tx ${sig}`,
+    );
   }
 
   private async getBurnerUsdcBalance(address: string): Promise<bigint> {

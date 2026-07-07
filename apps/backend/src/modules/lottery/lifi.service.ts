@@ -3,11 +3,17 @@ import { ConfigService } from '@nestjs/config';
 import { createPublicClient, createWalletClient, erc20Abi, http, type Address } from 'viem';
 import { base } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
-import { Keypair, Connection, Transaction, VersionedTransaction, SystemProgram, PublicKey } from '@solana/web3.js';
+import {
+  Keypair, Connection, Transaction, VersionedTransaction, SystemProgram, PublicKey,
+  TransactionMessage, ComputeBudgetProgram,
+} from '@solana/web3.js';
 
 const LIFI_API = 'https://li.quest/v1';
 const LIFI_INTEGRATOR_ID = '14bd5b16-4f94-44eb-8c7b-7e2c9a3dfc20';
 const LIFI_INTEGRATOR_NAME = 'loofta';
+// Priority fee for the burner's bridge tx — the bridge has been the slowest step in practice;
+// this nudges validators to prioritize it. Tune based on observed confirmation times.
+const BRIDGE_PRIORITY_FEE_MICROLAMPORTS = 50_000;
 
 const BASE_CHAIN = '8453';
 const SOL_CHAIN = '1151111081099710';
@@ -214,16 +220,42 @@ export class LifiService {
     }
 
     const txBytes = Buffer.from(quote.transactionRequest.data, 'base64');
+    const priorityIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BRIDGE_PRIORITY_FEE_MICROLAMPORTS });
 
     // Li.Fi may return a VersionedTransaction (v0 with address lookup tables)
     let sig: string;
     try {
       const vTx = VersionedTransaction.deserialize(txBytes);
-      vTx.sign([burnerKeypair]);
-      sig = await conn.sendRawTransaction(vTx.serialize(), { skipPreflight: false });
+      try {
+        // Reconstruct with a priority-fee instruction prepended, resolving any lookup tables.
+        // The bridge has been the slowest step in practice — this is a pure speed optimization,
+        // so any failure here falls back to sending Li.Fi's original tx unmodified.
+        const lookupTableAccounts = await Promise.all(
+          vTx.message.addressTableLookups.map(async lookup => {
+            const res = await conn.getAddressLookupTable(lookup.accountKey);
+            if (!res.value) throw new Error(`Lookup table not found: ${lookup.accountKey.toBase58()}`);
+            return res.value;
+          }),
+        );
+        const decompiled = TransactionMessage.decompile(vTx.message, { addressLookupTableAccounts: lookupTableAccounts });
+        // Drop any compute-budget instruction Li.Fi may have already set, to avoid duplicates.
+        decompiled.instructions = decompiled.instructions.filter(ix => !ix.programId.equals(ComputeBudgetProgram.programId));
+        decompiled.instructions.unshift(priorityIx);
+        const priorityMessage = decompiled.compileToV0Message(lookupTableAccounts);
+        const priorityTx = new VersionedTransaction(priorityMessage);
+        priorityTx.sign([burnerKeypair]);
+        sig = await conn.sendRawTransaction(priorityTx.serialize(), { skipPreflight: false });
+        this.logger.log(`Li.Fi Solana: sent with priority fee (${BRIDGE_PRIORITY_FEE_MICROLAMPORTS} microLamports/CU)`);
+      } catch (priorityErr: any) {
+        this.logger.warn(`Li.Fi Solana: priority-fee injection failed (${priorityErr.message}), sending original quote tx`);
+        vTx.sign([burnerKeypair]);
+        sig = await conn.sendRawTransaction(vTx.serialize(), { skipPreflight: false });
+      }
     } catch {
       // Fall back to legacy Transaction
       const tx = Transaction.from(txBytes);
+      tx.instructions = tx.instructions.filter(ix => !ix.programId.equals(ComputeBudgetProgram.programId));
+      tx.instructions.unshift(priorityIx);
       const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash();
       tx.recentBlockhash = blockhash;
       tx.feePayer = burnerKeypair.publicKey;

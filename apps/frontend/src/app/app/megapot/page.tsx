@@ -11,9 +11,10 @@ import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shu
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 
 const MEGAPOT_REFERRAL = "https://megapot.io/r/Q3M637";
-const MAGICBLOCK_SOL_GAS = 0.002;
+const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
 const MAGICBLOCK_BPS = 10;
 const BRIDGE_FEE_USD_EST = 0.04; // Li.Fi (cheaper than NEAR Intents)
+const LOOFTA_TICKET_FEE_USD = 0.10; // flat fee collected on every private ticket purchase
 const MAIN_MAX = 30;
 const MAIN_COUNT = 5;
 const BONUS_MAX = 12;
@@ -100,8 +101,10 @@ function formatDrawTime(dt: string | null): string {
 function fmt(n: number): string {
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
-function mbFee(cost: number, solPriceUsd: number) {
-  return (MAGICBLOCK_BPS / 10_000) * cost + MAGICBLOCK_SOL_GAS * solPriceUsd;
+/** 10 BPS of `base` (the exact amount MagicBlock grosses its fee up from) + the flat $0.20
+ * gasless relay fee. */
+function mbFee(base: number) {
+  return (MAGICBLOCK_BPS / 10_000) * base + MAGICBLOCK_GASLESS_RELAY_FEE_USD;
 }
 
 // ─── IconBubble ───────────────────────────────────────────────────────────────
@@ -723,10 +726,6 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
   bridgeFeeUsd?: number | null;      // actual Li.Fi fee; null = loading
   bridgeReceiveUsdc?: number | null; // Li.Fi toAmountMin; null = loading
 }) {
-  const bpsFee = (MAGICBLOCK_BPS / 10_000) * ticketCostUsd;
-  const solFee = MAGICBLOCK_SOL_GAS * solPriceUsd;
-  const mbTotal = bpsFee + solFee;
-
   if (mode === "base") return (
     <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
       <div className="flex justify-between px-4 py-3.5">
@@ -741,7 +740,7 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
   );
 
   if (mode === "solana_private") {
-    const wMb = (MAGICBLOCK_BPS / 10_000) * ticketCostUsd + solFee;
+    const wMb = (MAGICBLOCK_BPS / 10_000) * ticketCostUsd + MAGICBLOCK_GASLESS_RELAY_FEE_USD;
     const bridgeFeeLabel = bridgeFeeUsd != null ? fmt(bridgeFeeUsd) : `~${fmt(BRIDGE_FEE_USD_EST)}`;
     // Use actual Li.Fi toAmountMin if available, then subtract MagicBlock fee
     const youReceive = bridgeReceiveUsdc != null ? Math.max(0, bridgeReceiveUsdc - wMb) : null;
@@ -790,7 +789,15 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
     );
   }
 
-  const total = ticketCostUsd + mbTotal + BRIDGE_FEE_USD_EST;
+  // MagicBlock exactOut sends exactly ticketCostUsd (no rounding — it's already a whole-dollar
+  // amount for any ticket count) and grosses its own fee up from that same amount. Li.Fi's
+  // bridging cost is funded from the pooled fee reserve, not charged to the user directly — see
+  // backend computePurchaseAmounts / tryStartBridge.
+  const buyMbTotal = mbFee(ticketCostUsd);
+  const total = ticketCostUsd + buyMbTotal + LOOFTA_TICKET_FEE_USD;
+  // Both fees are (nearly) flat, so per-ticket cost falls fast with count — nudge small buys up
+  const feesPerTicket = (buyMbTotal + LOOFTA_TICKET_FEE_USD) / ticketCostUsd;
+  const feesPerTicketAt5 = (mbFee(5) + LOOFTA_TICKET_FEE_USD) / 5;
   return (
     <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
       <div className="flex justify-between px-4 py-3.5">
@@ -799,16 +806,25 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
       </div>
       <div className="flex justify-between px-4 py-3.5">
         <span className="text-base text-slate-400">MagicBlock privacy fee</span>
-        <span className="text-base text-slate-400 tabular-nums">~{fmt(mbTotal)}</span>
+        <span className="text-base text-slate-400 tabular-nums">~{fmt(buyMbTotal)}</span>
       </div>
       <div className="flex justify-between px-4 py-3.5">
-        <span className="text-base text-slate-400">Bridge (SOL → Base)</span>
-        <span className="text-base text-slate-400 tabular-nums">~{fmt(BRIDGE_FEE_USD_EST)}</span>
+        <span className="text-base text-slate-400">Loofta fee</span>
+        <span className="text-base text-slate-400 tabular-nums">{fmt(LOOFTA_TICKET_FEE_USD)}</span>
       </div>
       <div className="flex justify-between px-4 py-3.5">
         <span className="text-base font-semibold text-white">Total from your balance</span>
         <span className="text-base font-semibold text-white tabular-nums">~{fmt(total)}</span>
       </div>
+      {ticketCostUsd < 5 && (
+        <div className="flex items-start gap-2.5 px-4 py-3.5 bg-[#EAB308]/[0.07]">
+          <span aria-hidden className="text-base leading-snug">💡</span>
+          <p className="text-sm leading-snug text-amber-200/90">
+            Fees are flat — right now that&apos;s {fmt(feesPerTicket)} per ticket.
+            Buy 5 and it drops to {fmt(feesPerTicketAt5)} per ticket.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -817,6 +833,9 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
 
 const PRESETS = [5, 10, 50, 100] as const;
 const PRIVATE_MIN = 1;
+// Default the picker to 5: the privacy + Loofta fees are flat, so per-ticket cost drops
+// sharply with count ($0.30/ticket at 1 → $0.06/ticket at 5). Min stays 1.
+const DEFAULT_TICKETS = 5;
 
 function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboardLoading, nextDraw }: {
   accessToken: string | null;
@@ -826,8 +845,8 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   dashboardLoading?: boolean;
   nextDraw?: { drawTime: string | null; prizePool: string | null };
 }) {
-  const [numTickets, setNumTickets] = useState(PRIVATE_MIN);
-  const [tickets, setTickets] = useState<TicketNumbers[]>(() => Array.from({ length: PRIVATE_MIN }, randomTicket));
+  const [numTickets, setNumTickets] = useState(DEFAULT_TICKETS);
+  const [tickets, setTickets] = useState<TicketNumbers[]>(() => Array.from({ length: DEFAULT_TICKETS }, randomTicket));
   const [chooseOpen, setChooseOpen] = useState(false);
   const [step, setStep] = useState<BuyStep>("idle");
   const [stepError, setStepError] = useState("");
@@ -953,7 +972,23 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
         body: JSON.stringify({ numTickets, userSolanaAddress: embeddedWallet?.address }),
       });
       if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
-      const { ticketId, txBase64 } = await initRes.json();
+      const { ticketId, feeTxBase64, txBase64 } = await initRes.json();
+
+      // 1. Sign + send the upfront fee payment first — a plain transfer, separate from the
+      // MagicBlock private transfer (can't be combined into the same transaction).
+      const feeTxBytes = Buffer.from(feeTxBase64, "base64");
+      const { signature: feeSigBytes } = await signAndSendTransaction({
+        transaction: feeTxBytes as unknown as Uint8Array,
+        wallet: embeddedWallet as any,
+      });
+      const feeSignature = bs58.encode(feeSigBytes as Uint8Array);
+      await fetch("/api/lottery/buy-fee-confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ ticketId, feeTxHash: feeSignature }),
+      });
+
+      // 2. Sign + send the MagicBlock private transfer.
       const txBytes = Buffer.from(txBase64, "base64");
       const { signature: sigBytes } = await signAndSendTransaction({
         transaction: txBytes as unknown as Uint8Array,
@@ -1097,7 +1132,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
 
           <button onClick={() => handlePrivateBuy()}
             className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all">
-            {`Buy privately · ${fmt(numTickets + mbFee(numTickets, solPriceUsd) + BRIDGE_FEE_USD_EST)}`}
+            {`Buy privately · ${fmt(numTickets + mbFee(numTickets) + LOOFTA_TICKET_FEE_USD)}`}
           </button>
         </>
       )}
@@ -1968,16 +2003,41 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                     </div>
                   )}
 
-                  {/* Failed ticket actions */}
+                  {/* Failed ticket actions — funds must be retried or rescued before the
+                      ticket can be removed (RESCUED/CANCELLED = nothing left to recover) */}
                   {isFailed && (
                     <div className="px-3 pb-3 space-y-2 border-t border-white/[0.06] pt-3">
-                      <button
-                        onClick={() => handleDelete(t.id)}
-                        disabled={deleting === t.id}
-                        className="w-full h-9 rounded-xl text-sm font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
-                      >
-                        {deleting === t.id ? "Removing…" : "Remove from history"}
-                      </button>
+                      {(retryResult[t.id] || rescueResult[t.id]) && (
+                        <p className="text-sm text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
+                      )}
+                      {t.bridgeStatus === "RESCUED" || t.bridgeStatus === "CANCELLED" ? (
+                        <button
+                          onClick={() => handleDelete(t.id)}
+                          disabled={deleting === t.id}
+                          className="w-full h-9 rounded-xl text-sm font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+                        >
+                          {deleting === t.id ? "Removing…" : "Remove from history"}
+                        </button>
+                      ) : (
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleRetry(t.id)}
+                            disabled={retrying === t.id || rescuing === t.id}
+                            className="flex-1 h-9 rounded-xl text-sm font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                          >
+                            {retrying === t.id ? "Retrying…" : "Retry purchase"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRescue(t.id)}
+                            disabled={rescuing === t.id || retrying === t.id}
+                            className="flex-1 h-9 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
+                          >
+                            {rescuing === t.id ? "Rescuing…" : "Rescue funds"}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1999,8 +2059,9 @@ const FAQ_ITEMS: { question: string; answer: ReactNode }[] = [
     answer: (
       <>
         <p className="mb-3">Each ticket costs <span className="font-medium text-slate-300">$1 USDC</span>. On top of that:</p>
-        <p className="mb-3"><span className="font-medium text-slate-300">MagicBlock privacy fee:</span> 10 BPS (0.1%) of the ticket amount + 0.002 SOL for gas relay (~$0.28 at $140/SOL). For 10 tickets the privacy fee is about $0.29.</p>
-        <p><span className="font-medium text-slate-300">Bridge fee:</span> ~$0.10 est. per bridge hop (Solana → Base) — actual fee quoted at time of bridge. Your total for 10 tickets is roughly <span className="font-medium text-slate-300">$10.59</span>.</p>
+        <p className="mb-3"><span className="font-medium text-slate-300">MagicBlock privacy fee:</span> 10 BPS (0.1%) of the ticket amount + a flat $0.20 gas relay. For 10 tickets that&apos;s about $0.21.</p>
+        <p className="mb-3"><span className="font-medium text-slate-300">Loofta fee:</span> flat $0.10 per purchase — bridging costs are covered by Loofta, not charged to you.</p>
+        <p>Both flat fees stay the same no matter how many tickets you buy, so bigger purchases cost less per ticket. Your total for 10 tickets is roughly <span className="font-medium text-slate-300">$10.31</span>.</p>
       </>
     ),
   },

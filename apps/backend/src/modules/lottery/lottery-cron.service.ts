@@ -50,4 +50,20 @@ export class LotteryCronService {
       this.logger.error(`backfillTicketNumbers: ${e.message}`),
     );
   }
+
+  /** Every 5 minutes: sweep leftover SOL + USDC dust + token-account rent from finished burners */
+  @Cron('*/5 * * * *')
+  async sweepFinishedBurners(): Promise<void> {
+    await this.lottery.sweepFinishedBurners().catch(e =>
+      this.logger.error(`sweepFinishedBurners: ${e.message}`),
+    );
+  }
+
+  /** Every 2 minutes: refund the upfront fee for any purchase that failed or was abandoned */
+  @Cron('*/2 * * * *')
+  async refundOutstandingFees(): Promise<void> {
+    await this.lottery.refundOutstandingFees().catch(e =>
+      this.logger.error(`refundOutstandingFees: ${e.message}`),
+    );
+  }
 }
