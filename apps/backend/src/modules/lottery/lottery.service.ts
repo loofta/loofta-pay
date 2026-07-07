@@ -685,16 +685,36 @@ export class LotteryService {
     // broadcast their own Li.Fi transaction from the same burner. Only one write wins the
     // conditional update; the loser sees 0 rows affected and bails before touching the chain.
     // A 2-minute TTL lets a genuinely stuck/crashed claim become retryable again.
+    //
+    // Two sequential single-condition updates instead of one `.or(a,b)` update — this project's
+    // PostgREST throws a spurious "column does not exist" specifically for PATCH requests whose
+    // filter includes an `or=(...)` referencing this column (a GET with the identical `.or()`
+    // filter works fine, and a PATCH without `.or()` works fine — only PATCH + `.or()` fails).
     const claimDb = this.supabase.getClient();
     const staleBefore = new Date(Date.now() - 2 * 60_000).toISOString();
-    const { data: claimedRows, error: claimErr } = await claimDb
-      .from('lottery_tickets')
-      .update({ bridge_claimed_at: new Date().toISOString() })
-      .eq('id', ticket.id)
-      .eq('status', 'sent')
-      .or(`bridge_claimed_at.is.null,bridge_claimed_at.lt.${staleBefore}`)
-      .select('id');
-    if (claimErr) throw new Error(`bridge claim failed: ${claimErr.message}`);
+    let claimedRows: { id: string }[] | null = null;
+    {
+      const { data, error } = await claimDb
+        .from('lottery_tickets')
+        .update({ bridge_claimed_at: new Date().toISOString() })
+        .eq('id', ticket.id)
+        .eq('status', 'sent')
+        .is('bridge_claimed_at', null)
+        .select('id');
+      if (error) throw new Error(`bridge claim failed: ${error.message}`);
+      claimedRows = data;
+    }
+    if (!claimedRows?.length) {
+      const { data, error } = await claimDb
+        .from('lottery_tickets')
+        .update({ bridge_claimed_at: new Date().toISOString() })
+        .eq('id', ticket.id)
+        .eq('status', 'sent')
+        .lt('bridge_claimed_at', staleBefore)
+        .select('id');
+      if (error) throw new Error(`bridge claim (stale-retry) failed: ${error.message}`);
+      claimedRows = data;
+    }
     if (!claimedRows?.length) {
       this.logger.log(`Ticket ${ticket.id}: bridge already claimed by a concurrent run — skipping`);
       return;
