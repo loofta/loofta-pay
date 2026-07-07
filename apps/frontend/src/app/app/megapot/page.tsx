@@ -577,7 +577,7 @@ function PurchaseProgressModal({ step, error, devReset }: { step: BuyStep; error
 
         {error && <p className="text-base font-semibold text-red-400">{error}</p>}
 
-        <p className="text-sm font-medium text-slate-400">🔒 Don&apos;t close this window — this only takes a moment.</p>
+        <p className="text-sm font-medium text-slate-400">🔒 Don&apos;t close this window — usually under 3 minutes.</p>
 
         {devReset && (
           <button onClick={devReset} className="text-xs text-slate-500 hover:text-slate-300 border border-white/10 rounded-lg px-2 py-1 transition-colors">
