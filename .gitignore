@@ -30,6 +30,9 @@ public.pem
 # Frontend public files
 apps/frontend/public/loofta-swapxprivacycaash.code-workspace
 
+# VSCode auto-generated multi-root workspace files
+*.code-workspace
+
 # Backend build output
 apps/backend/dist
 
