@@ -865,6 +865,23 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   const pollingStartedRef = useRef(false);
   const suppressedTicketIdRef = useRef<string | null>(null);
 
+  // Sales pause DRAW_PURCHASE_CUTOFF_MS before the draw — backend enforces this for real
+  // (assertNotInDrawCutoff), this just keeps the UI from letting someone start a purchase
+  // the backend is about to reject.
+  const [drawCutoff, setDrawCutoff] = useState(false);
+  const [drawTimeLabel, setDrawTimeLabel] = useState<string | null>(null);
+  useEffect(() => {
+    const compute = () => {
+      const drawTime = nextDraw?.drawTime ? new Date(nextDraw.drawTime) : nextParisDrawDate();
+      const msUntil = drawTime.getTime() - Date.now();
+      setDrawCutoff(msUntil > 0 && msUntil <= DRAW_PURCHASE_CUTOFF_MS);
+      setDrawTimeLabel(drawTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Europe/Paris" }));
+    };
+    compute();
+    const id = setInterval(compute, 1000);
+    return () => clearInterval(id);
+  }, [nextDraw?.drawTime]);
+
   // Dev-only: jump directly to any purchase-flow screen via ?preview=... (see DevPreviewPanel)
   const previewParam = useSearchParams().get("preview");
   useEffect(() => {
@@ -1138,9 +1155,16 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
             <p className="text-base text-red-400">{stepError}</p>
           )}
 
+          {drawCutoff && (
+            <p className="text-sm text-amber-400 text-center">
+              Sales pause a few minutes before each draw{drawTimeLabel ? ` (${drawTimeLabel} CET)` : ""} — back right after.
+            </p>
+          )}
+
           <button onClick={() => handlePrivateBuy()}
-            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all">
-            {`Buy privately · ${fmt(numTickets + mbFee(numTickets) + looftaFee(numTickets))}`}
+            disabled={drawCutoff}
+            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100">
+            {drawCutoff ? "Sales paused" : `Buy privately · ${fmt(numTickets + mbFee(numTickets) + looftaFee(numTickets))}`}
           </button>
         </>
       )}
@@ -1461,7 +1485,7 @@ const PREVIEW_WON_TICKETS: TicketSummary[] = [
   },
 ];
 
-/** Returns the next UTC timestamp for 19:00:00 Europe/Paris, handling CET/CEST automatically. */
+/** Returns the next UTC timestamp for 19:10:00 Europe/Paris, handling CET/CEST automatically. */
 function nextParisDrawDate(after = new Date()): Date {
   for (let ahead = 0; ahead <= 2; ahead++) {
     const ref = new Date(after.getTime() + ahead * 86_400_000);
@@ -1471,7 +1495,7 @@ function nextParisDrawDate(after = new Date()): Date {
     // Try UTC+2 (CEST) then UTC+1 (CET)
     for (const offset of [2, 1]) {
       const utcH = String(19 - offset).padStart(2, "0");
-      const candidate = new Date(`${parisDate}T${utcH}:00:00Z`);
+      const candidate = new Date(`${parisDate}T${utcH}:10:00Z`);
       const parisH = parseInt(
         new Intl.DateTimeFormat("en", { timeZone: "Europe/Paris", hour: "numeric", hour12: false }).format(candidate),
       ) % 24;
@@ -1480,6 +1504,11 @@ function nextParisDrawDate(after = new Date()): Date {
   }
   return new Date(after.getTime() + 86_400_000);
 }
+
+// Purchases pause this long before the draw — mirrors DRAW_PURCHASE_CUTOFF_MS in
+// lottery.service.ts (backend is the real enforcement; this is just so the UI doesn't let
+// someone start a purchase the backend is about to reject).
+const DRAW_PURCHASE_CUTOFF_MS = 5 * 60_000;
 
 function PrizePoolHero({ prizePool, drawTime, onHowToPlay, onPrizeTiers }: {
   prizePool: string | null;

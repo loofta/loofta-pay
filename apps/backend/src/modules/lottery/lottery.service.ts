@@ -26,6 +26,10 @@ const TICKET_PRICE_USDC = 1;
 // destination-side activity means the bridge tool's solver network has abandoned the order,
 // not that it's "just slow". Past this, stop waiting and make the user whole ourselves.
 const BRIDGE_STALL_TIMEOUT_MS = 20 * 60_000;
+// New private purchases stop 5 min before the draw (draw is 7:10 PM CET daily) — a purchase
+// started right at the wire could still be mid-bridge when the round is drawn, buying a ticket
+// that can never win. Reopens automatically once Megapot's API reports the next round.
+const DRAW_PURCHASE_CUTOFF_MS = 5 * 60_000;
 // Per-purchase fee: flat component + proportional component. The proportional part exists
 // because Loofta absorbs Li.Fi's bridge cut (~25 bps of the bridged amount) — a purely flat
 // fee goes net-negative on purchases above ~35 tickets.
@@ -167,12 +171,32 @@ export class LotteryService {
 
   // ─── Purchase initiation ───────────────────────────────────────────────────
 
+  /** Blocks new purchases in the last DRAW_PURCHASE_CUTOFF_MS before the active round draws. */
+  private async assertNotInDrawCutoff(): Promise<void> {
+    let drawTime: string | null = null;
+    try {
+      drawTime = (await this.megapot.getActiveRound())?.drawTime ?? null;
+    } catch (e: any) {
+      this.logger.warn(`assertNotInDrawCutoff: could not fetch active round, allowing purchase: ${e.message}`);
+      return;
+    }
+    if (!drawTime) return;
+
+    const msUntilDraw = new Date(drawTime).getTime() - Date.now();
+    if (msUntilDraw > 0 && msUntilDraw <= DRAW_PURCHASE_CUTOFF_MS) {
+      throw new BadRequestException(
+        `Ticket sales are paused for the next few minutes while this round finishes — the draw is at ${new Date(drawTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'Europe/Paris' })} CET. Try again just after.`,
+      );
+    }
+  }
+
   async initiatePurchase(opts: {
     userId: string;
     numTickets: number;
     userSolanaAddress: string;
   }): Promise<InitiatePurchaseResult> {
     const { userId, numTickets, userSolanaAddress } = opts;
+    await this.assertNotInDrawCutoff();
     if (numTickets < 1 || numTickets > 100) throw new BadRequestException('1–100 tickets per private purchase');
 
     // Load protection: each initiation creates wallets, calls MagicBlock, and builds sponsored
@@ -539,6 +563,7 @@ export class LotteryService {
   }): Promise<InitiatePublicPurchaseResult> {
     const { userId, numTickets } = opts;
     if (numTickets < 1 || numTickets > 500) throw new BadRequestException('1–500 tickets per public purchase');
+    await this.assertNotInDrawCutoff();
 
     // Fresh companion wallet on Base
     const companionPrivKey = generatePrivateKey();
@@ -2036,6 +2061,39 @@ export class LotteryService {
   private async doMagicBlockTransfer(withdrawal: any, amountUsdc: number, batchId?: string): Promise<void> {
     const db = this.supabase.getClient();
     const W = batchId ? `[Batch ${batchId.slice(0, 8)}]` : `[Withdrawal ${withdrawal.id.slice(0, 8)}]`;
+
+    // Atomic claim: checkLifiWithdrawal (fired per-bridge-leg completion) and the separate
+    // magicblockRetries sweep in processPendingWithdrawalsInner can both decide to fire this for
+    // the same batch/withdrawal around the same moment — without a claim, both drain the same
+    // burner: the first send succeeds, the second's simulation fails with "insufficient funds".
+    // Two sequential single-condition updates (not `.or()`) — this project's PostgREST throws a
+    // spurious "column does not exist" for PATCH requests whose filter uses `or=(...)`.
+    const staleBefore = new Date(Date.now() - 2 * 60_000).toISOString();
+    let claimedRows: { id: string }[] | null = null;
+    {
+      let q = db.from('lottery_withdrawals')
+        .update({ magicblock_claimed_at: new Date().toISOString() })
+        .eq('status', 'processing')
+        .is('magicblock_claimed_at', null);
+      q = batchId ? q.eq('batch_id', batchId) : q.eq('id', withdrawal.id);
+      const { data, error } = await q.select('id');
+      if (error) throw new Error(`MagicBlock claim failed: ${error.message}`);
+      claimedRows = data;
+    }
+    if (!claimedRows?.length) {
+      let q = db.from('lottery_withdrawals')
+        .update({ magicblock_claimed_at: new Date().toISOString() })
+        .eq('status', 'processing')
+        .lt('magicblock_claimed_at', staleBefore);
+      q = batchId ? q.eq('batch_id', batchId) : q.eq('id', withdrawal.id);
+      const { data, error } = await q.select('id');
+      if (error) throw new Error(`MagicBlock claim (stale-retry) failed: ${error.message}`);
+      claimedRows = data;
+    }
+    if (!claimedRows?.length) {
+      this.logger.log(`${W} MagicBlock transfer already claimed by a concurrent run — skipping`);
+      return;
+    }
 
     const burnerBalance = await this.getBurnerUsdcBalance(withdrawal.withdrawal_burner_sol_address);
     if (burnerBalance === 0n) {
