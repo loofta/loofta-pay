@@ -575,6 +575,26 @@ export class LotteryService {
       return;
     }
 
+    // Atomic claim: two overlapping cron ticks (or two backend replicas) can both select this
+    // same 'sent' ticket before either finishes bridging it — without this, both would build and
+    // broadcast their own Li.Fi transaction from the same burner. Only one write wins the
+    // conditional update; the loser sees 0 rows affected and bails before touching the chain.
+    // A 2-minute TTL lets a genuinely stuck/crashed claim become retryable again.
+    const claimDb = this.supabase.getClient();
+    const staleBefore = new Date(Date.now() - 2 * 60_000).toISOString();
+    const { data: claimedRows, error: claimErr } = await claimDb
+      .from('lottery_tickets')
+      .update({ bridge_claimed_at: new Date().toISOString() })
+      .eq('id', ticket.id)
+      .eq('status', 'sent')
+      .or(`bridge_claimed_at.is.null,bridge_claimed_at.lt.${staleBefore}`)
+      .select('id');
+    if (claimErr) throw new Error(`bridge claim failed: ${claimErr.message}`);
+    if (!claimedRows?.length) {
+      this.logger.log(`Ticket ${ticket.id}: bridge already claimed by a concurrent run — skipping`);
+      return;
+    }
+
     const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
     if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
 
@@ -963,7 +983,7 @@ export class LotteryService {
     return { ok: true, count: Math.max(ticketNumbers.length, storedCount) };
   }
 
-  async rescueCompanionFunds(ticketId: string, userId: string): Promise<{ ok: boolean }> {
+  async rescueCompanionFunds(ticketId: string, userId: string): Promise<{ ok: boolean; rescued: boolean; amountUsdc: number; message: string }> {
     const RESCUE_WALLET = '0x50c236e3B93D3d69fe23F4D648A13901e6DdbC39' as const;
     const db = this.supabase.getClient();
     const { data: ticket } = await db
@@ -982,14 +1002,25 @@ export class LotteryService {
 
     this.logger.log(`Rescuing companion ${ticket.companion_address}: USDC=${usdcBalance}`);
 
-    if (usdcBalance > 0) {
-      await this.rhinestone.rescueUsdc({
-        companionPrivateKey: companionPrivHex as `0x${string}`,
-        rescueWallet: RESCUE_WALLET,
-        amountUsdc: usdcBalance,
-      });
-      this.logger.log(`Rescue USDC complete: ${usdcBalance} USDC → ${RESCUE_WALLET}`);
+    // Nothing on Base to move — do NOT mark the ticket 'failed'/'RESCUED', that would falsely
+    // declare it resolved (and permanently block Retry) while the funds are actually still
+    // elsewhere, e.g. mid-bridge on Solana or sitting in the burner. Leave status untouched so
+    // the ticket stays actionable (Retry, or Rescue from Solana).
+    if (usdcBalance <= 0) {
+      return {
+        ok: true,
+        rescued: false,
+        amountUsdc: 0,
+        message: 'No funds found on Base — try "Rescue from Solana" instead, the money may still be on the burner or mid-bridge.',
+      };
     }
+
+    await this.rhinestone.rescueUsdc({
+      companionPrivateKey: companionPrivHex as `0x${string}`,
+      rescueWallet: RESCUE_WALLET,
+      amountUsdc: usdcBalance,
+    });
+    this.logger.log(`Rescue USDC complete: ${usdcBalance} USDC → ${RESCUE_WALLET}`);
 
     await db.from('lottery_tickets').update({
       status: 'failed',
@@ -997,7 +1028,7 @@ export class LotteryService {
       updated_at: new Date().toISOString(),
     }).eq('id', ticket.id);
 
-    return { ok: true };
+    return { ok: true, rescued: true, amountUsdc: usdcBalance, message: `$${usdcBalance.toFixed(2)} USDC rescued and sent back to your Loofta balance.` };
   }
 
   async rescueBurnerFunds(

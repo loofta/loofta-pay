@@ -1815,9 +1815,12 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       const data = await res.json();
-      if (res.ok) {
-        setRescueResult(r => ({ ...r, [ticketId]: "Rescue submitted — USDC being sent to safe wallet. Check logs." }));
+      if (res.ok && data.rescued) {
+        setRescueResult(r => ({ ...r, [ticketId]: data.message ?? "Rescue submitted — USDC being sent to safe wallet." }));
         setTimeout(onRefresh, 3000);
+      } else if (res.ok) {
+        // Nothing found on Base — funds are likely still on Solana, point at that option.
+        setRescueResult(r => ({ ...r, [ticketId]: data.message ?? "No funds found on Base." }));
       } else {
         setRescueResult(r => ({ ...r, [ticketId]: `Error: ${data.message ?? "Unknown error"}` }));
       }
@@ -2190,6 +2193,9 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                         {(retryResult[t.id] || rescueResult[t.id]) && (
                           <p className="text-sm text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
                         )}
+                        {rescueBurnerResult[t.id] && (
+                          <p className="text-sm text-amber-400">{rescueBurnerResult[t.id]}</p>
+                        )}
                         {t.bridgeStatus === "RESCUED" || t.bridgeStatus === "CANCELLED" ? (
                           <button
                             onClick={() => handleDelete(t.id)}
@@ -2199,24 +2205,37 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                             {deleting === t.id ? "Removing…" : "Remove from history"}
                           </button>
                         ) : (
-                          <div className="flex gap-2">
+                          <>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRetry(t.id)}
+                                disabled={retrying === t.id || rescuing === t.id}
+                                className="flex-1 h-9 rounded-xl text-sm font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                              >
+                                {retrying === t.id ? "Retrying…" : "Retry purchase"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRescue(t.id)}
+                                disabled={rescuing === t.id || retrying === t.id}
+                                className="flex-1 h-9 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
+                              >
+                                {rescuing === t.id ? "Rescuing…" : "Rescue funds (Base)"}
+                              </button>
+                            </div>
+                            {/* Funds from a private purchase can still be sitting on the Solana
+                                burner (never bridged, or mid-bridge) — the Base-only rescue above
+                                finds nothing in that case, so offer this as a fallback. */}
                             <button
                               type="button"
-                              onClick={() => handleRetry(t.id)}
-                              disabled={retrying === t.id || rescuing === t.id}
-                              className="flex-1 h-9 rounded-xl text-sm font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                              onClick={() => handleRescueBurner(t.id)}
+                              disabled={rescuingBurner === t.id}
+                              className="w-full h-9 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
                             >
-                              {retrying === t.id ? "Retrying…" : "Retry purchase"}
+                              {rescuingBurner === t.id ? "Rescuing…" : "Rescue from Solana"}
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRescue(t.id)}
-                              disabled={rescuing === t.id || retrying === t.id}
-                              className="flex-1 h-9 rounded-xl text-sm font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
-                            >
-                              {rescuing === t.id ? "Rescuing…" : "Rescue funds"}
-                            </button>
-                          </div>
+                          </>
                         )}
                       </div>
                     )}

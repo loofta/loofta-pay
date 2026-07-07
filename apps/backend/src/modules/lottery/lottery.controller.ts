@@ -173,7 +173,7 @@ export class LotteryController {
   @Post('tickets/:ticketId/rescue')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Rescue stuck USDC from companion wallet back to safe address via Rhinestone' })
-  async rescue(@Param('ticketId') ticketId: string, @Request() req: any): Promise<{ ok: boolean }> {
+  async rescue(@Param('ticketId') ticketId: string, @Request() req: any): Promise<{ ok: boolean; rescued: boolean; amountUsdc: number; message: string }> {
     return this.lottery.rescueCompanionFunds(ticketId, req.user.id);
   }
 
