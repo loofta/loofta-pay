@@ -111,6 +111,11 @@ export class LifiService {
       integrator: LIFI_INTEGRATOR_NAME,
       slippage: opts.slippage,
       order: 'RECOMMENDED', // usually both the cheapest and fastest — FASTEST can pick pricier routes for marginal gains
+      // "eco" (Eco Protocol, solver-filled intents) left a $1 order funded on-chain but never
+      // filled on the destination side — no solver activity at all after 20+ min against a
+      // quoted 7s execution time. Across is equally fast/cheap on this lane and far more
+      // established; exclude eco until we have a reason to trust it again.
+      denyBridges: 'eco',
     });
 
     const res = await fetch(`${LIFI_API}/quote?${params}`, { headers: this.headers() });

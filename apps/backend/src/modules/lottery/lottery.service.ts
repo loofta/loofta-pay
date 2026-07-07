@@ -22,6 +22,10 @@ import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const TICKET_PRICE_USDC = 1;
+// A SOL→Base Li.Fi bridge normally quotes single-digit-seconds execution — 20 min with zero
+// destination-side activity means the bridge tool's solver network has abandoned the order,
+// not that it's "just slow". Past this, stop waiting and make the user whole ourselves.
+const BRIDGE_STALL_TIMEOUT_MS = 20 * 60_000;
 // Per-purchase fee: flat component + proportional component. The proportional part exists
 // because Loofta absorbs Li.Fi's bridge cut (~25 bps of the bridged amount) — a purely flat
 // fee goes net-negative on purchases above ~35 tickets.
@@ -426,6 +430,107 @@ export class LotteryService {
     }
   }
 
+  /**
+   * Cron: a bridge that's sat in 'bridging' for BRIDGE_STALL_TIMEOUT_MS with no fill is treated
+   * as abandoned by the bridge's solver network — see the 83cb2a7b incident (Eco Protocol quoted
+   * 7s execution, delivered nothing after 20+ min, zero destination-chain activity the whole
+   * time). Rather than leave the user's money in limbo indefinitely, Loofta fronts the ticket
+   * cost back to the user's own Solana balance immediately and marks the ticket for manual
+   * recovery — the original bridged funds are chased separately (this does NOT touch them).
+   */
+  private refundingStalled = false;
+
+  async refundStalledBridges(): Promise<void> {
+    if (this.refundingStalled) return;
+    this.refundingStalled = true;
+    try {
+      const db = this.supabase.getClient();
+      const staleBefore = new Date(Date.now() - BRIDGE_STALL_TIMEOUT_MS).toISOString();
+
+      // Newly-stalled: still 'bridging', past the timeout, never claimed.
+      const { data: newlyStalled } = await db
+        .from('lottery_tickets')
+        .select('*')
+        .eq('status', 'bridging')
+        .not('lifi_buy_tx_hash', 'is', null)
+        .is('stall_refunded_at', null)
+        .lt('updated_at', staleBefore)
+        .limit(10);
+
+      for (const ticket of newlyStalled ?? []) {
+        await this.claimStalledTicket(ticket).catch(e =>
+          this.logger.error(`refundStalledBridges (claim) ${ticket.id}: ${e.message}`),
+        );
+      }
+
+      // Previously claimed but the payout itself never completed (crash/network error mid-send)
+      // — retry just the payment, not the claim (status is already 'failed', so this can never
+      // race processBridgingTickets, which only touches 'bridging'/'buying' tickets).
+      const { data: pendingPayout } = await db
+        .from('lottery_tickets')
+        .select('*')
+        .eq('bridge_status', 'STALL_REFUND_PENDING')
+        .limit(10);
+
+      for (const ticket of pendingPayout ?? []) {
+        await this.payStalledRefund(ticket).catch(e =>
+          this.logger.error(`refundStalledBridges (payout retry) ${ticket.id}: ${e.message}`),
+        );
+      }
+    } finally {
+      this.refundingStalled = false;
+    }
+  }
+
+  private async claimStalledTicket(ticket: any): Promise<void> {
+    // Don't even attempt the claim if the bridge actually completed in this same window —
+    // saves a wasted conditional write, though the update guard below is what actually matters.
+    const lifiStatus = await this.lifi.getStatus(ticket.lifi_buy_tx_hash, ticket.lifi_buy_tool, 'sol_to_base');
+    if (lifiStatus === 'DONE') return;
+
+    // Atomic claim: races against processBridgingTickets, which can flip this same ticket to
+    // 'buying' the instant Li.Fi reports DONE. Only one side's conditional update can land on a
+    // still-'bridging' row; the loser (0 rows affected) sends nothing and does nothing further.
+    const db = this.supabase.getClient();
+    const { data: claimed, error: claimErr } = await db
+      .from('lottery_tickets')
+      .update({ status: 'failed', bridge_status: 'STALL_REFUND_PENDING', updated_at: new Date().toISOString() })
+      .eq('id', ticket.id)
+      .eq('status', 'bridging')
+      .select('id');
+    if (claimErr) throw new Error(`stall-refund claim failed: ${claimErr.message}`);
+    if (!claimed?.length) {
+      this.logger.log(`Ticket ${ticket.id}: bridge completed/claimed elsewhere just before stall-refund — skipping`);
+      return;
+    }
+
+    await this.payStalledRefund(ticket);
+  }
+
+  private async payStalledRefund(ticket: any): Promise<void> {
+    if (!ticket.user_solana_address) {
+      this.logger.error(`Ticket ${ticket.id}: bridge stalled but no user_solana_address on record — cannot auto-refund, needs manual handling`);
+      return;
+    }
+
+    const costUnits = BigInt(Math.round(ticket.cost_usdc * 1_000_000));
+    const sig = await this.topUpFromFeeWallet(ticket.user_solana_address, costUnits);
+
+    const db = this.supabase.getClient();
+    await db.from('lottery_tickets').update({
+      bridge_status: 'STALLED_REFUNDED',
+      stall_refunded_at: new Date().toISOString(),
+      stall_refund_tx_hash: sig,
+      updated_at: new Date().toISOString(),
+    }).eq('id', ticket.id);
+
+    this.logger.error(
+      `Ticket ${ticket.id}: bridge stalled >${BRIDGE_STALL_TIMEOUT_MS / 60_000}min with no fill — ` +
+      `auto-refunded ${ticket.cost_usdc} USDC to ${ticket.user_solana_address}, sig=${sig}. ` +
+      `Original funds at ${ticket.lifi_buy_tx_hash} still need manual recovery from the bridge provider.`,
+    );
+  }
+
   // ─── Public (non-private) purchase ────────────────────────────────────────
 
   async initiatePublicPurchase(opts: {
@@ -699,11 +804,19 @@ export class LotteryService {
         }
         if (lifiStatus !== 'DONE') return; // still in flight
 
-        await db.from('lottery_tickets').update({
+        // Conditional on status='bridging': closes the race against refundStalledBridges, which
+        // can independently decide the same ticket is stalled and refund it around the same
+        // moment Li.Fi actually delivers. Whichever update lands first on the still-'bridging'
+        // row wins; the other affects 0 rows and backs off instead of double-processing money.
+        const { data: claimed } = await db.from('lottery_tickets').update({
           bridge_status: 'DONE',
           status: 'buying',
           updated_at: new Date().toISOString(),
-        }).eq('id', ticket.id);
+        }).eq('id', ticket.id).eq('status', 'bridging').select('id');
+        if (!claimed?.length) {
+          this.logger.warn(`Ticket ${ticket.id}: Li.Fi delivered but ticket was concurrently claimed elsewhere (e.g. stall-refund) — skipping buy`);
+          return;
+        }
         this.logger.log(`Ticket ${ticket.id}: Li.Fi buy bridge DONE → buying`);
       } else {
         // Legacy flow: NEAR Intents bridge

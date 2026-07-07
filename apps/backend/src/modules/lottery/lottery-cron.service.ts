@@ -65,4 +65,12 @@ export class LotteryCronService {
       this.logger.error(`refundOutstandingFees: ${e.message}`),
     );
   }
+
+  /** Every 2 minutes: auto-refund tickets whose bridge stalled with no solver activity */
+  @Cron('*/2 * * * *')
+  async refundStalledBridges(): Promise<void> {
+    await this.lottery.refundStalledBridges().catch(e =>
+      this.logger.error(`refundStalledBridges: ${e.message}`),
+    );
+  }
 }
