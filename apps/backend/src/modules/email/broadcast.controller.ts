@@ -16,6 +16,31 @@ export class BroadcastController {
     private readonly supabaseService: SupabaseService,
   ) {}
 
+  /**
+   * Supabase/PostgREST caps unbounded selects at 1000 rows by default — a plain
+   * `.select('email')` silently truncates any table past that, undercounting broadcast
+   * recipients with no error. Page through in batches instead of relying on a bare select.
+   */
+  private async fetchAllEmails(
+    table: 'appUsers' | 'mainnetWaitlist',
+  ): Promise<string[]> {
+    const PAGE = 1000;
+    const emails: string[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await this.supabaseService[table]
+        .select('email')
+        .not('email', 'is', null)
+        .range(from, from + PAGE - 1);
+      if (error) throw new Error(`Failed to fetch ${table}: ${error.message}`);
+      for (const row of data ?? []) {
+        const e = (row.email as string | null)?.trim().toLowerCase();
+        if (e) emails.push(e);
+      }
+      if (!data || data.length < PAGE) break;
+    }
+    return emails;
+  }
+
   @Post('mainnet-launch')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Broadcast mainnet launch email. Pass testEmail to dry-run to one address.' })
@@ -28,26 +53,11 @@ export class BroadcastController {
       recipients = [testEmail.trim().toLowerCase()];
       this.logger.log(`Mainnet launch broadcast: TEST MODE — sending only to ${testEmail}`);
     } else {
-      const [usersResult, waitlistResult] = await Promise.all([
-        this.supabaseService.appUsers.select('email').not('email', 'is', null),
-        this.supabaseService.mainnetWaitlist.select('email').not('email', 'is', null),
+      const [userEmails, waitlistEmails] = await Promise.all([
+        this.fetchAllEmails('appUsers'),
+        this.fetchAllEmails('mainnetWaitlist'),
       ]);
-
-      if (usersResult.error) {
-        this.logger.error('Failed to fetch app users for broadcast:', usersResult.error);
-        throw new Error('Failed to fetch users: ' + usersResult.error.message);
-      }
-      if (waitlistResult.error) {
-        this.logger.error('Failed to fetch waitlist for broadcast:', waitlistResult.error);
-        throw new Error('Failed to fetch waitlist: ' + waitlistResult.error.message);
-      }
-
-      const emailSet = new Set<string>();
-      for (const u of [...(usersResult.data || []), ...(waitlistResult.data || [])]) {
-        const e = (u.email as string | null)?.trim().toLowerCase();
-        if (e) emailSet.add(e);
-      }
-      recipients = Array.from(emailSet);
+      recipients = Array.from(new Set([...userEmails, ...waitlistEmails]));
       this.logger.log(`Mainnet launch broadcast: ${recipients.length} unique recipients (users + waitlist, deduplicated)`);
     }
 
@@ -65,6 +75,39 @@ export class BroadcastController {
     }
 
     this.logger.log(`Mainnet launch broadcast complete: ${sent} sent, ${failed} failed`);
+    return { ok: true, sent, failed, total: recipients.length };
+  }
+
+  @Post('megapot-launch')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Broadcast Megapot $1,000 giveaway email. Pass testEmail to dry-run to one address.' })
+  async broadcastMegapotLaunch(@Body() body: { testEmail?: string }) {
+    const { testEmail } = body ?? {};
+
+    let recipients: string[];
+
+    if (testEmail) {
+      recipients = [testEmail.trim().toLowerCase()];
+      this.logger.log(`Megapot launch broadcast: TEST MODE — sending only to ${testEmail}`);
+    } else {
+      recipients = Array.from(new Set(await this.fetchAllEmails('appUsers')));
+      this.logger.log(`Megapot launch broadcast: ${recipients.length} unique recipients (app users)`);
+    }
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const email of recipients) {
+      try {
+        await this.emailService.sendMegapotLaunchEmail(email);
+        sent++;
+      } catch {
+        failed++;
+        this.logger.warn(`Failed to send Megapot launch email to ${email}`);
+      }
+    }
+
+    this.logger.log(`Megapot launch broadcast complete: ${sent} sent, ${failed} failed`);
     return { ok: true, sent, failed, total: recipients.length };
   }
 }

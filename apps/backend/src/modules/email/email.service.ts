@@ -128,6 +128,93 @@ export class EmailService {
     }
   }
 
+  async sendMegapotLaunchEmail(recipientEmail: string): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: recipientEmail,
+        subject: '🎰 Megapot is live — $1,000 in free tickets',
+        html: this.buildMegapotLaunchHtml(),
+      });
+      this.logger.log(`Megapot launch email sent to ${recipientEmail}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send Megapot launch email to ${recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
+  private buildMegapotLaunchHtml(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Megapot is live</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Live now</span>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px 8px;">
+              <p style="margin:0 0 28px;font-size:28px;line-height:1.15;color:#ffffff;font-weight:700;text-align:center;">Play Megapot,<br/>privately.</p>
+
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
+                <tr>
+                  <td style="padding:16px 18px;background:#1e1e23;border-radius:12px;">
+                    <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#9ca3af;">Onchain today</p>
+                    <p style="margin:0;font-size:14px;line-height:1.5;color:#d1d5db;">Your wallet, amounts, and timing — public to everyone.</p>
+                  </td>
+                </tr>
+                <tr><td style="height:10px;"></td></tr>
+                <tr>
+                  <td style="padding:16px 18px;background:#0d2b3d;border:1px solid #1a4a63;border-radius:12px;">
+                    <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5EEAD4;">Through Loofta</p>
+                    <p style="margin:0;font-size:14px;line-height:1.5;color:#d1d5db;">Same jackpot, same odds — <strong style="color:#ffffff;">your entries stay private.</strong></p>
+                  </td>
+                </tr>
+              </table>
+
+              <div style="background:#0a0a0c;border:1px solid #2a2a30;border-radius:12px;padding:20px 22px;margin:24px 0 28px;">
+                <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#5EEAD4;">$1,000 in free tickets</p>
+                <p style="margin:0;font-size:14px;color:#9ca3af;">Buy 5+ tickets privately to qualify — the pool is split across everyone who does.</p>
+              </div>
+
+              <div style="text-align:center;margin-bottom:8px;">
+                <a href="https://pay.loofta.xyz/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Buy tickets privately
+                </a>
+              </div>
+              <p style="margin:12px 0 24px;font-size:13px;color:#6b7280;text-align:center;">
+                Giveaway details: <a href="https://pay.loofta.xyz/rewards/megapot" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz/rewards/megapot</a>
+              </p>
+              <p style="margin:0 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
   private buildMainnetLiveHtml(): string {
     const imageUrl = 'https://pay.loofta.xyz/liveloofta-email.png';
     return `<!DOCTYPE html>
