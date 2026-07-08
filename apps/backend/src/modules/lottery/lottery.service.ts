@@ -1836,14 +1836,24 @@ export class LotteryService {
         await db.from('lottery_withdrawals').update({ status: 'processing', updated_at: new Date().toISOString() }).eq('id', withdrawalId);
 
         // Real claimed balance — the source of truth for this ticket's actual win (NFT metadata
-        // has proven unreliable). Reconcile the recorded amounts to it now.
-        const balance = await this.getCompanionUsdcBalance(ticket.companion_address).catch(() => 0);
+        // has proven unreliable). claimWinnings already waited for on-chain execution, so the USDC
+        // is there; retry the read a few times to ride out any RPC-node lag before concluding.
+        let balance = 0;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          balance = await this.getCompanionUsdcBalance(ticket.companion_address).catch(() => 0);
+          if (balance > 0) break;
+          await new Promise(r => setTimeout(r, 1500));
+        }
         if (balance > 0) {
           await db.from('lottery_tickets').update({ win_amount_usdc: balance, updated_at: new Date().toISOString() }).eq('id', ticket.id);
           await db.from('lottery_withdrawals').update({ amount_usdc: balance, updated_at: new Date().toISOString() }).eq('id', withdrawalId);
           claimed.push({ ticket, withdrawalId, balance });
         } else {
-          throw new Error('Companion has no USDC after claim');
+          // Claim recorded on-chain (claim_tx_hash set) but the companion still reads $0 — almost
+          // certainly RPC lag, NOT a real failure. Do NOT mark failed (that would strand a real
+          // win); leave it 'processing' so recoverStuckConsolidatedBatches bridges it once the
+          // balance materialises. Only a claim that actually threw lands in the catch below.
+          this.logger.warn(`${W} balance still $0 after claim + retries — leaving 'processing' for recovery cron (funds safe in companion)`);
         }
       } catch (err: any) {
         await db.from('lottery_withdrawals').update({ status: 'failed', error_message: err.message, updated_at: new Date().toISOString() }).eq('id', withdrawalId);
@@ -1873,10 +1883,10 @@ export class LotteryService {
           amountUsdc: c.balance,
         });
         this.logger.log(`${W} swept ${c.balance.toFixed(6)} USDC → lead companion ${leadAddress.slice(0, 10)}…`);
-        // This row is now folded into the lead's single bridge — mark its bridge leg done so
-        // tryCompleteBatch counts it, but it holds no independent lifi_tx_hash so the cron never
-        // bridges it separately.
-        await db.from('lottery_withdrawals').update({ bridge_status: 'done', updated_at: new Date().toISOString() }).eq('id', c.withdrawalId);
+        // Folded into the lead's single bridge. Marked 'consolidated' (NOT 'done') so it's
+        // distinguishable from a real completed bridge: tryCompleteBatch treats it as settled, but
+        // recovery must NOT read it as "a bridge succeeded" (only the lead's real bridge does).
+        await db.from('lottery_withdrawals').update({ bridge_status: 'consolidated', updated_at: new Date().toISOString() }).eq('id', c.withdrawalId);
       } catch (err: any) {
         this.logger.error(`${W} sweep to lead failed: ${err.message} — leaving as its own bridge`);
         // Fallback: if the sweep fails, bridge this companion on its own so funds aren't stranded.
@@ -1892,8 +1902,23 @@ export class LotteryService {
     }
 
     // ── Step 3: ONE bridge from the lead companion (now holding the consolidated total) ──
-    const leadTotal = await this.getCompanionUsdcBalance(leadAddress).catch(() => lead.balance);
-    this.logger.log(`${B} bridging consolidated ${leadTotal.toFixed(6)} USDC from lead → burner (1 bridge for ${claimed.length} ticket(s))`);
+    // Read the real on-chain balance with retries — NEVER fall back to lead.balance (its own
+    // pre-sweep claim), which would bridge only part and strand every swept-in amount. The sweeps
+    // used waitForExecution so the funds are on-chain; a persistently-failing read means we abort
+    // and let recoverStuckConsolidatedBatches bridge the (safe, intact) lead companion later.
+    const expectedTotal = claimed.reduce((s, c) => s + c.balance, 0);
+    let leadTotal = 0;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      leadTotal = await this.getCompanionUsdcBalance(leadAddress).catch(() => 0);
+      // Consider the read trustworthy once it reflects essentially the full consolidated sum.
+      if (leadTotal >= expectedTotal - 0.01) break;
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    if (leadTotal <= 0.005) {
+      this.logger.error(`${B} lead companion balance read $${leadTotal.toFixed(6)} (expected ~$${expectedTotal.toFixed(6)}) — aborting bridge, recovery cron will pick it up (funds safe in lead)`);
+      return;
+    }
+    this.logger.log(`${B} bridging consolidated ${leadTotal.toFixed(6)} USDC from lead → burner (1 bridge for ${claimed.length} ticket(s), expected ~$${expectedTotal.toFixed(6)})`);
     await this.bridgeCompanionToBurner({
       withdrawalId: lead.withdrawalId,
       companionPrivHex: leadPrivHex,
@@ -2016,13 +2041,13 @@ export class LotteryService {
   }
 
   /**
-   * Crash-safety net for consolidated batches. `processConsolidatedBatch` runs the claim → sweep →
-   * single-lead-bridge in one shot; if it dies after funds are consolidated into the lead companion
-   * but before that bridge is submitted, nothing else would ever bridge them. Funds are never lost
-   * (they sit in a Loofta-controlled smart account), but they'd be stuck. This cron finds any
-   * batch withdrawal that's been 'processing' with no bridge submitted for a few minutes, and — if
-   * the companion still holds USDC on Base — bridges it. Idempotent: once a bridge is submitted the
-   * row has a lifi_tx_hash and is skipped; a swept-out companion has ~0 balance and is skipped.
+   * Crash/failure safety net for consolidated batches. `processConsolidatedBatch` claims → sweeps
+   * into a lead companion → does one lead bridge. If it crashes before the bridge, OR the lead
+   * bridge itself returns FAILED, all the batch's USDC sits in a Loofta-controlled companion with
+   * nothing to move it. This cron is companion-balance-driven: for any non-complete batch that's
+   * been idle a few minutes with NO real bridge succeeded or in flight, it finds whichever
+   * companion still holds USDC and (re)bridges it to the burner. Funds are never lost — only
+   * temporarily stuck — and this makes recovery automatic instead of a manual rescue.
    */
   private recoveringBatches = false;
 
@@ -2032,40 +2057,49 @@ export class LotteryService {
     try {
       const db = this.supabase.getClient();
       const threeMinAgo = new Date(Date.now() - 3 * 60_000).toISOString();
-      const { data: stuck } = await db
+      // Candidate batches: have at least one leg still 'processing' or 'failed' and idle a while.
+      const { data: candidates } = await db
         .from('lottery_withdrawals')
-        .select('*')
+        .select('batch_id')
         .eq('route', 'solana_private')
-        .eq('status', 'processing')
         .not('batch_id', 'is', null)
-        .is('lifi_tx_hash', null)
+        .in('status', ['processing', 'failed'])
         .lt('updated_at', threeMinAgo)
-        .limit(20);
-      if (!stuck?.length) return;
+        .limit(60);
+      if (!candidates?.length) return;
+      const batchIds = [...new Set(candidates.map((c: any) => c.batch_id))];
 
-      const byBatch = new Map<string, any[]>();
-      for (const w of stuck) {
-        if (!byBatch.has(w.batch_id)) byBatch.set(w.batch_id, []);
-        byBatch.get(w.batch_id)!.push(w);
-      }
+      for (const batchId of batchIds) {
+        const B = `[Batch ${batchId.slice(0, 8)}]`;
+        const { data: allRows } = await db.from('lottery_withdrawals').select('*').eq('batch_id', batchId);
+        if (!allRows?.length) continue;
 
-      for (const [batchId, rows] of byBatch) {
-        // If any leg of this batch already has a live bridge, it's progressing normally — don't touch it.
-        const { data: allRows } = await db
-          .from('lottery_withdrawals')
-          .select('lifi_tx_hash, bridge_status, status')
-          .eq('batch_id', batchId);
-        const bridgeInFlight = (allRows ?? []).some(
-          (r: any) => r.lifi_tx_hash && r.bridge_status !== 'done' && r.status !== 'failed' && r.status !== 'complete',
+        // Gate on the batch's NEWEST activity, not per-row: a large batch mid-claim has old rows
+        // but recent ones — leave it to finish rather than racing processConsolidatedBatch.
+        if (allRows.some((r: any) => r.updated_at >= threeMinAgo)) continue;
+
+        // A REAL bridge succeeded ('done', not the 'consolidated' fold-in marker) → the burner is
+        // funded and the MagicBlock path owns delivery; never re-bridge. A live bridge in flight →
+        // wait for it. Either way, hands off.
+        const realBridgeDoneOrInFlight = allRows.some((r: any) =>
+          r.bridge_status === 'done' ||
+          (r.lifi_tx_hash && r.bridge_status === 'pending' && r.status !== 'failed' && r.status !== 'complete'),
         );
-        if (bridgeInFlight) continue;
+        if (realBridgeDoneOrInFlight) continue;
 
-        for (const w of rows) {
+        // No bridge has moved the money and none is pending — find the companion still holding it.
+        for (const w of allRows) {
+          if (w.status === 'complete' || !w.ticket_id) continue;
           const { data: ticket } = await db.from('lottery_tickets').select('*').eq('id', w.ticket_id).single();
           if (!ticket) continue;
           const bal = await this.getCompanionUsdcBalance(ticket.companion_address).catch(() => 0);
-          if (bal <= 0.005) continue; // already swept/bridged out of this companion
-          this.logger.warn(`[Batch ${batchId.slice(0, 8)}] RECOVERY — companion ${ticket.companion_address.slice(0, 10)}… holds ${bal.toFixed(6)} USDC with no bridge submitted; bridging now`);
+          if (bal <= 0.005) continue; // this companion is empty (already swept/bridged)
+          this.logger.warn(`${B} RECOVERY — companion ${ticket.companion_address.slice(0, 10)}… holds ${bal.toFixed(6)} USDC with no successful bridge; (re)bridging via row ${w.id.slice(0, 8)}`);
+          // Reuse this row for the bridge. Reset any prior failed/partial bridge state so
+          // checkLifiWithdrawal will poll the fresh lifi_tx_hash.
+          await db.from('lottery_withdrawals')
+            .update({ status: 'processing', lifi_tx_hash: null, bridge_status: null, error_message: null, updated_at: new Date().toISOString() })
+            .eq('id', w.id);
           const key = this.decryptKey(ticket.companion_key_enc, ticket.companion_address);
           await this.bridgeCompanionToBurner({
             withdrawalId: w.id,
@@ -2073,7 +2107,7 @@ export class LotteryService {
             companionAddress: ticket.companion_address,
             burnerAddress: w.withdrawal_burner_sol_address,
             amountUsdc: bal,
-          }).catch(e => this.logger.error(`[Batch ${batchId.slice(0, 8)}] recovery bridge failed: ${e.message}`));
+          }).catch(e => this.logger.error(`${B} recovery bridge failed: ${e.message}`));
           break; // one bridge per batch per tick; a split balance is picked up next tick
         }
       }
@@ -2289,10 +2323,11 @@ export class LotteryService {
 
     if (!allInBatch?.length) return;
 
-    // A row is "settled" once its bridge is done, it's already complete, OR it failed (a failed
-    // row will never bridge, so waiting on it would stall the batch forever — exclude it). Only
-    // non-failed rows count toward the total that actually reaches the burner.
-    const pending = allInBatch.filter(w => w.bridge_status !== 'done' && w.status !== 'complete' && w.status !== 'failed');
+    // A row is "settled" once its bridge is done, it was folded into the lead ('consolidated'),
+    // it's already complete, OR it failed (a failed row will never bridge, so waiting on it would
+    // stall the batch forever — exclude it). Only non-failed rows count toward the burner total.
+    const settledBridge = (s: string | null) => s === 'done' || s === 'consolidated';
+    const pending = allInBatch.filter(w => !settledBridge(w.bridge_status) && w.status !== 'complete' && w.status !== 'failed');
     const settled = allInBatch.length - pending.length;
     if (pending.length > 0) {
       this.logger.log(`${B} ${settled}/${allInBatch.length} legs settled — ${pending.length} still pending, waiting`);
