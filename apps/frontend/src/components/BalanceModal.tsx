@@ -497,14 +497,15 @@ export function BalanceModal({
         debug: true,
         containerElement: document.body,
       });
-      await blinkDepositRef.current.requestDeposit({
+      const depositResult = await blinkDepositRef.current.requestDeposit({
         amount: null,
         chainId: 792703809,
         address: solanaAddress,
         token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
       });
       toast({ title: "Deposit complete!", description: "USDC will appear in your balance shortly." });
-      recordDeposit("blink", "complete");
+      const depositedAmount = depositResult?.transfer?.amount?.amount;
+      recordDeposit("blink", "complete", depositedAmount);
       onRefresh();
     } catch (err: unknown) {
       const { DepositError, getDisplayMessage } = await import("@swype-org/deposit");

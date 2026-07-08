@@ -481,7 +481,7 @@ export default function AdminDashboard() {
   const [saving, setSaving] = useState(false);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout">("payments");
+  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout" | "lottery">("payments");
 
   // Sparks leaderboard
   const [sparksData, setSparksData] = useState<any[]>([]);
@@ -520,6 +520,13 @@ export default function AdminDashboard() {
   const [cashoutTotal, setCashoutTotal] = useState(0);
   const [cashoutPage, setCashoutPage] = useState(1);
   const [cashoutStatusFilter, setCashoutStatusFilter] = useState("");
+
+  const [lotteryData, setLotteryData] = useState<any[]>([]);
+  const [lotteryLoading, setLotteryLoading] = useState(false);
+  const [lotteryLoaded, setLotteryLoaded] = useState(false);
+  const [lotteryTotal, setLotteryTotal] = useState(0);
+  const [lotteryPage, setLotteryPage] = useState(1);
+  const [lotteryStatusFilter, setLotteryStatusFilter] = useState("");
 
   // Analytics
   type AnalyticsData = {
@@ -719,6 +726,26 @@ export default function AdminDashboard() {
       toast({ variant: "destructive", title: "Failed to load cash outs" });
     } finally {
       setCashoutLoading(false);
+    }
+  }, [authHeaders, toast]);
+
+  const fetchLottery = useCallback(async (page = 1, status = "") => {
+    setLotteryLoading(true);
+    try {
+      const headers = await authHeaders();
+      const qs = new URLSearchParams({ page: String(page) });
+      if (status) qs.set("status", status);
+      const res = await fetch(`/api/admin/lottery?${qs}`, { headers });
+      if (!res.ok) throw new Error("Failed to load lottery tickets");
+      const data = await res.json();
+      setLotteryData(data.data ?? []);
+      setLotteryTotal(data.total ?? 0);
+      setLotteryPage(page);
+      setLotteryLoaded(true);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load lottery tickets" });
+    } finally {
+      setLotteryLoading(false);
     }
   }, [authHeaders, toast]);
 
@@ -989,9 +1016,10 @@ export default function AdminDashboard() {
             activeTab === "blink" ? fetchBlink :
             activeTab === "analytics" ? fetchAnalytics :
             activeTab === "cashout" ? () => fetchCashOuts(cashoutPage, cashoutStatusFilter) :
+            activeTab === "lottery" ? () => fetchLottery(lotteryPage, lotteryStatusFilter) :
             () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })
           }
-          disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading || cashoutLoading}
+          disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading || cashoutLoading || lotteryLoading}
           className="border-gray-700 text-gray-300 bg-gray-900 hover:bg-gray-800"
         >
           {(loading || sparksLoading || waitlistLoading || blinkLoading) ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -1046,6 +1074,14 @@ export default function AdminDashboard() {
         >
           Cash Out
           {cashoutLoaded && <span className="text-sm md:text-xs bg-orange-900/50 text-orange-400 rounded px-1.5 py-0.5">{cashoutTotal}</span>}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setActiveTab("lottery"); if (!lotteryLoaded) fetchLottery(1, ""); }}
+          className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "lottery" ? "border-teal-500 text-teal-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+        >
+          Lottery Tickets
+          {lotteryLoaded && <span className="text-sm md:text-xs bg-teal-900/50 text-teal-400 rounded px-1.5 py-0.5">{lotteryTotal}</span>}
         </button>
         <Link
           href={outreachUrl}
@@ -1333,6 +1369,118 @@ export default function AdminDashboard() {
                 type="button"
                 disabled={cashoutPage >= Math.ceil(cashoutTotal / 50)}
                 onClick={() => fetchCashOuts(cashoutPage + 1, cashoutStatusFilter)}
+                className="px-3 py-1 rounded border border-gray-700 text-gray-400 disabled:opacity-40 hover:bg-gray-800"
+              >Next →</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Lottery tickets tab ── */}
+      {activeTab === "lottery" && (
+        <div className="space-y-3">
+          {/* Filter bar */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <select
+              value={lotteryStatusFilter}
+              onChange={(e) => { setLotteryStatusFilter(e.target.value); fetchLottery(1, e.target.value); }}
+              className="bg-gray-900 border border-gray-700 text-gray-300 rounded-lg px-3 py-1.5 text-base"
+            >
+              <option value="">All statuses</option>
+              <option value="pending_send">Pending send</option>
+              <option value="sent">Sent</option>
+              <option value="bridging">Bridging</option>
+              <option value="buying">Buying</option>
+              <option value="active">Active (in draw)</option>
+              <option value="won">Won</option>
+              <option value="lost">Lost</option>
+              <option value="failed">Failed</option>
+              <option value="withdrawn">Withdrawn</option>
+            </select>
+            <span className="text-base text-gray-500">{lotteryTotal} total</span>
+          </div>
+
+          {lotteryLoading && (
+            <div className="flex items-center gap-2 text-base text-gray-400 py-8">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading lottery tickets…
+            </div>
+          )}
+
+          {!lotteryLoading && lotteryLoaded && (
+            <div className="overflow-x-auto rounded-xl border border-gray-800">
+              <table className="w-full text-base text-gray-300">
+                <thead>
+                  <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
+                    <th className="text-left px-4 py-2.5">Date</th>
+                    <th className="text-right px-4 py-2.5">Tickets</th>
+                    <th className="text-right px-4 py-2.5">Cost</th>
+                    <th className="text-left px-4 py-2.5">Route</th>
+                    <th className="text-left px-4 py-2.5">Status</th>
+                    <th className="text-left px-4 py-2.5">Round</th>
+                    <th className="text-right px-4 py-2.5">Win</th>
+                    <th className="text-left px-4 py-2.5 max-w-[160px]">User</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lotteryData.length === 0 && (
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-600">No lottery tickets found.</td></tr>
+                  )}
+                  {lotteryData.map((row: any) => {
+                    const statusColors: Record<string, string> = {
+                      active: "text-blue-400",
+                      won: "text-emerald-400",
+                      withdrawn: "text-emerald-400",
+                      lost: "text-gray-500",
+                      failed: "text-red-400",
+                      pending_send: "text-gray-400",
+                      sent: "text-amber-400",
+                      bridging: "text-amber-400",
+                      buying: "text-amber-400",
+                    };
+                    return (
+                      <tr key={row.id} className="border-b border-gray-800/50 hover:bg-gray-900/40">
+                        <td className="px-4 py-2.5 whitespace-nowrap tabular-nums text-gray-500">
+                          {new Date(row.created_at).toLocaleDateString()} {new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">{row.num_tickets}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums font-medium">${Number(row.cost_usdc).toFixed(2)}</td>
+                        <td className="px-4 py-2.5">{row.burner_sol_address ? "Private" : "Public"}</td>
+                        <td className={`px-4 py-2.5 font-medium ${statusColors[row.status] ?? "text-gray-400"}`}>{row.status}</td>
+                        <td className="px-4 py-2.5 text-gray-400">{row.round_id ?? <span className="text-gray-700">—</span>}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">
+                          {row.win_amount_usdc ? <span className="text-emerald-400 font-medium">${Number(row.win_amount_usdc).toFixed(2)}</span> : <span className="text-gray-700">—</span>}
+                        </td>
+                        <td className="px-4 py-2.5 max-w-[160px] truncate">
+                          {row.user?.username ? (
+                            <span className="text-gray-200">@{row.user.username}</span>
+                          ) : row.user?.email ? (
+                            <span className="text-gray-300">{row.user.email}</span>
+                          ) : (
+                            <span className="text-gray-600 font-mono text-sm">{row.user_id}</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {lotteryLoaded && lotteryTotal > 50 && (
+            <div className="flex items-center gap-3 justify-center pt-1">
+              <button
+                type="button"
+                disabled={lotteryPage <= 1}
+                onClick={() => fetchLottery(lotteryPage - 1, lotteryStatusFilter)}
+                className="px-3 py-1 rounded border border-gray-700 text-gray-400 disabled:opacity-40 hover:bg-gray-800"
+              >← Prev</button>
+              <span className="text-base text-gray-500">Page {lotteryPage} of {Math.ceil(lotteryTotal / 50)}</span>
+              <button
+                type="button"
+                disabled={lotteryPage >= Math.ceil(lotteryTotal / 50)}
+                onClick={() => fetchLottery(lotteryPage + 1, lotteryStatusFilter)}
                 className="px-3 py-1 rounded border border-gray-700 text-gray-400 disabled:opacity-40 hover:bg-gray-800"
               >Next →</button>
             </div>
