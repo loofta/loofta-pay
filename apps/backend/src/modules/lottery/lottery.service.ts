@@ -18,7 +18,7 @@ import { SendPaymentEncryptionService } from '../send-payment/encryption.service
 import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI } from './megapot.service';
 import { RhinestoneService } from './rhinestone.service';
 import { LifiService } from './lifi.service';
-import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC } from '@/common/magicblock-private-transfer';
+import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_VOLUME_FEE_BPS } from '@/common/magicblock-private-transfer';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const TICKET_PRICE_USDC = 1;
@@ -1250,7 +1250,10 @@ export class LotteryService {
     tx.recentBlockhash = blockhash;
     tx.sign(feePayerKeypair, burnerKeypair);
     const sig = await conn.sendRawTransaction(tx.serialize());
-    await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+    const rescueConfirmation = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+    if (rescueConfirmation.value.err) {
+      throw new Error(`Burner rescue failed on-chain (${sig}): ${JSON.stringify(rescueConfirmation.value.err)}`);
+    }
 
     this.logger.log(`Ticket ${ticketId}: burner rescued ${burnerBalance} units → ${destinationSolAddress} | tx ${sig}`);
 
@@ -2106,9 +2109,22 @@ export class LotteryService {
     const cluster = this.getSolanaCluster();
 
     const relayFeeUnits = Math.round(MAGICBLOCK_GAS_USDC * 1_000_000);
-    const transferAmount = Number(burnerBalance) - relayFeeUnits;
+    // A plain (non-exactOut) request just moves `amount` in full with no internal gross-up, so
+    // this used to send burnerBalance-minus-flat-fee directly — reasonable in principle, but it
+    // silently assumed MAGICBLOCK_GAS_USDC ($0.20) always covers MagicBlock's real relay cost.
+    // Real incident: that assumption drifted and the relay rejected the request as underfunded
+    // (Program error: insufficient funds) even though the burner plainly had the money.
+    // exactOut: true is the documented-correct pattern (see magicblock-private-transfer.ts) —
+    // MagicBlock grosses up the sender's debit internally to cover its own fee, so we only need
+    // to reserve for the *separate* flat SOL-gas relay instruction, then invert
+    // estimateMagicblockGrossUp to find the largest net amount whose internal gross-up still
+    // fits what's left of the burner.
+    const availableForTransfer = Number(burnerBalance) - relayFeeUnits;
+    const transferAmount = availableForTransfer > 0
+      ? Math.floor((availableForTransfer - 1) * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS) / 10_000)
+      : 0;
 
-    this.logger.log(`${W} step 3/3 MagicBlock: burner ${withdrawal.withdrawal_burner_sol_address.slice(0, 8)}… balance=${burnerBalance} → transferAmount=${transferAmount} → ${withdrawal.destination_address}`);
+    this.logger.log(`${W} step 3/3 MagicBlock: burner ${withdrawal.withdrawal_burner_sol_address.slice(0, 8)}… balance=${burnerBalance} → transferAmount(net, exactOut)=${transferAmount} → ${withdrawal.destination_address}`);
 
     let sig: string;
 
@@ -2126,6 +2142,7 @@ export class LotteryService {
           amount: transferAmount,
           cluster,
           gasless: true,
+          exactOut: true,
         });
       } catch (err: any) {
         if (String(err?.message).includes('delegated to another validator')) {
@@ -2150,6 +2167,16 @@ export class LotteryService {
       }
       sig = await conn.sendRawTransaction(rawTx);
       this.logger.log(`${W} MagicBlock private tx: ${sig}`);
+
+      // sendRawTransaction only means the RPC accepted it for broadcast — confirmTransaction
+      // resolving normally does NOT mean the transaction succeeded, it only means the target
+      // commitment was reached; a reverted tx confirms with `.value.err` set and no throw. A
+      // real incident: a losing concurrent attempt's failed tx got recorded as 'complete'
+      // because this check didn't exist, while the actual successful transfer went unrecorded.
+      const confirmation = await conn.confirmTransaction(sig, 'confirmed');
+      if (confirmation.value.err) {
+        throw new Error(`MagicBlock transfer failed on-chain (${sig}): ${JSON.stringify(confirmation.value.err)}`);
+      }
     } else {
       // Amount below MagicBlock minimum ($5) — send directly via SPL transfer (fee payer covers gas)
       this.logger.log(`${W} balance ${(Number(burnerBalance) / 1e6).toFixed(6)} USDC < MagicBlock gasless minimum, using direct SPL transfer`);
@@ -2473,7 +2500,10 @@ export class LotteryService {
     tx.recentBlockhash = blockhash;
     tx.sign(feePayerKeypair);
     const sig = await conn.sendRawTransaction(tx.serialize());
-    await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+    const topUpConfirmation = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+    if (topUpConfirmation.value.err) {
+      throw new Error(`topUpFromFeeWallet failed on-chain (${sig}): ${JSON.stringify(topUpConfirmation.value.err)}`);
+    }
     this.logger.log(`topUpFromFeeWallet: sent ${(Number(amount) / 1_000_000).toFixed(6)} USDC → ${toAddress.slice(0, 8)}…, sig=${sig}`);
     return sig;
   }
@@ -2575,7 +2605,10 @@ export class LotteryService {
     tx.recentBlockhash = blockhash;
     tx.sign(feePayerKeypair, burnerKeypair);
     const sig = await conn.sendRawTransaction(tx.serialize());
-    await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+    const sweepConfirmation = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+    if (sweepConfirmation.value.err) {
+      throw new Error(`Burner sweep failed on-chain (${sig}): ${JSON.stringify(sweepConfirmation.value.err)}`);
+    }
 
     await db.from('lottery_tickets').update({
       burner_swept_at: new Date().toISOString(),
@@ -2666,7 +2699,10 @@ export class LotteryService {
     tx.sign(feePayerKeypair, burnerKeypair);
 
     const sig = await conn.sendRawTransaction(tx.serialize());
-    await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+    const confirmation = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+    if (confirmation.value.err) {
+      throw new Error(`Burner transfer failed on-chain (${sig}): ${JSON.stringify(confirmation.value.err)}`);
+    }
     this.logger.log(`Burner transfer complete: ${sig}, amount: ${amount}`);
     return sig;
   }
