@@ -750,10 +750,10 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
   );
 
   if (mode === "solana_private") {
-    const wMb = (MAGICBLOCK_BPS / 10_000) * ticketCostUsd + MAGICBLOCK_GASLESS_RELAY_FEE_USD;
-    const totalFees = (bridgeFeeUsd ?? BRIDGE_FEE_USD_EST) + wMb;
-    // Use actual Li.Fi toAmountMin if available, then subtract MagicBlock fee
-    const youReceive = bridgeReceiveUsdc != null ? Math.max(0, bridgeReceiveUsdc - wMb) : null;
+    // Backend /bridge-fee now returns the TRUE net (one consolidated bridge + MagicBlock relay +
+    // volume fee), so use it directly — don't re-subtract MagicBlock here or it double-counts.
+    const totalFees = bridgeFeeUsd ?? BRIDGE_FEE_USD_EST;
+    const youReceive = bridgeReceiveUsdc != null ? Math.max(0, bridgeReceiveUsdc) : null;
     return (
       <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
         <div className="flex justify-between items-start px-4 py-3.5 gap-4">
@@ -1205,7 +1205,13 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
         const mine = (data?.withdrawals ?? []).filter((w: WithdrawalSummary) => withdrawalIds.includes(w.id));
         if (!mine.length) return;
         if (mine.some((w: WithdrawalSummary) => w.status === "failed")) setTransferFailed(true);
-        else if (mine.every((w: WithdrawalSummary) => w.status === "complete")) setArrived(true);
+        else if (mine.every((w: WithdrawalSummary) => w.status === "complete")) {
+          // On completion the backend has stamped each row with the actually-delivered amount —
+          // show that real figure, not the gross win we optimistically displayed at redeem.
+          const delivered = mine.reduce((s: number, w: WithdrawalSummary) => s + (w.amountUsdc ?? 0), 0);
+          if (delivered > 0) setDoneAmount(delivered);
+          setArrived(true);
+        }
       } catch { /* keep polling */ }
     }, 5000);
     return () => clearInterval(id);
@@ -1245,7 +1251,9 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
       setWithdrawalIds(data?.withdrawalIds ?? []);
       setArrived(false);
       setTransferFailed(false);
-      setDoneAmount(totalAmount);
+      // Show the NET the user will actually receive (after fees), not the gross win — the polling
+      // above replaces this with the exact delivered amount once the transfer completes.
+      setDoneAmount(bridgeReceiveUsdc ?? totalAmount);
       setDone(true); onWithdrawn();
     } catch (err: any) { setError(err.message ?? "Unknown error"); }
     finally { setLoading(false); }
@@ -1600,11 +1608,15 @@ function TicketNumberCard({ tn, winningNumbers }: {
   const bonusHit = winningNumbers ? tn.bonus === winningNumbers.bonus : false;
   const matchedCount = winSet ? tn.main.filter(n => winSet.has(n)).length : 0;
   const prize = winningNumbers ? ticketTierLabel(matchedCount, bonusHit) : null;
-  const isWin = prize !== null && prize !== "Free ticket";
-  const isFreeTicket = prize === "Free ticket";
+  // Megapot's own lowest tier is marketed as "a free ticket", but on-chain claimWinnings pays
+  // out real USDC for it exactly like every other tier — there's no separate non-monetary
+  // redemption path in either their contract or ours. Treat it as a normal win, not a distinct
+  // "free ticket" case, so this badge can't contradict the card header (which already shows it
+  // as a real, redeemable "Won!" amount).
+  const isWin = prize !== null;
 
   return (
-    <div className={`flex items-center rounded-xl border bg-white/[0.04] px-3 gap-3 relative overflow-hidden ${isWin ? "border-emerald-500/30" : isFreeTicket ? "border-emerald-500/20" : "border-white/[0.08]"
+    <div className={`flex items-center rounded-xl border bg-white/[0.04] px-3 gap-3 relative overflow-hidden ${isWin ? "border-emerald-500/30" : "border-white/[0.08]"
       }`} style={{ minHeight: 58 }}>
       {/* Numbers */}
       <div className="flex flex-col gap-1 flex-1 min-w-0 py-3">
@@ -1640,10 +1652,6 @@ function TicketNumberCard({ tn, winningNumbers }: {
             {isWin ? (
               <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold whitespace-nowrap">
                 WIN
-              </span>
-            ) : isFreeTicket ? (
-              <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/20 text-emerald-300 text-xs font-bold whitespace-nowrap">
-                FREE
               </span>
             ) : (
               <span className="text-slate-600 text-xs font-bold uppercase tracking-wide">No win</span>
