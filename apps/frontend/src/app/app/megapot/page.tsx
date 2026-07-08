@@ -1639,7 +1639,7 @@ function TicketNumberCard({ tn, winningNumbers }: {
           <div className="shrink-0 py-3">
             {isWin ? (
               <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold whitespace-nowrap">
-                WIN {prize}
+                WIN
               </span>
             ) : isFreeTicket ? (
               <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/20 text-emerald-300 text-xs font-bold whitespace-nowrap">
