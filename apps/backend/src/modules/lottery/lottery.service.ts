@@ -1889,13 +1889,20 @@ export class LotteryService {
     const smartAcctUsdc = await this.getCompanionUsdcBalance(ticket.companion_address).catch(() => null);
     this.logger.log(`${W} Li.Fi: USDC check — smartAcct=${ticket.companion_address}:${smartAcctUsdc ?? '?'}`);
 
-    const bridgeAmount = Math.min(smartAcctUsdc ?? withdrawal.amount_usdc, withdrawal.amount_usdc);
+    // Trust the real on-chain balance over the NFT-metadata-derived estimate — that estimate has
+    // been wrong in BOTH directions in production (overstated for some tickets, crushed to near-
+    // zero for others). Capping at the stored estimate when the real balance is higher used to
+    // silently strand the excess in the companion wallet; bridge whatever is actually there.
+    const bridgeAmount = smartAcctUsdc ?? withdrawal.amount_usdc;
 
-    if (bridgeAmount < withdrawal.amount_usdc - 0.05) {
+    if (Math.abs(bridgeAmount - withdrawal.amount_usdc) > 0.005) {
       await db.from('lottery_tickets')
         .update({ win_amount_usdc: bridgeAmount, updated_at: new Date().toISOString() })
         .eq('id', ticket.id);
-      this.logger.log(`${W} updated win_amount_usdc: ${withdrawal.amount_usdc.toFixed(6)} (NFT) → ${bridgeAmount.toFixed(6)} (actual)`);
+      await db.from('lottery_withdrawals')
+        .update({ amount_usdc: bridgeAmount, updated_at: new Date().toISOString() })
+        .eq('id', withdrawal.id);
+      this.logger.log(`${W} updated win_amount_usdc: ${withdrawal.amount_usdc.toFixed(6)} (estimate) → ${bridgeAmount.toFixed(6)} (actual on-chain)`);
     }
 
     this.logger.log(`${W} Li.Fi: bridging smart account (${(ticket.companion_address as string).slice(0, 10)}…) → burner=${burnerAddress.slice(0, 8)}… amount=${bridgeAmount.toFixed(6)} USDC`);
@@ -2184,6 +2191,10 @@ export class LotteryService {
     }
 
     this.logger.log(`${W} step 3/3 complete: sig=${sig}`);
+    // The actual USDC that landed in the user's wallet — exactOut guarantees the gasless path
+    // delivers exactly `transferAmount`; the direct-SPL fallback sends the full burner balance.
+    const deliveredUsdc = (canUseGasless ? transferAmount : Number(burnerBalance)) / 1_000_000;
+
     const updateData = { status: 'complete', magicblock_tx_hash: sig, bridge_status: 'done', updated_at: new Date().toISOString() };
     let ticketIds: string[] = [];
     if (batchId) {
@@ -2196,12 +2207,27 @@ export class LotteryService {
       if (withdrawal.ticket_id) ticketIds = [withdrawal.ticket_id];
     }
 
-    // Mark each associated ticket as withdrawn so it disappears from the redeem UI
+    // Reconcile each ticket's displayed win amount with what was actually delivered — the
+    // mid-pipeline Base-side correction in processLifiWithdrawal doesn't account for the
+    // MagicBlock relay fee, so without this the History tab still overstates the real payout by
+    // that fee. Prorate the real delivered total across tickets by their current recorded share
+    // (keeps relative amounts sensible for a batch) rather than guessing a per-ticket split.
     if (ticketIds.length) {
-      await db.from('lottery_tickets')
-        .update({ status: 'withdrawn', updated_at: new Date().toISOString() })
+      const { data: ticketsForPayout } = await db
+        .from('lottery_tickets')
+        .select('id, win_amount_usdc')
         .in('id', ticketIds);
-      this.logger.log(`${W} marked ${ticketIds.length} ticket(s) withdrawn`);
+      const rows = ticketsForPayout ?? [];
+      const priorTotal = rows.reduce((sum: number, t: any) => sum + (t.win_amount_usdc ?? 0), 0);
+
+      for (const t of rows) {
+        const share = priorTotal > 0 ? (t.win_amount_usdc ?? 0) / priorTotal : 1 / rows.length;
+        const finalAmount = parseFloat((deliveredUsdc * share).toFixed(6));
+        await db.from('lottery_tickets')
+          .update({ status: 'withdrawn', win_amount_usdc: finalAmount, updated_at: new Date().toISOString() })
+          .eq('id', t.id);
+      }
+      this.logger.log(`${W} marked ${ticketIds.length} ticket(s) withdrawn, reconciled to actual delivered total $${deliveredUsdc.toFixed(6)}`);
     }
   }
 
