@@ -81,11 +81,11 @@ export class LotteryController {
 
   @Get('bridge-fee')
   @Public()
-  @ApiOperation({ summary: 'Get actual Li.Fi bridge fee for withdrawal amount (Base→Solana)' })
+  @ApiOperation({ summary: 'Estimate net a private withdrawal delivers (Li.Fi bridge + MagicBlock fees, Base→Solana)' })
   async bridgeFee(@Query('amountUsdc') amountUsdc: string): Promise<{ feeUsd: number; receiveUsdc: number }> {
     const amount = parseFloat(amountUsdc);
     if (!amount || amount <= 0 || amount > 1_000_000) throw new BadRequestException('amountUsdc must be between 0 and 1,000,000');
-    return this.lifi.getWithdrawalFeeEstimate(amount);
+    return this.lottery.estimatePrivateWithdrawalNet(amount);
   }
 
   @Post('buy')

@@ -18,7 +18,7 @@ import { SendPaymentEncryptionService } from '../send-payment/encryption.service
 import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI } from './megapot.service';
 import { RhinestoneService } from './rhinestone.service';
 import { LifiService } from './lifi.service';
-import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_VOLUME_FEE_BPS } from '@/common/magicblock-private-transfer';
+import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const TICKET_PRICE_USDC = 1;
@@ -1781,18 +1781,126 @@ export class LotteryService {
 
     if (wErr || !withdrawals?.length) throw new Error(`Failed to create batch withdrawals: ${wErr?.message}`);
 
-    // Claim + bridge each companion wallet in parallel
-    for (const w of withdrawals) {
-      const ticket = tickets.find(t => t.id === w.ticket_id);
-      if (ticket) {
-        this.processWithdrawal(w.id, ticket).catch(e =>
-          this.logger.error(`Batch withdrawal ${w.id}: ${e.message}`),
-        );
-      }
-    }
+    // Consolidate: claim every companion, sweep them all into one "lead" companion on Base
+    // (Rhinestone-sponsored, ~free), then bridge ONCE. Across charges a mostly-fixed ~$0.16 fee
+    // per bridge regardless of size, so bridging each ticket separately (the old behaviour) paid
+    // that fixed fee N times — brutal on small wins (a $1 ticket lost 16% to its own bridge).
+    this.processConsolidatedBatch(batchId, tickets, withdrawals, burnerAddress).catch(e =>
+      this.logger.error(`Batch withdrawal ${batchId}: ${e.message}`),
+    );
 
     this.logger.log(`Batch withdrawal ${batchId}: ${tickets.length} tickets → burner ${burnerAddress}`);
     return { withdrawalIds: withdrawals.map(w => w.id), batchId };
+  }
+
+  /**
+   * Consolidated batch processing: claim all winnings, sweep every companion's USDC into a single
+   * lead companion, then do ONE Li.Fi bridge to the shared burner (instead of one per ticket).
+   * The final MagicBlock transfer already fires once for the whole batch. Net effect: the fixed
+   * per-bridge fee is paid once, not N times.
+   */
+  private async processConsolidatedBatch(
+    batchId: string,
+    tickets: any[],
+    withdrawals: { id: string; ticket_id: string }[],
+    burnerAddress: string,
+  ): Promise<void> {
+    const db = this.supabase.getClient();
+    const B = `[Batch ${batchId.slice(0, 8)}]`;
+    const widByTicket = new Map(withdrawals.map(w => [w.ticket_id, w.id]));
+
+    // ── Step 1: claim every ticket's winnings into its own companion ──────────
+    const claimed: { ticket: any; withdrawalId: string; balance: number }[] = [];
+    for (const ticket of tickets) {
+      const withdrawalId = widByTicket.get(ticket.id);
+      if (!withdrawalId) continue;
+      const W = `[Withdrawal ${withdrawalId.slice(0, 8)}]`;
+      try {
+        const companionKey = this.decryptKey(ticket.companion_key_enc, ticket.companion_address);
+        const companionPrivHex = `0x${companionKey.toString('hex')}`;
+
+        if (!ticket.claim_tx_hash) {
+          const preSmartUsdc = await this.getCompanionUsdcBalance(ticket.companion_address).catch(() => 0);
+          if (preSmartUsdc >= ticket.win_amount_usdc - 0.15) {
+            await db.from('lottery_tickets').update({ claim_tx_hash: 'already_claimed', updated_at: new Date().toISOString() }).eq('id', ticket.id);
+          } else {
+            const allNftIds: string[] = ticket.ticket_nft_ids ?? [];
+            const nftResults = await this.megapot.checkTicketResultsFromNft(allNftIds);
+            const winningNftIds = nftResults.filter(r => r.winAmountUsdc > 0).map(r => BigInt(r.tokenId));
+            if (winningNftIds.length === 0) throw new Error(`No winning NFT IDs found among ${allNftIds.length} ticket NFTs`);
+            const claimTx = await this.rhinestone.claimWinnings({ companionPrivateKey: companionPrivHex as `0x${string}`, ticketNftIds: winningNftIds });
+            await db.from('lottery_tickets').update({ claim_tx_hash: claimTx, updated_at: new Date().toISOString() }).eq('id', ticket.id);
+            this.logger.log(`${W} claimed → ${claimTx}`);
+          }
+        }
+        await db.from('lottery_withdrawals').update({ status: 'processing', updated_at: new Date().toISOString() }).eq('id', withdrawalId);
+
+        // Real claimed balance — the source of truth for this ticket's actual win (NFT metadata
+        // has proven unreliable). Reconcile the recorded amounts to it now.
+        const balance = await this.getCompanionUsdcBalance(ticket.companion_address).catch(() => 0);
+        if (balance > 0) {
+          await db.from('lottery_tickets').update({ win_amount_usdc: balance, updated_at: new Date().toISOString() }).eq('id', ticket.id);
+          await db.from('lottery_withdrawals').update({ amount_usdc: balance, updated_at: new Date().toISOString() }).eq('id', withdrawalId);
+          claimed.push({ ticket, withdrawalId, balance });
+        } else {
+          throw new Error('Companion has no USDC after claim');
+        }
+      } catch (err: any) {
+        await db.from('lottery_withdrawals').update({ status: 'failed', error_message: err.message, updated_at: new Date().toISOString() }).eq('id', withdrawalId);
+        this.logger.error(`${W} claim/reconcile failed: ${err.message}`);
+      }
+    }
+
+    if (!claimed.length) {
+      this.logger.error(`${B} no tickets successfully claimed — nothing to bridge`);
+      return;
+    }
+
+    // ── Step 2: pick the largest-balance companion as lead, sweep the rest into it ──
+    claimed.sort((a, b) => b.balance - a.balance);
+    const lead = claimed[0];
+    const leadKey = this.decryptKey(lead.ticket.companion_key_enc, lead.ticket.companion_address);
+    const leadPrivHex = `0x${leadKey.toString('hex')}`;
+    const leadAddress = lead.ticket.companion_address as Address;
+
+    for (const c of claimed.slice(1)) {
+      const W = `[Withdrawal ${c.withdrawalId.slice(0, 8)}]`;
+      try {
+        const cKey = this.decryptKey(c.ticket.companion_key_enc, c.ticket.companion_address);
+        await this.rhinestone.rescueUsdc({
+          companionPrivateKey: `0x${cKey.toString('hex')}` as `0x${string}`,
+          rescueWallet: leadAddress,
+          amountUsdc: c.balance,
+        });
+        this.logger.log(`${W} swept ${c.balance.toFixed(6)} USDC → lead companion ${leadAddress.slice(0, 10)}…`);
+        // This row is now folded into the lead's single bridge — mark its bridge leg done so
+        // tryCompleteBatch counts it, but it holds no independent lifi_tx_hash so the cron never
+        // bridges it separately.
+        await db.from('lottery_withdrawals').update({ bridge_status: 'done', updated_at: new Date().toISOString() }).eq('id', c.withdrawalId);
+      } catch (err: any) {
+        this.logger.error(`${W} sweep to lead failed: ${err.message} — leaving as its own bridge`);
+        // Fallback: if the sweep fails, bridge this companion on its own so funds aren't stranded.
+        const cKey = this.decryptKey(c.ticket.companion_key_enc, c.ticket.companion_address);
+        await this.bridgeCompanionToBurner({
+          withdrawalId: c.withdrawalId,
+          companionPrivHex: `0x${cKey.toString('hex')}`,
+          companionAddress: c.ticket.companion_address,
+          burnerAddress,
+          amountUsdc: c.balance,
+        }).catch(e => this.logger.error(`${W} fallback bridge failed: ${e.message}`));
+      }
+    }
+
+    // ── Step 3: ONE bridge from the lead companion (now holding the consolidated total) ──
+    const leadTotal = await this.getCompanionUsdcBalance(leadAddress).catch(() => lead.balance);
+    this.logger.log(`${B} bridging consolidated ${leadTotal.toFixed(6)} USDC from lead → burner (1 bridge for ${claimed.length} ticket(s))`);
+    await this.bridgeCompanionToBurner({
+      withdrawalId: lead.withdrawalId,
+      companionPrivHex: leadPrivHex,
+      companionAddress: leadAddress,
+      burnerAddress,
+      amountUsdc: leadTotal,
+    });
   }
 
   async processWithdrawal(withdrawalId: string, ticket: any): Promise<void> {
@@ -1871,6 +1979,109 @@ export class LotteryService {
     }
   }
 
+  /**
+   * Estimate what a private (Solana) withdrawal actually delivers, mirroring the real pipeline so
+   * the "you receive" figure matches what lands: one Li.Fi bridge (Base→Solana) then the MagicBlock
+   * private transfer. Post-consolidation there is exactly ONE bridge for the whole redeem, so
+   * estimating on the total is accurate. Returns net delivered + total fee.
+   */
+  /**
+   * MagicBlock's gasless relay fee in USDC = its 0.002 SOL gas cost priced at the LIVE SOL/USD
+   * rate (NOT a hardcoded dollar amount — SOL moves, so a fixed $0.20 drifts wrong). Falls back to
+   * the documented flat value only if the price feed is unreachable.
+   */
+  private async magicblockRelayFeeUsdc(): Promise<number> {
+    const solPrice = await fetchSolPriceUsd().catch(() => null);
+    if (!solPrice || solPrice <= 0) return MAGICBLOCK_GAS_USDC;
+    return MAGICBLOCK_GAS_SOL * solPrice;
+  }
+
+  async estimatePrivateWithdrawalNet(amountUsdc: number): Promise<{ feeUsd: number; receiveUsdc: number }> {
+    // 1. Bridge leg: what actually lands in the burner (Li.Fi's guaranteed min out).
+    const bridge = await this.lifi.getWithdrawalFeeEstimate(amountUsdc);
+    const bridgeReceive = bridge.receiveUsdc;
+
+    // 2. MagicBlock leg — mirror doMagicBlockTransfer exactly:
+    //    gasless path (net ≥ $5): relay fee (0.002 SOL priced live) + 10 bps volume fee, exactOut.
+    //    below $5: falls back to a direct SPL transfer (Loofta's fee payer covers gas), so the full
+    //    bridged amount is delivered with no MagicBlock fee.
+    const relayFee = await this.magicblockRelayFeeUsdc();
+    const afterRelay = bridgeReceive - relayFee;
+    const gaslessNet = afterRelay > 0 ? afterRelay * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS) / 10_000 : 0;
+
+    const net = gaslessNet >= 5 ? gaslessNet : bridgeReceive;
+    const receiveUsdc = parseFloat(Math.max(0, net).toFixed(6));
+    const feeUsd = parseFloat(Math.max(0, amountUsdc - receiveUsdc).toFixed(6));
+    return { feeUsd, receiveUsdc };
+  }
+
+  /**
+   * Crash-safety net for consolidated batches. `processConsolidatedBatch` runs the claim → sweep →
+   * single-lead-bridge in one shot; if it dies after funds are consolidated into the lead companion
+   * but before that bridge is submitted, nothing else would ever bridge them. Funds are never lost
+   * (they sit in a Loofta-controlled smart account), but they'd be stuck. This cron finds any
+   * batch withdrawal that's been 'processing' with no bridge submitted for a few minutes, and — if
+   * the companion still holds USDC on Base — bridges it. Idempotent: once a bridge is submitted the
+   * row has a lifi_tx_hash and is skipped; a swept-out companion has ~0 balance and is skipped.
+   */
+  private recoveringBatches = false;
+
+  async recoverStuckConsolidatedBatches(): Promise<void> {
+    if (this.recoveringBatches) return;
+    this.recoveringBatches = true;
+    try {
+      const db = this.supabase.getClient();
+      const threeMinAgo = new Date(Date.now() - 3 * 60_000).toISOString();
+      const { data: stuck } = await db
+        .from('lottery_withdrawals')
+        .select('*')
+        .eq('route', 'solana_private')
+        .eq('status', 'processing')
+        .not('batch_id', 'is', null)
+        .is('lifi_tx_hash', null)
+        .lt('updated_at', threeMinAgo)
+        .limit(20);
+      if (!stuck?.length) return;
+
+      const byBatch = new Map<string, any[]>();
+      for (const w of stuck) {
+        if (!byBatch.has(w.batch_id)) byBatch.set(w.batch_id, []);
+        byBatch.get(w.batch_id)!.push(w);
+      }
+
+      for (const [batchId, rows] of byBatch) {
+        // If any leg of this batch already has a live bridge, it's progressing normally — don't touch it.
+        const { data: allRows } = await db
+          .from('lottery_withdrawals')
+          .select('lifi_tx_hash, bridge_status, status')
+          .eq('batch_id', batchId);
+        const bridgeInFlight = (allRows ?? []).some(
+          (r: any) => r.lifi_tx_hash && r.bridge_status !== 'done' && r.status !== 'failed' && r.status !== 'complete',
+        );
+        if (bridgeInFlight) continue;
+
+        for (const w of rows) {
+          const { data: ticket } = await db.from('lottery_tickets').select('*').eq('id', w.ticket_id).single();
+          if (!ticket) continue;
+          const bal = await this.getCompanionUsdcBalance(ticket.companion_address).catch(() => 0);
+          if (bal <= 0.005) continue; // already swept/bridged out of this companion
+          this.logger.warn(`[Batch ${batchId.slice(0, 8)}] RECOVERY — companion ${ticket.companion_address.slice(0, 10)}… holds ${bal.toFixed(6)} USDC with no bridge submitted; bridging now`);
+          const key = this.decryptKey(ticket.companion_key_enc, ticket.companion_address);
+          await this.bridgeCompanionToBurner({
+            withdrawalId: w.id,
+            companionPrivHex: `0x${key.toString('hex')}`,
+            companionAddress: ticket.companion_address,
+            burnerAddress: w.withdrawal_burner_sol_address,
+            amountUsdc: bal,
+          }).catch(e => this.logger.error(`[Batch ${batchId.slice(0, 8)}] recovery bridge failed: ${e.message}`));
+          break; // one bridge per batch per tick; a split balance is picked up next tick
+        }
+      }
+    } finally {
+      this.recoveringBatches = false;
+    }
+  }
+
   /** Li.Fi bridge: Base USDC (companion) → Solana USDC (shared burner). */
   private async processLifiWithdrawal(
     withdrawalId: string,
@@ -1905,35 +2116,58 @@ export class LotteryService {
       this.logger.log(`${W} updated win_amount_usdc: ${withdrawal.amount_usdc.toFixed(6)} (estimate) → ${bridgeAmount.toFixed(6)} (actual on-chain)`);
     }
 
-    this.logger.log(`${W} Li.Fi: bridging smart account (${(ticket.companion_address as string).slice(0, 10)}…) → burner=${burnerAddress.slice(0, 8)}… amount=${bridgeAmount.toFixed(6)} USDC`);
-    const quote = await this.lifi.getBaseToSolQuote({
-      fromAddress: ticket.companion_address as string,
-      toAddress: burnerAddress,
+    await this.bridgeCompanionToBurner({
+      withdrawalId,
+      companionPrivHex,
+      companionAddress: ticket.companion_address as string,
+      burnerAddress,
       amountUsdc: bridgeAmount,
+    });
+  }
+
+  /**
+   * Single Li.Fi bridge: companion USDC (Base) → shared burner (Solana). Sets lifi_tx_hash on the
+   * withdrawal row; the cron polls it to DONE and then fires the batch's one MagicBlock transfer.
+   * Kept free of any per-ticket win-amount reconciliation so it can bridge a *consolidated* lead
+   * balance without misattributing the whole total to the lead ticket.
+   */
+  private async bridgeCompanionToBurner(opts: {
+    withdrawalId: string;
+    companionPrivHex: string;
+    companionAddress: string;
+    burnerAddress: string;
+    amountUsdc: number;
+  }): Promise<string> {
+    const db = this.supabase.getClient();
+    const W = `[Withdrawal ${opts.withdrawalId.slice(0, 8)}]`;
+    const quote = await this.lifi.getBaseToSolQuote({
+      fromAddress: opts.companionAddress,
+      toAddress: opts.burnerAddress,
+      amountUsdc: opts.amountUsdc,
     });
     const feeUsd = this.lifi.feeFromQuote(quote);
     const receiveUsdc = parseFloat(quote.estimate.toAmountMin) / 1_000_000;
-    this.logger.log(`${W} Li.Fi: quote via ${quote.tool} — send ${bridgeAmount.toFixed(6)} USDC, receive min ${receiveUsdc.toFixed(4)} USDC, fee ~$${feeUsd.toFixed(4)}`);
+    this.logger.log(`${W} Li.Fi: quote via ${quote.tool} — send ${opts.amountUsdc.toFixed(6)} USDC, receive min ${receiveUsdc.toFixed(4)} USDC, fee ~$${feeUsd.toFixed(4)}`);
 
     const txHash = await this.rhinestone.executeLifiSwap({
-      companionPrivateKey: companionPrivHex as `0x${string}`,
+      companionPrivateKey: opts.companionPrivHex as `0x${string}`,
       approvalAddress: quote.estimate.approvalAddress as Address | undefined,
       fromAmountRaw: BigInt(quote.estimate.fromAmount),
       swapTo: quote.transactionRequest.to as Address,
       swapData: quote.transactionRequest.data as `0x${string}`,
       swapValue: quote.transactionRequest.value ? BigInt(quote.transactionRequest.value) : 0n,
-      toChainAddress: burnerAddress,
+      toChainAddress: opts.burnerAddress,
     });
-    this.logger.log(`${W} Li.Fi: Rhinestone swap submitted tx=${txHash}`);
 
     await db.from('lottery_withdrawals').update({
       lifi_tx_hash: txHash,
       lifi_step_tool: quote.tool,
       bridge_status: 'pending',
       updated_at: new Date().toISOString(),
-    }).eq('id', withdrawalId);
+    }).eq('id', opts.withdrawalId);
 
     this.logger.log(`${W} Li.Fi bridge submitted — tool=${quote.tool} tx=${txHash} → waiting for DONE (polls every cron tick)`);
+    return txHash;
   }
 
   private withdrawalsRunning = false;
@@ -2055,14 +2289,19 @@ export class LotteryService {
 
     if (!allInBatch?.length) return;
 
-    const pending = allInBatch.filter(w => w.bridge_status !== 'done' && w.status !== 'complete');
-    const done = allInBatch.length - pending.length;
+    // A row is "settled" once its bridge is done, it's already complete, OR it failed (a failed
+    // row will never bridge, so waiting on it would stall the batch forever — exclude it). Only
+    // non-failed rows count toward the total that actually reaches the burner.
+    const pending = allInBatch.filter(w => w.bridge_status !== 'done' && w.status !== 'complete' && w.status !== 'failed');
+    const settled = allInBatch.length - pending.length;
     if (pending.length > 0) {
-      this.logger.log(`${B} ${done}/${allInBatch.length} bridges done — ${pending.length} still pending, waiting`);
+      this.logger.log(`${B} ${settled}/${allInBatch.length} legs settled — ${pending.length} still pending, waiting`);
       return;
     }
 
-    const totalUsdc = allInBatch.reduce((sum, w) => sum + parseFloat(w.amount_usdc ?? '0'), 0);
+    const totalUsdc = allInBatch
+      .filter(w => w.status !== 'failed')
+      .reduce((sum, w) => sum + parseFloat(w.amount_usdc ?? '0'), 0);
     this.logger.log(`${B} ALL bridges done (${allInBatch.length}/${allInBatch.length}) — total=${totalUsdc} USDC → MagicBlock private transfer`);
     await this.doMagicBlockTransfer(anyWithdrawal, totalUsdc, batchId);
   }
@@ -2115,7 +2354,11 @@ export class LotteryService {
     const burnerKeypair = Keypair.fromSecretKey(burnerKey);
     const cluster = this.getSolanaCluster();
 
-    const relayFeeUnits = Math.round(MAGICBLOCK_GAS_USDC * 1_000_000);
+    // Reserve MagicBlock's relay fee at the LIVE 0.002-SOL price (not a stale flat $0.20). A small
+    // 15% safety pad absorbs SOL-price movement between this reservation and MagicBlock building the
+    // tx; over-reserving only leaves recoverable dust, under-reserving fails the transfer.
+    const relayFeeUsdc = (await this.magicblockRelayFeeUsdc()) * 1.15;
+    const relayFeeUnits = Math.round(relayFeeUsdc * 1_000_000);
     // A plain (non-exactOut) request just moves `amount` in full with no internal gross-up, so
     // this used to send burnerBalance-minus-flat-fee directly — reasonable in principle, but it
     // silently assumed MAGICBLOCK_GAS_USDC ($0.20) always covers MagicBlock's real relay cost.
@@ -2198,9 +2441,11 @@ export class LotteryService {
     const updateData = { status: 'complete', magicblock_tx_hash: sig, bridge_status: 'done', updated_at: new Date().toISOString() };
     let ticketIds: string[] = [];
     if (batchId) {
-      await db.from('lottery_withdrawals').update(updateData).eq('batch_id', batchId);
-      // Collect ticket IDs for the entire batch so we can mark each ticket withdrawn
-      const { data: batchRows } = await db.from('lottery_withdrawals').select('ticket_id').eq('batch_id', batchId);
+      // Only settle rows that actually contributed to the burner — a 'failed' row (e.g. a claim
+      // that reverted) must NOT be flipped to complete, and its ticket must NOT be marked
+      // withdrawn (it never got paid).
+      await db.from('lottery_withdrawals').update(updateData).eq('batch_id', batchId).neq('status', 'failed');
+      const { data: batchRows } = await db.from('lottery_withdrawals').select('ticket_id').eq('batch_id', batchId).neq('status', 'failed');
       ticketIds = (batchRows ?? []).map((r: any) => r.ticket_id).filter(Boolean);
     } else {
       await db.from('lottery_withdrawals').update(updateData).eq('id', withdrawal.id);
@@ -2226,6 +2471,13 @@ export class LotteryService {
         await db.from('lottery_tickets')
           .update({ status: 'withdrawn', win_amount_usdc: finalAmount, updated_at: new Date().toISOString() })
           .eq('id', t.id);
+        // Also stamp the withdrawal row with the actually-delivered share so the client can show
+        // "you received $X" (the real net), not the gross win it optimistically displayed at redeem.
+        const rowUpdate = db.from('lottery_withdrawals')
+          .update({ amount_usdc: finalAmount, updated_at: new Date().toISOString() });
+        await (batchId
+          ? rowUpdate.eq('batch_id', batchId).eq('ticket_id', t.id)
+          : rowUpdate.eq('id', withdrawal.id));
       }
       this.logger.log(`${W} marked ${ticketIds.length} ticket(s) withdrawn, reconciled to actual delivered total $${deliveredUsdc.toFixed(6)}`);
     }

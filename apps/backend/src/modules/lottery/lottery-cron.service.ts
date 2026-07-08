@@ -101,4 +101,13 @@ export class LotteryCronService {
       this.logger.error(`refundStalledBridges: ${e.message}`),
     );
   }
+
+  /** Every 2 minutes: recover consolidated batches whose lead bridge never got submitted (crash). */
+  @Cron('*/2 * * * *')
+  async recoverStuckBatches(): Promise<void> {
+    if (!this.isProd) return;
+    await this.lottery.recoverStuckConsolidatedBatches().catch(e =>
+      this.logger.error(`recoverStuckConsolidatedBatches: ${e.message}`),
+    );
+  }
 }
