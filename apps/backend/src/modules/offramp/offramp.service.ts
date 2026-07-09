@@ -5,6 +5,7 @@ import { base } from 'viem/chains';
 import { SupabaseService } from '@/database/supabase.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { CreateOfframpDto } from './dto/create-offramp.dto';
+import { isZkp2pDepositFulfilled } from './zkp2p-fulfilment.util';
 
 const BASE_USDC: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const DEFAULT_BASE_RPC = 'https://mainnet.base.org';
@@ -262,27 +263,12 @@ export class OfframpService {
   }
 
   private async checkFulfilment(record: any) {
-    try {
-      const { getContracts } = await import('@zkp2p/sdk');
-      const { addresses, abis } = getContracts(base.id, 'production');
-      const publicClient = this.getPublicClient();
-
-      const deposit = await publicClient.readContract({
-        address: addresses.escrow as Address,
-        abi:     abis.escrow as any,
-        functionName: 'getDeposit',
-        args:    [BigInt(record.zkp2p_deposit_id)],
-      }) as any;
-
-      const remaining = deposit?.remainingDeposits ?? deposit?.remainingAmount;
-      if (remaining !== undefined && BigInt(remaining) === 0n) {
-        await this.supabase.getClient()
-          .from('offramp_requests')
-          .update({ status: 'COMPLETE', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq('id', record.id);
-      }
-    } catch (err: any) {
-      this.logger.debug(`checkFulfilment ${record.id}:`, err.message);
+    const fulfilled = await isZkp2pDepositFulfilled(this.getPublicClient(), record.zkp2p_deposit_id);
+    if (fulfilled) {
+      await this.supabase.getClient()
+        .from('offramp_requests')
+        .update({ status: 'COMPLETE', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', record.id);
     }
   }
 

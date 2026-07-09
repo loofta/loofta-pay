@@ -5,6 +5,7 @@ import { ChevronRight } from "lucide-react";
 import { Footer } from "./Footer";
 import { BottomNav } from "./BottomNav";
 import { MinimalHeader } from "./MinimalHeader";
+import { BeamHeader } from "./BeamHeader";
 import { UserSync } from "./UserSync";
 import dynamic from "next/dynamic";
 const UpdateJun26Modal = dynamic(() => import("@/components/UpdateJun26Modal").then(m => ({ default: m.UpdateJun26Modal })), { ssr: false });
@@ -25,16 +26,17 @@ function ShellContent({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
-  const showBottomNav = !isCheckoutPage && (
+  const isBeamPage = pathname?.startsWith('/beam') === true || pathname?.startsWith('/app/beam') === true;
+  const showBottomNav = !isCheckoutPage && !isBeamPage && (
     pathname === '/' || pathname === '/app' ||
     pathname === '/history' || pathname === '/app/history' ||
     pathname === '/settings' || pathname === '/app/settings' || pathname === '/app/profile' ||
     pathname?.startsWith('/c/') || pathname?.startsWith('/app/c/') ||
     pathname === '/sparks' || pathname === '/app/sparks'
   );
-  const showMinimalHeader = !isCheckoutPage;
+  const showMinimalHeader = !isCheckoutPage && !isBeamPage;
   const showBanner = showMinimalHeader && !bannerDismissed;
-  const showFooter = !isCheckoutPage;
+  const showFooter = !isCheckoutPage && !isBeamPage;
 
   const bannerText = networkMode === "mainnet" ? t('bannerMainnet') : t('bannerDevnet');
   const bannerLink = (
@@ -89,6 +91,7 @@ function ShellContent({ children }: { children: ReactNode }) {
         </div>
       )}
       {showMinimalHeader && <MinimalHeader />}
+      {isBeamPage && <BeamHeader />}
       <main className={showBottomNav ? "pb-20 md:pb-0" : undefined}>
         {children}
       </main>

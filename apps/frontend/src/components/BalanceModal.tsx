@@ -928,28 +928,35 @@ export function BalanceModal({
         const receipt = await pubClient.waitForTransactionReceipt({ hash: depositTxHash as `0x${string}`, timeout: 90_000 });
         let depositId: string | null = null;
 
-        // Primary: parse deposit ID from emitted event logs
+        // Primary: parse deposit ID from the DepositReceived event specifically. An unfiltered
+        // parseEventLogs() over the whole escrow ABI matches ANY event carrying a depositId
+        // field (DepositWithdrawn, IntentSignaled, DepositClosed, ...) — a bundled/sponsored tx
+        // receipt can contain other escrow events unrelated to this deposit, and grabbing the
+        // first depositId found silently records the wrong one. Cross-check depositor + amount
+        // too, in case the receipt contains more than one DepositReceived log.
         try {
           const { parseEventLogs } = await import("viem");
           const { getContracts: getZkpContracts } = await import("@zkp2p/sdk");
           const { abis } = getZkpContracts(base.id, 'production');
-          const parsed = parseEventLogs({ abi: abis.escrow as any, logs: receipt.logs });
-          for (const log of parsed as any[]) {
-            if (log.args?.depositId !== undefined) {
-              depositId = log.args.depositId.toString();
-              break;
-            }
-          }
+          const parsed = parseEventLogs({ abi: abis.escrow as any, eventName: "DepositReceived", logs: receipt.logs }) as any[];
+          const walletLower = peerBaseWalletAddress!.toLowerCase();
+          const match =
+            parsed.find((log) => log.args?.depositor?.toLowerCase() === walletLower && BigInt(log.args?.amount ?? 0) === atomicUsdc) ??
+            parsed.find((log) => log.args?.depositor?.toLowerCase() === walletLower);
+          if (match?.args?.depositId !== undefined) depositId = match.args.depositId.toString();
         } catch { /* fall through to polling */ }
 
         // Fallback: poll getAccountDeposits until the new deposit appears
         if (!depositId) {
           for (let attempt = 0; attempt < 6; attempt++) {
             try {
-              const deposits = await client.getAccountDeposits(peerBaseWalletAddress as `0x${string}`);
+              const deposits = await client.getAccountDeposits(peerBaseWalletAddress as `0x${string}`) as any[];
               if (Array.isArray(deposits) && deposits.length > 0) {
-                const latest = deposits[deposits.length - 1];
-                depositId = latest?.depositId?.toString() ?? null;
+                // Prefer an exact amount match — "take the last item" assumes ordering the SDK
+                // doesn't guarantee, which risks picking an older, unrelated deposit.
+                const exact = deposits.find((d) => BigInt(d?.deposit?.depositAmount ?? d?.depositAmount ?? 0) === atomicUsdc);
+                const chosen = exact ?? deposits.reduce((a, b) => (BigInt(b.depositId) > BigInt(a.depositId) ? b : a));
+                depositId = chosen?.depositId?.toString() ?? null;
                 if (depositId) break;
               }
             } catch { /* retry */ }
