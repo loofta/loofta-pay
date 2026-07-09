@@ -167,7 +167,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 text-slate-500 hover:text-slate-300"
+                className="h-8 w-8 text-slate-500 hover:text-white hover:bg-white/[0.08]"
                 disabled={!gf}
                 title={!gf ? 'Giphy API key required' : 'Search GIFs'}
               >
@@ -222,7 +222,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-slate-400 hover:text-white"
+                            className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-slate-400 hover:text-white hover:bg-white/[0.08]"
                             onClick={() => {
                               setGifSearchQuery('');
                               loadMoneyGifs();
