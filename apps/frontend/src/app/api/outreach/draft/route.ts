@@ -13,7 +13,7 @@ if (!process.env.ANTHROPIC_API_KEY) {
 } 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-type ProspectType = "creator" | "freelancer" | "web3_project";
+type ProspectType = "creator" | "freelancer" | "web3_project" | "giveaway_project";
 
 const TYPE_CONTEXT: Record<ProspectType, string> = {
   creator:
@@ -22,6 +22,8 @@ const TYPE_CONTEXT: Record<ProspectType, string> = {
     "Web3 freelancer or contractor (dev, designer, writer, auditor). Works for multiple clients. Real pain: when a client pays them on-chain, the client can see every other project they've worked on, how much they earned, who else paid them - full income history exposed. With Loofta they get paid privately in any token their client holds, and withdraw to whatever they want. No awkward 'I only have ETH' moments.",
   web3_project:
     "Web3 protocol or project that pays contributors, grantees, bounty hunters, or a distributed team. Real pain: when they pay contributors from their treasury, every recipient can see the full payment list - who got what, how much the treasury has, who the other contributors are. Loofta decouples payments from treasury visibility. They can pay in any token they hold; contributors receive privately. DEFAULT TO QUALIFYING unless purely a trading bot, scam, or completely dormant.",
+  giveaway_project:
+    "A crypto project, community, or account currently running (or about to run) a giveaway, reward campaign, or contest with a prize pool. This is NOT the treasury-privacy pitch - it's a partnership pitch. Real pain: paying out winners is a logistics headache (collecting wallet addresses, converting currencies, winners who don't hold crypto), and they want more eyes on the campaign. Loofta's angle: co-market the giveaway to Loofta's audience, and let Loofta Pay handle winner payouts so winners can claim straight to their bank app or wallet, no crypto knowledge required. DEFAULT TO QUALIFYING if there's a live or recent giveaway/reward campaign signal.",
 };
 
 function buildPrompt(
@@ -33,12 +35,14 @@ function buildPrompt(
     creator_pitch: string;
     freelancer_pitch: string;
     web3_project_pitch: string;
+    giveaway_project_pitch: string;
   },
 ) {
   const typePitch: Record<ProspectType, string> = {
-    creator:       config.creator_pitch,
-    freelancer:    config.freelancer_pitch,
-    web3_project:  config.web3_project_pitch,
+    creator:           config.creator_pitch,
+    freelancer:        config.freelancer_pitch,
+    web3_project:      config.web3_project_pitch,
+    giveaway_project:  config.giveaway_project_pitch,
   };
 
   return `You are writing outbound DMs for Lisa, founder of Loofta Pay.
@@ -73,16 +77,16 @@ ${typePitch[prospect.type] ?? config.product_pitch}
 ---
 TASK:
 
-1. RECLASSIFY - confirm or correct: "creator" | "freelancer" | "web3_project"
+1. RECLASSIFY - confirm or correct: "creator" | "freelancer" | "web3_project" | "giveaway_project"
 
-2. QUALIFY - default YES. Only NO if: price/trading bot, completely dead account, zero connection to paying or being paid.
+2. QUALIFY - default YES. Only NO if: price/trading bot, completely dead account, zero connection to paying or being paid (or, for giveaway_project, zero signal of a live/recent giveaway or reward campaign).
 
 3. DRAFT - 2-3 sentences max. Rules:
    - Open with exactly: "Hey, Lisa here from Loofta Pay."
    - Keep it simple and conversational - do not try to reference their specific bio or seem over-researched
    - Ask a qualifying question first ("is that your case?" style) before pitching
-   - Focus on the simple value prop: pay teammates privately, just using their email, they claim however they want
-   - Do NOT lead with the pain angle or treasury exposure - keep it friendly and low-pressure
+   - For creator/freelancer/web3_project: focus on the simple value prop: pay teammates privately, just using their email, they claim however they want. Do NOT lead with the pain angle or treasury exposure - keep it friendly and low-pressure.
+   - For giveaway_project: this is a partnership pitch, not a payments-privacy pitch. Ask if their giveaway/campaign is still live, then offer to co-market it and handle winner payouts through Loofta Pay so winners can claim without needing a crypto wallet.
    - Do NOT say: "first protocol", "revolutionize", "seamless", "ecosystem", "leverage", "excited to", "love what you're doing", "want to try it"
    - Do NOT use em dashes or en dashes - use a comma or period instead. This is critical.
    - No hashtags, no emojis
@@ -90,7 +94,7 @@ TASK:
 
 Respond ONLY with raw JSON (no markdown fences, no explanation):
 {
-  "type": "creator"|"freelancer"|"web3_project",
+  "type": "creator"|"freelancer"|"web3_project"|"giveaway_project",
   "qualified": true|false,
   "qualification_reason": "one sentence",
   "message": "draft DM text or null if not qualified"
@@ -137,7 +141,7 @@ export async function POST(req: NextRequest) {
     };
     // Normalize any stale "KOL" value Claude might still return
     if (parsed.type === "KOL") parsed.type = "creator";
-    if (!["creator","freelancer","web3_project"].includes(parsed.type)) parsed.type = "creator";
+    if (!["creator","freelancer","web3_project","giveaway_project"].includes(parsed.type)) parsed.type = "creator";
     // Strip all dash variants and curly quotes regardless of prompt compliance
     if (parsed.message) {
       parsed.message = parsed.message

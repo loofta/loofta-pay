@@ -11,14 +11,14 @@ import { useToast } from "@/components/ui/use-toast";
 import {
   Loader2, Play, Trash2, Zap, Check, X, RefreshCw,
   SlidersHorizontal, Target, SendHorizonal, ArrowLeft, Search,
-  Mic2, Briefcase, Building2, ChevronDown, ChevronUp, MapPin, Users,
+  Mic2, Briefcase, Building2, Gift, ChevronDown, ChevronUp, MapPin, Users,
   Copy, MessageCircle, UserCheck, Activity, Square, CheckSquare2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ProspectType   = "creator" | "freelancer" | "web3_project";
+type ProspectType   = "creator" | "freelancer" | "web3_project" | "giveaway_project";
 type ProspectStatus = "new" | "drafting" | "drafted" | "approved" | "rejected" | "sent" | "follow_pending";
 type Filter         = "all" | "approved" | "sent" | "rejected";
 
@@ -49,6 +49,7 @@ type OutreachConfig = {
   creator_pitch: string;
   freelancer_pitch: string;
   web3_project_pitch: string;
+  giveaway_project_pitch: string;
 };
 
 const DEFAULT_CONFIG: OutreachConfig = {
@@ -64,14 +65,17 @@ const DEFAULT_CONFIG: OutreachConfig = {
     "When a client pays you on-chain, they can see your full income history - who else paid you, how much, every project. Loofta pays you privately in any token your client has. No forced conversions, no exposed history. Early users get priority setup.",
   web3_project_pitch:
     "Hey, Lisa here from Loofta Pay. I'm reaching out to a few projects that pay their team in crypto - is that your case? We're offering free access to our platform to pay your teammates privately, just using their email address. They claim it however they want. Would love to have you in.",
+  giveaway_project_pitch:
+    "Hey, Lisa here from Loofta Pay. Saw you're running a giveaway right now, is that still live? We'd love to co-market it with you and cover payouts through Loofta Pay, so winners can claim straight to their bank or wallet, no crypto knowledge needed. Want to chat?",
 };
 
 // ─── Type metadata ────────────────────────────────────────────────────────────
 
 const TYPE_META: Record<ProspectType, { label: string; icon: React.ReactNode; badge: string }> = {
-  creator:      { label: "Creator",      icon: <Mic2      className="h-3 w-3" />, badge: "border-orange-500/30 text-orange-300 bg-orange-500/10" },
-  freelancer:   { label: "Freelancer",   icon: <Briefcase className="h-3 w-3" />, badge: "border-sky-500/30    text-sky-300    bg-sky-500/10"    },
-  web3_project: { label: "Web3 Project", icon: <Building2 className="h-3 w-3" />, badge: "border-emerald-500/30 text-emerald-300 bg-emerald-500/10" },
+  creator:          { label: "Creator",       icon: <Mic2      className="h-3 w-3" />, badge: "border-orange-500/30 text-orange-300 bg-orange-500/10" },
+  freelancer:       { label: "Freelancer",    icon: <Briefcase className="h-3 w-3" />, badge: "border-sky-500/30    text-sky-300    bg-sky-500/10"    },
+  web3_project:     { label: "Web3 Project",  icon: <Building2 className="h-3 w-3" />, badge: "border-emerald-500/30 text-emerald-300 bg-emerald-500/10" },
+  giveaway_project: { label: "Giveaway",      icon: <Gift      className="h-3 w-3" />, badge: "border-fuchsia-500/30 text-fuchsia-300 bg-fuchsia-500/10" },
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -483,9 +487,10 @@ function TypePitchConfig({
       {open && (
         <div className="px-4 pb-4 space-y-3 border-t border-white/[0.06]">
           {([
-            { key: "creator_pitch",      label: "Creator / KOL angle", color: "text-orange-400" },
-            { key: "freelancer_pitch",   label: "Freelancer angle",    color: "text-sky-400"    },
-            { key: "web3_project_pitch", label: "Web3 Project angle",  color: "text-emerald-400"},
+            { key: "creator_pitch",          label: "Creator / KOL angle", color: "text-orange-400" },
+            { key: "freelancer_pitch",        label: "Freelancer angle",    color: "text-sky-400"    },
+            { key: "web3_project_pitch",      label: "Web3 Project angle",  color: "text-emerald-400"},
+            { key: "giveaway_project_pitch",  label: "Giveaway angle",      color: "text-fuchsia-400"},
           ] as const).map(({ key, label, color }) => (
             <div key={key} className="pt-3">
               <span className={cn("block mb-1.5 text-xs font-mono font-medium uppercase tracking-wider", color)}>{label}</span>
@@ -897,8 +902,8 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
                 placeholder="bio / signal…"
                 className="text-sm bg-white/[0.04] border-white/[0.08] min-h-[64px] resize-none text-gray-200 placeholder:text-gray-600 focus:border-orange-500/40" />
 
-              <div className="grid grid-cols-3 gap-1.5">
-                {(["creator","freelancer","web3_project"] as ProspectType[]).map((t) => (
+              <div className="grid grid-cols-2 gap-1.5">
+                {(["creator","freelancer","web3_project","giveaway_project"] as ProspectType[]).map((t) => (
                   <button key={t} onClick={() => setNewType(t)}
                     className={cn(
                       "h-8 rounded-lg text-xs font-mono font-medium uppercase tracking-wide border transition-colors",
