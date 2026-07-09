@@ -570,39 +570,45 @@ export class LotteryService {
    * recipient (see purchaseGiftTickets) and disappears from the sender's own ticket
    * dashboard/history — this is what lets a sender keep seeing "gifted to X, claimed" afterward.
    */
-  async getMyGifts(userId: string): Promise<{
-    giftId: string;
-    createdAt: string;
-    numTickets: number;
-    note: string | null;
-    recipientType: 'email' | 'handle';
-    recipientIdentifier: string;
-    status: string;
-    claimedAt: string | null;
-    claimToken: string;
-    claimUrl: string;
-  }[]> {
+  async getMyGifts(userId: string, offset: number, limit: number): Promise<{
+    gifts: {
+      giftId: string;
+      createdAt: string;
+      numTickets: number;
+      note: string | null;
+      recipientType: 'email' | 'handle';
+      recipientIdentifier: string;
+      status: string;
+      claimedAt: string | null;
+      claimToken: string;
+      claimUrl: string;
+    }[];
+    total: number;
+  }> {
     const db = this.supabase.getClient();
-    const { data: gifts } = await db
+    const { data: gifts, count } = await db
       .from('lottery_gifts')
-      .select('id, created_at, num_tickets, note, recipient_type, recipient_identifier, status, claimed_at, claim_token')
+      .select('id, created_at, num_tickets, note, recipient_type, recipient_identifier, status, claimed_at, claim_token', { count: 'exact' })
       .eq('created_by_user_id', userId)
       .eq('funding_mode', 'sender_paid')
       .neq('status', 'pending_payment') // abandoned mid-signature — not a real gift yet, nothing to show
       .order('created_at', { ascending: false })
-      .limit(50);
-    return (gifts ?? []).map(g => ({
-      giftId: g.id,
-      createdAt: g.created_at,
-      numTickets: g.num_tickets,
-      note: g.note,
-      recipientType: g.recipient_type,
-      recipientIdentifier: g.recipient_identifier,
-      status: g.status,
-      claimedAt: g.claimed_at,
-      claimToken: g.claim_token,
-      claimUrl: `https://pay.loofta.xyz/gift/${g.claim_token}`,
-    }));
+      .range(offset, offset + limit - 1);
+    return {
+      gifts: (gifts ?? []).map(g => ({
+        giftId: g.id,
+        createdAt: g.created_at,
+        numTickets: g.num_tickets,
+        note: g.note,
+        recipientType: g.recipient_type,
+        recipientIdentifier: g.recipient_identifier,
+        status: g.status,
+        claimedAt: g.claimed_at,
+        claimToken: g.claim_token,
+        claimUrl: `https://pay.loofta.xyz/gift/${g.claim_token}`,
+      })),
+      total: count ?? 0,
+    };
   }
 
   /**

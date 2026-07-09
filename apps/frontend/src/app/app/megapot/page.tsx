@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign } from "lucide-react";
+import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2 } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { getMyGifts, type MyGiftItem } from "@/services/api/lotteryGift";
 
@@ -1940,23 +1940,38 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const syncedIds = useRef<Set<string>>(new Set());
 
-  // Gifts you sent — separate from your own tickets, since a claimed gift's ownership moves to
-  // the recipient (see LotteryService.transferGiftedTicket) and would otherwise vanish from view.
+  // Gifts you sent — separate from your own tickets, since ownership of a claimed gift's ticket
+  // belongs to the recipient, not you (see LotteryService.purchaseGiftTickets).
+  const GIFTS_PAGE = 20;
   const { user: giftsUser } = usePrivy();
   const [myGifts, setMyGifts] = useState<MyGiftItem[]>([]);
   const [myGiftsLoaded, setMyGiftsLoaded] = useState(false);
+  const [myGiftsTotal, setMyGiftsTotal] = useState(0);
+  const [loadingMoreGifts, setLoadingMoreGifts] = useState(false);
   const [copiedGiftId, setCopiedGiftId] = useState<string | null>(null);
   useEffect(() => {
     if (!giftsUser?.id) return;
     (async () => {
       try {
         const accessToken = await getAccessToken();
-        const gifts = await getMyGifts(giftsUser.id, accessToken);
+        const { gifts, total } = await getMyGifts(giftsUser.id, 0, GIFTS_PAGE, accessToken);
         setMyGifts(gifts);
+        setMyGiftsTotal(total);
       } catch { /* non-fatal */ }
       finally { setMyGiftsLoaded(true); }
     })();
   }, [giftsUser?.id, getAccessToken]);
+  async function handleLoadMoreGifts() {
+    if (!giftsUser?.id || loadingMoreGifts) return;
+    setLoadingMoreGifts(true);
+    try {
+      const accessToken = await getAccessToken();
+      const { gifts, total } = await getMyGifts(giftsUser.id, myGifts.length, GIFTS_PAGE, accessToken);
+      setMyGifts(prev => [...prev, ...gifts]);
+      setMyGiftsTotal(total);
+    } catch { /* non-fatal */ }
+    finally { setLoadingMoreGifts(false); }
+  }
   function copyGiftLink(giftId: string, url: string) {
     navigator.clipboard.writeText(url);
     setCopiedGiftId(giftId);
@@ -2400,11 +2415,13 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                       {g.claimedAt && ` · claimed ${new Date(g.claimedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
                     </p>
                     {g.note && <p className="text-base text-slate-400">&ldquo;{g.note}&rdquo;</p>}
-                    {g.status === "unclaimed" && (
+                    {(g.status === "unclaimed" || g.status === "claimed") && (
                       <button type="button"
                         onClick={() => copyGiftLink(g.giftId, g.claimUrl)}
                         className="w-full h-10 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all flex items-center justify-center gap-1.5">
-                        {copiedGiftId === g.giftId ? <><CheckCircle2 className="w-4 h-4" /> Copied</> : <><Copy className="w-4 h-4" /> Copy claim link</>}
+                        {copiedGiftId === g.giftId
+                          ? <><CheckCircle2 className="w-4 h-4" /> Copied</>
+                          : <><Copy className="w-4 h-4" /> {g.status === "unclaimed" ? "Copy claim link" : "Copy share link"}</>}
                       </button>
                     )}
                   </div>
@@ -2412,6 +2429,15 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
               );
             })}
           </div>
+          {myGifts.length < myGiftsTotal && (
+            <button type="button"
+              onClick={handleLoadMoreGifts}
+              disabled={loadingMoreGifts}
+              className="mt-2 w-full h-10 rounded-xl text-base font-medium border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5">
+              {loadingMoreGifts ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              {loadingMoreGifts ? "Loading…" : "See more"}
+            </button>
+          )}
         </div>
       )}
 
