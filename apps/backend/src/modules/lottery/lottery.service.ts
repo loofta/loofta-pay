@@ -586,13 +586,19 @@ export class LotteryService {
       ? await db.from('app_users').select('username').eq('privy_user_id', gift.created_by_user_id).maybeSingle()
       : { data: null };
 
+    const isSender = Boolean(viewerUserId) && gift.created_by_user_id === viewerUserId;
+    const isClaimant = Boolean(viewerUserId) && gift.claimed_by_user_id === viewerUserId;
+
     return {
       numTickets: gift.num_tickets,
-      note: gift.note,
+      // The note is private correspondence between sender and recipient — unlike ticket
+      // count/status (shown on the public share card), it never goes out over the wire to
+      // anyone else, authenticated or not.
+      note: isSender || isClaimant ? gift.note : null,
       status: gift.status,
       recipientType: gift.recipient_type,
-      isSender: Boolean(viewerUserId) && gift.created_by_user_id === viewerUserId,
-      isClaimant: Boolean(viewerUserId) && gift.claimed_by_user_id === viewerUserId,
+      isSender,
+      isClaimant,
       senderUsername: (senderAppUser as { username?: string } | null)?.username ?? null,
       recipientHandle: gift.recipient_type === 'handle' ? gift.recipient_identifier : null,
     };

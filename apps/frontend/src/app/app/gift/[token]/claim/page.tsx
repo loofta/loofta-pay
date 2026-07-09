@@ -133,6 +133,52 @@ export default function LotteryGiftClaimPage() {
     );
   }
 
+  // Gated: only the sender and the intended recipient may see gift details on this page (the
+  // note especially — that's private correspondence, unlike the public /gift/:token share card).
+  // Can't tell who's who without a login, so an anonymous visitor gets a plain sign-in prompt
+  // first; once logged in, anyone who isn't sender/claimant gets a flat "not available" — no
+  // ticket count, no note, nothing that would confirm the gift even exists to them.
+  if (!authenticated) {
+    return (
+      <>
+        <div className="fixed inset-0 -z-10 bg-[#0f0f12]" />
+        <main className="min-h-[calc(100vh-5rem)] flex flex-col items-center justify-center px-4 py-12">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-8 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FF7A2A]/15">
+              <Gift className="h-7 w-7 text-[#FF7A2A]" />
+            </div>
+            <h1 className="text-xl font-semibold text-white">Sign in to view this gift</h1>
+            <p className="mt-2 text-slate-400">Only the sender and the intended recipient can see this page.</p>
+            <button
+              onClick={() => login()}
+              className="mt-6 w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
+            >
+              <LogIn className="w-5 h-5" />
+              Log in to continue
+            </button>
+          </div>
+        </main>
+      </>
+    );
+  }
+
+  if (!data.isSender && !data.isClaimant) {
+    return (
+      <>
+        <div className="fixed inset-0 -z-10 bg-[#0f0f12]" />
+        <main className="min-h-[calc(100vh-5rem)] flex flex-col items-center justify-center px-4 py-12">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-8 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-500/10">
+              <AlertCircle className="h-7 w-7 text-red-400" />
+            </div>
+            <h1 className="text-xl font-semibold text-white">Not available</h1>
+            <p className="mt-2 text-slate-400">This gift isn&apos;t available to view from this account.</p>
+          </div>
+        </main>
+      </>
+    );
+  }
+
   const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
   const isClaimed = data.status === 'claimed' || Boolean(claimedTicketId);
   const isPending = data.status === 'pending_payment';
@@ -231,22 +277,7 @@ export default function LotteryGiftClaimPage() {
                 </div>
               )}
 
-              {canClaim && !authenticated && (
-                <div className="space-y-4">
-                  <p className="text-center text-slate-400">
-                    Log in with the <strong className="text-slate-200">{data.recipientType === 'email' ? 'email' : 'X or Loofta'}</strong> account this was sent to. Only that account can claim it.
-                  </p>
-                  <button
-                    onClick={() => login()}
-                    className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
-                  >
-                    <LogIn className="w-5 h-5" />
-                    Log in to claim
-                  </button>
-                </div>
-              )}
-
-              {canClaim && authenticated && (
+              {canClaim && (
                 <div className="space-y-4">
                   {viewerIsSenderOnly ? (
                     <>
