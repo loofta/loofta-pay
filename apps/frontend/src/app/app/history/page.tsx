@@ -48,6 +48,13 @@ function getSenderDisplay(claim: PaymentHistoryClaim, anonymous: string): string
 }
 
 function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string {
+  if (claim.direction === "from_recipient") {
+    // Payment request links: recipient_username/recipient_address describe the creator's own
+    // identity (see sharePreview.ts), not a payer's — the true payee is whoever created the
+    // request, resolved server-side into creator_username.
+    if (claim.creator_username) return `@${claim.creator_username}`;
+    return anonymous;
+  }
   if (claim.recipient_username) return `@${claim.recipient_username}`;
   const ra = (claim.recipient_address || "").trim();
   if (ra.startsWith(PENDING_USERNAME_PREFIX)) return `@${ra.slice(PENDING_USERNAME_PREFIX.length).trim()}`;
@@ -55,6 +62,8 @@ function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string 
   if (claim.recipient_email) return claim.recipient_email;
   return anonymous;
 }
+
+const REQUEST_LINK_PAID_STATUSES = new Set(["SUCCESS", "PRIVATE_TRANSFER_PENDING"]);
 
 const STATUS_KEYS = ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CANCELLED", "OPEN", "PENDING_DEPOSIT", "IN_FLIGHT", "REFUNDED", "EXPIRED"] as const;
 type StatusKey = typeof STATUS_KEYS[number];
@@ -408,12 +417,13 @@ export default function HistoryPage() {
                       const message = stripGifUrlsFromMessage(claim.description || "");
                       const gifUrl = type === "received" ? extractGifUrl(claim.description || "") : null;
                       const showMessageOrGif = (type === "received" && (message || gifUrl)) || (type === "sent" && message);
-                      // An unpaid request link (direction=from_recipient, always unpaid while it's
-                      // still in the "sent" list — it moves to "received" once someone pays it) has
-                      // no counterparty yet: recipient_username/address on the row describe the
-                      // creator themselves, not a payer, so getPayeeDisplay would wrongly fall back
-                      // to "Anonymous". The "Open" status badge already conveys this state.
-                      const hasKnownCounterparty = !(type === "sent" && claim.direction === "from_recipient");
+                      // A request link (direction=from_recipient) shows up in "sent" from two very
+                      // different viewers: the creator's own still-open request (no payer yet — the
+                      // "Open" status badge already conveys that, nothing to name) or the actual
+                      // payer's completed payment (recipient is the request's creator, always known).
+                      const hasKnownCounterparty =
+                        !(type === "sent" && claim.direction === "from_recipient") ||
+                        REQUEST_LINK_PAID_STATUSES.has(String(claim.status || "").toUpperCase());
                       return (
                         <li key={`${type}-${claim.id}`}>
                           <Link
