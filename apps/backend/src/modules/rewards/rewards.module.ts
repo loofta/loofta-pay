@@ -3,10 +3,11 @@ import { RewardsController } from './rewards.controller';
 import { RewardsService } from './rewards.service';
 import { BlinkCampaignService } from './blink-campaign.service';
 import { MegapotCampaignService } from './megapot-campaign.service';
+import { GetPaidCampaignService } from './getpaid-campaign.service';
 
 @Module({
   controllers: [RewardsController],
-  providers: [RewardsService, BlinkCampaignService, MegapotCampaignService],
-  exports: [RewardsService, BlinkCampaignService, MegapotCampaignService],
+  providers: [RewardsService, BlinkCampaignService, MegapotCampaignService, GetPaidCampaignService],
+  exports: [RewardsService, BlinkCampaignService, MegapotCampaignService, GetPaidCampaignService],
 })
 export class RewardsModule {}
