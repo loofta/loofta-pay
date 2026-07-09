@@ -211,6 +211,13 @@ export async function requestMagicblockPrivateTransfer(params: {
    *  (confirmed against MagicBlock's own web app and the payments-demo `one/` reference repo):
    *  never gross up `amount` ourselves, just pass the clean intended amount with exactOut: true. */
   exactOut?: boolean;
+  /** Loofta's own cut, taken by MagicBlock as part of this same transfer (proportional, bps of
+   *  `amount`) — requires platformFeeAccount too. Lets a caller collect its fee without a
+   *  separate fee-collection transaction/signature. Both fields are optional and additive — omit
+   *  either to get today's behavior (no platform fee taken). */
+  platformFeeBps?: number;
+  /** Destination wallet for platformFeeBps — must be paired with platformFeeBps. */
+  platformFeeAccount?: string;
 }): Promise<MagicblockPrivateTransferTxResponse> {
   const defaults = magicblockPrivateDelayForCluster(params.cluster);
   const minDelayMs = params.minDelayMs !== undefined ? String(params.minDelayMs) : defaults.minDelayMs;
@@ -232,6 +239,9 @@ export async function requestMagicblockPrivateTransfer(params: {
     ...(params.cluster === 'mainnet' ? { split: computeSplitForAmount(params.amount) } : {}),
     ...(params.gasless ? { gasless: true } : {}),
     ...(params.exactOut !== undefined ? { exactOut: params.exactOut } : {}),
+    ...(params.platformFeeBps !== undefined && params.platformFeeAccount
+      ? { platformFeeBps: params.platformFeeBps, platformFeeAccount: params.platformFeeAccount }
+      : {}),
   };
   log.log(`POST https://payments.magicblock.app/v1/spl/transfer payload=${JSON.stringify(body)}`);
 

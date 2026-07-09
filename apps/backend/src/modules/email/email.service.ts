@@ -144,6 +144,78 @@ export class EmailService {
     }
   }
 
+  async sendGiftTicketEmail(data: { recipientEmail: string; numTickets: number; claimUrl: string; note?: string | null }): Promise<void> {
+    if (!this.resend) return;
+    const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject: `You've been gifted ${data.numTickets} Megapot ${ticketWord} 🎁`,
+        html: this.buildGiftTicketHtml(data),
+      });
+      this.logger.log(`Gift ticket email sent to ${data.recipientEmail} (${data.numTickets} tickets)`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send gift ticket email to ${data.recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
+  private buildGiftTicketHtml(data: { numTickets: number; claimUrl: string; note?: string | null }): string {
+    const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
+    const noteBlock = data.note
+      ? `<div style="background:#1e1e23;border-radius:12px;padding:16px 18px;margin:0 0 28px;">
+           <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#9ca3af;">Message</p>
+           <p style="margin:0;font-size:14px;line-height:1.5;color:#d1d5db;">${data.note}</p>
+         </div>`
+      : '';
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>You've been gifted a Megapot ticket</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Gift</span>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px 8px;">
+              <p style="margin:0 0 12px;font-size:28px;line-height:1.15;color:#ffffff;font-weight:700;text-align:center;">You've been gifted<br/>${data.numTickets} Megapot ${ticketWord}</p>
+              <p style="margin:0 0 28px;font-size:14px;color:#9ca3af;text-align:center;">Claim it to enter the next draw — Loofta covers the cost, no wallet needed yet.</p>
+              ${noteBlock}
+              <div style="text-align:center;margin-bottom:8px;">
+                <a href="${data.claimUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Claim your ${ticketWord}
+                </a>
+              </div>
+              <p style="margin:20px 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
   private buildMegapotLaunchHtml(): string {
     return `<!DOCTYPE html>
 <html lang="en">

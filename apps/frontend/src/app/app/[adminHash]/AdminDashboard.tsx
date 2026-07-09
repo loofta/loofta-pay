@@ -15,7 +15,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import {
   Loader2, RefreshCw, Shield, Search, ChevronDown, ChevronRight,
-  ExternalLink, Pencil, AlertTriangle, Copy, Zap, BarChart2, SendHorizonal,
+  ExternalLink, Pencil, AlertTriangle, Copy, Zap, BarChart2, SendHorizonal, Mail, AtSign,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -528,6 +528,25 @@ export default function AdminDashboard() {
   const [lotteryPage, setLotteryPage] = useState(1);
   const [lotteryStatusFilter, setLotteryStatusFilter] = useState("");
 
+  // Gift a Megapot ticket — one field accepts an email, X handle, or Loofta username, same as Send
+  const [giftIdentifierInput, setGiftIdentifierInput] = useState("");
+  const [giftNumTicketsInput, setGiftNumTicketsInput] = useState("1");
+  const [giftNoteInput, setGiftNoteInput] = useState("");
+  const [gifting, setGifting] = useState(false);
+  const [lastGiftLink, setLastGiftLink] = useState<string | null>(null);
+  const [giftsData, setGiftsData] = useState<any[]>([]);
+  const [giftsLoading, setGiftsLoading] = useState(false);
+  const [giftsLoaded, setGiftsLoaded] = useState(false);
+  const [giftsTotal, setGiftsTotal] = useState(0);
+  const [giftsPage, setGiftsPage] = useState(1);
+
+  // Megapot referral fees — read-only balance; claiming is manual (see AdminDashboard UI note)
+  const [referralFeesBalance, setReferralFeesBalance] = useState<number | null>(null);
+  const [referralFeesLoading, setReferralFeesLoading] = useState(false);
+  const [referralFeesLoaded, setReferralFeesLoaded] = useState(false);
+  const [referralFeesWallet, setReferralFeesWallet] = useState<string | null>(null);
+  const [referralFeesBasescanUrl, setReferralFeesBasescanUrl] = useState<string | null>(null);
+
   // Analytics
   type AnalyticsData = {
     volume_devnet: number;
@@ -748,6 +767,77 @@ export default function AdminDashboard() {
       setLotteryLoading(false);
     }
   }, [authHeaders, toast]);
+
+  const fetchGifts = useCallback(async (page = 1) => {
+    setGiftsLoading(true);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(`/api/admin/lottery/gifts?page=${page}`, { headers });
+      if (!res.ok) throw new Error("Failed to load gifts");
+      const data = await res.json();
+      setGiftsData(data.data ?? []);
+      setGiftsTotal(data.total ?? 0);
+      setGiftsPage(page);
+      setGiftsLoaded(true);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load gifts" });
+    } finally {
+      setGiftsLoading(false);
+    }
+  }, [authHeaders, toast]);
+
+  const fetchReferralFees = useCallback(async () => {
+    setReferralFeesLoading(true);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch("/api/admin/lottery/referral-fees", { headers });
+      if (!res.ok) throw new Error("Failed to load referral fees");
+      const data = await res.json();
+      setReferralFeesBalance(data.balanceUsdc ?? 0);
+      setReferralFeesWallet(data.referrerWallet ?? null);
+      setReferralFeesBasescanUrl(data.basescanWriteUrl ?? null);
+      setReferralFeesLoaded(true);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load referral fees" });
+    } finally {
+      setReferralFeesLoading(false);
+    }
+  }, [authHeaders, toast]);
+
+  const createGiftTicket = useCallback(async () => {
+    const recipientIdentifier = giftIdentifierInput.trim().replace(/^@+/, "");
+    const numTickets = parseInt(giftNumTicketsInput, 10);
+    if (!recipientIdentifier || !numTickets || numTickets < 1 || numTickets > 100) return;
+    const recipientType = recipientIdentifier.includes("@") && recipientIdentifier.includes(".") ? "email" : "handle";
+    setGifting(true);
+    try {
+      const res = await fetch("/api/admin/lottery/gift", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({
+          recipientType,
+          recipientIdentifier,
+          numTickets,
+          note: giftNoteInput.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message ?? "Failed");
+      }
+      const data = await res.json();
+      setLastGiftLink(data.claimUrl);
+      toast({ title: `Gifted ${numTickets} ticket${numTickets === 1 ? "" : "s"} to ${recipientIdentifier}` });
+      setGiftIdentifierInput("");
+      setGiftNoteInput("");
+      setGiftNumTicketsInput("1");
+      fetchGifts(1);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Failed to create gift", description: err.message });
+    } finally {
+      setGifting(false);
+    }
+  }, [giftIdentifierInput, giftNumTicketsInput, giftNoteInput, authHeaders, toast, fetchGifts]);
 
   // ── Grant access by email ────────────────────────────────────────────────────
   const grantAccessByEmail = useCallback(async () => {
@@ -1016,7 +1106,7 @@ export default function AdminDashboard() {
             activeTab === "blink" ? fetchBlink :
             activeTab === "analytics" ? fetchAnalytics :
             activeTab === "cashout" ? () => fetchCashOuts(cashoutPage, cashoutStatusFilter) :
-            activeTab === "lottery" ? () => fetchLottery(lotteryPage, lotteryStatusFilter) :
+            activeTab === "lottery" ? () => { fetchLottery(lotteryPage, lotteryStatusFilter); fetchGifts(giftsPage); fetchReferralFees(); } :
             () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })
           }
           disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading || cashoutLoading || lotteryLoading}
@@ -1077,7 +1167,7 @@ export default function AdminDashboard() {
         </button>
         <button
           type="button"
-          onClick={() => { setActiveTab("lottery"); if (!lotteryLoaded) fetchLottery(1, ""); }}
+          onClick={() => { setActiveTab("lottery"); if (!lotteryLoaded) fetchLottery(1, ""); if (!giftsLoaded) fetchGifts(1); if (!referralFeesLoaded) fetchReferralFees(); }}
           className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "lottery" ? "border-teal-500 text-teal-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
           Lottery Tickets
@@ -1379,6 +1469,135 @@ export default function AdminDashboard() {
       {/* ── Lottery tickets tab ── */}
       {activeTab === "lottery" && (
         <div className="space-y-3">
+          {/* Gift a Megapot ticket */}
+          <div className="rounded-xl border border-gray-800 p-4 space-y-3">
+            <div className="text-base font-semibold text-gray-200">Gift a Megapot ticket</div>
+            <div className="flex flex-wrap gap-2">
+              <div className="relative flex-1 min-w-[220px]">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
+                  {giftIdentifierInput.includes("@") && giftIdentifierInput.includes(".")
+                    ? <Mail className="w-4 h-4" /> : <AtSign className="w-4 h-4" />}
+                </span>
+                <Input
+                  placeholder="Email, X handle, or Loofta username"
+                  value={giftIdentifierInput}
+                  onChange={(e) => setGiftIdentifierInput(e.target.value.replace(/^@+/, ""))}
+                  className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-base md:text-sm pl-9 w-full"
+                />
+              </div>
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                value={giftNumTicketsInput}
+                onChange={(e) => setGiftNumTicketsInput(e.target.value)}
+                className="bg-gray-900 border-gray-700 text-gray-100 text-base md:text-sm w-24"
+              />
+            </div>
+            <Textarea
+              placeholder="Optional note to include in the email…"
+              value={giftNoteInput}
+              onChange={(e) => setGiftNoteInput(e.target.value)}
+              className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-base md:text-sm min-h-[60px]"
+            />
+            <Button
+              size="sm"
+              onClick={createGiftTicket}
+              disabled={gifting || !giftIdentifierInput.trim()}
+              className="bg-teal-700 hover:bg-teal-600 text-white"
+            >
+              {gifting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Gift ticket(s)"}
+            </Button>
+            {lastGiftLink && (
+              <div className="flex items-center gap-2 text-base md:text-sm text-gray-400">
+                <span className="truncate">{lastGiftLink}</span>
+                <button type="button" onClick={() => copyText(lastGiftLink)} title="Copy" className="shrink-0">
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Megapot referral fees — read-only balance, claim is manual */}
+          <div className="rounded-xl border border-gray-800 p-4 space-y-2">
+            <div className="text-base font-semibold text-gray-200">Megapot referral fees</div>
+            <p className="text-sm text-gray-500">
+              Accrues automatically from Loofta-referred tickets (10% of winners&apos; payouts). This backend never
+              holds that wallet&apos;s private key — claiming is a manual on-chain action from whatever wallet controls it.
+            </p>
+            {referralFeesLoading && (
+              <div className="flex items-center gap-2 text-base text-gray-400 py-2">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading balance…
+              </div>
+            )}
+            {!referralFeesLoading && referralFeesLoaded && (
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <div>
+                  <div className="text-2xl font-semibold text-emerald-400 tabular-nums">
+                    ${(referralFeesBalance ?? 0).toFixed(6)}
+                  </div>
+                  {referralFeesWallet && (
+                    <div className="text-sm text-gray-500 font-mono">{referralFeesWallet}</div>
+                  )}
+                </div>
+                {referralFeesBasescanUrl && (
+                  <a
+                    href={referralFeesBasescanUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-base md:text-sm text-teal-400 hover:text-teal-300 underline underline-offset-2"
+                  >
+                    Claim on Basescan <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Gifts list */}
+          {giftsLoaded && giftsData.length > 0 && (
+            <div className="overflow-x-auto rounded-xl border border-gray-800">
+              <table className="w-full text-base text-gray-300">
+                <thead>
+                  <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
+                    <th className="text-left px-4 py-2.5">Date</th>
+                    <th className="text-left px-4 py-2.5">Recipient</th>
+                    <th className="text-right px-4 py-2.5">Tickets</th>
+                    <th className="text-left px-4 py-2.5">Status</th>
+                    <th className="text-left px-4 py-2.5">Ticket</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {giftsData.map((row: any) => {
+                    const giftStatusColors: Record<string, string> = {
+                      unclaimed: "text-amber-400",
+                      claimed: "text-emerald-400",
+                      cancelled: "text-gray-500",
+                      failed: "text-red-400",
+                    };
+                    return (
+                      <tr key={row.id} className="border-b border-gray-800/50 hover:bg-gray-900/40">
+                        <td className="px-4 py-2.5 whitespace-nowrap tabular-nums text-gray-500">
+                          {new Date(row.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          {row.recipient_type === "handle" ? `@${row.recipient_identifier}` : row.recipient_identifier}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">{row.num_tickets}</td>
+                        <td className={`px-4 py-2.5 font-medium ${giftStatusColors[row.status] ?? "text-gray-400"}`}>
+                          {row.status}{row.failure_reason ? ` — ${row.failure_reason}` : ""}
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-sm text-gray-500">
+                          {row.resulting_ticket_id ?? <span className="text-gray-700">—</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {/* Filter bar */}
           <div className="flex flex-wrap gap-2 items-center">
             <select
