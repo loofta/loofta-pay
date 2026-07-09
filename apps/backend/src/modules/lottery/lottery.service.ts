@@ -543,15 +543,25 @@ export class LotteryService {
   }
 
   /** Public, unauthenticated preview for the claim page — no recipient identifier exposed. */
-  async getGiftPublic(token: string): Promise<{ numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle' }> {
+  async getGiftPublic(token: string, viewerUserId?: string): Promise<{
+    numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle';
+    isSender: boolean; isClaimant: boolean;
+  }> {
     const db = this.supabase.getClient();
     const { data: gift } = await db
       .from('lottery_gifts')
-      .select('num_tickets, note, status, recipient_type')
+      .select('num_tickets, note, status, recipient_type, created_by_user_id, claimed_by_user_id')
       .eq('claim_token', token)
       .maybeSingle();
     if (!gift) throw new NotFoundException('Gift not found');
-    return { numTickets: gift.num_tickets, note: gift.note, status: gift.status, recipientType: gift.recipient_type };
+    return {
+      numTickets: gift.num_tickets,
+      note: gift.note,
+      status: gift.status,
+      recipientType: gift.recipient_type,
+      isSender: Boolean(viewerUserId) && gift.created_by_user_id === viewerUserId,
+      isClaimant: Boolean(viewerUserId) && gift.claimed_by_user_id === viewerUserId,
+    };
   }
 
   /**
@@ -712,6 +722,22 @@ export class LotteryService {
 
       await db.from('lottery_gifts').update({ resulting_ticket_id: ticket.id }).eq('id', gift.id);
       this.logger.log(`Gift ${gift.id}: claimed by ${claimantPrivyUserId}, ticket ${ticket.id} funded (${numTickets} tickets, sig=${senderTxHash})`);
+
+      // Don't wait for the next processSentTickets cron tick (up to 5s away) — the burner is
+      // already known-funded (just topped up, or funded by the sender earlier), so start the
+      // bridge right now. Fire-and-forget: tryStartBridge does its own atomic claim against the
+      // DB row, so this can't race the cron picking up the same ticket a moment later.
+      this.tryStartBridge({
+        id: ticket.id,
+        status: 'sent',
+        fee_tx_hash: null,
+        is_gift: true,
+        burner_sol_address: burnerAddress,
+        burner_sol_key_enc: burnerKeyEnc,
+        cost_usdc: costUsdc,
+        companion_address: companionAddress,
+      }).catch(e => this.logger.warn(`purchaseGiftTickets ${gift.id}: immediate tryStartBridge failed, cron will retry: ${e.message}`));
+
       return { ticketId: ticket.id, numTickets };
     } catch (e: any) {
       this.logger.error(`purchaseGiftTickets ${gift.id}: ${e.message}`);
