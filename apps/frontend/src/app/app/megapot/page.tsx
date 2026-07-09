@@ -9,6 +9,7 @@ import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/sola
 import bs58 from "bs58";
 import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { getMyGifts, type MyGiftItem } from "@/services/api/lotteryGift";
 
 const MEGAPOT_REFERRAL = "https://megapot.io/r/Q3M637";
 const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
@@ -1145,20 +1146,22 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
         }),
       });
       if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
-      const { ticketId, claimUrl, feeTxBase64, txBase64 } = await initRes.json();
+      const { giftId, feeTxBase64, txBase64 } = await initRes.json();
 
       // Two signatures, same as a normal purchase: the fee tx first (can't be combined into
-      // MagicBlock's own pre-built tx), then the MagicBlock private transfer.
+      // MagicBlock's own pre-built tx), then the MagicBlock private transfer. Nothing is bought
+      // yet — this just funds a holding burner. The actual Megapot purchase happens when the
+      // recipient claims (see /app/gift/[token]), not here.
       const feeTxBytes = Buffer.from(feeTxBase64, "base64");
       const { signature: feeSigBytes } = await signAndSendTransaction({
         transaction: feeTxBytes as unknown as Uint8Array,
         wallet: embeddedWallet as any,
       });
       const feeSignature = bs58.encode(feeSigBytes as Uint8Array);
-      await fetch("/api/lottery/buy-fee-confirm", {
+      await fetch("/api/lottery/buy-gift-fee-confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ ticketId, feeTxHash: feeSignature }),
+        body: JSON.stringify({ giftId, feeTxHash: feeSignature }),
       });
 
       const txBytes = Buffer.from(txBase64, "base64");
@@ -1167,11 +1170,13 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
         wallet: embeddedWallet as any,
       });
       const signature = bs58.encode(sigBytes as Uint8Array);
-      await fetch("/api/lottery/buy-confirm", {
+      const confirmRes = await fetch("/api/lottery/buy-gift-confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ ticketId, senderTxHash: signature }),
+        body: JSON.stringify({ giftId, senderTxHash: signature }),
       });
+      if (!confirmRes.ok) throw new Error((await confirmRes.json()).message ?? "Failed to confirm");
+      const { claimUrl } = await confirmRes.json();
       setGiftClaimUrl(claimUrl);
       setGiftStep("done");
     } catch (err: any) {
@@ -1935,6 +1940,29 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const syncedIds = useRef<Set<string>>(new Set());
 
+  // Gifts you sent — separate from your own tickets, since a claimed gift's ownership moves to
+  // the recipient (see LotteryService.transferGiftedTicket) and would otherwise vanish from view.
+  const { user: giftsUser } = usePrivy();
+  const [myGifts, setMyGifts] = useState<MyGiftItem[]>([]);
+  const [myGiftsLoaded, setMyGiftsLoaded] = useState(false);
+  const [copiedGiftId, setCopiedGiftId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!giftsUser?.id) return;
+    (async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const gifts = await getMyGifts(giftsUser.id, accessToken);
+        setMyGifts(gifts);
+      } catch { /* non-fatal */ }
+      finally { setMyGiftsLoaded(true); }
+    })();
+  }, [giftsUser?.id, getAccessToken]);
+  function copyGiftLink(giftId: string, url: string) {
+    navigator.clipboard.writeText(url);
+    setCopiedGiftId(giftId);
+    setTimeout(() => setCopiedGiftId(null), 1500);
+  }
+
   // Call sync-numbers API when expanding a card that has no numbers, then poll until they arrive
   const toggleExpand = useCallback(async (ticketId: string, ticketHasNumbers: boolean) => {
     const isOpening = !expandedIds.has(ticketId);
@@ -2333,6 +2361,56 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                 </div>
               </details>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Gifts you sent */}
+      {myGiftsLoaded && myGifts.length > 0 && (
+        <div>
+          <p className="text-base font-medium text-slate-500 uppercase tracking-wider mb-2">Gifts you sent</p>
+          <div className="space-y-2">
+            {myGifts.map(g => {
+              const giftStatusStyle: Record<string, string> = {
+                unclaimed: "border-amber-500/30 text-amber-400 bg-amber-500/10",
+                claimed: "border-emerald-500/30 text-emerald-400 bg-emerald-500/10",
+                cancelled: "border-white/15 text-slate-400 bg-white/5",
+                failed: "border-red-500/30 text-red-400 bg-red-500/10",
+              };
+              const recipientLabel = g.recipientType === "handle" ? `@${g.recipientIdentifier}` : g.recipientIdentifier;
+              return (
+                <details key={g.giftId} className="rounded-xl border border-white/10 bg-white/5 group">
+                  <summary className="flex items-center justify-between p-3 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Gift className="w-3.5 h-3.5 text-[#FF7A2A] shrink-0" />
+                      <span className="text-base font-semibold text-white truncate">
+                        {g.numTickets} ticket{g.numTickets !== 1 ? "s" : ""} → {recipientLabel}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${giftStatusStyle[g.status] ?? "border-white/15 text-slate-400 bg-white/5"}`}>
+                        {g.status === "unclaimed" ? "Not yet claimed" : g.status === "claimed" ? "Claimed" : g.status}
+                      </span>
+                      <ChevronDown className="w-4 h-4 text-slate-500 transition-transform duration-200 group-open:rotate-180" />
+                    </div>
+                  </summary>
+                  <div className="px-3 pb-3 pt-0 space-y-3 border-t border-white/10">
+                    <p className="text-base text-slate-500 pt-2">
+                      {new Date(g.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      {g.claimedAt && ` · claimed ${new Date(g.claimedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
+                    </p>
+                    {g.note && <p className="text-base text-slate-400">&ldquo;{g.note}&rdquo;</p>}
+                    {g.status === "unclaimed" && (
+                      <button type="button"
+                        onClick={() => copyGiftLink(g.giftId, g.claimUrl)}
+                        className="w-full h-10 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all flex items-center justify-center gap-1.5">
+                        {copiedGiftId === g.giftId ? <><CheckCircle2 className="w-4 h-4" /> Copied</> : <><Copy className="w-4 h-4" /> Copy claim link</>}
+                      </button>
+                    )}
+                  </div>
+                </details>
+              );
+            })}
           </div>
         </div>
       )}

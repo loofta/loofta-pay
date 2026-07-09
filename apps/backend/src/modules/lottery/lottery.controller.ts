@@ -65,6 +65,22 @@ class ConfirmFeeDto {
   feeTxHash: string;
 }
 
+class ConfirmGiftFeeDto {
+  @IsString()
+  giftId: string;
+
+  @IsString()
+  feeTxHash: string;
+}
+
+class ConfirmGiftSendDto {
+  @IsString()
+  giftId: string;
+
+  @IsString()
+  senderTxHash: string;
+}
+
 class WithdrawDto {
   @IsString()
   ticketId: string;
@@ -151,8 +167,8 @@ export class LotteryController {
 
   @Post('buy-gift')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Buy N tickets for someone else — returns fee tx + MagicBlock tx to sign, in that order (same two-signature flow as buy)' })
-  async buyGift(@Body() dto: BuyGiftDto, @Request() req: any): Promise<{ ticketId: string; giftId: string; claimUrl: string; feeTxBase64: string; feeWalletAddress: string; txBase64: string; requiredSigners: string[] }> {
+  @ApiOperation({ summary: 'Pay for a gift (N tickets for someone else) — returns fee tx + MagicBlock tx to sign, in that order. The Megapot purchase itself only happens when the recipient claims (see gift/:token/claim).' })
+  async buyGift(@Body() dto: BuyGiftDto, @Request() req: any): Promise<{ giftId: string; feeTxBase64: string; feeWalletAddress: string; txBase64: string; requiredSigners: string[] }> {
     if (!dto.numTickets || dto.numTickets < 1) throw new BadRequestException('numTickets required');
     if (!dto.userSolanaAddress) throw new BadRequestException('userSolanaAddress required');
     if (!dto.recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
@@ -164,6 +180,23 @@ export class LotteryController {
       recipientIdentifier: dto.recipientIdentifier,
       note: dto.note,
     });
+  }
+
+  @Post('buy-gift-fee-confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Confirm the gift upfront fee tx signed — must be called before buy-gift-confirm' })
+  async confirmGiftFee(@Body() dto: ConfirmGiftFeeDto, @Request() req: any): Promise<{ ok: boolean }> {
+    if (!dto.giftId || !dto.feeTxHash) throw new BadRequestException('giftId and feeTxHash required');
+    await this.lottery.confirmGiftFee({ giftId: dto.giftId, userId: req.user.id, feeTxHash: dto.feeTxHash });
+    return { ok: true };
+  }
+
+  @Post('buy-gift-confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Confirm the gift MagicBlock tx signed — this is what makes the gift real and notifies the recipient' })
+  async confirmGiftSend(@Body() dto: ConfirmGiftSendDto, @Request() req: any): Promise<{ claimUrl: string }> {
+    if (!dto.giftId || !dto.senderTxHash) throw new BadRequestException('giftId and senderTxHash required');
+    return this.lottery.confirmGiftSend({ giftId: dto.giftId, userId: req.user.id, senderTxHash: dto.senderTxHash });
   }
 
   @Post('buy-confirm')
@@ -284,6 +317,12 @@ export class LotteryController {
   @ApiOperation({ summary: 'Get public gift details for the claim page (no auth required)' })
   async getGift(@Param('token') token: string): Promise<{ numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle' }> {
     return this.lottery.getGiftPublic(token);
+  }
+
+  @Get('my-gifts')
+  @ApiOperation({ summary: 'Self-service gifts the current user has sent (sender_paid), with status + claim link' })
+  async myGifts(@Request() req: any) {
+    return this.lottery.getMyGifts(req.user.id);
   }
 
   @Post('gift/:token/claim')
