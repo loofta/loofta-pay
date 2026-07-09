@@ -132,7 +132,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
       {/* GIF Attachment Preview */}
       {currentGifUrl && (
         <div className="mb-2 relative inline-block">
-          <div className="relative rounded-lg overflow-hidden border border-gray-200 bg-gray-50">
+          <div className="relative rounded-lg overflow-hidden border border-white/10 bg-white/5">
             <img
               src={currentGifUrl}
               alt="Selected GIF"
@@ -167,7 +167,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 text-gray-500 hover:text-gray-700"
+                className="h-8 w-8 text-slate-500 hover:text-slate-300"
                 disabled={!gf}
                 title={!gf ? 'Giphy API key required' : 'Search GIFs'}
               >
@@ -175,54 +175,54 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
               </Button>
             </PopoverTrigger>
             <PopoverContent
-              className="w-[min(calc(100vw-1rem),400px)] p-0 border-0 shadow-xl"
+              className="w-[min(calc(100vw-1rem),400px)] p-0 border border-white/10 shadow-xl"
               align="end"
               side="top"
               sideOffset={8}
               collisionPadding={8}
             >
-              <div className="bg-white rounded-lg">
+              <div className="bg-[#18181c] rounded-lg">
                 {!gf ? (
                   <div className="p-6 text-center">
-                    <div className="text-base md:text-sm text-gray-600 mb-2">
+                    <div className="text-base md:text-sm text-slate-300 mb-2">
                       Giphy API key not configured
                     </div>
-                    <div className="text-base md:text-sm text-gray-500 mb-4">
+                    <div className="text-base md:text-sm text-slate-500 mb-4">
                       Get a free API key at{' '}
                       <a
                         href="https://developers.giphy.com/dashboard/"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-blue-600 hover:underline"
+                        className="text-[#FF9A5A] hover:underline"
                       >
                         developers.giphy.com
                       </a>
                     </div>
-                    <div className="text-base md:text-sm text-gray-500">
-                      Add to <code className="bg-gray-100 px-1 py-0.5 rounded">.env.local</code>:
+                    <div className="text-base md:text-sm text-slate-500">
+                      Add to <code className="bg-white/10 px-1 py-0.5 rounded">.env.local</code>:
                       <br />
-                      <code className="bg-gray-100 px-1 py-0.5 rounded">NEXT_PUBLIC_GIPHY_API_KEY=your_key</code>
+                      <code className="bg-white/10 px-1 py-0.5 rounded">NEXT_PUBLIC_GIPHY_API_KEY=your_key</code>
                     </div>
                   </div>
                 ) : (
                   <>
                     {/* Search bar */}
-                    <div className="p-3 border-b border-gray-200 sticky top-0 bg-white z-10">
+                    <div className="p-3 border-b border-white/10 sticky top-0 bg-[#18181c] z-10">
                       <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                         <Input
                           type="text"
                           value={gifSearchQuery}
                           onChange={(e) => handleGifSearch(e.target.value)}
                           placeholder="Search GIFs..."
-                          className="pl-9 pr-9 h-9 text-base md:text-sm"
+                          className="pl-9 pr-9 h-9 text-base md:text-sm bg-white/5 border-white/10 text-white placeholder:text-slate-500"
                         />
                         {gifSearchQuery && (
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                            className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-slate-400 hover:text-white"
                             onClick={() => {
                               setGifSearchQuery('');
                               loadMoneyGifs();
@@ -239,7 +239,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                     <div className="max-h-[min(400px,50vh)] overflow-y-auto p-3">
                       {isLoadingGifs ? (
                         <div className="flex items-center justify-center py-8">
-                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white/60"></div>
                         </div>
                       ) : (
                         <div className="grid grid-cols-2 gap-2">
@@ -248,7 +248,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                               key={gif.id}
                               type="button"
                               onClick={() => handleGifClick(gif)}
-                              className="relative aspect-square rounded-lg overflow-hidden hover:opacity-80 transition-opacity bg-gray-100"
+                              className="relative aspect-square rounded-lg overflow-hidden hover:opacity-80 transition-opacity bg-white/5"
                             >
                               <img
                                 src={gif.images.fixed_height_small.url}
@@ -270,7 +270,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                         </div>
                       )}
                       {!isLoadingGifs && (gifSearchQuery ? searchGifs : trendingGifs).length === 0 && (
-                        <div className="text-center py-8 text-gray-500 text-base md:text-sm">
+                        <div className="text-center py-8 text-slate-500 text-base md:text-sm">
                           {giphyApiKey ? 'No GIFs found' : 'Giphy API key required'}
                         </div>
                       )}
