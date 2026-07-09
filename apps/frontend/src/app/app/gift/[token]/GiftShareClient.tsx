@@ -3,18 +3,16 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { getLotteryGiftPublic, type LotteryGiftPublic } from '@/services/api/lotteryGift';
-import { DescriptionWithGif } from '@/components/DescriptionWithGif';
 import { GradientActionButton } from '@/components/ui/GradientActionButton';
-import { ShareLinkMenu } from '@/components/ShareLinkMenu';
-import { Loader2, Ticket, AlertCircle, Gift, ArrowDown, Lock, CheckCircle2, ArrowRight, Copy } from 'lucide-react';
-
-const SITE_URL = 'https://pay.loofta.xyz';
+import { Loader2, Ticket, AlertCircle, ArrowDown, Lock, CheckCircle2, ArrowRight } from 'lucide-react';
 
 /**
  * Public preview page — anyone with the link can see "N Megapot tickets, gifted" (mirrors the
  * payment /share/:short_id card: sender/recipient labels either side of the headline figure), no
- * login required. The actual claim interaction (gated to the sender/recipient) lives one click
- * away at /gift/:token/claim, matching the payments pattern of /share/:short_id -> /c/:id.
+ * login required. Kept deliberately simple, same as the payment share card — no share/copy
+ * affordances here (this page is public) and no note/message (that stays on the gated claim
+ * page). The actual claim interaction lives one click away at /gift/:token/claim, matching the
+ * payments pattern of /share/:short_id -> /c/:id.
  */
 export default function GiftShareClient({ token }: { token: string }) {
   const router = useRouter();
@@ -23,12 +21,10 @@ export default function GiftShareClient({ token }: { token: string }) {
   // (loofta.xyz or localhost hitting /app/* directly). Same pattern as HistoryTab's megapotBase.
   const isAppPath = usePathname()?.startsWith('/app');
   const claimHref = isAppPath ? `/app/gift/${token}/claim` : `/gift/${token}/claim`;
-  const shareUrl = `${SITE_URL}/gift/${token}`;
 
   const [data, setData] = useState<LotteryGiftPublic | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     getLotteryGiftPublic(token)
@@ -69,9 +65,6 @@ export default function GiftShareClient({ token }: { token: string }) {
   const isClaimed = data.status === 'claimed';
   const senderLabel = data.senderUsername ? `@${data.senderUsername}` : 'Someone';
   const recipientLabel = data.recipientHandle ? `@${data.recipientHandle}` : 'someone';
-  const shareText = isClaimed
-    ? `${senderLabel} gifted ${data.numTickets} Megapot ${ticketWord} on Loofta 🎟️`
-    : `I gifted ${data.numTickets} Megapot ${ticketWord} on Loofta 🎟️`;
 
   return (
     <>
@@ -95,12 +88,6 @@ export default function GiftShareClient({ token }: { token: string }) {
               </div>
               <span className="text-xl font-bold text-white">{recipientLabel}</span>
             </div>
-
-            {data.note && (
-              <div className="border-t border-white/[0.06] px-5 py-4">
-                <DescriptionWithGif text={data.note} />
-              </div>
-            )}
           </div>
 
           {/* CTA card */}
@@ -110,27 +97,6 @@ export default function GiftShareClient({ token }: { token: string }) {
               {isClaimed ? 'View gift' : 'View & claim gift'}
               <ArrowRight className="h-4 w-4" />
             </GradientActionButton>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3 flex-1 min-w-0">
-                <span className="flex-1 min-w-0 truncate text-base text-slate-300">{shareUrl}</span>
-                <button
-                  onClick={() => { navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-                  className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
-                  aria-label="Copy share link"
-                >
-                  {copied ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                </button>
-              </div>
-              <ShareLinkMenu
-                url={shareUrl}
-                title="Megapot ticket gift"
-                text={shareText}
-                ogUrl={`${SITE_URL}/api/gift/${token}/og`}
-              />
-            </div>
-            <p className="text-center text-sm text-slate-500 flex items-center justify-center gap-1.5">
-              <Gift className="w-3.5 h-3.5" /> Only the sender and recipient can claim it.
-            </p>
           </div>
         </div>
       </main>
