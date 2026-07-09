@@ -1390,7 +1390,12 @@ function BuiltOn() {
             </div>
 
             {/* MagicBlock card */}
-            <div className="relative overflow-hidden rounded-[22px] border border-[rgba(255,19,1,0.22)] bg-[linear-gradient(135deg,rgba(255,19,1,0.08)_0%,rgba(234,179,8,0.08)_100%)] px-9 py-8">
+            <a
+              href="https://magicblock.xyz"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="relative block overflow-hidden rounded-[22px] border border-[rgba(255,19,1,0.22)] bg-[linear-gradient(135deg,rgba(255,19,1,0.08)_0%,rgba(234,179,8,0.08)_100%)] px-9 py-8 transition-opacity hover:opacity-90"
+            >
               <div
                 aria-hidden
                 className="absolute -left-10 -top-10 h-[200px] w-[200px] rounded-full blur-[40px]"
@@ -1421,7 +1426,7 @@ function BuiltOn() {
                   <div className="font-grotesk text-[11px] text-slate-500">{t('builtOn.byDefault')}</div>
                 </div>
               </div>
-            </div>
+            </a>
           </motion.div>
         </div>
 
