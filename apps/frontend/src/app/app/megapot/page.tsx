@@ -11,9 +11,9 @@ import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shu
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { getMyGifts, type MyGiftItem } from "@/services/api/lotteryGift";
 import { MessageInput } from "@/components/MessageInput";
+import { Label } from "@/components/ui/label";
 import { DescriptionWithGif } from "@/components/DescriptionWithGif";
 
-const MEGAPOT_REFERRAL = "https://megapot.io/r/Q3M637";
 const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
 const MAGICBLOCK_BPS = 10;
 // Loofta per-purchase fee: mirrors backend looftaTicketFee — calibrated to break even against
@@ -182,7 +182,7 @@ function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPoo
 
         <div className="overflow-y-auto flex-1 px-5 pb-2">
           <h2 className="text-3xl font-black text-white text-center tracking-tight mb-2">PRIZES</h2>
-          <p className="text-sm text-slate-400 text-center mb-5 leading-relaxed">
+          <p className="text-base text-slate-400 text-center mb-5 leading-relaxed">
             All prize tiers are automatically paid out from the{" "}
             <span className="font-semibold text-white">{poolDisplay}</span>{" "}
             total prize pool everyday.
@@ -198,7 +198,7 @@ function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPoo
                 <div key={i} className="flex items-center justify-between px-4 py-3 bg-white/[0.015]">
                   <div>
                     <TierBalls normal={tier.normal} bonusMatch={tier.bonusMatch} />
-                    <p className="text-sm text-slate-500 mt-1">{desc}</p>
+                    <p className="text-base text-slate-500 mt-1">{desc}</p>
                   </div>
                   <span className={["text-base font-semibold tabular-nums shrink-0 ml-4",
                     tier.prize === "Free ticket" ? "text-[#FF7A2A]" : "text-white"].join(" ")}>
@@ -218,7 +218,7 @@ function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPoo
                 <span className="text-[#FF7A2A] font-bold text-lg">→</span>
                 <span className="w-9 h-9 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-white font-bold text-base">30</span>
               </div>
-              <p className="text-sm text-slate-400">30 normal balls</p>
+              <p className="text-base text-slate-400">30 normal balls</p>
             </div>
             {/* Bonus balls */}
             <div className="rounded-xl bg-white/[0.04] border border-white/10 px-4 py-4 flex flex-col items-center gap-3">
@@ -227,7 +227,7 @@ function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPoo
                 <span className="text-[#FF7A2A] font-bold text-lg">→</span>
                 <span className="w-9 h-9 rounded-full bg-[#1e1e26] border border-white/30 flex items-center justify-center text-white font-bold text-base">12</span>
               </div>
-              <p className="text-sm text-slate-400">12 bonus balls</p>
+              <p className="text-base text-slate-400">12 bonus balls</p>
             </div>
           </div>
         </div>
@@ -261,7 +261,7 @@ function MegapotTabs({ activeTab, wonCount }: { activeTab: Tab; wonCount: number
   const sliderPos = activeTab === "redeem" ? "translate-x-full" : "translate-x-0";
   const isHistory = activeTab === "history";
   return (
-    <div className="flex items-center justify-between mb-6">
+    <div className="hidden md:flex items-center justify-between mb-6">
       <div className="relative grid grid-cols-2 rounded-2xl p-1 bg-white/[0.05] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] border border-white/[0.06] overflow-hidden">
         <div aria-hidden="true" className={["absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-xl transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] bg-gradient-to-b from-white/[0.08] to-white/[0.03] shadow-[0_8px_24px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.08)] border border-white/[0.08]", isHistory ? "opacity-0" : sliderPos].join(" ")} />
         <div aria-hidden="true" className={["pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-xl transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] opacity-40 bg-[radial-gradient(80%_140%_at_50%_0%,rgba(255,122,42,0.35),transparent_60%)]", isHistory ? "opacity-0" : sliderPos].join(" ")} />
@@ -583,7 +583,7 @@ function PurchaseProgressModal({ step, error, devReset }: { step: BuyStep; error
         <p className="text-sm font-medium text-slate-400">🔒 Don&apos;t close this window — usually under 3 minutes.</p>
 
         {devReset && (
-          <button onClick={devReset} className="text-xs text-slate-500 hover:text-slate-300 border border-white/10 rounded-lg px-2 py-1 transition-colors">
+          <button onClick={devReset} className="text-sm text-slate-500 hover:text-slate-300 border border-white/10 rounded-lg px-2 py-1 transition-colors">
             New payment (dev)
           </button>
         )}
@@ -674,7 +674,7 @@ function DrawSuccessModal({ tickets, drawTime, prizePool, onBuyMore, onClose }: 
           {/* Countdown */}
           {drawTime && totalSecs > 0 && (
             <div className="space-y-2">
-              <p className="text-xs text-slate-400 uppercase tracking-wider text-center font-semibold">Draw in</p>
+              <p className="text-sm text-slate-400 uppercase tracking-wider text-center font-semibold">Draw in</p>
               <div className="flex justify-center items-start gap-2">
                 {[{ v: hours, label: "HRS" }, { v: minutes, label: "MIN" }, { v: seconds, label: "SEC" }].map(({ v, label }, i) => (
                   <div key={label} className="flex items-start gap-2">
@@ -695,7 +695,7 @@ function DrawSuccessModal({ tickets, drawTime, prizePool, onBuyMore, onClose }: 
           {/* Ticket picks */}
           {showPicks && (
             <div className="space-y-2">
-              <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-2">Your tickets</p>
+              <p className="text-sm text-slate-400 uppercase tracking-wider font-semibold mb-2">Your tickets</p>
               {(showAllTickets ? tickets : tickets.slice(0, 5)).map((t, i) => (
                 <motion.div
                   key={i}
@@ -1249,13 +1249,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
       )}
       {!isRunning && step !== "done" && giftStep !== "done" && (
         <>
-          <div className="flex items-center justify-between">
-            <p className="text-slate-300 text-xl font-medium font-sans">Buy tickets privately</p>
-            <a href={MEGAPOT_REFERRAL} target="_blank" rel="noopener noreferrer"
-              className="text-sm text-slate-500 hover:text-slate-300 transition-colors underline underline-offset-2">
-              megapot.io ↗
-            </a>
-          </div>
+          <p className="text-slate-300 text-xl font-medium font-sans">Buy tickets privately</p>
 
           <p className="text-sm text-slate-400">🔒 Shielded via MagicBlock. Min {PRIVATE_MIN} tickets. Uses your Loofta balance.</p>
 
@@ -1274,22 +1268,29 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
             </button>
             {giftMode && (
               <div className="px-4 pb-4 border-t border-white/[0.06] space-y-3 pt-4">
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
-                    {giftLooksLikeEmail ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
-                  </span>
-                  <input value={giftIdentifier} onChange={e => setGiftIdentifier(e.target.value.replace(/^@+/, ""))}
-                    placeholder="Email, X handle, or Loofta username"
-                    className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base" />
+                <div>
+                  <Label className="text-slate-400 text-base">Recipient</Label>
+                  <div className="relative mt-1.5">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                      {giftLooksLikeEmail ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
+                    </span>
+                    <input value={giftIdentifier} onChange={e => setGiftIdentifier(e.target.value.replace(/^@+/, ""))}
+                      placeholder="Email, X handle, or Loofta username"
+                      className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base" />
+                  </div>
                 </div>
-                <MessageInput
-                  value={giftNote}
-                  onChange={setGiftNote}
-                  gifUrl={giftGifUrl}
-                  onGifChange={setGiftGifUrl}
-                  placeholder="Optional note…"
-                  maxLength={300}
-                />
+                <div>
+                  <Label className="text-slate-400 text-base">Message (optional)</Label>
+                  <MessageInput
+                    value={giftNote}
+                    onChange={setGiftNote}
+                    gifUrl={giftGifUrl}
+                    onGifChange={setGiftGifUrl}
+                    placeholder="Add a message…"
+                    maxLength={300}
+                    className="mt-1.5 [&_input]:h-11 [&_input]:bg-white/[0.03] [&_input]:border-white/10 [&_input]:text-slate-100 [&_input]:placeholder:text-slate-600"
+                  />
+                </div>
                 <p className="text-sm text-slate-500">They'll get a claim link — the ticket enters the draw as soon as they claim it.</p>
               </div>
             )}
@@ -1912,7 +1913,7 @@ function TicketNumberCard({ tn, winningNumbers }: {
       {/* Bonus */}
       <div className="flex flex-col items-center gap-1 shrink-0 py-3">
         <span className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase">Bonus</span>
-        <span className={`w-7 h-7 rounded-full border text-xs font-bold flex items-center justify-center tabular-nums ${bonusHit
+        <span className={`w-7 h-7 rounded-full border text-sm font-bold flex items-center justify-center tabular-nums ${bonusHit
           ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-400"
           : "border-amber-500/50 bg-amber-500/10 text-amber-400"
           }`}>
@@ -1925,11 +1926,11 @@ function TicketNumberCard({ tn, winningNumbers }: {
           <div className="self-stretch border-l border-dashed border-white/[0.12] mx-1" />
           <div className="shrink-0 py-3">
             {isWin ? (
-              <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold whitespace-nowrap">
+              <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-sm font-bold whitespace-nowrap">
                 WIN
               </span>
             ) : (
-              <span className="text-slate-600 text-xs font-bold uppercase tracking-wide">No win</span>
+              <span className="text-slate-600 text-sm font-bold uppercase tracking-wide">No win</span>
             )}
           </div>
         </>
@@ -2794,7 +2795,7 @@ function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRe
             </div>
           )}
           <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-0.5">Draw Result</p>
+            <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-0.5">Draw Result</p>
             {anyWon ? (
               <>
                 <h2 className="text-2xl font-bold text-white">You Won!</h2>
@@ -2886,7 +2887,7 @@ function DevPreviewPanel() {
       <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-1.5 pt-0.5">Preview flow (dev)</p>
       {DEV_PREVIEW_LINKS.map(l => (
         <Link key={l.label} href={l.href}
-          className="text-xs font-medium text-slate-300 hover:text-white hover:bg-white/10 rounded-lg px-2 py-1.5 transition-colors">
+          className="text-sm font-medium text-slate-300 hover:text-white hover:bg-white/10 rounded-lg px-2 py-1.5 transition-colors">
           {l.label}
         </Link>
       ))}
