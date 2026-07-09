@@ -10,6 +10,8 @@ import bs58 from "bs58";
 import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2 } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { getMyGifts, type MyGiftItem } from "@/services/api/lotteryGift";
+import { MessageInput } from "@/components/MessageInput";
+import { DescriptionWithGif } from "@/components/DescriptionWithGif";
 
 const MEGAPOT_REFERRAL = "https://megapot.io/r/Q3M637";
 const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
@@ -937,6 +939,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   const [giftIdentifier, setGiftIdentifier] = useState("");
   const giftLooksLikeEmail = giftIdentifier.includes("@") && giftIdentifier.includes(".");
   const [giftNote, setGiftNote] = useState("");
+  const [giftGifUrl, setGiftGifUrl] = useState<string | null>(null);
   const [giftStep, setGiftStep] = useState<"idle" | "signing" | "done" | "error">("idle");
   const [giftError, setGiftError] = useState("");
   const [giftClaimUrl, setGiftClaimUrl] = useState<string | null>(null);
@@ -1142,7 +1145,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           userSolanaAddress: embeddedWallet?.address,
           recipientType,
           recipientIdentifier,
-          note: giftNote.trim() || undefined,
+          note: [giftNote.trim(), giftGifUrl].filter(Boolean).join(" ").trim() || undefined,
         }),
       });
       if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
@@ -1240,6 +1243,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
             setGiftClaimUrl(null);
             setGiftIdentifier("");
             setGiftNote("");
+            setGiftGifUrl(null);
           }}
         />
       )}
@@ -1278,9 +1282,14 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
                     placeholder="Email, X handle, or Loofta username"
                     className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base" />
                 </div>
-                <input value={giftNote} onChange={e => setGiftNote(e.target.value)}
+                <MessageInput
+                  value={giftNote}
+                  onChange={setGiftNote}
+                  gifUrl={giftGifUrl}
+                  onGifChange={setGiftGifUrl}
                   placeholder="Optional note…"
-                  className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg px-3 py-2 text-base" />
+                  maxLength={300}
+                />
                 <p className="text-sm text-slate-500">They'll get a claim link — the ticket enters the draw as soon as they claim it.</p>
               </div>
             )}
@@ -2328,7 +2337,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                   </p>
                   <Link
                     href={megapotBase}
-                    className="inline-flex items-center gap-1.5 text-base font-medium text-[#FF7A2A] hover:text-[#FF9A5A] transition-colors"
+                    className="w-full h-10 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all flex items-center justify-center gap-1.5"
                   >
                     View progress <ArrowUpRight className="w-3.5 h-3.5" />
                   </Link>
@@ -2414,15 +2423,18 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                       {new Date(g.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                       {g.claimedAt && ` · claimed ${new Date(g.claimedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
                     </p>
-                    {g.note && <p className="text-base text-slate-400">&ldquo;{g.note}&rdquo;</p>}
+                    <DescriptionWithGif text={g.note} />
                     {(g.status === "unclaimed" || g.status === "claimed") && (
-                      <button type="button"
-                        onClick={() => copyGiftLink(g.giftId, g.claimUrl)}
-                        className="w-full h-10 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all flex items-center justify-center gap-1.5">
-                        {copiedGiftId === g.giftId
-                          ? <><CheckCircle2 className="w-4 h-4" /> Copied</>
-                          : <><Copy className="w-4 h-4" /> {g.status === "unclaimed" ? "Copy claim link" : "Copy share link"}</>}
-                      </button>
+                      <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
+                        <span className="flex-1 min-w-0 truncate text-base text-slate-300">{g.claimUrl}</span>
+                        <button
+                          onClick={() => copyGiftLink(g.giftId, g.claimUrl)}
+                          className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+                          aria-label={g.status === "unclaimed" ? "Copy claim link" : "Copy share link"}
+                        >
+                          {copiedGiftId === g.giftId ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                        </button>
+                      </div>
                     )}
                   </div>
                 </details>
@@ -2435,7 +2447,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
               disabled={loadingMoreGifts}
               className="mt-2 w-full h-10 rounded-xl text-base font-medium border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5">
               {loadingMoreGifts ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              {loadingMoreGifts ? "Loading…" : "See more"}
+              {loadingMoreGifts ? "Loading…" : "Show more gifts"}
             </button>
           )}
         </div>

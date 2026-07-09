@@ -1,5 +1,5 @@
 import { Injectable, Logger, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { Keypair, PublicKey, Connection, Transaction, VersionedTransaction, TransactionMessage, SystemProgram } from '@solana/web3.js';
 import {
@@ -42,6 +42,23 @@ const DRAW_PURCHASE_CUTOFF_MS = 5 * 60_000;
 // regimes with ~20-60% headroom instead of a flat guess.
 const LOOFTA_TICKET_FEE_FLAT_USDC = 0.03;
 const LOOFTA_TICKET_FEE_BPS = 150;
+
+// Same alphabet/algorithm as claims.service.ts's generateShortId — public 8-char share code for
+// gift links (mirrors payments.short_id), kept as its own copy per this repo's existing convention.
+const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SHORT_ID_MAX_VALID = Math.floor(256 / SHORT_ID_ALPHABET.length) * SHORT_ID_ALPHABET.length;
+function generateShortId(length = 8): string {
+  let result = '';
+  while (result.length < length) {
+    const bytes = randomBytes(length - result.length + 4);
+    for (const byte of bytes) {
+      if (byte < SHORT_ID_MAX_VALID && result.length < length) {
+        result += SHORT_ID_ALPHABET[byte % SHORT_ID_ALPHABET.length];
+      }
+    }
+  }
+  return result;
+}
 function looftaTicketFee(costUsdc: number): number {
   return parseFloat((LOOFTA_TICKET_FEE_FLAT_USDC + (costUsdc * LOOFTA_TICKET_FEE_BPS) / 10_000).toFixed(6));
 }
@@ -397,6 +414,7 @@ export class LotteryService {
 
     const db = this.supabase.getClient();
     const claimToken = randomUUID();
+    const shortId = generateShortId();
     const { data: gift, error: giftError } = await db
       .from('lottery_gifts')
       .insert({
@@ -407,6 +425,7 @@ export class LotteryService {
         recipient_type: opts.recipientType,
         recipient_identifier: recipientIdentifier,
         claim_token: claimToken,
+        short_id: shortId,
         status: 'pending_payment',
         burner_sol_address: burnerAddress,
         burner_sol_key_enc: burnerKeyEnc,
@@ -465,7 +484,7 @@ export class LotteryService {
       .eq('funding_mode', 'sender_paid')
       .single();
     if (!gift) throw new BadRequestException('Gift not found');
-    const claimUrl = `https://pay.loofta.xyz/gift/${gift.claim_token}`;
+    const claimUrl = `https://pay.loofta.xyz/gift/${gift.short_id || gift.claim_token}`;
     if (gift.status !== 'pending_payment') return { claimUrl }; // idempotent retry
 
     const { error } = await db
@@ -511,6 +530,7 @@ export class LotteryService {
     if (!recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
 
     const claimToken = randomUUID();
+    const shortId = generateShortId();
     const db = this.supabase.getClient();
     const { data: gift, error } = await db
       .from('lottery_gifts')
@@ -522,13 +542,14 @@ export class LotteryService {
         recipient_type: recipientType,
         recipient_identifier: recipientIdentifier,
         claim_token: claimToken,
+        short_id: shortId,
         status: 'unclaimed',
       })
       .select('id')
       .single();
     if (error || !gift) throw new Error(`Failed to create lottery gift: ${error?.message}`);
 
-    const claimUrl = `https://pay.loofta.xyz/gift/${claimToken}`;
+    const claimUrl = `https://pay.loofta.xyz/gift/${shortId}`;
     if (recipientType === 'email') {
       await this.emailService.sendGiftTicketEmail({
         recipientEmail: recipientIdentifier,
@@ -542,18 +563,29 @@ export class LotteryService {
     return { giftId: gift.id, claimToken, claimUrl };
   }
 
-  /** Public, unauthenticated preview for the claim page — no recipient identifier exposed. */
+  /**
+   * Public, unauthenticated preview for the share + claim pages — accepts either the short share
+   * id or (for links sent before short ids existed) the long claim_token. Never exposes the raw
+   * recipient_identifier when it's an email; a handle recipient is already public the same way a
+   * payment's recipient username is (see sharePreview.ts on the frontend for the precedent).
+   */
   async getGiftPublic(token: string, viewerUserId?: string): Promise<{
     numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle';
     isSender: boolean; isClaimant: boolean;
+    senderUsername: string | null; recipientHandle: string | null;
   }> {
     const db = this.supabase.getClient();
     const { data: gift } = await db
       .from('lottery_gifts')
-      .select('num_tickets, note, status, recipient_type, created_by_user_id, claimed_by_user_id')
-      .eq('claim_token', token)
+      .select('num_tickets, note, status, recipient_type, recipient_identifier, created_by_user_id, claimed_by_user_id')
+      .or(`short_id.eq.${token},claim_token.eq.${token}`)
       .maybeSingle();
     if (!gift) throw new NotFoundException('Gift not found');
+
+    const { data: senderAppUser } = gift.created_by_user_id
+      ? await db.from('app_users').select('username').eq('privy_user_id', gift.created_by_user_id).maybeSingle()
+      : { data: null };
+
     return {
       numTickets: gift.num_tickets,
       note: gift.note,
@@ -561,6 +593,8 @@ export class LotteryService {
       recipientType: gift.recipient_type,
       isSender: Boolean(viewerUserId) && gift.created_by_user_id === viewerUserId,
       isClaimant: Boolean(viewerUserId) && gift.claimed_by_user_id === viewerUserId,
+      senderUsername: (senderAppUser as { username?: string } | null)?.username ?? null,
+      recipientHandle: gift.recipient_type === 'handle' ? gift.recipient_identifier : null,
     };
   }
 
@@ -588,7 +622,7 @@ export class LotteryService {
     const db = this.supabase.getClient();
     const { data: gifts, count } = await db
       .from('lottery_gifts')
-      .select('id, created_at, num_tickets, note, recipient_type, recipient_identifier, status, claimed_at, claim_token', { count: 'exact' })
+      .select('id, created_at, num_tickets, note, recipient_type, recipient_identifier, status, claimed_at, claim_token, short_id', { count: 'exact' })
       .eq('created_by_user_id', userId)
       .eq('funding_mode', 'sender_paid')
       .neq('status', 'pending_payment') // abandoned mid-signature — not a real gift yet, nothing to show
@@ -605,7 +639,7 @@ export class LotteryService {
         status: g.status,
         claimedAt: g.claimed_at,
         claimToken: g.claim_token,
-        claimUrl: `https://pay.loofta.xyz/gift/${g.claim_token}`,
+        claimUrl: `https://pay.loofta.xyz/gift/${g.short_id || g.claim_token}`,
       })),
       total: count ?? 0,
     };
@@ -622,7 +656,7 @@ export class LotteryService {
     const { data: gift } = await db
       .from('lottery_gifts')
       .select('*')
-      .eq('claim_token', token)
+      .or(`short_id.eq.${token},claim_token.eq.${token}`)
       .maybeSingle();
     if (!gift) throw new NotFoundException('Gift not found');
 
