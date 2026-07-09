@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { getLotteryGiftPublic, type LotteryGiftPublic } from '@/services/api/lotteryGift';
 import { GradientActionButton } from '@/components/ui/GradientActionButton';
-import { Loader2, Ticket, AlertCircle, ArrowDown, Lock, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Ticket, AlertCircle, ArrowDown, Lock, CheckCircle2, ArrowRight } from 'lucide-react';
 
 /**
  * Public preview page — anyone with the link can see "N Megapot tickets, gifted" (mirrors the
@@ -37,8 +37,22 @@ export default function GiftShareClient({ token }: { token: string }) {
     return (
       <>
         <div className="fixed inset-0 -z-10 bg-[#0f0f12]" />
-        <main className="min-h-[calc(100vh-5rem)] flex flex-col items-center justify-center px-4 py-12">
-          <Loader2 className="h-10 w-10 animate-spin text-[#FF7A2A]" />
+        <main className="flex flex-col items-center px-4 pt-6 pb-16 min-h-[calc(100vh-5rem)]">
+          <div className="w-full max-w-sm space-y-4 animate-pulse">
+            <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] overflow-hidden">
+              <div className="flex items-center justify-center border-b border-white/[0.06] px-5 py-4">
+                <div className="h-4 w-28 rounded-full bg-white/[0.08]" />
+              </div>
+              <div className="flex flex-col items-center gap-3 px-6 py-7">
+                <div className="h-5 w-24 rounded-lg bg-white/[0.08]" />
+                <div className="h-16 w-20 rounded-2xl bg-white/[0.08] my-2" />
+                <div className="h-5 w-24 rounded-lg bg-white/[0.08]" />
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-5 py-5">
+              <div className="h-11 w-full rounded-2xl bg-white/[0.08]" />
+            </div>
+          </div>
         </main>
       </>
     );
@@ -82,7 +96,7 @@ export default function GiftShareClient({ token }: { token: string }) {
               <span className="text-xl font-bold text-white">{senderLabel}</span>
               <div className="flex flex-col items-center gap-1.5 py-2">
                 <ArrowDown className={`h-4 w-4 ${isClaimed ? 'text-emerald-500/40' : 'text-white/20'}`} />
-                <span className={`text-5xl font-bold tracking-tight ${isClaimed ? 'text-emerald-400' : 'text-white'}`}>{data.numTickets}</span>
+                <span className={`font-display text-5xl font-medium tracking-tight ${isClaimed ? 'text-emerald-400' : 'text-white'}`}>{data.numTickets}</span>
                 <span className="text-base md:text-sm text-white/30 font-medium tracking-widest uppercase">Megapot {ticketWord}</span>
                 <ArrowDown className={`h-4 w-4 ${isClaimed ? 'text-emerald-500/40' : 'text-white/20'}`} />
               </div>
