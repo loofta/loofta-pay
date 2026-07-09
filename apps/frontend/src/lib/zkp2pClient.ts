@@ -87,6 +87,43 @@ export async function createSponsoredZkp2pClient(opts: {
 }
 
 /**
+ * Attaches Peer's oracle-backed "automatic rate management" (ARM) to a currency/processor pair
+ * on an already-created deposit, at 0% spread — the deposit's conversion rate then tracks the
+ * live Chainlink feed instead of the static rate baked in at createDeposit time. Only applies to
+ * currencies with a bundled oracle feed (USD's is a no-op 1:1 passthrough, so it's skipped).
+ * Non-fatal on failure: the static conversionRate from createDeposit remains in effect as a fallback.
+ */
+async function attachAutomaticRateManagement(opts: {
+  client: any;
+  processorName: string;
+  currency: string;
+  depositId: string;
+}) {
+  const currency = opts.currency.toUpperCase();
+  if (currency === "USD") return;
+  try {
+    const { getSpreadOracleConfig, resolveFiatCurrencyBytes32, resolvePaymentMethodHash } = await import("@zkp2p/sdk");
+    const oracle = getSpreadOracleConfig(currency as any);
+    if (!oracle) {
+      console.warn(BEAM_LOG, `no bundled oracle feed for ${currency}, keeping static rate`);
+      return;
+    }
+    const paymentMethodHash = resolvePaymentMethodHash(opts.processorName, { env: "production" });
+    const currencyHash = resolveFiatCurrencyBytes32(currency);
+    console.log(BEAM_LOG, `attaching ARM oracle for ${currency}/${opts.processorName}…`, { depositId: opts.depositId });
+    await opts.client.setOracleRateConfig({
+      depositId: opts.depositId,
+      paymentMethodHash,
+      currencyHash,
+      config: { adapter: oracle.adapter, adapterConfig: oracle.adapterConfig, spreadBps: 0, maxStaleness: oracle.maxStaleness },
+    });
+    console.log(BEAM_LOG, `ARM oracle attached for ${currency}/${opts.processorName}`);
+  } catch (err) {
+    console.warn(BEAM_LOG, `ARM oracle attach failed, static rate remains in effect`, err);
+  }
+}
+
+/**
  * Approves USDC (if needed) and creates a ZKP2P deposit for exactly the requested amount,
  * returning the resulting deposit id + tx hash. Mirrors the withdraw flow's Peer signing step.
  *
@@ -206,6 +243,11 @@ export async function createZkp2pDeposit(opts: {
   }
 
   console.log(BEAM_LOG, `deposit created (${elapsed()})`, { depositId, depositTxHash });
+
+  if (depositId) {
+    await attachAutomaticRateManagement({ client: opts.client, processorName: opts.processorName, currency: opts.currency, depositId });
+  }
+
   return { depositId, depositTxHash: depositTxHash as string, amountAtomic: atomicUsdc };
 }
 

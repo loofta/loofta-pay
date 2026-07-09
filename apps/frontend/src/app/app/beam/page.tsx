@@ -36,7 +36,7 @@ const BEAM_RATE = 1 - BEAM_RATE_PERCENT / 100; // 0.998
 const BEAM_PLATFORMS = BEAM_PLATFORM_IDS.map((id) => getPlatform(id)).filter(Boolean) as NonNullable<ReturnType<typeof getPlatform>>[];
 
 type FundingMethod = "blink" | "near-intents" | "moonpay" | "coinbase" | "balance";
-type Step = "compose" | "fund" | "near-fund" | "sending";
+type Step = "compose" | "fund" | "confirm-balance" | "near-fund" | "sending";
 type BeamHistoryItem = {
   id: string;
   created_at: string;
@@ -51,6 +51,13 @@ type BeamHistoryItem = {
 
 function currencySymbol(currency: string): string {
   return currency === "EUR" ? "€" : "$";
+}
+
+// The recipient's payout amount, with the actual USDC equivalent alongside for non-USD
+// currencies — the sender should always be able to see what they're really paying in dollars.
+function formatPayout(currency: string, payoutAmount: number, amountUsdc: number): string {
+  const base = `${currencySymbol(currency)}${payoutAmount.toFixed(2)}`;
+  return currency === "EUR" ? `${base} (~$${amountUsdc.toFixed(2)})` : base;
 }
 
 const basePublicClient = createPublicClient({ chain: base, transport: http("https://mainnet.base.org") });
@@ -108,6 +115,7 @@ export default function BeamPage() {
   const [detailFullRecord, setDetailFullRecord] = useState<any | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [sendingPaymentId, setSendingPaymentId] = useState<string | null>(null);
+  const [hasSufficientBalance, setHasSufficientBalance] = useState(false);
 
   const [history, setHistory] = useState<BeamHistoryItem[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -218,6 +226,7 @@ export default function BeamPage() {
     setNearDepositMemo(null);
     setNearFromSelection(undefined);
     setSendingPaymentId(null);
+    setHasSufficientBalance(false);
   }, []);
 
   // Moves a payment to background tracking while bringing the "sending" step to the
@@ -275,18 +284,32 @@ export default function BeamPage() {
       } catch { /* fall through to normal funding flow */ }
       const requiredAtomic = BigInt(Math.round(payAmount * 1_000_000));
 
-      if (existingBalance >= requiredAtomic) {
-        await confirmFunded(data.id, "balance", null);
-        startPaymentTracking({
-          id: data.id, platform: platformId, identifier, amountUsdc: payAmount,
-          amountPayout: payoutAmount, currency, fxRateFromUsd: fxRateFromUsd ?? 1,
-          baseWalletAddress: addr, stage: "sending",
-          label: `Sending to ${identifier}…`, startedAt: Date.now(),
-        }, signAndSendDeposit);
-        toast({ title: "Using your balance", description: `$${payAmount.toFixed(2)} covered — sending now.` });
-      } else {
-        setStep("fund");
-      }
+      // Don't auto-charge the balance — show the same fee breakdown as any other funding
+      // method and require an explicit confirm, so the sender always sees what they're
+      // about to pay before it happens.
+      setHasSufficientBalance(existingBalance >= requiredAtomic);
+      setStep(existingBalance >= requiredAtomic ? "confirm-balance" : "fund");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not start this payment";
+      toast({ variant: "destructive", title: "Error", description: msg });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Explicit confirm step for paying from existing balance — mirrors the "fund" step's
+  // breakdown so the sender always sees the total before anything is charged.
+  const handleConfirmBalancePayment = async () => {
+    if (!beamId || !baseWalletAddr) return;
+    setSubmitting(true);
+    try {
+      await confirmFunded(beamId, "balance", null);
+      startPaymentTracking({
+        id: beamId, platform: platformId, identifier, amountUsdc: payAmount,
+        amountPayout: amountPayout ?? amountNum, currency, fxRateFromUsd: fxRateFromUsd ?? 1,
+        baseWalletAddress: baseWalletAddr, stage: "sending",
+        label: `Sending to ${identifier}…`, startedAt: Date.now(),
+      }, signAndSendDeposit);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Could not start this payment";
       toast({ variant: "destructive", title: "Error", description: msg });
@@ -306,7 +329,7 @@ export default function BeamPage() {
         const d = await r.json() as { status?: string };
         if (d.status === "COMPLETE") {
           removeActive(payment.id);
-          toast({ title: "Sent!", description: `${currencySymbol(payment.currency)}${payment.amountPayout.toFixed(2)} is on its way to ${payment.identifier}.` });
+          toast({ title: "Sent!", description: `${formatPayout(payment.currency, payment.amountPayout, payment.amountUsdc)} is on its way to ${payment.identifier}.` });
           return true;
         }
         if (d.status === "FAILED" || d.status === "CANCELLED") {
@@ -777,6 +800,7 @@ export default function BeamPage() {
                   </div>
                   <div className="text-right shrink-0 ml-2">
                     <p className="text-white font-bold text-lg tabular-nums">{currencySymbol(h.currency)}{h.amount_payout.toFixed(2)}</p>
+                    {h.currency === "EUR" && <p className="text-sm text-slate-500 tabular-nums">≈ ${h.amount_usdc.toFixed(2)}</p>}
                     <p className={cn("text-sm font-semibold", s.textClass)}>{s.label}</p>
                   </div>
                 </button>
@@ -837,6 +861,11 @@ export default function BeamPage() {
                         </span>
                       </div>
                     </div>
+                    {currency === "EUR" && amountNum > 0 && (
+                      <p className="text-center text-base text-slate-400 -mt-4 mb-2">
+                        {Number.isFinite(payAmount) ? `≈ $${payAmount.toFixed(2)} paid in USDC` : "Fetching exchange rate…"}
+                      </p>
+                    )}
                   </div>
 
                   <Label className="text-slate-300 text-xl font-sans font-medium">To</Label>
@@ -893,27 +922,34 @@ export default function BeamPage() {
                   <ArrowLeft className="h-4 w-4" /> Back
                 </button>
 
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-400">To {platform?.name} · {identifier}</span>
-                    <span className="text-white font-semibold">{currencySymbol(currency)}{amountNum.toFixed(2)}</span>
-                  </div>
-                  {currency === "USD" && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-slate-400">Network fee</span>
-                      <span className="text-white font-semibold">${(payAmount - amountNum).toFixed(2)}</span>
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-white/10">
-                    <span className="text-base text-slate-200 font-medium">Total to pay{currency === "EUR" ? " (in USDC)" : ""}</span>
-                    <span className="text-white font-bold text-xl tabular-nums">${Number.isFinite(payAmount) ? payAmount.toFixed(2) : "—"}</span>
-                  </div>
-                </div>
+                <PaymentBreakdown currency={currency} amountNum={amountNum} payAmount={payAmount} platformName={platform?.name} identifier={identifier} />
 
                 <FundingCard title="Card via Coinbase" subtitle="Apple Pay · card · bank transfer" onClick={handleCoinbase} />
                 <FundingCard title="Card via MoonPay" subtitle="Apple Pay · Google Pay · card" onClick={handleMoonpay} />
                 <FundingCard title="Pay with Blink" subtitle="ETH · USDC · USDT — any chain" onClick={handleBlink} />
                 <FundingCard title="Pay with another crypto" subtitle="Any token, any chain" onClick={() => setStep("near-fund")} />
+              </div>
+            )}
+
+            {step === "confirm-balance" && (
+              <div className="space-y-4">
+                <button type="button" onClick={() => setStep("compose")} className="flex items-center gap-1 text-sm text-slate-400 hover:text-white mb-2">
+                  <ArrowLeft className="h-4 w-4" /> Back
+                </button>
+
+                <PaymentBreakdown currency={currency} amountNum={amountNum} payAmount={payAmount} platformName={platform?.name} identifier={identifier} />
+
+                <p className="text-sm text-slate-400 px-1">
+                  {hasSufficientBalance ? "Covered by your existing balance." : ""} Confirm to send — this charges your balance right away.
+                </p>
+
+                <Button
+                  onClick={handleConfirmBalancePayment}
+                  disabled={submitting}
+                  className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                >
+                  {submitting ? <Loader2 className="h-5 w-5 animate-spin" /> : "Confirm & Send"}
+                </Button>
               </div>
             )}
 
@@ -985,7 +1021,7 @@ export default function BeamPage() {
                     )}
                     <p className="text-2xl font-bold text-white">{isError ? "Something went wrong" : payment.label}</p>
                     <p className="text-lg font-medium text-slate-200">
-                      {currencySymbol(payment.currency)}{payment.amountPayout.toFixed(2)} to {getPlatform(payment.platform)?.name ?? payment.platform} · {payment.identifier}
+                      {formatPayout(payment.currency, payment.amountPayout, payment.amountUsdc)} to {getPlatform(payment.platform)?.name ?? payment.platform} · {payment.identifier}
                     </p>
                     {payment.stage === "funding" && (
                       <p className="text-base text-slate-300">
@@ -1069,7 +1105,7 @@ export default function BeamPage() {
                 )}
                 <p className="text-2xl font-bold text-white">{statusInfo(status).label}</p>
                 <p className="text-lg font-medium text-slate-200">
-                  {currencySymbol(detailHistory.currency)}{detailHistory.amount_payout.toFixed(2)} to {getPlatform(detailHistory.platform)?.name ?? detailHistory.platform} · {detailHistory.platform_identifier}
+                  {formatPayout(detailHistory.currency, detailHistory.amount_payout, detailHistory.amount_usdc)} to {getPlatform(detailHistory.platform)?.name ?? detailHistory.platform} · {detailHistory.platform_identifier}
                 </p>
                 <p className="text-sm text-slate-400">{new Date(detailHistory.created_at).toLocaleString()}</p>
                 {!["COMPLETE", "FAILED", "CANCELLED", "DEPOSITED"].includes(status) && (
@@ -1191,6 +1227,29 @@ function BeamTabs({ activeTab, onTabChange }: { activeTab: "send" | "history"; o
           </IconBubble>
           <span className={tabTextClass("history")}>History</span>
         </button>
+      </div>
+    </div>
+  );
+}
+
+function PaymentBreakdown({ currency, amountNum, payAmount, platformName, identifier }: {
+  currency: string; amountNum: number; payAmount: number; platformName?: string; identifier: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-slate-400">To {platformName} · {identifier}</span>
+        <span className="text-white font-semibold">{currencySymbol(currency)}{amountNum.toFixed(2)}</span>
+      </div>
+      {currency === "USD" && (
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-slate-400">Network fee</span>
+          <span className="text-white font-semibold">${(payAmount - amountNum).toFixed(2)}</span>
+        </div>
+      )}
+      <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-white/10">
+        <span className="text-base text-slate-200 font-medium">Total to pay{currency === "EUR" ? " (in USDC)" : ""}</span>
+        <span className="text-white font-bold text-xl tabular-nums">${Number.isFinite(payAmount) ? payAmount.toFixed(2) : "—"}</span>
       </div>
     </div>
   );
