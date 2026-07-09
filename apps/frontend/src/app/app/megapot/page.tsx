@@ -1145,10 +1145,22 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
         }),
       });
       if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
-      const { ticketId, claimUrl, txBase64 } = await initRes.json();
+      const { ticketId, claimUrl, feeTxBase64, txBase64 } = await initRes.json();
 
-      // Only one signature needed — Loofta's fee is collected inline by MagicBlock
-      // (platformFeeBps/platformFeeAccount), no separate fee tx to sign here.
+      // Two signatures, same as a normal purchase: the fee tx first (can't be combined into
+      // MagicBlock's own pre-built tx), then the MagicBlock private transfer.
+      const feeTxBytes = Buffer.from(feeTxBase64, "base64");
+      const { signature: feeSigBytes } = await signAndSendTransaction({
+        transaction: feeTxBytes as unknown as Uint8Array,
+        wallet: embeddedWallet as any,
+      });
+      const feeSignature = bs58.encode(feeSigBytes as Uint8Array);
+      await fetch("/api/lottery/buy-fee-confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ ticketId, feeTxHash: feeSignature }),
+      });
+
       const txBytes = Buffer.from(txBase64, "base64");
       const { signature: sigBytes } = await signAndSendTransaction({
         transaction: txBytes as unknown as Uint8Array,

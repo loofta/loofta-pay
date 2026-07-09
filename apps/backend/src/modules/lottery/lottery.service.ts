@@ -324,9 +324,11 @@ export class LotteryService {
    * committing real money now, same as any purchase); only ownership attachment is deferred to
    * claim time.
    *
-   * Only ONE signature is needed (vs. two for a normal purchase): Loofta's fee is collected by
-   * MagicBlock itself as part of the same private transfer (platformFeeBps/platformFeeAccount),
-   * so there's no separate upfront fee-collection transaction to sign.
+   * Two signatures, same as a normal purchase (fee tx + MagicBlock private transfer). An earlier
+   * version tried to collect Loofta's fee inline via MagicBlock's platformFeeBps/platformFeeAccount
+   * to cut this to one signature — confirmed broken in production: combined with gasless mode it
+   * pushes the transaction past Solana's 1232-byte limit ("Transaction too large: 1278 > 1232"),
+   * so every gift purchase failed with a 500. Reverted to the proven two-tx pattern.
    */
   async initiateGiftedPurchase(opts: {
     userId: string;
@@ -335,7 +337,7 @@ export class LotteryService {
     recipientType: 'email' | 'handle';
     recipientIdentifier: string;
     note?: string;
-  }): Promise<{ ticketId: string; giftId: string; claimUrl: string; txBase64: string; requiredSigners: string[] }> {
+  }): Promise<{ ticketId: string; giftId: string; claimUrl: string; feeTxBase64: string; feeWalletAddress: string; txBase64: string; requiredSigners: string[] }> {
     const { userId, userSolanaAddress, numTickets } = opts;
     await this.assertNotInDrawCutoff();
     if (!numTickets || numTickets < 1 || numTickets > 100) throw new BadRequestException('1–100 tickets per gift');
@@ -366,11 +368,13 @@ export class LotteryService {
 
     const costUsdc = numTickets * TICKET_PRICE_USDC;
     const costUnits = Math.round(costUsdc * 1_000_000);
+    const looftaFeeUsdc = looftaTicketFee(costUsdc);
 
-    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
-    if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
-    const bs58Mod = await import('bs58');
-    const feeWalletAddress = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey)).publicKey.toBase58();
+    // Fee collection: a plain USDC transfer, user → fee wallet, same as initiatePurchase — has to
+    // be its own transaction, can't be appended to MagicBlock's own pre-built tx.
+    const { transactionBase64: feeTxBase64, feeWalletAddress } = await this.buildFeeCollectionTx(
+      userSolanaAddress, looftaFeeUsdc,
+    );
 
     const cluster = this.getSolanaCluster();
     let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
@@ -385,8 +389,6 @@ export class LotteryService {
         gasless: true,
         minDelayMs: 10_000,
         maxDelayMs: 30_000,
-        platformFeeBps: LOOFTA_TICKET_FEE_BPS,
-        platformFeeAccount: feeWalletAddress,
       });
     } catch (err: any) {
       if (String(err?.message).includes('delegated to another validator')) {
@@ -410,7 +412,7 @@ export class LotteryService {
         num_tickets: numTickets,
         cost_usdc: costUsdc,
         status: 'pending_send',
-        is_gift: true, // no separate fee_tx_hash — MagicBlock collected the fee inline, see tryStartBridge's gate
+        is_gift: true,
       })
       .select('id')
       .single();
@@ -448,6 +450,8 @@ export class LotteryService {
       ticketId: ticket.id,
       giftId: gift.id,
       claimUrl,
+      feeTxBase64,
+      feeWalletAddress,
       txBase64: txResponse.transactionBase64,
       requiredSigners: txResponse.requiredSigners,
     };

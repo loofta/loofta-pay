@@ -151,8 +151,8 @@ export class LotteryController {
 
   @Post('buy-gift')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Buy N tickets for someone else — returns a single MagicBlock tx to sign (fee collected inline), then use buy-confirm as normal' })
-  async buyGift(@Body() dto: BuyGiftDto, @Request() req: any): Promise<{ ticketId: string; giftId: string; claimUrl: string; txBase64: string; requiredSigners: string[] }> {
+  @ApiOperation({ summary: 'Buy N tickets for someone else — returns fee tx + MagicBlock tx to sign, in that order (same two-signature flow as buy)' })
+  async buyGift(@Body() dto: BuyGiftDto, @Request() req: any): Promise<{ ticketId: string; giftId: string; claimUrl: string; feeTxBase64: string; feeWalletAddress: string; txBase64: string; requiredSigners: string[] }> {
     if (!dto.numTickets || dto.numTickets < 1) throw new BadRequestException('numTickets required');
     if (!dto.userSolanaAddress) throw new BadRequestException('userSolanaAddress required');
     if (!dto.recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
