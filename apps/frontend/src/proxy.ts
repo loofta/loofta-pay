@@ -29,7 +29,17 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/home", request.url));
   }
 
-  const marketingPaths = new Set(["/home", "/home-white", "/brand", "/terms", "/privacy", "/careers"]);
+  const marketingPaths = new Set([
+    "/home",
+    "/home-white",
+    "/brand",
+    "/terms",
+    "/privacy",
+    "/careers",
+    "/payment-links",
+    "/guides/send-crypto-privately",
+    "/vs/paypal",
+  ]);
   const isLocalAppPath =
     isLocalhost &&
     !marketingPaths.has(pathname) &&

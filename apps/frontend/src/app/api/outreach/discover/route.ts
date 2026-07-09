@@ -8,7 +8,7 @@ function checkSecret(req: NextRequest) {
   return !!secret && !!expected && secret === expected;
 }
 
-type ProspectType = "creator" | "freelancer" | "web3_project";
+type ProspectType = "creator" | "freelancer" | "web3_project" | "giveaway_project";
 
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
@@ -55,6 +55,17 @@ const QUERIES: Array<{ q: string; hint: ProspectType }> = [
   { hint: "freelancer", q: 'freelance solana (developer OR designer OR writer) -is:retweet lang:en' },
   { hint: "freelancer", q: '"superteam" earn completed -is:retweet lang:en' },
   { hint: "freelancer", q: '"received" USDC bounty -is:retweet lang:en' },
+
+  // ── GIVEAWAY PROJECTS: currently running a giveaway / reward campaign ─────
+  // BD strategy: co-market their giveaway + offer Loofta Pay as the winner payout
+  // rail. Smaller/mid projects are the real fit here, not major CEXs who already
+  // have their own payout infra.
+  { hint: "giveaway_project", q: '"giveaway" "prize pool" crypto -is:retweet lang:en' },
+  { hint: "giveaway_project", q: '"giveaway" winner solana -is:retweet lang:en' },
+  { hint: "giveaway_project", q: '"reward campaign" crypto -is:retweet lang:en' },
+  { hint: "giveaway_project", q: '"enter to win" (crypto OR solana OR web3) -is:retweet lang:en' },
+  { hint: "giveaway_project", q: '"RT to enter" crypto -is:retweet lang:en' },
+  { hint: "giveaway_project", q: '"winners will receive" crypto -is:retweet lang:en' },
 ];
 
 function buildSignalText(bio: string, tweet: string, query: string): string {
