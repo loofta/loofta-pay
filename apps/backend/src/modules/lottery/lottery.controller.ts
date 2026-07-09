@@ -319,6 +319,7 @@ export class LotteryController {
   async getGift(@Param('token') token: string, @Request() req: any): Promise<{
     numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle';
     isSender: boolean; isClaimant: boolean;
+    senderUsername: string | null; recipientHandle: string | null;
   }> {
     return this.lottery.getGiftPublic(token, req.user?.id);
   }

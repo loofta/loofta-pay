@@ -49,6 +49,7 @@ export function ShareLinkMenu({
   url,
   title,
   text,
+  ogUrl,
   triggerClassName,
   triggerLabel = "Share",
 }: {
@@ -57,6 +58,10 @@ export function ShareLinkMenu({
   title: string;
   /** Body copy shared alongside the link. */
   text: string;
+  /** Explicit OG image URL to pre-warm. Defaults to the payment share route's
+   *  `/api/share/:id/og` convention (derived from `url`'s last path segment) when omitted —
+   *  pass this for any other OG route shape (e.g. `/api/gift/:id/og`). */
+  ogUrl?: string;
   triggerClassName?: string;
   triggerLabel?: string;
 }) {
@@ -77,10 +82,14 @@ export function ShareLinkMenu({
   // forget: failures here just mean the crawler falls back to generating it itself.
   useEffect(() => {
     try {
+      if (ogUrl) {
+        fetch(ogUrl).catch(() => {});
+        return;
+      }
       const shortId = new URL(url).pathname.split("/").filter(Boolean).pop();
       if (shortId) {
-        const ogUrl = `${new URL(url).origin}/api/share/${shortId}/og`;
-        fetch(ogUrl).catch(() => {});
+        const defaultOgUrl = `${new URL(url).origin}/api/share/${shortId}/og`;
+        fetch(defaultOgUrl).catch(() => {});
       }
     } catch {
       // url wasn't a valid absolute URL — nothing to pre-warm

@@ -68,6 +68,8 @@ async function renderImage(preview: NonNullable<Awaited<ReturnType<typeof getGif
   const { displayBold, groteskMedium, groteskBold } = await loadFonts();
   const isClaimed = preview.status === "claimed";
   const ticketWord = preview.numTickets === 1 ? "ticket" : "tickets";
+  const senderLabel = preview.senderUsername ? `@${preview.senderUsername}` : "Someone";
+  const recipientLabel = preview.recipientHandle ? `@${preview.recipientHandle}` : "someone";
 
   return new ImageResponse(
     (
@@ -130,6 +132,18 @@ async function renderImage(preview: NonNullable<Awaited<ReturnType<typeof getGif
             }}
           >
             Megapot ticket gift
+          </span>
+          <span
+            style={{
+              display: "flex",
+              fontSize: 30,
+              fontWeight: 600,
+              color: "#e4e4e7",
+              marginBottom: 18,
+              fontFamily: "Clash Grotesk",
+            }}
+          >
+            {senderLabel} → {recipientLabel}
           </span>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 20 }}>
             <span

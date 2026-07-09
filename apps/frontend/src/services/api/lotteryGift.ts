@@ -16,6 +16,10 @@ export interface LotteryGiftPublic {
   isSender: boolean;
   /** True only when the logged-in viewer is the one who actually claimed it. */
   isClaimant: boolean;
+  /** Loofta username of whoever sent the gift, or null if unresolved. */
+  senderUsername: string | null;
+  /** Recipient's X/Loofta handle — only set when the gift targeted a handle, never an email. */
+  recipientHandle: string | null;
 }
 
 export interface ClaimLotteryGiftResult {

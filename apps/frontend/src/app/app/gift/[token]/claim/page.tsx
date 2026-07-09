@@ -5,10 +5,13 @@ import { usePrivy } from '@privy-io/react-auth';
 import { useParams, useRouter, usePathname } from 'next/navigation';
 import { useToast } from '@/components/ui/use-toast';
 import { getLotteryGiftPublic, claimLotteryGift, type LotteryGiftPublic } from '@/services/api/lotteryGift';
-import { Loader2, LogIn, CheckCircle2, Ticket, AlertCircle, Clock, Gift } from 'lucide-react';
+import { ShareLinkMenu } from '@/components/ShareLinkMenu';
+import { DescriptionWithGif } from '@/components/DescriptionWithGif';
+import { Loader2, LogIn, CheckCircle2, Ticket, AlertCircle, Clock, Gift, Copy } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const READY_STATUSES = new Set(['active', 'won', 'lost', 'withdrawn']);
+const SITE_URL = 'https://pay.loofta.xyz';
 
 export default function LotteryGiftClaimPage() {
   const params = useParams();
@@ -21,6 +24,8 @@ export default function LotteryGiftClaimPage() {
   // paths to /app/* on pay.loofta.xyz, so only prefix when we're already under /app.
   const isAppPath = usePathname()?.startsWith('/app');
   const megapotHref = isAppPath ? '/app/megapot?tab=history' : '/megapot?tab=history';
+  const shareUrl = `${SITE_URL}/gift/${token}`;
+  const [shareCopied, setShareCopied] = useState(false);
 
   const [data, setData] = useState<LotteryGiftPublic | null>(null);
   const [loading, setLoading] = useState(true);
@@ -163,7 +168,7 @@ export default function LotteryGiftClaimPage() {
 
               {data.note && (
                 <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-4">
-                  <p className="text-slate-300 text-base leading-relaxed">{data.note}</p>
+                  <DescriptionWithGif text={data.note} />
                 </div>
               )}
 
@@ -244,9 +249,29 @@ export default function LotteryGiftClaimPage() {
               {canClaim && authenticated && (
                 <div className="space-y-4">
                   {viewerIsSenderOnly ? (
-                    <p className="text-center text-base text-amber-400">
-                      You sent this gift — it&apos;s still unclaimed. The button below only works if you&apos;re also the intended recipient (e.g. you gifted it to yourself to test).
-                    </p>
+                    <>
+                      <p className="text-center text-base text-amber-400">
+                        You sent this gift — it&apos;s still unclaimed. The button below only works if you&apos;re also the intended recipient (e.g. you gifted it to yourself to test).
+                      </p>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3 flex-1 min-w-0">
+                          <span className="flex-1 min-w-0 truncate text-base text-slate-300">{shareUrl}</span>
+                          <button
+                            onClick={() => { navigator.clipboard.writeText(shareUrl); setShareCopied(true); setTimeout(() => setShareCopied(false), 1500); }}
+                            className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+                            aria-label="Copy share link"
+                          >
+                            {shareCopied ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                          </button>
+                        </div>
+                        <ShareLinkMenu
+                          url={shareUrl}
+                          title="Megapot ticket gift"
+                          text={`I gifted ${data.numTickets} Megapot ${ticketWord} on Loofta 🎟️`}
+                          ogUrl={`${SITE_URL}/api/gift/${token}/og`}
+                        />
+                      </div>
+                    </>
                   ) : (
                     <p className="text-center text-base text-slate-500">
                       Claiming buys your {ticketWord} now, so it&apos;s ready for the next draw.
