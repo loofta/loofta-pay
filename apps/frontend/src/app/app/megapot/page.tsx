@@ -765,7 +765,10 @@ function GiftSentCard({ claimUrl, numTickets, recipientType, onDone }: {
           </div>
 
           <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
-            <span className="flex-1 min-w-0 truncate text-base text-slate-300">{claimUrl}</span>
+            <a href={claimUrl} target="_blank" rel="noopener noreferrer"
+              className="flex-1 min-w-0 truncate text-base text-slate-300 hover:text-white hover:underline underline-offset-2 transition-colors">
+              {claimUrl}
+            </a>
             <button
               onClick={() => { navigator.clipboard.writeText(claimUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
               className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
@@ -1948,6 +1951,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
   const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
   const [copied, setCopied] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [historyFilter, setHistoryFilter] = useState<"all" | "mine" | "gifted">("all");
   const syncedIds = useRef<Set<string>>(new Set());
 
   // Gifts you sent — separate from your own tickets, since ownership of a claimed gift's ticket
@@ -1955,7 +1959,6 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
   const GIFTS_PAGE = 20;
   const { user: giftsUser } = usePrivy();
   const [myGifts, setMyGifts] = useState<MyGiftItem[]>([]);
-  const [myGiftsLoaded, setMyGiftsLoaded] = useState(false);
   const [myGiftsTotal, setMyGiftsTotal] = useState(0);
   const [loadingMoreGifts, setLoadingMoreGifts] = useState(false);
   const [copiedGiftId, setCopiedGiftId] = useState<string | null>(null);
@@ -1968,11 +1971,10 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
         setMyGifts(gifts);
         setMyGiftsTotal(total);
       } catch { /* non-fatal */ }
-      finally { setMyGiftsLoaded(true); }
     })();
   }, [giftsUser?.id, getAccessToken]);
-  async function handleLoadMoreGifts() {
-    if (!giftsUser?.id || loadingMoreGifts) return;
+  async function fetchMoreGifts() {
+    if (!giftsUser?.id || myGifts.length >= myGiftsTotal || loadingMoreGifts) return;
     setLoadingMoreGifts(true);
     try {
       const accessToken = await getAccessToken();
@@ -2048,14 +2050,24 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
   })();
-  const visibleCompleted = completed.slice(0, visibleCount);
-  const hasMore = completed.length > visibleCount || serverHasMore;
+  // Unified, chronologically-interleaved history — a gift you sent isn't a ticket you own (once
+  // claimed, ownership moves to the recipient), but it's still "your" history, so it belongs in
+  // the same follow-each-other list as your own tickets rather than a separately pinned section.
+  type HistoryRow =
+    | { kind: "ticket"; date: string; failed: boolean; ticket: TicketSummary }
+    | { kind: "gift"; date: string; failed: boolean; gift: MyGiftItem };
+  const mergedHistory: HistoryRow[] = [
+    ...completed.map(t => ({ kind: "ticket" as const, date: t.createdAt, failed: t.status === "failed", ticket: t })),
+    ...myGifts.map(g => ({ kind: "gift" as const, date: g.createdAt, failed: g.status === "failed", gift: g })),
+  ].sort((a, b) => {
+    if (a.failed && !b.failed) return -1;
+    if (b.failed && !a.failed) return 1;
+    return new Date(b.date).getTime() - new Date(a.date).getTime();
+  });
+  const visibleMerged = mergedHistory.slice(0, visibleCount);
+  const hasMore = mergedHistory.length > visibleCount || serverHasMore || myGifts.length < myGiftsTotal;
 
-  async function handleLoadMore() {
-    if (completed.length > visibleCount) {
-      setVisibleCount(c => c + HISTORY_PAGE);
-      return;
-    }
+  async function fetchMoreTicketHistory() {
     if (!serverHasMore || loadingMore) return;
     setLoadingMore(true);
     try {
@@ -2068,7 +2080,6 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
       const fetched: TicketSummary[] = data?.tickets ?? [];
       setExtraHistory(prev => [...prev, ...fetched]);
       setServerHasMore(offset + fetched.length < (data?.total ?? 0));
-      setVisibleCount(c => c + HISTORY_PAGE);
     } catch (e) {
       console.error("Load more history failed", e);
     } finally {
@@ -2076,9 +2087,23 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
     }
   }
 
+  async function handleLoadMore() {
+    if (mergedHistory.length > visibleCount) {
+      setVisibleCount(c => c + HISTORY_PAGE);
+      return;
+    }
+    await Promise.all([fetchMoreTicketHistory(), fetchMoreGifts()]);
+    setVisibleCount(c => c + HISTORY_PAGE);
+  }
+
   const allForStats = [...activeTickets, ...history];
-  const totalSpent = allForStats.filter(t => t.status !== "failed").reduce((s, t) => s + t.costUsdc, 0);
-  const totalWon = allForStats.filter(t => t.status === "won" || t.status === "withdrawn").reduce((s, t) => s + (t.winAmountUsdc ?? 0), 0);
+  const ticketSpent = allForStats.filter(t => t.status !== "failed").reduce((s, t) => s + t.costUsdc, 0);
+  const ticketWon = allForStats.filter(t => t.status === "won" || t.status === "withdrawn").reduce((s, t) => s + (t.winAmountUsdc ?? 0), 0);
+  const giftSpent = myGifts.filter(g => g.status !== "failed").reduce((s, g) => s + g.costUsdc, 0);
+  // "Spent"/"Won" fold gift spend into one number rather than a separate card — dynamically
+  // recomputed per the All/My tickets/Gifted filter below.
+  const totalSpent = historyFilter === "mine" ? ticketSpent : historyFilter === "gifted" ? giftSpent : ticketSpent + giftSpent;
+  const totalWon = historyFilter === "gifted" ? 0 : ticketWon;
 
   async function handleCancel(ticketId: string) {
     setCancelling(ticketId);
@@ -2221,9 +2246,256 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
     setTimeout(() => setCopied(null), 2000);
   }
 
+  function renderGiftRow(g: MyGiftItem) {
+    const giftStatusStyle: Record<string, string> = {
+      unclaimed: "border-amber-500/30 text-amber-400 bg-amber-500/10",
+      claimed: "border-emerald-500/30 text-emerald-400 bg-emerald-500/10",
+      cancelled: "border-white/15 text-slate-400 bg-white/5",
+      failed: "border-red-500/30 text-red-400 bg-red-500/10",
+    };
+    const giftStatusLabel: Record<string, string> = {
+      unclaimed: "Not yet claimed",
+      claimed: "Claimed",
+      cancelled: "Cancelled",
+      failed: "Failed",
+    };
+    const recipientLabel = g.recipientType === "handle" ? `@${g.recipientIdentifier}` : g.recipientIdentifier;
+    const key = `gift-${g.giftId}`;
+    const isExpanded = expandedIds.has(key);
+    const dateStr = new Date(g.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    return (
+      // Same card shell/height/icon/font weight as a ticket row — a sent gift belongs in the
+      // same visual family as your own tickets, just tagged via the "→ @recipient" title and badge.
+      <div key={key} className="rounded-xl border bg-white/5 overflow-hidden border-white/10">
+        <button
+          onClick={() => setExpandedIds(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; })}
+          className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.03] transition-colors"
+        >
+          <img src="/images/icons/ticket-icon.svg" alt="" className="w-9 h-9 shrink-0 opacity-90" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-base font-semibold text-white">
+                {g.numTickets} ticket{g.numTickets !== 1 ? "s" : ""} → {recipientLabel}
+              </span>
+              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${giftStatusStyle[g.status] ?? "border-white/15 text-slate-400 bg-white/5"}`}>
+                {giftStatusLabel[g.status] ?? g.status}
+              </span>
+            </div>
+            <p className="text-base text-slate-500 mt-0.5">
+              {dateStr}
+              {g.claimedAt && ` · claimed ${new Date(g.claimedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-base font-semibold font-sans text-slate-500">−{fmt(g.costUsdc)}</span>
+            <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+          </div>
+        </button>
+
+        {isExpanded && (
+          <div className="border-t border-white/[0.06] px-3 pb-3 pt-3 space-y-3">
+            <DescriptionWithGif text={g.note} />
+            {(g.status === "unclaimed" || g.status === "claimed") && (
+              <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
+                <a href={g.claimUrl} target="_blank" rel="noopener noreferrer"
+                  className="flex-1 min-w-0 truncate text-base text-slate-300 hover:text-white hover:underline underline-offset-2 transition-colors">
+                  {g.claimUrl}
+                </a>
+                <button
+                  onClick={() => copyGiftLink(g.giftId, g.claimUrl)}
+                  className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+                  aria-label={g.status === "unclaimed" ? "Copy claim link" : "Copy share link"}
+                >
+                  {copiedGiftId === g.giftId ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderTicketRow(t: TicketSummary) {
+    const dateStr = (t.drawTime ? new Date(t.drawTime) : new Date(t.createdAt))
+      .toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    const hasNumbers = t.ticketNumbers && t.ticketNumbers.length > 0 && t.ticketNumbers[0].main.length > 0;
+    const hasAllNumbers = hasNumbers && t.ticketNumbers!.length >= t.numTickets;
+    const isFailed = t.status === "failed";
+    return (
+      <div key={`ticket-${t.id}`} className={`rounded-xl border bg-white/5 overflow-hidden ${isFailed ? "border-red-500/20" : "border-white/10"}`}>
+        {/* Main row — clickable to expand */}
+        <button
+          onClick={() => toggleExpand(t.id, !!hasAllNumbers)}
+          className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.03] transition-colors"
+        >
+          <img src="/images/icons/ticket-icon.svg" alt="" className="w-9 h-9 shrink-0 opacity-90" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
+              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
+                {statusLabel(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}
+              </span>
+            </div>
+            <p className="text-base text-slate-500 mt-0.5">
+              {t.roundId ? `Round ${t.roundId} · ` : ""}{dateStr}
+              {t.winTier ? ` · Tier ${t.winTier}` : ""}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-base font-semibold font-sans">
+              {(t.status === "won" || t.status === "withdrawn")
+                ? <span className="text-emerald-400">+{fmt(t.winAmountUsdc ?? 0)}</span>
+                : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
+            </span>
+            <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${expandedIds.has(t.id) ? "rotate-180" : ""}`} />
+          </div>
+        </button>
+
+        {/* Expanded details */}
+        {expandedIds.has(t.id) && (
+          <div className="border-t border-white/[0.06] px-3 pb-3 pt-3 space-y-3">
+            {/* Draw info */}
+            {t.drawTime && (
+              <div>
+                <p className="text-base text-slate-500">
+                  Draw: {new Date(t.drawTime).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                </p>
+              </div>
+            )}
+            {/* Check results button for active tickets past draw time */}
+            {t.status === "active" && (
+              (t.drawTime && new Date(t.drawTime) < new Date()) ||
+              (t.roundId && nextDrawRoundId && t.roundId !== nextDrawRoundId)
+            ) && (
+                <div className="space-y-2">
+                  {checkResultMsg[t.id] && (
+                    <p className={`text-base ${checkResultMsg[t.id].startsWith("Error") ? "text-red-400" : checkResultMsg[t.id].includes("Won") ? "text-emerald-400" : "text-slate-400"}`}>
+                      {checkResultMsg[t.id]}
+                    </p>
+                  )}
+                  <button
+                    onClick={() => handleCheckResults(t.id)}
+                    disabled={checkingResult === t.id}
+                    className="w-full h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                  >
+                    {checkingResult === t.id ? "Checking…" : "Check Results"}
+                  </button>
+                </div>
+              )}
+            {/* Number balls */}
+            {hasNumbers ? (
+              <div className="space-y-2">
+                {!hasAllNumbers && (
+                  <p className="text-base text-slate-500 italic">Loading {t.numTickets - t.ticketNumbers!.length} more ticket numbers…</p>
+                )}
+                {t.winningNumbers && (
+                  <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] px-3 py-2">
+                    <p className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase mb-1.5">Winning numbers</p>
+                    <div className="flex items-center gap-2">
+                      {t.winningNumbers.main.map(n => (
+                        <span key={n} className="w-7 h-7 rounded-full bg-white/10 border border-white/20 text-white text-sm font-bold flex items-center justify-center tabular-nums">{n}</span>
+                      ))}
+                      <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 text-slate-300 text-sm font-bold flex items-center justify-center tabular-nums">{t.winningNumbers.bonus}</span>
+                    </div>
+                  </div>
+                )}
+                <p className="text-base text-slate-600">Your tickets</p>
+                {(() => {
+                  const matchCount = (tn: TicketNumbers) => {
+                    if (!t.winningNumbers) return 0;
+                    const m = tn.main.filter(n => t.winningNumbers!.main.includes(n)).length;
+                    const b = tn.bonus === t.winningNumbers.bonus ? 1 : 0;
+                    return m * 2 + b;
+                  };
+                  const sorted = [...t.ticketNumbers!].sort((a, b) => matchCount(b) - matchCount(a));
+                  const showAll = ticketShowAll[t.id];
+                  const visible = showAll ? sorted : sorted.slice(0, 5);
+                  return (
+                    <>
+                      {visible.map((tn, i) => (
+                        <TicketNumberCard key={i} tn={tn} winningNumbers={t.winningNumbers} />
+                      ))}
+                      {!showAll && sorted.length > 5 && (
+                        <button
+                          type="button"
+                          onClick={() => setTicketShowAll(prev => ({ ...prev, [t.id]: true }))}
+                          className="w-full h-9 rounded-xl text-base font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all"
+                        >
+                          +{sorted.length - 5} more tickets
+                        </button>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            ) : (
+              <p className="text-base text-slate-600 italic">Loading ticket numbers…</p>
+            )}
+          </div>
+        )}
+
+        {/* Failed ticket actions — funds must be retried or rescued before the
+          ticket can be removed (RESCUED/CANCELLED = nothing left to recover) */}
+        {isFailed && (
+          <div className="px-3 pb-3 space-y-2 border-t border-white/[0.06] pt-3">
+            {(retryResult[t.id] || rescueResult[t.id]) && (
+              <p className="text-base text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
+            )}
+            {rescueBurnerResult[t.id] && (
+              <p className="text-base text-amber-400">{rescueBurnerResult[t.id]}</p>
+            )}
+            {t.bridgeStatus === "RESCUED" || t.bridgeStatus === "CANCELLED" ? (
+              <button
+                onClick={() => handleDelete(t.id)}
+                disabled={deleting === t.id}
+                className="w-full h-9 rounded-xl text-base font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+              >
+                {deleting === t.id ? "Removing…" : "Remove from history"}
+              </button>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleRetry(t.id)}
+                    disabled={retrying === t.id || rescuing === t.id}
+                    className="flex-1 h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                  >
+                    {retrying === t.id ? "Retrying…" : "Retry purchase"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRescue(t.id)}
+                    disabled={rescuing === t.id || retrying === t.id}
+                    className="flex-1 h-9 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
+                  >
+                    {rescuing === t.id ? "Rescuing…" : "Rescue funds (Base)"}
+                  </button>
+                </div>
+                {/* Funds from a private purchase can still be sitting on the Solana
+                    burner (never bridged, or mid-bridge) — the Base-only rescue above
+                    finds nothing in that case, so offer this as a fallback. */}
+                <button
+                  type="button"
+                  onClick={() => handleRescueBurner(t.id)}
+                  disabled={rescuingBurner === t.id}
+                  className="w-full h-9 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
+                >
+                  {rescuingBurner === t.id ? "Rescuing…" : "Rescue from Solana"}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4 pb-24">
-      {/* Stats cards */}
+      {/* Stats cards — Spent folds in gift spend (dynamically re-scoped by the All/My
+          tickets/Gifted filter below, not a separate card) */}
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-2xl border bg-amber-500/5 border-amber-500/20 p-4">
           <div className="flex items-center gap-2 mb-2">
@@ -2390,72 +2662,9 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
         </div>
       )}
 
-      {/* Gifts you sent */}
-      {myGiftsLoaded && myGifts.length > 0 && (
-        <div>
-          <p className="text-base font-medium text-slate-500 uppercase tracking-wider mb-2">Gifts you sent</p>
-          <div className="space-y-2">
-            {myGifts.map(g => {
-              const giftStatusStyle: Record<string, string> = {
-                unclaimed: "border-amber-500/30 text-amber-400 bg-amber-500/10",
-                claimed: "border-emerald-500/30 text-emerald-400 bg-emerald-500/10",
-                cancelled: "border-white/15 text-slate-400 bg-white/5",
-                failed: "border-red-500/30 text-red-400 bg-red-500/10",
-              };
-              const recipientLabel = g.recipientType === "handle" ? `@${g.recipientIdentifier}` : g.recipientIdentifier;
-              return (
-                <details key={g.giftId} className="rounded-xl border border-white/10 bg-white/5 group">
-                  <summary className="flex items-center justify-between p-3 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Gift className="w-3.5 h-3.5 text-[#FF7A2A] shrink-0" />
-                      <span className="text-base font-semibold text-white truncate">
-                        {g.numTickets} ticket{g.numTickets !== 1 ? "s" : ""} → {recipientLabel}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${giftStatusStyle[g.status] ?? "border-white/15 text-slate-400 bg-white/5"}`}>
-                        {g.status === "unclaimed" ? "Not yet claimed" : g.status === "claimed" ? "Claimed" : g.status}
-                      </span>
-                      <ChevronDown className="w-4 h-4 text-slate-500 transition-transform duration-200 group-open:rotate-180" />
-                    </div>
-                  </summary>
-                  <div className="px-3 pb-3 pt-0 space-y-3 border-t border-white/10">
-                    <p className="text-base text-slate-500 pt-2">
-                      {new Date(g.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                      {g.claimedAt && ` · claimed ${new Date(g.claimedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
-                    </p>
-                    <DescriptionWithGif text={g.note} />
-                    {(g.status === "unclaimed" || g.status === "claimed") && (
-                      <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
-                        <span className="flex-1 min-w-0 truncate text-base text-slate-300">{g.claimUrl}</span>
-                        <button
-                          onClick={() => copyGiftLink(g.giftId, g.claimUrl)}
-                          className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
-                          aria-label={g.status === "unclaimed" ? "Copy claim link" : "Copy share link"}
-                        >
-                          {copiedGiftId === g.giftId ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </details>
-              );
-            })}
-          </div>
-          {myGifts.length < myGiftsTotal && (
-            <button type="button"
-              onClick={handleLoadMoreGifts}
-              disabled={loadingMoreGifts}
-              className="mt-2 w-full h-10 rounded-xl text-base font-medium border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5">
-              {loadingMoreGifts ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              {loadingMoreGifts ? "Loading…" : "Show more gifts"}
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Completed draws */}
-      {loading && completed.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? (
+      {/* Tickets + gifts you sent — one chronological list, not separated (a sent gift isn't a
+          ticket you own, but it's still your history, so it follows the same feed). */}
+      {loading && mergedHistory.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? (
         <div className="space-y-2 animate-pulse">
           {[1, 2, 3].map(i => (
             <div key={i} className="rounded-xl border border-white/10 bg-white/5 p-3 flex items-center justify-between">
@@ -2467,195 +2676,38 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
             </div>
           ))}
         </div>
-      ) : completed.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? null
-        : completed.length > 0 && (
-          <div>
-            <p className="text-base font-medium text-slate-500 uppercase tracking-wider mb-2">Tickets</p>
-            <div className="space-y-2">
-              {visibleCompleted.map(t => {
-                const dateStr = (t.drawTime ? new Date(t.drawTime) : new Date(t.createdAt))
-                  .toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-                const hasNumbers = t.ticketNumbers && t.ticketNumbers.length > 0 && t.ticketNumbers[0].main.length > 0;
-                const hasAllNumbers = hasNumbers && t.ticketNumbers!.length >= t.numTickets;
-                const isFailed = t.status === "failed";
-                return (
-                  <div key={t.id} className={`rounded-xl border bg-white/5 overflow-hidden ${isFailed ? "border-red-500/20" : "border-white/10"}`}>
-                    {/* Main row — clickable to expand */}
-                    <button
-                      onClick={() => toggleExpand(t.id, !!hasAllNumbers)}
-                      className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.03] transition-colors"
-                    >
-                      <img src="/images/icons/ticket-icon.svg" alt="" className="w-9 h-9 shrink-0 opacity-90" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
-                            {statusLabel(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}
-                          </span>
-                        </div>
-                        <p className="text-base text-slate-500 mt-0.5">
-                          {t.roundId ? `Round ${t.roundId} · ` : ""}{dateStr}
-                          {t.winTier ? ` · Tier ${t.winTier}` : ""}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-base font-semibold font-sans">
-                          {(t.status === "won" || t.status === "withdrawn")
-                            ? <span className="text-emerald-400">+{fmt(t.winAmountUsdc ?? 0)}</span>
-                            : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
-                        </span>
-                        <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${expandedIds.has(t.id) ? "rotate-180" : ""}`} />
-                      </div>
+      ) : mergedHistory.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? null
+        : mergedHistory.length > 0 && (
+          <div className="mt-3">
+            <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+              <p className="text-base font-medium text-slate-500 uppercase tracking-wider">Tickets</p>
+              {myGifts.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {([["all", "All"], ["mine", "My tickets"], ["gifted", "Gifted"]] as const).map(([key, label]) => (
+                    <button key={key} type="button" onClick={() => setHistoryFilter(key)}
+                      className={`px-2.5 py-1.5 rounded-full text-sm font-semibold border transition-colors ${historyFilter === key
+                        ? "bg-white/10 border-white/20 text-white"
+                        : "border-white/10 text-slate-500 hover:text-slate-300"
+                        }`}>
+                      {label}
                     </button>
-
-                    {/* Expanded details */}
-                    {expandedIds.has(t.id) && (
-                      <div className="border-t border-white/[0.06] px-3 pb-3 pt-3 space-y-3">
-                        {/* Draw info */}
-                        {t.drawTime && (
-                          <div>
-                            <p className="text-base text-slate-500">
-                              Draw: {new Date(t.drawTime).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-                            </p>
-                          </div>
-                        )}
-                        {/* Check results button for active tickets past draw time */}
-                        {t.status === "active" && (
-                          (t.drawTime && new Date(t.drawTime) < new Date()) ||
-                          (t.roundId && nextDrawRoundId && t.roundId !== nextDrawRoundId)
-                        ) && (
-                            <div className="space-y-2">
-                              {checkResultMsg[t.id] && (
-                                <p className={`text-base ${checkResultMsg[t.id].startsWith("Error") ? "text-red-400" : checkResultMsg[t.id].includes("Won") ? "text-emerald-400" : "text-slate-400"}`}>
-                                  {checkResultMsg[t.id]}
-                                </p>
-                              )}
-                              <button
-                                onClick={() => handleCheckResults(t.id)}
-                                disabled={checkingResult === t.id}
-                                className="w-full h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
-                              >
-                                {checkingResult === t.id ? "Checking…" : "Check Results"}
-                              </button>
-                            </div>
-                          )}
-                        {/* Number balls */}
-                        {hasNumbers ? (
-                          <div className="space-y-2">
-                            {!hasAllNumbers && (
-                              <p className="text-base text-slate-500 italic">Loading {t.numTickets - t.ticketNumbers!.length} more ticket numbers…</p>
-                            )}
-                            {t.winningNumbers && (
-                              <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] px-3 py-2">
-                                <p className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase mb-1.5">Winning numbers</p>
-                                <div className="flex items-center gap-2">
-                                  {t.winningNumbers.main.map(n => (
-                                    <span key={n} className="w-7 h-7 rounded-full bg-white/10 border border-white/20 text-white text-sm font-bold flex items-center justify-center tabular-nums">{n}</span>
-                                  ))}
-                                  <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 text-slate-300 text-sm font-bold flex items-center justify-center tabular-nums">{t.winningNumbers.bonus}</span>
-                                </div>
-                              </div>
-                            )}
-                            <p className="text-base text-slate-600">Your tickets</p>
-                            {(() => {
-                              const matchCount = (tn: TicketNumbers) => {
-                                if (!t.winningNumbers) return 0;
-                                const m = tn.main.filter(n => t.winningNumbers!.main.includes(n)).length;
-                                const b = tn.bonus === t.winningNumbers.bonus ? 1 : 0;
-                                return m * 2 + b;
-                              };
-                              const sorted = [...t.ticketNumbers!].sort((a, b) => matchCount(b) - matchCount(a));
-                              const showAll = ticketShowAll[t.id];
-                              const visible = showAll ? sorted : sorted.slice(0, 5);
-                              return (
-                                <>
-                                  {visible.map((tn, i) => (
-                                    <TicketNumberCard key={i} tn={tn} winningNumbers={t.winningNumbers} />
-                                  ))}
-                                  {!showAll && sorted.length > 5 && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setTicketShowAll(prev => ({ ...prev, [t.id]: true }))}
-                                      className="w-full h-9 rounded-xl text-base font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all"
-                                    >
-                                      +{sorted.length - 5} more tickets
-                                    </button>
-                                  )}
-                                </>
-                              );
-                            })()}
-                          </div>
-                        ) : (
-                          <p className="text-base text-slate-600 italic">Loading ticket numbers…</p>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Failed ticket actions — funds must be retried or rescued before the
-                      ticket can be removed (RESCUED/CANCELLED = nothing left to recover) */}
-                    {isFailed && (
-                      <div className="px-3 pb-3 space-y-2 border-t border-white/[0.06] pt-3">
-                        {(retryResult[t.id] || rescueResult[t.id]) && (
-                          <p className="text-base text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
-                        )}
-                        {rescueBurnerResult[t.id] && (
-                          <p className="text-base text-amber-400">{rescueBurnerResult[t.id]}</p>
-                        )}
-                        {t.bridgeStatus === "RESCUED" || t.bridgeStatus === "CANCELLED" ? (
-                          <button
-                            onClick={() => handleDelete(t.id)}
-                            disabled={deleting === t.id}
-                            className="w-full h-9 rounded-xl text-base font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
-                          >
-                            {deleting === t.id ? "Removing…" : "Remove from history"}
-                          </button>
-                        ) : (
-                          <>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleRetry(t.id)}
-                                disabled={retrying === t.id || rescuing === t.id}
-                                className="flex-1 h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
-                              >
-                                {retrying === t.id ? "Retrying…" : "Retry purchase"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleRescue(t.id)}
-                                disabled={rescuing === t.id || retrying === t.id}
-                                className="flex-1 h-9 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
-                              >
-                                {rescuing === t.id ? "Rescuing…" : "Rescue funds (Base)"}
-                              </button>
-                            </div>
-                            {/* Funds from a private purchase can still be sitting on the Solana
-                                burner (never bridged, or mid-bridge) — the Base-only rescue above
-                                finds nothing in that case, so offer this as a fallback. */}
-                            <button
-                              type="button"
-                              onClick={() => handleRescueBurner(t.id)}
-                              disabled={rescuingBurner === t.id}
-                              className="w-full h-9 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
-                            >
-                              {rescuingBurner === t.id ? "Rescuing…" : "Rescue from Solana"}
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="space-y-2">
+              {visibleMerged
+                .filter(item => historyFilter === "all" || (historyFilter === "mine" ? item.kind === "ticket" : item.kind === "gift"))
+                .map(item => item.kind === "gift" ? renderGiftRow(item.gift) : renderTicketRow(item.ticket))}
             </div>
             {hasMore && (
               <button
                 type="button"
                 onClick={handleLoadMore}
-                disabled={loadingMore}
+                disabled={loadingMore || loadingMoreGifts}
                 className="w-full h-10 mt-3 rounded-xl text-base font-semibold border border-white/10 text-slate-300 hover:text-white hover:bg-white/[0.06] transition-all disabled:opacity-40"
               >
-                {loadingMore ? "Loading…" : "Show more tickets"}
+                {(loadingMore || loadingMoreGifts) ? "Loading…" : "Show more"}
               </button>
             )}
           </div>

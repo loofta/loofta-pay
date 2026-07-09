@@ -50,6 +50,7 @@ export interface MyGiftItem {
   giftId: string;
   createdAt: string;
   numTickets: number;
+  costUsdc: number;
   note: string | null;
   recipientType: 'email' | 'handle';
   recipientIdentifier: string;

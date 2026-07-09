@@ -255,7 +255,10 @@ export default function LotteryGiftClaimPage() {
                       </p>
                       <div className="flex flex-col sm:flex-row gap-2">
                         <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3 flex-1 min-w-0">
-                          <span className="flex-1 min-w-0 truncate text-base text-slate-300">{shareUrl}</span>
+                          <a href={shareUrl} target="_blank" rel="noopener noreferrer"
+                            className="flex-1 min-w-0 truncate text-base text-slate-300 hover:text-white hover:underline underline-offset-2 transition-colors">
+                            {shareUrl}
+                          </a>
                           <button
                             onClick={() => { navigator.clipboard.writeText(shareUrl); setShareCopied(true); setTimeout(() => setShareCopied(false), 1500); }}
                             className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"

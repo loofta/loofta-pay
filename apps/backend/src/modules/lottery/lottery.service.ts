@@ -609,6 +609,7 @@ export class LotteryService {
       giftId: string;
       createdAt: string;
       numTickets: number;
+      costUsdc: number;
       note: string | null;
       recipientType: 'email' | 'handle';
       recipientIdentifier: string;
@@ -633,6 +634,7 @@ export class LotteryService {
         giftId: g.id,
         createdAt: g.created_at,
         numTickets: g.num_tickets,
+        costUsdc: g.num_tickets * TICKET_PRICE_USDC,
         note: g.note,
         recipientType: g.recipient_type,
         recipientIdentifier: g.recipient_identifier,
