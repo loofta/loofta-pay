@@ -5,7 +5,7 @@
 
 import { fetchApi } from './client';
 
-export type LotteryGiftStatus = 'unclaimed' | 'claimed' | 'cancelled' | 'failed';
+export type LotteryGiftStatus = 'pending_payment' | 'unclaimed' | 'claimed' | 'cancelled' | 'failed';
 
 export interface LotteryGiftPublic {
   numTickets: number;
@@ -34,4 +34,21 @@ export async function claimLotteryGift(
     userId,
     accessToken,
   });
+}
+
+export interface MyGiftItem {
+  giftId: string;
+  createdAt: string;
+  numTickets: number;
+  note: string | null;
+  recipientType: 'email' | 'handle';
+  recipientIdentifier: string;
+  status: LotteryGiftStatus;
+  claimedAt: string | null;
+  claimToken: string;
+  claimUrl: string;
+}
+
+export async function getMyGifts(userId: string, accessToken?: string | null): Promise<MyGiftItem[]> {
+  return fetchApi<MyGiftItem[]>('/lottery/my-gifts', { userId, accessToken });
 }
