@@ -98,11 +98,15 @@ export default function LotteryGiftClaimPage() {
     return (
       <>
         <div className="fixed inset-0 -z-10 bg-[#0f0f12]" />
-        <main className="min-h-[calc(100vh-5rem)] flex flex-col items-center justify-center px-4 py-12">
-          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-8">
-            <div className="flex flex-col items-center gap-4">
-              <Loader2 className="h-10 w-10 animate-spin text-[#FF7A2A]" />
-              <p className="text-slate-300 font-medium">Loading gift…</p>
+        <main className="min-h-[calc(100vh-5rem)] flex flex-col items-center px-4 py-8 md:py-12">
+          <div className="w-full max-w-md">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6 md:p-8 space-y-5 animate-pulse">
+              <div className="flex flex-col items-center gap-3">
+                <div className="h-14 w-14 rounded-2xl bg-white/[0.08]" />
+                <div className="h-8 w-40 rounded-lg bg-white/[0.08]" />
+                <div className="h-4 w-52 rounded-lg bg-white/[0.06]" />
+              </div>
+              <div className="h-12 w-full rounded-xl bg-white/[0.06]" />
             </div>
           </div>
         </main>
@@ -204,7 +208,7 @@ export default function LotteryGiftClaimPage() {
                 <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FF7A2A]/15">
                   {viewerIsSenderOnly ? <Gift className="h-7 w-7 text-[#FF7A2A]" /> : <Ticket className="h-7 w-7 text-[#FF7A2A]" />}
                 </div>
-                <p className="text-2xl md:text-3xl font-semibold text-white">
+                <p className="font-display text-2xl md:text-3xl font-medium text-white">
                   {data.numTickets} Megapot {ticketWord}
                 </p>
                 <p className="mt-2 text-slate-400">
