@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import PaymentLinksContent, { PAYMENT_LINKS_FAQ } from "./PaymentLinksContent";
+import PaymentLinksContent from "./PaymentLinksContent";
+import { PAYMENT_LINKS_FAQ } from "./data";
 
 export const metadata: Metadata = {
   title: "Private Crypto Payment Links — No KYC, No Wallet Exposure",

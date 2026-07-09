@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import SendCryptoPrivatelyContent, { HOW_TO_STEPS } from "./SendCryptoPrivatelyContent";
+import SendCryptoPrivatelyContent from "./SendCryptoPrivatelyContent";
+import { HOW_TO_STEPS } from "./data";
 
 export const metadata: Metadata = {
   title: "How to Send Crypto Without Revealing Your Wallet Address",
