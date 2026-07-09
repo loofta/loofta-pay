@@ -14,6 +14,10 @@ const BLINK_END_DATE = new Date("2026-08-15T00:00:00.000Z");
 const MEGAPOT_START_DATE = new Date("2026-07-07T15:00:00.000Z");
 const MEGAPOT_END_DATE = new Date("2026-08-31T00:00:00.000Z");
 const MEGAPOT_ACCENT = "#5EEAD4";
+// Get Paid campaign: 2 weeks starting Jul 9 2026
+const GETPAID_START_DATE = new Date("2026-07-09T00:00:00.000Z");
+const GETPAID_END_DATE = new Date("2026-07-23T00:00:00.000Z");
+const GETPAID_ACCENT = "#4ADE80";
 
 function getDaysLeft(endDate: Date): number {
   const now = new Date();
@@ -143,6 +147,36 @@ const MEGAPOT_BG_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480
 
 const MEGAPOT_BG = `data:image/svg+xml,${encodeURIComponent(MEGAPOT_BG_SVG)}`;
 
+// Get Paid background — dark/green cash style
+const GETPAID_BG_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 240" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <radialGradient id="getpaid-glow" cx="70%" cy="35%" r="55%">
+      <stop offset="0%" stop-color="${GETPAID_ACCENT}" stop-opacity="0.22"/>
+      <stop offset="70%" stop-color="${GETPAID_ACCENT}" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="getpaid-edge" cx="50%" cy="50%" r="75%">
+      <stop offset="35%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.70"/>
+    </radialGradient>
+  </defs>
+  <rect width="480" height="240" fill="#080a09"/>
+  <line x1="0" y1="80" x2="480" y2="80" stroke="${GETPAID_ACCENT}" stroke-width="0.3" opacity="0.06"/>
+  <line x1="0" y1="160" x2="480" y2="160" stroke="${GETPAID_ACCENT}" stroke-width="0.3" opacity="0.06"/>
+  <line x1="160" y1="0" x2="160" y2="240" stroke="${GETPAID_ACCENT}" stroke-width="0.3" opacity="0.06"/>
+  <line x1="320" y1="0" x2="320" y2="240" stroke="${GETPAID_ACCENT}" stroke-width="0.3" opacity="0.06"/>
+  <ellipse cx="340" cy="110" rx="220" ry="150" fill="url(#getpaid-glow)"/>
+  <circle cx="330" cy="55" r="2.5" fill="${GETPAID_ACCENT}" opacity="0.40"/>
+  <circle cx="410" cy="90" r="2" fill="${GETPAID_ACCENT}" opacity="0.32"/>
+  <circle cx="440" cy="150" r="2.5" fill="${GETPAID_ACCENT}" opacity="0.26"/>
+  <circle cx="100" cy="132" r="2" fill="${GETPAID_ACCENT}" opacity="0.20"/>
+  <circle cx="60" cy="60" r="1.5" fill="${GETPAID_ACCENT}" opacity="0.18"/>
+  <circle cx="200" cy="190" r="2" fill="${GETPAID_ACCENT}" opacity="0.16"/>
+  <rect width="480" height="240" fill="url(#getpaid-edge)"/>
+</svg>`;
+
+const GETPAID_BG = `data:image/svg+xml,${encodeURIComponent(GETPAID_BG_SVG)}`;
+
 
 export default function RewardsPage() {
   const t = useTranslations("RewardsPage");
@@ -152,6 +186,8 @@ export default function RewardsPage() {
   const [blinkActive, setBlinkActive] = useState(false);
   const [megapotDaysLeft, setMegapotDaysLeft] = useState<number | null>(null);
   const [megapotActive, setMegapotActive] = useState(false);
+  const [getpaidDaysLeft, setGetpaidDaysLeft] = useState<number | null>(null);
+  const [getpaidActive, setGetpaidActive] = useState(false);
   const [isLocalhost, setIsLocalhost] = useState(false);
 
   useEffect(() => {
@@ -161,6 +197,8 @@ export default function RewardsPage() {
     setBlinkActive(now >= BLINK_START_DATE);
     setMegapotDaysLeft(getDaysLeft(MEGAPOT_END_DATE));
     setMegapotActive(now >= MEGAPOT_START_DATE);
+    setGetpaidDaysLeft(getDaysLeft(GETPAID_END_DATE));
+    setGetpaidActive(now >= GETPAID_START_DATE);
     setIsLocalhost(window.location.hostname === "localhost");
   }, []);
 
@@ -179,7 +217,83 @@ export default function RewardsPage() {
           {t("activeCampaigns")}
         </p>
 
+        {/* Get Paid Campaign */}
+        {(() => {
+            const getpaidClickable = getpaidActive || isLocalhost;
+            const getpaidCard = (
+            <div
+              className="relative rounded-2xl overflow-hidden border transition-all duration-200"
+              style={{
+                backgroundImage: `url("${GETPAID_BG}")`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                borderColor: `${GETPAID_ACCENT}33`,
+              }}
+            >
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/15" />
+
+              <div className="relative z-10 p-6">
+                <div className="flex items-center gap-2 mb-6">
+                  <span
+                    className="text-xs font-bold px-2.5 py-1 rounded-full border"
+                    style={{ backgroundColor: `${GETPAID_ACCENT}26`, color: GETPAID_ACCENT, borderColor: `${GETPAID_ACCENT}40` }}
+                  >
+                    Mainnet
+                  </span>
+                  {getpaidDaysLeft !== null && (
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
+                      Ends in {getpaidDaysLeft}d
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 mb-3">
+                  <Image
+                    src="/loofta-white.svg"
+                    alt="Loofta"
+                    width={72}
+                    height={20}
+                    priority
+                    className="opacity-90"
+                  />
+                </div>
+
+                <h2 className="text-2xl font-bold text-white leading-tight mb-2">
+                  Get Paid Campaign
+                </h2>
+
+                <p className="text-base text-slate-300 mb-5 leading-relaxed">
+                  Create a payment link, share it with someone, and get paid through it — 3 people who qualify each win $20.
+                </p>
+
+                <div className="flex items-end justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: `${GETPAID_ACCENT}99` }}>
+                      Prize
+                    </p>
+                    <p className="text-3xl font-bold leading-none" style={{ color: GETPAID_ACCENT }}>
+                      $20 × 3
+                    </p>
+                  </div>
+                  {getpaidClickable && (
+                    <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
+                      <span>View quest</span>
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
+                        <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            );
+            return getpaidClickable
+              ? <Link href="/rewards/getpaid" className="block group">{getpaidCard}</Link>
+              : <div className="block">{getpaidCard}</div>;
+        })()}
+
         {/* Blink Campaign */}
+        <div className="mt-4">
         {(() => {
           const blinkClickable = blinkActive || isLocalhost;
           const blinkCard = (
@@ -271,6 +385,7 @@ export default function RewardsPage() {
             ? <Link href="/rewards/blink" className="block group">{blinkCard}</Link>
             : <div className="block">{blinkCard}</div>;
         })()}
+        </div>
 
         {/* Megapot Campaign */}
         <div className="mt-4">

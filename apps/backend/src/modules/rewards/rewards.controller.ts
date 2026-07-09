@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { RewardsService } from './rewards.service';
 import { BlinkCampaignService } from './blink-campaign.service';
 import { MegapotCampaignService } from './megapot-campaign.service';
+import { GetPaidCampaignService } from './getpaid-campaign.service';
 import { PrivyAuthGuard } from '@/auth/privy-auth.guard';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { AdminGuard } from '@/common/guards';
@@ -14,6 +15,7 @@ export class RewardsController {
     private readonly rewardsService: RewardsService,
     private readonly blinkCampaign: BlinkCampaignService,
     private readonly megapotCampaign: MegapotCampaignService,
+    private readonly getPaidCampaign: GetPaidCampaignService,
   ) {}
 
   @Get('me')
@@ -72,5 +74,21 @@ export class RewardsController {
   @ApiOperation({ summary: 'Admin: Megapot campaign eligible participants for the lucky draw' })
   async getMegapotCampaignAdmin() {
     return this.megapotCampaign.getAllMegapotCampaignStatus();
+  }
+
+  @Get('getpaid/me')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get Paid campaign quest status for current user' })
+  async getMyGetPaidCampaign(@PrivyUser() user: { id: string }) {
+    return this.getPaidCampaign.getGetPaidCampaign(user.id);
+  }
+
+  @Get('admin/getpaid')
+  @UseGuards(AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Admin: Get Paid campaign eligible participants for the $50 x 3 draw' })
+  async getGetPaidCampaignAdmin() {
+    return this.getPaidCampaign.getAllGetPaidCampaignStatus();
   }
 }
