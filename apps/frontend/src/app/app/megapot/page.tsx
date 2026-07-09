@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2 } from "lucide-react";
+import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { getMyGifts, type MyGiftItem } from "@/services/api/lotteryGift";
 import { MessageInput } from "@/components/MessageInput";
@@ -114,6 +114,30 @@ function fmt(n: number): string {
  * gasless relay fee. */
 function mbFee(base: number) {
   return (MAGICBLOCK_BPS / 10_000) * base + MAGICBLOCK_GASLESS_RELAY_FEE_USD;
+}
+
+// ─── SignInGate ───────────────────────────────────────────────────────────────
+// Redeem/History have nothing meaningful to show for a logged-out visitor (no tickets, no
+// winnings), so they're fully gated behind sign-in. Buy is the deliberate exception — its form
+// stays visible and only the buy button itself switches to "Sign in to continue" (matching
+// SendFlowInApp's convention), since browsing ticket counts/prices shouldn't require login.
+
+function SignInGate({ message, login }: { message: string; login: () => void }) {
+  return (
+    <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-8 flex flex-col items-center gap-4 text-center">
+      <div className="w-14 h-14 rounded-2xl bg-[#FF7A2A]/15 flex items-center justify-center">
+        <LogIn className="w-7 h-7 text-[#FF7A2A]" />
+      </div>
+      <p className="text-slate-300 text-base">{message}</p>
+      <button
+        onClick={() => login()}
+        className="h-12 px-8 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
+      >
+        <LogIn className="w-5 h-5" />
+        Sign in to continue
+      </button>
+    </div>
+  );
 }
 
 // ─── IconBubble ───────────────────────────────────────────────────────────────
@@ -989,7 +1013,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   const { wallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
 
-  const { user, getAccessToken } = usePrivy();
+  const { user, getAccessToken, authenticated, login } = usePrivy();
 
   const embeddedSolAddress = ((user?.linkedAccounts ?? [])
     .find((a: any) => a.type === "wallet" && a.chainType === "solana" &&
@@ -1376,10 +1400,15 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           )}
 
           {giftMode ? (
-            <button onClick={() => handleGiftBuy()}
-              disabled={drawCutoff || giftStep === "signing" || !giftIdentifier.trim()}
+            <button onClick={!authenticated ? () => login() : () => handleGiftBuy()}
+              disabled={authenticated && (drawCutoff || giftStep === "signing" || !giftIdentifier.trim())}
               className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 flex items-center justify-center gap-2">
-              {giftStep === "signing" ? "Signing…" : (
+              {!authenticated ? (
+                <>
+                  <LogIn className="w-5 h-5" />
+                  Sign in to continue
+                </>
+              ) : giftStep === "signing" ? "Signing…" : (
                 <>
                   <Gift className="w-5 h-5" />
                   {drawCutoff ? "Sales paused" : `Gift privately · ${fmt(numTickets + mbFee(numTickets) + looftaFee(numTickets))}`}
@@ -1387,10 +1416,15 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
               )}
             </button>
           ) : (
-            <button onClick={() => handlePrivateBuy()}
-              disabled={drawCutoff}
-              className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100">
-              {drawCutoff ? "Sales paused" : `Buy privately · ${fmt(numTickets + mbFee(numTickets) + looftaFee(numTickets))}`}
+            <button onClick={!authenticated ? () => login() : () => handlePrivateBuy()}
+              disabled={authenticated && drawCutoff}
+              className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 flex items-center justify-center gap-2">
+              {!authenticated ? (
+                <>
+                  <LogIn className="w-5 h-5" />
+                  Sign in to continue
+                </>
+              ) : (drawCutoff ? "Sales paused" : `Buy privately · ${fmt(numTickets + mbFee(numTickets) + looftaFee(numTickets))}`)}
             </button>
           )}
         </>
@@ -2475,15 +2509,18 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                 </div>
                 {/* Funds from a private purchase can still be sitting on the Solana
                     burner (never bridged, or mid-bridge) — the Base-only rescue above
-                    finds nothing in that case, so offer this as a fallback. */}
-                <button
-                  type="button"
-                  onClick={() => handleRescueBurner(t.id)}
-                  disabled={rescuingBurner === t.id}
-                  className="w-full h-9 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
-                >
-                  {rescuingBurner === t.id ? "Rescuing…" : "Rescue from Solana"}
-                </button>
+                    finds nothing in that case, so offer this as a fallback. Dev-only for
+                    now — not yet trusted enough to expose as self-service in production. */}
+                {IS_LOCALHOST && (
+                  <button
+                    type="button"
+                    onClick={() => handleRescueBurner(t.id)}
+                    disabled={rescuingBurner === t.id}
+                    className="w-full h-9 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
+                  >
+                    {rescuingBurner === t.id ? "Rescuing…" : "Rescue from Solana"}
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -2623,12 +2660,14 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                           {rescueBurnerResult[t.id]}
                         </p>
                       )}
-                      <button type="button"
-                        onClick={() => handleRescueBurner(t.id)}
-                        disabled={rescuingBurner === t.id}
-                        className="w-full h-10 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40">
-                        {rescuingBurner === t.id ? "Rescuing..." : "Rescue from Solana"}
-                      </button>
+                      {IS_LOCALHOST && (
+                        <button type="button"
+                          onClick={() => handleRescueBurner(t.id)}
+                          disabled={rescuingBurner === t.id}
+                          className="w-full h-10 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40">
+                          {rescuingBurner === t.id ? "Rescuing..." : "Rescue from Solana"}
+                        </button>
+                      )}
                     </div>
                   )}
                   {/* Bridging is fully automatic and can't be safely cancelled — funds are in
@@ -2950,7 +2989,7 @@ function DevPreviewPanel() {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function MegapotPage() {
-  const { getAccessToken } = usePrivy();
+  const { getAccessToken, authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const searchParams = useSearchParams();
   const rawTab = searchParams.get("tab");
@@ -3119,20 +3158,28 @@ export default function MegapotPage() {
           </>
         )}
         {tab === "redeem" && (
-          <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} dashboardLoading={isRedeemPreview ? false : dashboardLoading} previewDone={redeemPreview === "redeem-done"} />
+          authenticated ? (
+            <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} dashboardLoading={isRedeemPreview ? false : dashboardLoading} previewDone={redeemPreview === "redeem-done"} />
+          ) : (
+            <SignInGate message="Sign in to see and redeem your winnings." login={login} />
+          )
         )}
         {tab === "history" && (
-          <HistoryTab
-            history={dashboard?.history ?? []}
-            withdrawals={dashboard?.withdrawals ?? []}
-            activeTickets={dashboard?.activeTickets ?? []}
-            getAccessToken={getAccessToken}
-            onRefresh={fetchDashboard}
-            refetch={fetchDashboard}
-            userSolanaAddress={userSolanaAddress}
-            loading={dashboardLoading}
-            nextDrawRoundId={dashboard?.nextDraw?.roundId ?? null}
-          />
+          authenticated ? (
+            <HistoryTab
+              history={dashboard?.history ?? []}
+              withdrawals={dashboard?.withdrawals ?? []}
+              activeTickets={dashboard?.activeTickets ?? []}
+              getAccessToken={getAccessToken}
+              onRefresh={fetchDashboard}
+              refetch={fetchDashboard}
+              userSolanaAddress={userSolanaAddress}
+              loading={dashboardLoading}
+              nextDrawRoundId={dashboard?.nextDraw?.roundId ?? null}
+            />
+          ) : (
+            <SignInGate message="Sign in to see your ticket history." login={login} />
+          )
         )}
       </div>
 
