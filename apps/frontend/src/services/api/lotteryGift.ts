@@ -12,6 +12,10 @@ export interface LotteryGiftPublic {
   note: string | null;
   status: LotteryGiftStatus;
   recipientType: 'email' | 'handle';
+  /** True only when the logged-in viewer is the one who sent this gift. */
+  isSender: boolean;
+  /** True only when the logged-in viewer is the one who actually claimed it. */
+  isClaimant: boolean;
 }
 
 export interface ClaimLotteryGiftResult {
@@ -19,8 +23,10 @@ export interface ClaimLotteryGiftResult {
   numTickets: number;
 }
 
-export async function getLotteryGiftPublic(token: string): Promise<LotteryGiftPublic> {
-  return fetchApi<LotteryGiftPublic>(`/lottery/gift/${token}`);
+/** accessToken is optional — the page works for anonymous visitors too, just without
+ *  isSender/isClaimant (those require knowing who's looking). */
+export async function getLotteryGiftPublic(token: string, accessToken?: string | null): Promise<LotteryGiftPublic> {
+  return fetchApi<LotteryGiftPublic>(`/lottery/gift/${token}`, { accessToken });
 }
 
 export async function claimLotteryGift(

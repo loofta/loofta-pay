@@ -15,7 +15,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { IsNumber, IsString, IsIn, IsArray, IsOptional, Min, Max } from 'class-validator';
-import { AuthGuard, Public } from '@/common/guards';
+import { AuthGuard, Public, OptionalAuthGuard } from '@/common/guards';
 import { LotteryService, InitiatePurchaseResult, InitiatePublicPurchaseResult, LotteryDashboard, LotteryTicketSummary } from './lottery.service';
 import { LifiService } from './lifi.service';
 
@@ -314,9 +314,13 @@ export class LotteryController {
 
   @Get('gift/:token')
   @Public()
-  @ApiOperation({ summary: 'Get public gift details for the claim page (no auth required)' })
-  async getGift(@Param('token') token: string): Promise<{ numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle' }> {
-    return this.lottery.getGiftPublic(token);
+  @UseGuards(OptionalAuthGuard)
+  @ApiOperation({ summary: 'Get public gift details for the claim page — auth optional, used to tell sender/claimant/stranger apart' })
+  async getGift(@Param('token') token: string, @Request() req: any): Promise<{
+    numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle';
+    isSender: boolean; isClaimant: boolean;
+  }> {
+    return this.lottery.getGiftPublic(token, req.user?.id);
   }
 
   @Get('my-gifts')
