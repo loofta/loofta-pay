@@ -55,6 +55,14 @@ export interface MyGiftItem {
   claimUrl: string;
 }
 
-export async function getMyGifts(userId: string, accessToken?: string | null): Promise<MyGiftItem[]> {
-  return fetchApi<MyGiftItem[]>('/lottery/my-gifts', { userId, accessToken });
+export async function getMyGifts(
+  userId: string,
+  offset: number,
+  limit: number,
+  accessToken?: string | null,
+): Promise<{ gifts: MyGiftItem[]; total: number }> {
+  return fetchApi<{ gifts: MyGiftItem[]; total: number }>(
+    `/lottery/my-gifts?offset=${offset}&limit=${limit}`,
+    { userId, accessToken },
+  );
 }
