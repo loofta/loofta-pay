@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { Keypair, PublicKey, Connection, Transaction, VersionedTransaction, TransactionMessage, SystemProgram } from '@solana/web3.js';
@@ -18,6 +18,8 @@ import { SendPaymentEncryptionService } from '../send-payment/encryption.service
 import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI } from './megapot.service';
 import { RhinestoneService } from './rhinestone.service';
 import { LifiService } from './lifi.service';
+import { UsersService } from '../users/users.service';
+import { EmailService } from '../email/email.service';
 import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
@@ -30,11 +32,16 @@ const BRIDGE_STALL_TIMEOUT_MS = 20 * 60_000;
 // started right at the wire could still be mid-bridge when the round is drawn, buying a ticket
 // that can never win. Reopens automatically once Megapot's API reports the next round.
 const DRAW_PURCHASE_CUTOFF_MS = 5 * 60_000;
-// Per-purchase fee: flat component + proportional component. The proportional part exists
-// because Loofta absorbs Li.Fi's bridge cut (~25 bps of the bridged amount) — a purely flat
-// fee goes net-negative on purchases above ~35 tickets.
-const LOOFTA_TICKET_FEE_FLAT_USDC = 0.10;
-const LOOFTA_TICKET_FEE_BPS = 30;
+// Per-purchase fee: flat component + proportional component, calibrated to break even against
+// the REAL Sol→Base Li.Fi cost (live-quoted, not assumed) plus a thin buffer for quote
+// volatility — this fee only needs to cover bridging, not be a profit center (the referral
+// win-share cut on winners' payouts is the actual margin, see getWinClaimFactor). The old
+// $0.10+30bps figure was calibrated against an assumed ~25bps bridging cost; live quotes show
+// the real cost is ~0.4-0.5% via Across under ~$5, then plateaus ~1.28-1.32% via NEAR Intents
+// above that — the old formula went net-negative above ~10 tickets. $0.03+150bps tracks both
+// regimes with ~20-60% headroom instead of a flat guess.
+const LOOFTA_TICKET_FEE_FLAT_USDC = 0.03;
+const LOOFTA_TICKET_FEE_BPS = 150;
 function looftaTicketFee(costUsdc: number): number {
   return parseFloat((LOOFTA_TICKET_FEE_FLAT_USDC + (costUsdc * LOOFTA_TICKET_FEE_BPS) / 10_000).toFixed(6));
 }
@@ -167,6 +174,8 @@ export class LotteryService {
     private readonly megapot: MegapotService,
     private readonly rhinestone: RhinestoneService,
     private readonly lifi: LifiService,
+    private readonly usersService: UsersService,
+    private readonly emailService: EmailService,
   ) {}
 
   // ─── Purchase initiation ───────────────────────────────────────────────────
@@ -299,6 +308,357 @@ export class LotteryService {
       requiredSigners: txResponse.requiredSigners,
       feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, looftaFeeUsdc, totalUsdc },
     };
+  }
+
+  // ─── Gift a ticket ──────────────────────────────────────────────────────────
+
+  private normalizeGiftIdentifier(type: 'email' | 'handle', value: string): string {
+    const v = value.trim();
+    return type === 'email' ? v.toLowerCase() : v.replace(/^@/, '').toLowerCase();
+  }
+
+  /**
+   * Self-service gift: a user buys N tickets with their own wallet — same signed private
+   * transfer as buying for themselves in initiatePurchase — but addresses the ticket to someone
+   * else's email/X handle instead of keeping it. The ticket is bought immediately (the sender is
+   * committing real money now, same as any purchase); only ownership attachment is deferred to
+   * claim time.
+   *
+   * Only ONE signature is needed (vs. two for a normal purchase): Loofta's fee is collected by
+   * MagicBlock itself as part of the same private transfer (platformFeeBps/platformFeeAccount),
+   * so there's no separate upfront fee-collection transaction to sign.
+   */
+  async initiateGiftedPurchase(opts: {
+    userId: string;
+    userSolanaAddress: string;
+    numTickets: number;
+    recipientType: 'email' | 'handle';
+    recipientIdentifier: string;
+    note?: string;
+  }): Promise<{ ticketId: string; giftId: string; claimUrl: string; txBase64: string; requiredSigners: string[] }> {
+    const { userId, userSolanaAddress, numTickets } = opts;
+    await this.assertNotInDrawCutoff();
+    if (!numTickets || numTickets < 1 || numTickets > 100) throw new BadRequestException('1–100 tickets per gift');
+    if (!['email', 'handle'].includes(opts.recipientType)) throw new BadRequestException('recipientType must be "email" or "handle"');
+    const recipientIdentifier = this.normalizeGiftIdentifier(opts.recipientType, opts.recipientIdentifier);
+    if (!recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
+
+    // Same load protection as initiatePurchase: each initiation creates wallets, calls
+    // MagicBlock, and builds a sponsored tx — cap unsigned purchases per user.
+    const db0 = this.supabase.getClient();
+    const { count: pendingCount } = await db0
+      .from('lottery_tickets')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('status', 'pending_send')
+      .not('burner_sol_address', 'is', null)
+      .gte('created_at', new Date(Date.now() - 15 * 60_000).toISOString());
+    if ((pendingCount ?? 0) >= 3) {
+      throw new BadRequestException('You have unfinished purchases — complete or cancel them first, or retry in a few minutes.');
+    }
+
+    const companionPrivKey = generatePrivateKey();
+    const companionAddress = await this.rhinestone.getCompanionAddress(companionPrivKey);
+    const burnerKeypair = Keypair.generate();
+    const burnerAddress = burnerKeypair.publicKey.toBase58();
+    const companionKeyEnc = this.enc.encrypt(Buffer.from(companionPrivKey.slice(2), 'hex'), companionAddress);
+    const burnerKeyEnc = this.enc.encrypt(Buffer.from(burnerKeypair.secretKey), burnerAddress);
+
+    const costUsdc = numTickets * TICKET_PRICE_USDC;
+    const costUnits = Math.round(costUsdc * 1_000_000);
+
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
+    const bs58Mod = await import('bs58');
+    const feeWalletAddress = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey)).publicKey.toBase58();
+
+    const cluster = this.getSolanaCluster();
+    let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
+    try {
+      txResponse = await requestMagicblockPrivateTransfer({
+        from: userSolanaAddress,
+        to: burnerAddress,
+        mint: USDC_MINT.toBase58(),
+        amount: costUnits,
+        cluster,
+        exactOut: true,
+        gasless: true,
+        minDelayMs: 10_000,
+        maxDelayMs: 30_000,
+        platformFeeBps: LOOFTA_TICKET_FEE_BPS,
+        platformFeeAccount: feeWalletAddress,
+      });
+    } catch (err: any) {
+      if (String(err?.message).includes('delegated to another validator')) {
+        throw new BadRequestException(
+          'A previous payment from this wallet is still in transit (usually clears within 2 minutes). Please wait and try again.',
+        );
+      }
+      throw err;
+    }
+
+    const db = this.supabase.getClient();
+    const { data: ticket, error } = await db
+      .from('lottery_tickets')
+      .insert({
+        user_id: userId,
+        user_solana_address: userSolanaAddress,
+        companion_address: companionAddress,
+        companion_key_enc: companionKeyEnc,
+        burner_sol_address: burnerAddress,
+        burner_sol_key_enc: burnerKeyEnc,
+        num_tickets: numTickets,
+        cost_usdc: costUsdc,
+        status: 'pending_send',
+        is_gift: true, // no separate fee_tx_hash — MagicBlock collected the fee inline, see tryStartBridge's gate
+      })
+      .select('id')
+      .single();
+    if (error || !ticket) throw new Error(`Failed to create gift lottery ticket: ${error?.message}`);
+
+    const claimToken = randomUUID();
+    const { data: gift, error: giftError } = await db
+      .from('lottery_gifts')
+      .insert({
+        created_by_user_id: userId,
+        funding_mode: 'sender_paid',
+        num_tickets: numTickets,
+        note: opts.note ?? null,
+        recipient_type: opts.recipientType,
+        recipient_identifier: recipientIdentifier,
+        claim_token: claimToken,
+        status: 'unclaimed',
+        resulting_ticket_id: ticket.id,
+      })
+      .select('id')
+      .single();
+    if (giftError || !gift) throw new Error(`Failed to create gift record: ${giftError?.message}`);
+
+    const claimUrl = `https://pay.loofta.xyz/app/gift/${claimToken}`;
+    if (opts.recipientType === 'email') {
+      await this.emailService.sendGiftTicketEmail({
+        recipientEmail: recipientIdentifier,
+        numTickets,
+        claimUrl,
+        note: opts.note ?? null,
+      }).catch(e => this.logger.warn(`initiateGiftedPurchase ${gift.id}: sendGiftTicketEmail failed: ${e.message}`));
+    }
+
+    return {
+      ticketId: ticket.id,
+      giftId: gift.id,
+      claimUrl,
+      txBase64: txResponse.transactionBase64,
+      requiredSigners: txResponse.requiredSigners,
+    };
+  }
+
+  /**
+   * Admin action: creates a lightweight, unfunded gift record. No wallets are generated and no
+   * money moves here — that's deliberate, see claimGift below. Mirrors the recipient-targeting
+   * UX of a regular Loofta payment (email or X handle) without touching the payments/claims
+   * tables at all.
+   */
+  async createGift(opts: {
+    adminUserId: string;
+    numTickets: number;
+    recipientType: 'email' | 'handle';
+    recipientIdentifier: string;
+    note?: string;
+  }): Promise<{ giftId: string; claimToken: string; claimUrl: string }> {
+    const { adminUserId, numTickets, recipientType, note } = opts;
+    if (!numTickets || numTickets < 1 || numTickets > 100) {
+      throw new BadRequestException('1–100 tickets per gift');
+    }
+    if (!['email', 'handle'].includes(recipientType)) {
+      throw new BadRequestException('recipientType must be "email" or "handle"');
+    }
+    const recipientIdentifier = this.normalizeGiftIdentifier(recipientType, opts.recipientIdentifier);
+    if (!recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
+
+    const claimToken = randomUUID();
+    const db = this.supabase.getClient();
+    const { data: gift, error } = await db
+      .from('lottery_gifts')
+      .insert({
+        created_by_user_id: adminUserId,
+        funding_mode: 'admin_treasury',
+        num_tickets: numTickets,
+        note: note ?? null,
+        recipient_type: recipientType,
+        recipient_identifier: recipientIdentifier,
+        claim_token: claimToken,
+        status: 'unclaimed',
+      })
+      .select('id')
+      .single();
+    if (error || !gift) throw new Error(`Failed to create lottery gift: ${error?.message}`);
+
+    const claimUrl = `https://pay.loofta.xyz/app/gift/${claimToken}`;
+    if (recipientType === 'email') {
+      await this.emailService.sendGiftTicketEmail({
+        recipientEmail: recipientIdentifier,
+        numTickets,
+        claimUrl,
+        note: note ?? null,
+      }).catch(e => this.logger.warn(`createGift ${gift.id}: sendGiftTicketEmail failed: ${e.message}`));
+    }
+
+    this.logger.log(`Gift ${gift.id}: created ${numTickets} ticket(s) for ${recipientType}:${recipientIdentifier.slice(0, 3)}*** by admin ${adminUserId}`);
+    return { giftId: gift.id, claimToken, claimUrl };
+  }
+
+  /** Public, unauthenticated preview for the claim page — no recipient identifier exposed. */
+  async getGiftPublic(token: string): Promise<{ numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle' }> {
+    const db = this.supabase.getClient();
+    const { data: gift } = await db
+      .from('lottery_gifts')
+      .select('num_tickets, note, status, recipient_type')
+      .eq('claim_token', token)
+      .maybeSingle();
+    if (!gift) throw new NotFoundException('Gift not found');
+    return { numTickets: gift.num_tickets, note: gift.note, status: gift.status, recipientType: gift.recipient_type };
+  }
+
+  /**
+   * Recipient action: verifies identity, then does the real work — generates wallets, funds the
+   * burner from Loofta's own fee wallet (no fee charged, no MagicBlock leg, no signed user tx),
+   * and creates a normal lottery_tickets row already owned by the claimant. Buying at claim time
+   * (not gift-creation time) means the ticket always enters whichever draw is live right now.
+   */
+  async claimGift(token: string, claimantPrivyUserId: string): Promise<{ ticketId: string; numTickets: number }> {
+    const db = this.supabase.getClient();
+    const { data: gift } = await db
+      .from('lottery_gifts')
+      .select('*')
+      .eq('claim_token', token)
+      .maybeSingle();
+    if (!gift) throw new NotFoundException('Gift not found');
+
+    // Idempotent retry: a prior claim got as far as flipping status='claimed' but failed before
+    // the purchase/transfer completed (e.g. fee-wallet funding failed, or getSolanaWalletAddress
+    // errored) — let the same claimant retry without re-verifying identity or re-racing the
+    // atomic claim below. sender_paid gifts already have resulting_ticket_id set at gift-creation
+    // time (the ticket was bought upfront), so — unlike admin_treasury — its presence doesn't
+    // mean the transfer already succeeded; transferGiftedTicket's own ownership-conditioned
+    // UPDATE is what makes a repeat call safe (0 rows affected if it already went through).
+    if (gift.status === 'claimed' && gift.claimed_by_user_id === claimantPrivyUserId) {
+      if (gift.funding_mode === 'sender_paid') return this.transferGiftedTicket(gift, claimantPrivyUserId);
+      if (!gift.resulting_ticket_id) return this.purchaseGiftTickets(gift, claimantPrivyUserId);
+      return { ticketId: gift.resulting_ticket_id, numTickets: gift.num_tickets };
+    }
+    if (gift.status !== 'unclaimed') {
+      throw new BadRequestException(gift.status === 'claimed' ? 'This gift has already been claimed' : `This gift is ${gift.status}`);
+    }
+
+    // A gift addressed to a "handle" doesn't declare upfront whether it's an X handle or a
+    // Loofta username — the sender picked one free-text field (matching how Send works), so try
+    // both identity checks and accept either match.
+    const matches = gift.recipient_type === 'handle'
+      ? (await this.usersService.verifyRecipientIdentityForSendPayment(claimantPrivyUserId, 'twitter', gift.recipient_identifier))
+        || (await this.usersService.verifyRecipientIdentityForSendPayment(claimantPrivyUserId, 'username', gift.recipient_identifier))
+      : await this.usersService.verifyRecipientIdentityForSendPayment(claimantPrivyUserId, 'email', gift.recipient_identifier);
+    if (!matches) {
+      throw new ForbiddenException('You are not the intended recipient of this gift. Log in with the email, X account, or Loofta username it was sent to.');
+    }
+
+    // Atomic claim — same conditional-update race guard used for bridge_claimed_at (tryStartBridge).
+    const { data: claimedRows, error: claimError } = await db
+      .from('lottery_gifts')
+      .update({ status: 'claimed', claimed_at: new Date().toISOString(), claimed_by_user_id: claimantPrivyUserId })
+      .eq('id', gift.id)
+      .eq('status', 'unclaimed')
+      .select('id');
+    if (claimError) throw new Error(`claimGift failed: ${claimError.message}`);
+    if (!claimedRows?.length) throw new BadRequestException('This gift has already been claimed');
+
+    const claimedGift = { ...gift, status: 'claimed', claimed_by_user_id: claimantPrivyUserId };
+
+    if (claimedGift.funding_mode === 'sender_paid') {
+      return this.transferGiftedTicket(claimedGift, claimantPrivyUserId);
+    }
+    return this.purchaseGiftTickets(claimedGift, claimantPrivyUserId);
+  }
+
+  /**
+   * sender_paid gifts already bought their ticket at gift-creation time (the sender funded it
+   * with their own wallet, same as a normal purchase) — claiming here just reassigns ownership
+   * away from the sender to the verified recipient. No wallets, no on-chain activity.
+   */
+  private async transferGiftedTicket(gift: any, claimantPrivyUserId: string): Promise<{ ticketId: string; numTickets: number }> {
+    if (!gift.resulting_ticket_id) throw new Error(`Gift ${gift.id}: sender_paid gift missing resulting_ticket_id`);
+    const userSolanaAddress = await this.usersService.getSolanaWalletAddress(claimantPrivyUserId);
+    const db = this.supabase.getClient();
+    const { data: updated, error } = await db
+      .from('lottery_tickets')
+      .update({ user_id: claimantPrivyUserId, user_solana_address: userSolanaAddress, updated_at: new Date().toISOString() })
+      .eq('id', gift.resulting_ticket_id)
+      .eq('user_id', gift.created_by_user_id)
+      .select('id, num_tickets')
+      .maybeSingle();
+    if (error) throw new Error(`transferGiftedTicket failed: ${error.message}`);
+    if (!updated) throw new BadRequestException('This gift could not be transferred — it may have already moved.');
+    this.logger.log(`Gift ${gift.id}: ticket ${updated.id} reassigned from ${gift.created_by_user_id} to ${claimantPrivyUserId}`);
+    return { ticketId: updated.id, numTickets: updated.num_tickets };
+  }
+
+  /**
+   * Shared by claimGift's fresh-claim and retry paths — the actual wallet-gen + fund + buy.
+   * Ordered so the one step that moves real money (topUpFromFeeWallet) runs last, right before
+   * the DB insert that records where it went — everything that can fail more routinely (draw
+   * cutoff, fetching the claimant's wallet from Privy) happens first, while failure is still free.
+   */
+  private async purchaseGiftTickets(gift: any, claimantPrivyUserId: string): Promise<{ ticketId: string; numTickets: number }> {
+    try {
+      await this.assertNotInDrawCutoff();
+      const userSolanaAddress = await this.usersService.getSolanaWalletAddress(claimantPrivyUserId);
+
+      const companionPrivKey = generatePrivateKey();
+      const companionAddress = await this.rhinestone.getCompanionAddress(companionPrivKey);
+      const burnerKeypair = Keypair.generate();
+      const burnerAddress = burnerKeypair.publicKey.toBase58();
+      const companionKeyEnc = this.enc.encrypt(Buffer.from(companionPrivKey.slice(2), 'hex'), companionAddress);
+      const burnerKeyEnc = this.enc.encrypt(Buffer.from(burnerKeypair.secretKey), burnerAddress);
+
+      const numTickets = gift.num_tickets as number;
+      const costUsdc = numTickets * TICKET_PRICE_USDC;
+      const costUnits = Math.round(costUsdc * 1_000_000);
+      const sig = await this.topUpFromFeeWallet(burnerAddress, BigInt(costUnits));
+
+      const db = this.supabase.getClient();
+      const { data: ticket, error } = await db
+        .from('lottery_tickets')
+        .insert({
+          user_id: claimantPrivyUserId,
+          user_solana_address: userSolanaAddress,
+          companion_address: companionAddress,
+          companion_key_enc: companionKeyEnc,
+          burner_sol_address: burnerAddress,
+          burner_sol_key_enc: burnerKeyEnc,
+          num_tickets: numTickets,
+          cost_usdc: costUsdc,
+          status: 'sent',
+          sender_tx_hash: sig,
+          is_gift: true,
+        })
+        .select('id')
+        .single();
+      if (error || !ticket) throw new Error(`Failed to create gift lottery ticket: ${error?.message}`);
+
+      await db.from('lottery_gifts').update({ resulting_ticket_id: ticket.id }).eq('id', gift.id);
+      this.logger.log(`Gift ${gift.id}: claimed by ${claimantPrivyUserId}, ticket ${ticket.id} funded (${numTickets} tickets, sig=${sig})`);
+      return { ticketId: ticket.id, numTickets };
+    } catch (e: any) {
+      this.logger.error(`purchaseGiftTickets ${gift.id}: ${e.message}`);
+      // Deliberately left as status='claimed' (not 'failed') with no resulting_ticket_id — this
+      // is exactly the state claimGift's idempotent-retry branch looks for, so the same claimant
+      // calling claim again will retry the purchase without re-verifying identity.
+      await this.supabase.getClient()
+        .from('lottery_gifts')
+        .update({ failure_reason: e.message })
+        .eq('id', gift.id);
+      throw new BadRequestException('Something went wrong claiming your gift — please try again in a moment.');
+    }
   }
 
   /**
@@ -663,12 +1023,15 @@ export class LotteryService {
       // buy-confirm reaches us — the ticket then sits in pending_send and the refund cron would
       // wrongly refund a purchase whose money is about to land. The burner balance is the
       // ground truth: any USDC there means the transfer really was sent, so promote to 'sent'.
+      // Normal purchases sign a fee tx before the MagicBlock tx, so fee_tx_hash being set proves
+      // they got that far; gift purchases (is_gift) have no separate fee tx at all (MagicBlock
+      // collects it inline), so they're eligible here purely on age + a funded burner instead.
       const { data: pending } = await db
         .from('lottery_tickets')
         .select('*')
         .eq('status', 'pending_send')
         .not('burner_sol_address', 'is', null)
-        .not('fee_tx_hash', 'is', null) // fee is signed before the MagicBlock tx — no fee, nothing sent
+        .or('fee_tx_hash.not.is.null,is_gift.eq.true')
         .gte('created_at', new Date(Date.now() - 30 * 60_000).toISOString())
         .limit(20);
 
@@ -689,9 +1052,11 @@ export class LotteryService {
   }
 
   private async tryStartBridge(ticket: any): Promise<void> {
-    // No verified fee, no service: without this gate a client that skips the fee tx (calling
-    // buy-confirm directly) would still get bridging + ticket purchase for free.
-    if (!ticket.fee_tx_hash) {
+    // No verified fee, no service — UNLESS this is an admin-issued gift (is_gift), where Loofta
+    // never charges a fee in the first place, so there's nothing to verify. Without this gate a
+    // client that skips the fee tx (calling buy-confirm directly) would still get bridging +
+    // ticket purchase for free.
+    if (!ticket.fee_tx_hash && !ticket.is_gift) {
       this.logger.warn(`Ticket ${ticket.id}: no fee recorded — not bridging (funds stay rescuable from the burner)`);
       return;
     }
@@ -1521,7 +1886,11 @@ export class LotteryService {
         // Read on-chain NFT metadata to check Tier + Win Amount post-draw
         const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
         const grossWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
-        const claimFactor = await this.megapot.getWinClaimFactor(ticket.round_id);
+        // Use the NFT metadata's own on-chain "Drawing ID", NOT ticket.round_id (that's Megapot's
+        // off-chain Data-API round id — passing it to getDrawingState() silently reads a zeroed
+        // struct instead of reverting, understating the real referral-win-share deduction).
+        const onChainDrawingId = results.find(r => r.drawingId)?.drawingId;
+        const claimFactor = onChainDrawingId ? await this.megapot.getWinClaimFactor(onChainDrawingId) : 1;
         const totalWinUsdc = parseFloat((grossWinUsdc * claimFactor).toFixed(6));
         const topWin = results.find(r => r.winAmountUsdc > 0);
 
@@ -1615,7 +1984,13 @@ export class LotteryService {
         );
         if (apiWin) {
           const winningNumbers = await this.megapot.getWinningNumbersForRound(ticket.round_id);
-          const apiClaimFactor = await this.megapot.getWinClaimFactor(ticket.round_id);
+          // No NFT metadata available on this last-resort path, so there's no real on-chain
+          // "Drawing ID" to look up getDrawingState() with — ticket.round_id is the Data-API's
+          // off-chain id, which getWinClaimFactor cannot use (see checkDailyResults). Applying no
+          // factor here means this branch shows the gross amount pre-claim; the actual redeem
+          // still reconciles win_amount_usdc to the real claimed companion balance afterward, so
+          // this is a display-only gap in this rare fallback, not a fund-safety issue.
+          const apiClaimFactor = 1;
           const netApiWin = parseFloat((apiWin.winAmountUsdc * apiClaimFactor).toFixed(6));
           await db.from('lottery_tickets').update({
             status: 'won',
@@ -1639,7 +2014,10 @@ export class LotteryService {
 
     const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
     const grossWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
-    const nftClaimFactor = await this.megapot.getWinClaimFactor(ticket.round_id ?? '0');
+    // Real on-chain drawing id from the NFT metadata itself — see checkDailyResults for why
+    // ticket.round_id (Megapot's off-chain Data-API id) must not be used here.
+    const onChainDrawingId = results.find(r => r.drawingId)?.drawingId;
+    const nftClaimFactor = onChainDrawingId ? await this.megapot.getWinClaimFactor(onChainDrawingId) : 1;
     const totalWinUsdc = parseFloat((grossWinUsdc * nftClaimFactor).toFixed(6));
     const topWin = results.find(r => r.winAmountUsdc > 0);
 
@@ -1694,6 +2072,22 @@ export class LotteryService {
 
     if (tErr || !ticket) throw new BadRequestException('Ticket not found or not won');
     if (!ticket.win_amount_usdc || ticket.win_amount_usdc <= 0) throw new BadRequestException('No winnings to withdraw');
+
+    // Same idempotency guard as initiateWithdrawalBatch — ticket.status stays 'won' throughout
+    // the whole withdrawal pipeline, so a duplicate call (e.g. refresh + re-click) would otherwise
+    // create a second withdrawal row racing the first.
+    const { data: existingInFlight } = await db
+      .from('lottery_withdrawals')
+      .select('id')
+      .eq('ticket_id', opts.ticketId)
+      .in('status', ['pending', 'processing'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existingInFlight) {
+      this.logger.log(`initiateWithdrawal: ticket ${opts.ticketId} already has an in-flight withdrawal — returning it`);
+      return { withdrawalId: existingInFlight.id };
+    }
 
     const { data: withdrawal, error: wErr } = await db
       .from('lottery_withdrawals')
@@ -1754,6 +2148,35 @@ export class LotteryService {
       if (!t.win_amount_usdc || parseFloat(t.win_amount_usdc) <= 0) {
         throw new BadRequestException(`Ticket ${t.id} has no winnings to withdraw`);
       }
+    }
+
+    // Idempotency guard: a ticket's status stays 'won' for the ENTIRE claim → bridge → deliver
+    // pipeline (only flips to 'withdrawn' at the very end), so without this check a duplicate
+    // call — e.g. a page refresh mid-redeem followed by the user clicking "Redeem" again — would
+    // find the same tickets still eligible and spin up a second batch racing the first to claim
+    // the same companion wallets. If any of these tickets already has a withdrawal in flight,
+    // return that existing batch instead of creating a new one.
+    const { data: inFlight } = await db
+      .from('lottery_withdrawals')
+      .select('id, ticket_id, batch_id')
+      .in('ticket_id', tickets.map(t => t.id))
+      .in('status', ['pending', 'processing'])
+      .order('created_at', { ascending: false });
+    if (inFlight?.length) {
+      const existingBatchId = inFlight[0].batch_id;
+      const covered = new Set(inFlight.filter(w => w.batch_id === existingBatchId).map(w => w.ticket_id));
+      const allCovered = tickets.every(t => covered.has(t.id));
+      if (!allCovered) {
+        // Partial overlap — some requested tickets are mid-flight in one batch, others aren't in
+        // any batch. Refuse rather than guess: creating a new batch for just the uncovered
+        // tickets would silently drop the caller's expectation that this call handles all of them.
+        throw new BadRequestException('Some of these tickets already have a withdrawal in progress — try again in a moment.');
+      }
+      this.logger.log(`initiateWithdrawalBatch: ${tickets.length} ticket(s) already have an in-flight withdrawal — returning existing batch ${existingBatchId}`);
+      return {
+        withdrawalIds: inFlight.filter(w => w.batch_id === existingBatchId).map(w => w.id),
+        batchId: existingBatchId,
+      };
     }
 
     // One shared burner Solana wallet for the entire batch

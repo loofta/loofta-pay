@@ -296,6 +296,24 @@ export class MegapotService {
   }
 
   /**
+   * Read the accrued, unclaimed referral fee balance for `referrerAddress` on the Jackpot
+   * contract — a real, view-only balance (`referralFees(address)`), separate from any ticket
+   * this app's backend controls. This wallet's private key is intentionally NOT held by this
+   * backend (see admin UI) — claiming (`claimReferralFees()`, msg.sender-gated) is done manually
+   * by whoever controls that wallet, e.g. via Basescan's "Write Contract" tab.
+   */
+  async getReferralFeesBalanceUsdc(referrerAddress: Address): Promise<number> {
+    const client = this.getPublicClient();
+    const balance = await client.readContract({
+      address: MEGAPOT_JACKPOT,
+      abi: JACKPOT_ABI,
+      functionName: 'referralFees',
+      args: [referrerAddress],
+    }) as bigint;
+    return Number(balance) / 1_000_000;
+  }
+
+  /**
    * Fetch actual ticket ball numbers for a companion wallet by scanning on-chain Transfer mint
    * events on the Megapot NFT contract, then reading each token's metadata via tokenURI.
    * The Megapot REST API does not index smart-account wallets (Rhinestone), so we go on-chain.
@@ -452,13 +470,17 @@ export class MegapotService {
    * Read Tier + Win Amount from on-chain NFT metadata for a set of token IDs.
    * After Megapot runs the draw, these attributes are populated in the tokenURI.
    * Returns winAmountUsdc = 0 for losing tickets or tickets not yet drawn.
+   * Also returns the metadata's own "Drawing ID" — the real on-chain _drawingId that
+   * getDrawingState()/getWinClaimFactor() need. This is NOT the same as Megapot's off-chain
+   * Data-API round.id (see the 90%-payout incident this was added to fix) — passing the wrong
+   * one makes getDrawingState() silently return a zeroed struct instead of reverting.
    */
   async checkTicketResultsFromNft(
     tokenIds: string[],
-  ): Promise<{ tokenId: string; tier: number | null; winAmountUsdc: number }[]> {
+  ): Promise<{ tokenId: string; tier: number | null; winAmountUsdc: number; drawingId: string | null }[]> {
     if (!tokenIds.length) return [];
     const client = this.getPublicClient();
-    const results: { tokenId: string; tier: number | null; winAmountUsdc: number }[] = [];
+    const results: { tokenId: string; tier: number | null; winAmountUsdc: number; drawingId: string | null }[] = [];
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
     for (const tokenId of tokenIds) {
@@ -496,6 +518,7 @@ export class MegapotService {
 
         const tier = get('Tier') != null ? Number(get('Tier')) : null;
         const rawWin = get('Win Amount');
+        const drawingId = String(get('Drawing ID') ?? '') || null;
 
         let winAmountUsdc = 0;
         if (rawWin != null && rawWin !== '' && String(rawWin) !== '0') {
@@ -507,8 +530,8 @@ export class MegapotService {
           }
         }
 
-        this.logger.log(`NFT ${tokenId}: tier=${tier} rawWin=${rawWin} → $${winAmountUsdc}`);
-        results.push({ tokenId, tier, winAmountUsdc });
+        this.logger.log(`NFT ${tokenId}: tier=${tier} rawWin=${rawWin} drawingId=${drawingId} → $${winAmountUsdc}`);
+        results.push({ tokenId, tier, winAmountUsdc, drawingId });
       } catch (e: any) {
         this.logger.warn(`checkTicketResultsFromNft failed for token ${tokenId}: ${e.message}`);
       }

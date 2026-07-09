@@ -7,17 +7,17 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser } from "lucide-react";
+import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 
 const MEGAPOT_REFERRAL = "https://megapot.io/r/Q3M637";
 const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
 const MAGICBLOCK_BPS = 10;
-const BRIDGE_FEE_USD_EST = 0.04; // Li.Fi (cheaper than NEAR Intents)
-// Loofta per-purchase fee: $0.10 flat + 30 BPS of ticket cost (mirrors backend looftaTicketFee —
-// the proportional part covers the bridge cut Loofta absorbs on bigger purchases)
-const LOOFTA_TICKET_FEE_FLAT_USD = 0.10;
-const LOOFTA_TICKET_FEE_BPS = 30;
+// Loofta per-purchase fee: mirrors backend looftaTicketFee — calibrated to break even against
+// real Sol→Base bridging costs plus a thin volatility buffer, not a profit center (see
+// lottery.service.ts for the live-quoted cost data this was calibrated against).
+const LOOFTA_TICKET_FEE_FLAT_USD = 0.03;
+const LOOFTA_TICKET_FEE_BPS = 150;
 function looftaFee(ticketCostUsd: number) {
   return LOOFTA_TICKET_FEE_FLAT_USD + (ticketCostUsd * LOOFTA_TICKET_FEE_BPS) / 10_000;
 }
@@ -727,14 +727,71 @@ function DrawSuccessModal({ tickets, drawTime, prizePool, onBuyMore, onClose }: 
   );
 }
 
+function GiftSentCard({ claimUrl, numTickets, recipientType, onDone }: {
+  claimUrl: string;
+  numTickets: number;
+  recipientType: "email" | "handle";
+  onDone: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const ticketWord = numTickets === 1 ? "ticket" : "tickets";
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-0 sm:p-4" onClick={onDone}>
+      <div
+        className="w-full max-w-md bg-[#0f0f16] rounded-t-3xl sm:rounded-3xl border border-white/10 shadow-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Gift sent"
+      >
+        <div className="flex items-center justify-end px-5 pt-4 pb-0">
+          <button onClick={onDone} aria-label="Close" className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="px-6 pb-6 space-y-5">
+          <div className="flex flex-col items-center text-center gap-2 pt-1">
+            <div className="w-14 h-14 rounded-2xl bg-[#FF7A2A]/15 flex items-center justify-center">
+              <Gift className="w-7 h-7 text-[#FF7A2A]" />
+            </div>
+            <p className="text-2xl font-semibold text-white">Gifted!</p>
+            <p className="text-base text-slate-400">
+              {numTickets} Megapot {ticketWord} paid for — {recipientType === "email" ? "they'll get an email with" : "share"} the claim link{recipientType === "email" ? "." : " below."}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
+            <span className="flex-1 min-w-0 truncate text-base text-slate-300">{claimUrl}</span>
+            <button
+              onClick={() => { navigator.clipboard.writeText(claimUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+              className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+              aria-label="Copy claim link"
+            >
+              {copied ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+            </button>
+          </div>
+
+          <button onClick={onDone}
+            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all">
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Fee breakdown ────────────────────────────────────────────────────────────
 
-function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeReceiveUsdc }: {
+function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeReceiveUsdc, bridgeFeeUnavailable, onRetryFee }: {
   ticketCostUsd: number;
   mode: "buy" | "buy-public" | "base" | "solana_private";
   solPriceUsd: number;
   bridgeFeeUsd?: number | null;      // actual Li.Fi fee; null = loading
   bridgeReceiveUsdc?: number | null; // Li.Fi toAmountMin; null = loading
+  bridgeFeeUnavailable?: boolean;    // couldn't get a real quote after retries — no guessed number is shown
+  onRetryFee?: () => void;
 }) {
   if (mode === "base") return (
     <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
@@ -752,7 +809,8 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
   if (mode === "solana_private") {
     // Backend /bridge-fee now returns the TRUE net (one consolidated bridge + MagicBlock relay +
     // volume fee), so use it directly — don't re-subtract MagicBlock here or it double-counts.
-    const totalFees = bridgeFeeUsd ?? BRIDGE_FEE_USD_EST;
+    // No estimated/guessed fallback: if a real quote can't be obtained, say so plainly rather
+    // than showing a number that might not match what the bridge actually charges.
     const youReceive = bridgeReceiveUsdc != null ? Math.max(0, bridgeReceiveUsdc) : null;
     return (
       <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
@@ -762,17 +820,28 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
             <p className="text-sm text-slate-500 mt-0.5">Private transfer &amp; bridging — all included</p>
           </div>
           <span className="text-base text-slate-400 tabular-nums shrink-0">
-            {bridgeFeeUsd === null ? <span className="opacity-40">estimating…</span> : `~${fmt(totalFees)}`}
+            {bridgeFeeUnavailable
+              ? <span className="text-amber-400">unavailable</span>
+              : bridgeFeeUsd == null ? <span className="opacity-40">estimating…</span> : `~${fmt(bridgeFeeUsd)}`}
           </span>
         </div>
         <div className="flex justify-between px-4 py-3.5">
           <span className="text-base font-semibold text-white">You receive</span>
           <span className="text-base font-semibold text-white tabular-nums">
-            {youReceive === null
-              ? <span className="opacity-40 font-normal text-slate-400">estimating…</span>
-              : fmt(youReceive)}
+            {bridgeFeeUnavailable
+              ? <span className="text-sm font-normal text-amber-400">couldn&apos;t get a real quote</span>
+              : youReceive === null
+                ? <span className="opacity-40 font-normal text-slate-400">estimating…</span>
+                : fmt(youReceive)}
           </span>
         </div>
+        {bridgeFeeUnavailable && onRetryFee && (
+          <div className="px-4 py-3">
+            <button type="button" onClick={onRetryFee} className="text-sm text-amber-400 underline underline-offset-2 hover:text-amber-300">
+              Try again
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -860,6 +929,16 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   const [stepError, setStepError] = useState("");
   const [lastTickets, setLastTickets] = useState<TicketNumbers[]>([]);
   const [lastNumTickets, setLastNumTickets] = useState(0);
+
+  // Gift mode: buy tickets for someone else instead of yourself. Same signed private transfer,
+  // just addressed to a recipient's email, X handle, or Loofta username — see handleGiftBuy.
+  const [giftMode, setGiftMode] = useState(false);
+  const [giftIdentifier, setGiftIdentifier] = useState("");
+  const giftLooksLikeEmail = giftIdentifier.includes("@") && giftIdentifier.includes(".");
+  const [giftNote, setGiftNote] = useState("");
+  const [giftStep, setGiftStep] = useState<"idle" | "signing" | "done" | "error">("idle");
+  const [giftError, setGiftError] = useState("");
+  const [giftClaimUrl, setGiftClaimUrl] = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingStartedRef = useRef(false);
@@ -1036,6 +1115,59 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     }
   }
 
+  async function handleGiftBuy() {
+    if (!embeddedWallet?.address) {
+      setGiftError("Wallet not ready — please wait a moment and try again.");
+      setGiftStep("error");
+      return;
+    }
+    const recipientIdentifier = giftIdentifier.trim().replace(/^@+/, "");
+    if (!recipientIdentifier) {
+      setGiftError("Enter a recipient email, X handle, or Loofta username.");
+      setGiftStep("error");
+      return;
+    }
+    const recipientType = giftLooksLikeEmail ? "email" : "handle";
+    setGiftStep("signing");
+    setGiftError("");
+    try {
+      const token = await getAccessToken();
+      const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const initRes = await fetch("/api/lottery/buy-gift", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({
+          numTickets,
+          userSolanaAddress: embeddedWallet?.address,
+          recipientType,
+          recipientIdentifier,
+          note: giftNote.trim() || undefined,
+        }),
+      });
+      if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
+      const { ticketId, claimUrl, txBase64 } = await initRes.json();
+
+      // Only one signature needed — Loofta's fee is collected inline by MagicBlock
+      // (platformFeeBps/platformFeeAccount), no separate fee tx to sign here.
+      const txBytes = Buffer.from(txBase64, "base64");
+      const { signature: sigBytes } = await signAndSendTransaction({
+        transaction: txBytes as unknown as Uint8Array,
+        wallet: embeddedWallet as any,
+      });
+      const signature = bs58.encode(sigBytes as Uint8Array);
+      await fetch("/api/lottery/buy-confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ ticketId, senderTxHash: signature }),
+      });
+      setGiftClaimUrl(claimUrl);
+      setGiftStep("done");
+    } catch (err: any) {
+      setGiftStep("error");
+      setGiftError(err.message ?? "Unknown error");
+    }
+  }
+
   const isRunning = !["idle", "done", "error"].includes(step);
 
   function resetBuy() { setStep("idle"); setStepError(""); pollingStartedRef.current = false; }
@@ -1081,7 +1213,20 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           onClose={resetBuy}
         />
       )}
-      {!isRunning && step !== "done" && (
+      {giftStep === "done" && giftClaimUrl && (
+        <GiftSentCard
+          claimUrl={giftClaimUrl}
+          numTickets={numTickets}
+          recipientType={giftLooksLikeEmail ? "email" : "handle"}
+          onDone={() => {
+            setGiftStep("idle");
+            setGiftClaimUrl(null);
+            setGiftIdentifier("");
+            setGiftNote("");
+          }}
+        />
+      )}
+      {!isRunning && step !== "done" && giftStep !== "done" && (
         <>
           <div className="flex items-center justify-between">
             <p className="text-slate-300 text-xl font-medium font-sans">Buy tickets privately</p>
@@ -1092,6 +1237,37 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           </div>
 
           <p className="text-sm text-slate-400">🔒 Shielded via MagicBlock. Min {PRIVATE_MIN} tickets. Uses your Loofta balance.</p>
+
+          {/* Gift toggle */}
+          <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] overflow-hidden">
+            <button type="button" onClick={() => setGiftMode(g => !g)}
+              className="w-full flex items-center justify-between px-4 py-3.5 text-left hover:bg-white/[0.03] transition-colors">
+              <span className="flex items-center gap-2 text-base font-medium text-slate-200">
+                <Gift className="w-4 h-4 text-slate-400" /> Gift to someone
+              </span>
+              <div className={["w-10 h-6 rounded-full transition-colors relative shrink-0",
+                giftMode ? "bg-[#FF7A2A]" : "bg-white/10"].join(" ")}>
+                <div className={["absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform",
+                  giftMode ? "translate-x-4" : "translate-x-0.5"].join(" ")} />
+              </div>
+            </button>
+            {giftMode && (
+              <div className="px-4 pb-4 border-t border-white/[0.06] space-y-3 pt-4">
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                    {giftLooksLikeEmail ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
+                  </span>
+                  <input value={giftIdentifier} onChange={e => setGiftIdentifier(e.target.value.replace(/^@+/, ""))}
+                    placeholder="Email, X handle, or Loofta username"
+                    className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base" />
+                </div>
+                <input value={giftNote} onChange={e => setGiftNote(e.target.value)}
+                  placeholder="Optional note…"
+                  className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg px-3 py-2 text-base" />
+                <p className="text-sm text-slate-500">They'll get a claim link — the ticket enters the draw as soon as they claim it.</p>
+              </div>
+            )}
+          </div>
 
           {/* Ticket count selector */}
           <div>
@@ -1123,8 +1299,13 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
             </div>
           </div>
 
-          {/* Choose numbers — collapsible for ≤10 tickets, random notice for 11+ */}
-          {numTickets <= 10 ? (
+          {/* Choose numbers — collapsible for ≤10 tickets, random notice for 11+ (skipped when gifting, since the recipient's numbers are always assigned randomly at claim time) */}
+          {giftMode ? (
+            <div className="flex items-center gap-3 px-4 py-3.5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+              <Shuffle className="w-4 h-4 text-slate-400 shrink-0" />
+              <p className="text-base text-slate-300">Numbers are picked randomly when they claim their ticket</p>
+            </div>
+          ) : numTickets <= 10 ? (
             <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] overflow-hidden">
               <button type="button" onClick={() => setChooseOpen(o => !o)}
                 className="w-full flex items-center justify-between px-4 py-3.5 text-left hover:bg-white/[0.03] transition-colors">
@@ -1154,6 +1335,9 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           {step === "error" && stepError && (
             <p className="text-base text-red-400">{stepError}</p>
           )}
+          {giftMode && giftStep === "error" && giftError && (
+            <p className="text-base text-red-400">{giftError}</p>
+          )}
 
           {drawCutoff && (
             <p className="text-sm text-amber-400 text-center">
@@ -1161,11 +1345,24 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
             </p>
           )}
 
-          <button onClick={() => handlePrivateBuy()}
-            disabled={drawCutoff}
-            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100">
-            {drawCutoff ? "Sales paused" : `Buy privately · ${fmt(numTickets + mbFee(numTickets) + looftaFee(numTickets))}`}
-          </button>
+          {giftMode ? (
+            <button onClick={() => handleGiftBuy()}
+              disabled={drawCutoff || giftStep === "signing" || !giftIdentifier.trim()}
+              className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 flex items-center justify-center gap-2">
+              {giftStep === "signing" ? "Signing…" : (
+                <>
+                  <Gift className="w-5 h-5" />
+                  {drawCutoff ? "Sales paused" : `Gift privately · ${fmt(numTickets + mbFee(numTickets) + looftaFee(numTickets))}`}
+                </>
+              )}
+            </button>
+          ) : (
+            <button onClick={() => handlePrivateBuy()}
+              disabled={drawCutoff}
+              className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100">
+              {drawCutoff ? "Sales paused" : `Buy privately · ${fmt(numTickets + mbFee(numTickets) + looftaFee(numTickets))}`}
+            </button>
+          )}
         </>
       )}
     </div>
@@ -1188,10 +1385,32 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   const [error, setError] = useState("");
   const [bridgeFeeUsd, setBridgeFeeUsd] = useState<number | null>(null);
   const [bridgeReceiveUsdc, setBridgeReceiveUsdc] = useState<number | null>(null);
+  const [bridgeFeeUnavailable, setBridgeFeeUnavailable] = useState(false);
+  const [feeRetryToken, setFeeRetryToken] = useState(0);
   const [withdrawalIds, setWithdrawalIds] = useState<string[]>([]);
   const [arrived, setArrived] = useState(false);
   const [transferFailed, setTransferFailed] = useState(false);
   const reduceMotion = useReducedMotion();
+
+  // Resume an in-flight redeem across a page refresh — without this, a refresh mid-redeem drops
+  // back to "ready to redeem" (the ticket's status stays 'won' until the very end of the
+  // pipeline), and clicking Redeem again used to spin up a duplicate withdrawal that raced the
+  // first one and got permanently stuck. The backend is now idempotent against that too, but
+  // resuming here avoids the confusing "stuck" UI in the first place.
+  const WITHDRAWAL_STORAGE_KEY = "megapot_withdrawal";
+  useEffect(() => {
+    if (previewDone) return;
+    try {
+      const saved = localStorage.getItem(WITHDRAWAL_STORAGE_KEY);
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as { withdrawalIds: string[]; doneAmount: number };
+      if (!parsed?.withdrawalIds?.length) return;
+      setWithdrawalIds(parsed.withdrawalIds);
+      setDoneAmount(parsed.doneAmount ?? 0);
+      setDone(true);
+    } catch { /* ignore malformed/missing storage */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Live progress: poll our withdrawal rows until they all complete (or one fails).
   useEffect(() => {
@@ -1204,13 +1423,16 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
         const data = await res.json();
         const mine = (data?.withdrawals ?? []).filter((w: WithdrawalSummary) => withdrawalIds.includes(w.id));
         if (!mine.length) return;
-        if (mine.some((w: WithdrawalSummary) => w.status === "failed")) setTransferFailed(true);
-        else if (mine.every((w: WithdrawalSummary) => w.status === "complete")) {
+        if (mine.some((w: WithdrawalSummary) => w.status === "failed")) {
+          setTransferFailed(true);
+          localStorage.removeItem(WITHDRAWAL_STORAGE_KEY);
+        } else if (mine.every((w: WithdrawalSummary) => w.status === "complete")) {
           // On completion the backend has stamped each row with the actually-delivered amount —
           // show that real figure, not the gross win we optimistically displayed at redeem.
           const delivered = mine.reduce((s: number, w: WithdrawalSummary) => s + (w.amountUsdc ?? 0), 0);
           if (delivered > 0) setDoneAmount(delivered);
           setArrived(true);
+          localStorage.removeItem(WITHDRAWAL_STORAGE_KEY);
         }
       } catch { /* keep polling */ }
     }, 5000);
@@ -1222,20 +1444,34 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
 
   useEffect(() => {
     if (!totalAmount) return;
+    let cancelled = false;
     setBridgeFeeUsd(null);
     setBridgeReceiveUsdc(null);
+    setBridgeFeeUnavailable(false);
     const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
-    fetch(`/api/lottery/bridge-fee?amountUsdc=${totalAmount}`, { headers })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data?.feeUsd != null) setBridgeFeeUsd(data.feeUsd);
-        if (data?.receiveUsdc != null) setBridgeReceiveUsdc(data.receiveUsdc);
-      })
-      .catch(() => {
-        setBridgeFeeUsd(BRIDGE_FEE_USD_EST);
-        setBridgeReceiveUsdc(totalAmount - BRIDGE_FEE_USD_EST);
-      });
-  }, [totalAmount, accessToken]);
+
+    // No fabricated fallback here — a fee estimate that doesn't match the real bridge is worse
+    // than showing nothing (see the incident this was hardened for). Retry transient failures a
+    // few times; if it still can't get a real number, block redeeming and let the user retry.
+    (async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 700 * attempt));
+        try {
+          const res = await fetch(`/api/lottery/bridge-fee?amountUsdc=${totalAmount}`, { headers });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if (data?.feeUsd == null || data?.receiveUsdc == null) throw new Error("Malformed response");
+          if (cancelled) return;
+          setBridgeFeeUsd(data.feeUsd);
+          setBridgeReceiveUsdc(data.receiveUsdc);
+          return;
+        } catch { /* try again */ }
+      }
+      if (!cancelled) setBridgeFeeUnavailable(true);
+    })();
+
+    return () => { cancelled = true; };
+  }, [totalAmount, accessToken, feeRetryToken]);
 
   async function handleWithdraw() {
     if (!userSolanaAddress || !wonTickets.length) return;
@@ -1248,13 +1484,18 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
       });
       if (!res.ok) throw new Error((await res.json()).message ?? "Failed");
       const data = await res.json().catch(() => null);
-      setWithdrawalIds(data?.withdrawalIds ?? []);
+      const ids: string[] = data?.withdrawalIds ?? [];
+      setWithdrawalIds(ids);
       setArrived(false);
       setTransferFailed(false);
       // Show the NET the user will actually receive (after fees), not the gross win — the polling
       // above replaces this with the exact delivered amount once the transfer completes.
-      setDoneAmount(bridgeReceiveUsdc ?? totalAmount);
+      const optimisticAmount = bridgeReceiveUsdc ?? totalAmount;
+      setDoneAmount(optimisticAmount);
       setDone(true); onWithdrawn();
+      if (ids.length) {
+        localStorage.setItem(WITHDRAWAL_STORAGE_KEY, JSON.stringify({ withdrawalIds: ids, doneAmount: optimisticAmount }));
+      }
     } catch (err: any) { setError(err.message ?? "Unknown error"); }
     finally { setLoading(false); }
   }
@@ -1423,12 +1664,20 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
         </div>
       </div>
 
-      <FeeBreakdown ticketCostUsd={totalAmount} mode="solana_private" solPriceUsd={solPriceUsd} bridgeFeeUsd={bridgeFeeUsd} bridgeReceiveUsdc={bridgeReceiveUsdc} />
+      <FeeBreakdown
+        ticketCostUsd={totalAmount}
+        mode="solana_private"
+        solPriceUsd={solPriceUsd}
+        bridgeFeeUsd={bridgeFeeUsd}
+        bridgeReceiveUsdc={bridgeReceiveUsdc}
+        bridgeFeeUnavailable={bridgeFeeUnavailable}
+        onRetryFee={() => setFeeRetryToken(t => t + 1)}
+      />
       {error && <p className="text-base text-red-400">{error}</p>}
 
       <button onClick={handleWithdraw} disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
         className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
-        {loading ? "Processing..." : bridgeFeeUsd === null ? "Estimating fees…" : `Redeem ${fmt(totalAmount)} privately`}
+        {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Redeem ${fmt(totalAmount)} privately`}
       </button>
     </div>
   );

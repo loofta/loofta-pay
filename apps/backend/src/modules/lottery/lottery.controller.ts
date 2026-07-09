@@ -11,9 +11,10 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { IsNumber, IsString, IsIn, IsArray, Min, Max } from 'class-validator';
+import { IsNumber, IsString, IsIn, IsArray, IsOptional, Min, Max } from 'class-validator';
 import { AuthGuard, Public } from '@/common/guards';
 import { LotteryService, InitiatePurchaseResult, InitiatePublicPurchaseResult, LotteryDashboard, LotteryTicketSummary } from './lottery.service';
 import { LifiService } from './lifi.service';
@@ -26,6 +27,26 @@ class BuyTicketsDto {
 
   @IsString()
   userSolanaAddress: string;
+}
+
+class BuyGiftDto {
+  @IsNumber()
+  @Min(1)
+  @Max(100)
+  numTickets: number;
+
+  @IsString()
+  userSolanaAddress: string;
+
+  @IsIn(['email', 'handle'])
+  recipientType: 'email' | 'handle';
+
+  @IsString()
+  recipientIdentifier: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
 }
 
 class ConfirmSendDto {
@@ -85,7 +106,13 @@ export class LotteryController {
   async bridgeFee(@Query('amountUsdc') amountUsdc: string): Promise<{ feeUsd: number; receiveUsdc: number }> {
     const amount = parseFloat(amountUsdc);
     if (!amount || amount <= 0 || amount > 1_000_000) throw new BadRequestException('amountUsdc must be between 0 and 1,000,000');
-    return this.lottery.estimatePrivateWithdrawalNet(amount);
+    try {
+      return await this.lottery.estimatePrivateWithdrawalNet(amount);
+    } catch (e: any) {
+      // No fabricated fallback — a fee estimate that doesn't match the real bridge is worse than
+      // none. 503 tells the frontend to show "unavailable, try again", not a guessed number.
+      throw new ServiceUnavailableException(`Could not get a real fee quote right now: ${e.message}`);
+    }
   }
 
   @Post('buy')
@@ -119,6 +146,23 @@ export class LotteryController {
     return this.lottery.initiatePublicPurchase({
       userId: req.user.id,
       numTickets,
+    });
+  }
+
+  @Post('buy-gift')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Buy N tickets for someone else — returns a single MagicBlock tx to sign (fee collected inline), then use buy-confirm as normal' })
+  async buyGift(@Body() dto: BuyGiftDto, @Request() req: any): Promise<{ ticketId: string; giftId: string; claimUrl: string; txBase64: string; requiredSigners: string[] }> {
+    if (!dto.numTickets || dto.numTickets < 1) throw new BadRequestException('numTickets required');
+    if (!dto.userSolanaAddress) throw new BadRequestException('userSolanaAddress required');
+    if (!dto.recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
+    return this.lottery.initiateGiftedPurchase({
+      userId: req.user.id,
+      userSolanaAddress: dto.userSolanaAddress,
+      numTickets: dto.numTickets,
+      recipientType: dto.recipientType,
+      recipientIdentifier: dto.recipientIdentifier,
+      note: dto.note,
     });
   }
 
@@ -233,6 +277,20 @@ export class LotteryController {
       userId: req.user.id,
       destinationAddress: dto.destinationAddress,
     });
+  }
+
+  @Get('gift/:token')
+  @Public()
+  @ApiOperation({ summary: 'Get public gift details for the claim page (no auth required)' })
+  async getGift(@Param('token') token: string): Promise<{ numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle' }> {
+    return this.lottery.getGiftPublic(token);
+  }
+
+  @Post('gift/:token/claim')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Claim a gifted ticket — verifies identity, then buys the ticket(s) now' })
+  async claimGift(@Param('token') token: string, @Request() req: any): Promise<{ ticketId: string; numTickets: number }> {
+    return this.lottery.claimGift(token, req.user.id);
   }
 
   @Post('withdraw')
