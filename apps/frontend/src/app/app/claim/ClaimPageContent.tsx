@@ -147,7 +147,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
 
   useEffect(() => {
     setIsPrivateMode(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Prefill recipient with logged-in user's Solana wallet when they have one
@@ -230,7 +230,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         setToSel({ symbol: usdcSolana.symbol, chain: usdcSolana.chain });
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokens]);
 
   function sanitizeNumberInput(v: string, maxDecimals: number = 9) {
@@ -955,7 +955,6 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         loadingText="Creating…"
                       >
                         <>
-                          <ShieldIcon className="w-5 h-5" />
                           Create payment link
                         </>
                       </GradientActionButton>
