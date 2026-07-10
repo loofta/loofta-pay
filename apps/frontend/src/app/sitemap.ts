@@ -6,6 +6,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const urls: string[] = [
     "/",
     "/payment-links",
+    "/partners",
     "/guides/send-crypto-privately",
     "/vs/paypal",
     "/careers",
@@ -16,6 +17,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const priority: Record<string, number> = {
     "/": 1,
     "/payment-links": 0.9,
+    "/partners": 0.9,
     "/guides/send-crypto-privately": 0.8,
     "/vs/paypal": 0.8,
   };

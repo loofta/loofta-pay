@@ -109,6 +109,7 @@ function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
     { label: t('nav.privacy'), href: "#privacy" },
     { label: t('nav.earn'), href: "#earn" },
     { label: t('nav.business'), href: "#business" },
+    { label: "For Business", href: "/partners" },
   ];
 
   return (
