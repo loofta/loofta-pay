@@ -44,14 +44,20 @@ export default function LotteryGiftClaimPage() {
       setError('Invalid link');
       return;
     }
+    // Re-fetches when auth state changes so isSender/isClaimant/isRecipient reflect who's
+    // actually logged in — e.g. a visitor who logs in after the initial anonymous load. Reset to
+    // loading (not just leave stale anonymous data sitting there) since the backend 404s a
+    // logged-in viewer who turns out to be none of sender/claimant/recipient — without this reset
+    // that verification-in-flight window would flash the old anonymous state instead.
+    setLoading(true);
+    setError(null);
     (async () => {
       try {
-        // Re-fetches when auth state changes so isSender/isClaimant reflect who's actually
-        // logged in — e.g. a visitor who logs in after the initial anonymous load.
         const accessToken = authenticated ? await getAccessToken() : null;
         const gift = await getLotteryGiftPublic(token, accessToken);
         setData(gift);
       } catch (err: any) {
+        setData(null);
         setError(err?.message || 'Link not found');
       } finally {
         setLoading(false);
@@ -168,14 +174,11 @@ export default function LotteryGiftClaimPage() {
     );
   }
 
-  // Gated, but carefully: isClaimant only becomes true AFTER a successful claim, so a genuine
-  // recipient who hasn't claimed yet is neither isSender nor isClaimant — blocking on that
-  // combo would lock the real recipient out before they ever get a chance to claim. Real
-  // identity verification happens server-side at claim time (claimGift), same as before this
-  // page had any gate at all. What we CAN safely restrict up front: once a gift is claimed, only
-  // the sender and whoever actually claimed it should keep seeing it — a stranger shouldn't see
-  // who claimed what. The note stays hidden from everyone except sender/claimant regardless (see
-  // getGiftPublic), independent of this page-level gate.
+  // Identity is fully verified server-side before data ever gets here: getGiftPublic computes
+  // isSender/isClaimant/isRecipient from the viewer's linked email/X/username and 404s (same as a
+  // bad token) for anyone logged in who matches none of them — so by the time we have `data` for
+  // an authenticated viewer, they're guaranteed to be the sender, the claimant, or the genuine
+  // (not-yet-claimed) recipient. Anonymous visitors still need to log in first, below.
   if (!authenticated) {
     return (
       <>
@@ -194,23 +197,6 @@ export default function LotteryGiftClaimPage() {
               <LogIn className="w-5 h-5" />
               Log in to continue
             </button>
-          </div>
-        </main>
-      </>
-    );
-  }
-
-  if (data.status === 'claimed' && !data.isSender && !data.isClaimant) {
-    return (
-      <>
-        <div className="fixed inset-0 -z-10 bg-[#0f0f12]" />
-        <main className="min-h-[calc(100vh-5rem)] flex flex-col items-center justify-center px-4 py-12">
-          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-8 text-center">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-500/10">
-              <AlertCircle className="h-7 w-7 text-red-400" />
-            </div>
-            <h1 className="text-xl font-semibold text-white">Not available</h1>
-            <p className="mt-2 text-slate-400">This gift isn&apos;t available to view from this account.</p>
           </div>
         </main>
       </>
