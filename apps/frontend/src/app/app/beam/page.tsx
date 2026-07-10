@@ -90,7 +90,18 @@ export default function BeamPage() {
   const { wallets: solanaWallets } = useSolanaWallets();
   const { createWallet: createEvmWallet } = useCreateWallet();
   const { sendTransaction: privySendEvmTx } = useEvmSendTransaction();
-  const { fundWallet: privyFundWalletEvm } = useFundWallet();
+  // Privy's fundWallet() promise can resolve with status "completed" as soon as the user is
+  // handed off to MoonPay's card checkout — that's not the same as the purchase succeeding.
+  // onUserExited gives the wallet's real on-chain balance at the moment the flow closes, which
+  // is the only reliable signal for "did they actually close without paying."
+  const moonpayExitRef = useRef<{ paymentId: string; requiredAtomic: bigint; exitedInsufficient: boolean } | null>(null);
+  const { fundWallet: privyFundWalletEvm } = useFundWallet({
+    onUserExited: (params) => {
+      const info = moonpayExitRef.current;
+      if (!info) return;
+      if ((params.balance ?? 0n) < info.requiredAtomic) info.exitedInsufficient = true;
+    },
+  });
 
   const activePayments = useBeamStore((s) => s.active);
   const upsertActive = useBeamStore((s) => s.upsertActive);
@@ -116,6 +127,7 @@ export default function BeamPage() {
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [sendingPaymentId, setSendingPaymentId] = useState<string | null>(null);
   const [hasSufficientBalance, setHasSufficientBalance] = useState(false);
+  const [existingBalanceUsdc, setExistingBalanceUsdc] = useState(0);
 
   const [history, setHistory] = useState<BeamHistoryItem[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -175,6 +187,9 @@ export default function BeamPage() {
   // gross up for ZKP2P's spread so the recipient nets exactly the amount entered above.
   const usdEquivalent = fxRateFromUsd ? amountNum / fxRateFromUsd : NaN;
   const payAmount = Math.round((usdEquivalent / BEAM_RATE) * 1e6) / 1e6;
+  // If some of the total is already covered by the wallet's existing USDC balance, every
+  // funding method only needs to raise the shortfall — not the full amount all over again.
+  const amountToTopUp = Math.max(0, Math.round((payAmount - existingBalanceUsdc) * 1e6) / 1e6);
 
   const findEvmWallet = useCallback(
     () => evmWalletsRef.current.find((w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"),
@@ -227,6 +242,7 @@ export default function BeamPage() {
     setNearFromSelection(undefined);
     setSendingPaymentId(null);
     setHasSufficientBalance(false);
+    setExistingBalanceUsdc(0);
   }, []);
 
   // Moves a payment to background tracking while bringing the "sending" step to the
@@ -283,6 +299,7 @@ export default function BeamPage() {
         }) as bigint;
       } catch { /* fall through to normal funding flow */ }
       const requiredAtomic = BigInt(Math.round(payAmount * 1_000_000));
+      setExistingBalanceUsdc(Number(existingBalance) / 1_000_000);
 
       // Don't auto-charge the balance — show the same fee breakdown as any other funding
       // method and require an explicit confirm, so the sender always sees what they're
@@ -565,8 +582,9 @@ export default function BeamPage() {
       // Preset the exact USDC amount rather than a fiat amount — fiat presets get converted
       // from the buyer's local currency (EUR, etc.), which can quietly deliver a different
       // amount of USDC than the payment actually needs. This is the grossed-up total
-      // (recipient amount + spread) since the sender absorbs the rate.
-      params.set("presetCryptoAmount", String(payAmount));
+      // (recipient amount + spread) minus whatever the wallet already holds, since the
+      // sender only needs to top up the shortfall.
+      params.set("presetCryptoAmount", String(amountToTopUp));
       params.set("sessionToken", sessionToken);
       const onrampUrl = `https://pay.coinbase.com/buy/select-asset?${params.toString()}`;
 
@@ -600,19 +618,25 @@ export default function BeamPage() {
   const handleMoonpay = async () => {
     if (!beamId || !baseWalletAddr || !platform) return;
     const paymentId = beamId;
+    const requiredAtomic = BigInt(Math.round(payAmount * 1_000_000));
+    moonpayExitRef.current = { paymentId, requiredAtomic, exitedInsufficient: false };
     try {
       await confirmFunded(beamId, "moonpay", null);
       const result = await privyFundWalletEvm({
         address: baseWalletAddr,
         options: {
           chain: base,
-          amount: payAmount.toString(),
+          amount: amountToTopUp.toString(),
           asset: "USDC",
           defaultFundingMethod: "card",
           card: { preferredProvider: "moonpay" },
         },
       });
-      if (result?.status !== "completed") {
+      // Trust onUserExited's on-chain balance check over result.status — Privy can report
+      // "completed" once it hands off to MoonPay's checkout, even if the user then closes
+      // that window without actually buying anything.
+      const exitedInsufficient = moonpayExitRef.current?.exitedInsufficient ?? false;
+      if (result?.status !== "completed" || exitedInsufficient) {
         // User backed out of MoonPay without buying — nothing to track.
         cancelBeam(paymentId);
         return;
@@ -626,6 +650,8 @@ export default function BeamPage() {
       cancelBeam(paymentId);
       const msg = err instanceof Error ? err.message : "Could not open MoonPay.";
       toast({ variant: "destructive", title: "MoonPay error", description: msg });
+    } finally {
+      moonpayExitRef.current = null;
     }
   };
 
@@ -651,7 +677,7 @@ export default function BeamPage() {
       const deposit = new Deposit({ signer: getBlinkSigner, debug: true, containerElement: document.body });
       try {
         await deposit.requestDeposit({
-          amount: payAmount,
+          amount: amountToTopUp,
           chainId: 8453,
           address: baseWalletAddr,
           token: BASE_USDC_ADDRESS,
@@ -681,7 +707,7 @@ export default function BeamPage() {
       const info = await getDepositInfo({
         fromToken: nearFromToken,
         toToken: usdcBaseToken,
-        amount: payAmount.toString(),
+        amount: amountToTopUp.toString(),
         recipient: baseWalletAddr,
         sender: refundAddress,
         refundAddress,
@@ -922,12 +948,19 @@ export default function BeamPage() {
                   <ArrowLeft className="h-4 w-4" /> Back
                 </button>
 
-                <PaymentBreakdown currency={currency} amountNum={amountNum} payAmount={payAmount} platformName={platform?.name} identifier={identifier} />
+                <PaymentBreakdown
+                  currency={currency}
+                  amountNum={amountNum}
+                  payAmount={payAmount}
+                  platformName={platform?.name}
+                  identifier={identifier}
+                  existingBalanceUsdc={existingBalanceUsdc}
+                />
 
-                <FundingCard title="Card via Coinbase" subtitle="Apple Pay · card · bank transfer" onClick={handleCoinbase} />
-                <FundingCard title="Card via MoonPay" subtitle="Apple Pay · Google Pay · card" onClick={handleMoonpay} />
-                <FundingCard title="Pay with Blink" subtitle="ETH · USDC · USDT — any chain" onClick={handleBlink} />
-                <FundingCard title="Pay with another crypto" subtitle="Any token, any chain" onClick={() => setStep("near-fund")} />
+                <FundingCard icon="/images/icons/deposit-bridge.svg" title="Pay with Blink" subtitle="ETH · USDC · USDT — any chain" onClick={handleBlink} />
+                <FundingCard icon="/images/icons/deposit-receive.svg" title="Pay with another crypto" subtitle="Any token, any chain" onClick={() => setStep("near-fund")} />
+                <FundingCard icon="/images/icons/deposit-bank.svg" title="Card via Coinbase" subtitle="Apple Pay · card · bank transfer" onClick={handleCoinbase} />
+                <FundingCard icon="/images/icons/deposit-bank.svg" title="Card via MoonPay" subtitle="Apple Pay · Google Pay · card" onClick={handleMoonpay} />
               </div>
             )}
 
@@ -936,6 +969,10 @@ export default function BeamPage() {
                 <button type="button" onClick={() => setStep("compose")} className="flex items-center gap-1 text-sm text-slate-400 hover:text-white mb-2">
                   <ArrowLeft className="h-4 w-4" /> Back
                 </button>
+
+                <div className="flex justify-center py-1">
+                  <img src="/images/icons/withdraw-usdc.svg" alt="" className="w-16 h-16 object-contain drop-shadow-md" />
+                </div>
 
                 <PaymentBreakdown currency={currency} amountNum={amountNum} payAmount={payAmount} platformName={platform?.name} identifier={identifier} />
 
@@ -1232,9 +1269,12 @@ function BeamTabs({ activeTab, onTabChange }: { activeTab: "send" | "history"; o
   );
 }
 
-function PaymentBreakdown({ currency, amountNum, payAmount, platformName, identifier }: {
-  currency: string; amountNum: number; payAmount: number; platformName?: string; identifier: string;
+function PaymentBreakdown({ currency, amountNum, payAmount, platformName, identifier, existingBalanceUsdc = 0 }: {
+  currency: string; amountNum: number; payAmount: number; platformName?: string; identifier: string; existingBalanceUsdc?: number;
 }) {
+  const coveredByBalance = Math.min(Math.max(existingBalanceUsdc, 0), payAmount);
+  const remaining = Math.max(0, payAmount - coveredByBalance);
+  const hasPartialBalance = coveredByBalance > 0 && remaining > 0;
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-1.5">
       <div className="flex items-center justify-between">
@@ -1247,21 +1287,30 @@ function PaymentBreakdown({ currency, amountNum, payAmount, platformName, identi
           <span className="text-white font-semibold">${(payAmount - amountNum).toFixed(2)}</span>
         </div>
       )}
+      {hasPartialBalance && (
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-slate-400">From your balance</span>
+          <span className="text-emerald-400 font-semibold">-${coveredByBalance.toFixed(2)}</span>
+        </div>
+      )}
       <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-white/10">
-        <span className="text-base text-slate-200 font-medium">Total to pay{currency === "EUR" ? " (in USDC)" : ""}</span>
-        <span className="text-white font-bold text-xl tabular-nums">${Number.isFinite(payAmount) ? payAmount.toFixed(2) : "—"}</span>
+        <span className="text-base text-slate-200 font-medium">
+          {hasPartialBalance ? "Add to send" : `Total to pay${currency === "EUR" ? " (in USDC)" : ""}`}
+        </span>
+        <span className="text-white font-bold text-xl tabular-nums">${Number.isFinite(remaining) ? remaining.toFixed(2) : "—"}</span>
       </div>
     </div>
   );
 }
 
-function FundingCard({ title, subtitle, onClick }: { title: string; subtitle: string; onClick: () => void }) {
+function FundingCard({ icon, title, subtitle, onClick }: { icon: string; title: string; subtitle: string; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className="w-full flex items-center gap-4 p-5 rounded-2xl border-2 border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 text-left transition-all"
     >
+      <img src={icon} alt="" className="w-12 h-12 shrink-0 object-contain drop-shadow-md" />
       <div className="min-w-0 flex-1">
         <p className="text-lg font-semibold text-white">{title}</p>
         <p className="text-sm mt-0.5 text-slate-400">{subtitle}</p>
