@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import { usePrivy } from '@privy-io/react-auth';
 import { getLotteryGiftPublic, type LotteryGiftPublic } from '@/services/api/lotteryGift';
 import { GradientActionButton } from '@/components/ui/GradientActionButton';
 import { Ticket, AlertCircle, ArrowDown, Lock, CheckCircle2, ArrowRight } from 'lucide-react';
