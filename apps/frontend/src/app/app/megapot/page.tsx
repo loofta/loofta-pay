@@ -9,7 +9,7 @@ import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/sola
 import bs58 from "bs58";
 import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { getMyGifts, type MyGiftItem } from "@/services/api/lotteryGift";
+import { getMyGifts, updateGiftRecipient, type MyGiftItem } from "@/services/api/lotteryGift";
 import { MessageInput } from "@/components/MessageInput";
 import { Label } from "@/components/ui/label";
 import { DescriptionWithGif } from "@/components/DescriptionWithGif";
@@ -2007,6 +2007,10 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
   const [myGiftsTotal, setMyGiftsTotal] = useState(0);
   const [loadingMoreGifts, setLoadingMoreGifts] = useState(false);
   const [copiedGiftId, setCopiedGiftId] = useState<string | null>(null);
+  const [editingGiftId, setEditingGiftId] = useState<string | null>(null);
+  const [editRecipientValue, setEditRecipientValue] = useState("");
+  const [savingRecipientId, setSavingRecipientId] = useState<string | null>(null);
+  const [editRecipientError, setEditRecipientError] = useState<string | null>(null);
   useEffect(() => {
     if (!giftsUser?.id) return;
     (async () => {
@@ -2033,6 +2037,33 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
     navigator.clipboard.writeText(url);
     setCopiedGiftId(giftId);
     setTimeout(() => setCopiedGiftId(null), 1500);
+  }
+
+  function startEditRecipient(g: MyGiftItem) {
+    setEditingGiftId(g.giftId);
+    setEditRecipientValue(g.recipientIdentifier);
+    setEditRecipientError(null);
+  }
+
+  async function saveEditRecipient(giftId: string) {
+    if (!giftsUser?.id) return;
+    const trimmed = editRecipientValue.trim();
+    if (!trimmed) { setEditRecipientError("Required"); return; }
+    const recipientType = trimmed.includes("@") && trimmed.includes(".") ? "email" : "handle";
+    setSavingRecipientId(giftId);
+    setEditRecipientError(null);
+    try {
+      const accessToken = await getAccessToken();
+      await updateGiftRecipient(giftId, recipientType, trimmed.replace(/^@+/, ""), giftsUser.id, accessToken);
+      setMyGifts(prev => prev.map(g => g.giftId === giftId
+        ? { ...g, recipientType, recipientIdentifier: trimmed.replace(/^@+/, "") }
+        : g));
+      setEditingGiftId(null);
+    } catch (e: any) {
+      setEditRecipientError(e?.message || "Couldn't save — try again.");
+    } finally {
+      setSavingRecipientId(null);
+    }
   }
 
   // Call sync-numbers API when expanding a card that has no numbers, then poll until they arrive
@@ -2340,6 +2371,44 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
         {isExpanded && (
           <div className="border-t border-white/[0.06] px-3 pb-3 pt-3 space-y-3">
             <DescriptionWithGif text={g.note} />
+            {g.status === "unclaimed" && (
+              editingGiftId === g.giftId ? (
+                <div className="space-y-2">
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                      {editRecipientValue.includes("@") && editRecipientValue.includes(".") ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
+                    </span>
+                    <input
+                      value={editRecipientValue}
+                      onChange={e => setEditRecipientValue(e.target.value.replace(/^@+/, ""))}
+                      placeholder="Email, X handle, or Loofta username"
+                      className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base"
+                    />
+                  </div>
+                  {editRecipientError && <p className="text-sm text-red-400">{editRecipientError}</p>}
+                  <div className="flex gap-2">
+                    <button type="button"
+                      onClick={() => saveEditRecipient(g.giftId)}
+                      disabled={savingRecipientId === g.giftId}
+                      className="flex-1 h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40">
+                      {savingRecipientId === g.giftId ? "Saving…" : "Save"}
+                    </button>
+                    <button type="button"
+                      onClick={() => setEditingGiftId(null)}
+                      disabled={savingRecipientId === g.giftId}
+                      className="flex-1 h-9 rounded-xl text-base font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button"
+                  onClick={() => startEditRecipient(g)}
+                  className="w-full h-9 rounded-xl text-base font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all">
+                  Edit recipient
+                </button>
+              )
+            )}
             {(g.status === "unclaimed" || g.status === "claimed") && (
               <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
                 <a href={g.claimUrl} target="_blank" rel="noopener noreferrer"

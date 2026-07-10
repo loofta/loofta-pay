@@ -4,10 +4,10 @@ import React, { useEffect, useState } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 import { useParams, useRouter, usePathname } from 'next/navigation';
 import { useToast } from '@/components/ui/use-toast';
-import { getLotteryGiftPublic, claimLotteryGift, type LotteryGiftPublic } from '@/services/api/lotteryGift';
+import { getLotteryGiftPublic, claimLotteryGift, updateGiftRecipient, type LotteryGiftPublic } from '@/services/api/lotteryGift';
 import { ShareLinkMenu } from '@/components/ShareLinkMenu';
 import { DescriptionWithGif } from '@/components/DescriptionWithGif';
-import { Loader2, LogIn, CheckCircle2, Ticket, AlertCircle, Clock, Gift, Copy } from 'lucide-react';
+import { Loader2, LogIn, CheckCircle2, Ticket, AlertCircle, Clock, Gift, Copy, Pencil, Mail, AtSign } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const READY_STATUSES = new Set(['active', 'won', 'lost', 'withdrawn']);
@@ -33,6 +33,10 @@ export default function LotteryGiftClaimPage() {
   const [claimedTicketId, setClaimedTicketId] = useState<string | null>(null);
   const [ticketReady, setTicketReady] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editingRecipient, setEditingRecipient] = useState(false);
+  const [editRecipientValue, setEditRecipientValue] = useState('');
+  const [savingRecipient, setSavingRecipient] = useState(false);
+  const [editRecipientError, setEditRecipientError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -91,6 +95,33 @@ export default function LotteryGiftClaimPage() {
       });
     } finally {
       setClaiming(false);
+    }
+  };
+
+  const startEditRecipient = () => {
+    setEditRecipientValue(data?.recipientIdentifier ?? '');
+    setEditRecipientError(null);
+    setEditingRecipient(true);
+  };
+
+  const saveEditRecipient = async () => {
+    if (!data?.giftId) return;
+    const trimmed = editRecipientValue.trim();
+    if (!trimmed) { setEditRecipientError('Required'); return; }
+    const recipientType = trimmed.includes('@') && trimmed.includes('.') ? 'email' : 'handle';
+    const identifier = trimmed.replace(/^@+/, '');
+    setSavingRecipient(true);
+    setEditRecipientError(null);
+    try {
+      const accessToken = await getAccessToken();
+      await updateGiftRecipient(data.giftId, recipientType, identifier, user!.id, accessToken);
+      setData((d) => (d ? { ...d, recipientType, recipientIdentifier: identifier } : null));
+      setEditingRecipient(false);
+      toast({ title: 'Recipient updated' });
+    } catch (err: any) {
+      setEditRecipientError(err?.message || "Couldn't save — try again.");
+    } finally {
+      setSavingRecipient(false);
     }
   };
 
@@ -191,6 +222,9 @@ export default function LotteryGiftClaimPage() {
   // A sender who also happens to match the recipient identity (self-gifting to test) is both —
   // treat that combo as "claimant" copy, since they really did claim it themselves.
   const viewerIsSenderOnly = data.isSender && !data.isClaimant;
+  const recipientLabel = data.recipientIdentifier
+    ? (data.recipientType === 'handle' ? `@${data.recipientIdentifier}` : data.recipientIdentifier)
+    : null;
 
   return (
     <>
@@ -206,13 +240,15 @@ export default function LotteryGiftClaimPage() {
             >
               <div className="text-center">
                 <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FF7A2A]/15">
-                  {viewerIsSenderOnly ? <Gift className="h-7 w-7 text-[#FF7A2A]" /> : <Ticket className="h-7 w-7 text-[#FF7A2A]" />}
+                  <img src="/images/icons/ticket-icon.svg" alt="" className="w-8 h-8" />
                 </div>
                 <p className="font-display text-2xl md:text-3xl font-medium text-white">
                   {data.numTickets} Megapot {ticketWord}
                 </p>
                 <p className="mt-2 text-slate-400">
-                  {viewerIsSenderOnly ? 'Sent by you — Loofta covered the cost.' : 'Gifted to you — Loofta covers the cost.'}
+                  {viewerIsSenderOnly
+                    ? (recipientLabel ? `Sent by you to ${recipientLabel} — Loofta covered the cost.` : 'Sent by you — Loofta covered the cost.')
+                    : 'Gifted to you — Loofta covers the cost.'}
                 </p>
               </div>
 
@@ -281,40 +317,82 @@ export default function LotteryGiftClaimPage() {
                 </div>
               )}
 
-              {canClaim && (
+              {canClaim && viewerIsSenderOnly && (
                 <div className="space-y-4">
-                  {viewerIsSenderOnly ? (
-                    <>
-                      <p className="text-center text-base text-amber-400">
-                        You sent this gift — it&apos;s still unclaimed. The button below only works if you&apos;re also the intended recipient (e.g. you gifted it to yourself to test).
-                      </p>
-                      <div className="flex flex-col sm:flex-row gap-2">
-                        <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3 flex-1 min-w-0">
-                          <a href={shareUrl} target="_blank" rel="noopener noreferrer"
-                            className="flex-1 min-w-0 truncate text-base text-slate-300 hover:text-white hover:underline underline-offset-2 transition-colors">
-                            {shareUrl}
-                          </a>
-                          <button
-                            onClick={() => { navigator.clipboard.writeText(shareUrl); setShareCopied(true); setTimeout(() => setShareCopied(false), 1500); }}
-                            className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
-                            aria-label="Copy share link"
-                          >
-                            {shareCopied ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                          </button>
-                        </div>
-                        <ShareLinkMenu
-                          url={shareUrl}
-                          title="Megapot ticket gift"
-                          text={`I gifted ${data.numTickets} Megapot ${ticketWord} on Loofta 🎟️`}
-                          ogUrl={`${SITE_URL}/api/gift/${token}/og`}
+                  <p className="text-center text-base text-amber-400">
+                    You sent this gift — it&apos;s still unclaimed.
+                  </p>
+                  <div className="flex gap-2">
+                    <div className="h-12 flex-1 min-w-0 flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4">
+                      <a href={shareUrl} target="_blank" rel="noopener noreferrer"
+                        className="flex-1 min-w-0 truncate text-base text-slate-300 hover:text-white hover:underline underline-offset-2 transition-colors">
+                        {shareUrl}
+                      </a>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(shareUrl); setShareCopied(true); setTimeout(() => setShareCopied(false), 1500); }}
+                        className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+                        aria-label="Copy share link"
+                      >
+                        {shareCopied ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <ShareLinkMenu
+                      url={shareUrl}
+                      title="Megapot ticket gift"
+                      text={`I gifted ${data.numTickets} Megapot ${ticketWord} on Loofta 🎟️`}
+                      ogUrl={`${SITE_URL}/api/gift/${token}/og`}
+                      triggerClassName="h-12"
+                    />
+                  </div>
+
+                  {editingRecipient ? (
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                          {editRecipientValue.includes('@') && editRecipientValue.includes('.') ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
+                        </span>
+                        <input
+                          value={editRecipientValue}
+                          onChange={e => setEditRecipientValue(e.target.value.replace(/^@+/, ''))}
+                          placeholder="Email, X handle, or Loofta username"
+                          className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base"
                         />
                       </div>
-                    </>
+                      {editRecipientError && <p className="text-sm text-red-400">{editRecipientError}</p>}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={saveEditRecipient}
+                          disabled={savingRecipient}
+                          className="flex-1 h-11 rounded-xl font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40"
+                        >
+                          {savingRecipient ? 'Saving…' : 'Save'}
+                        </button>
+                        <button
+                          onClick={() => setEditingRecipient(false)}
+                          disabled={savingRecipient}
+                          className="flex-1 h-11 rounded-xl font-semibold text-base border border-white/10 text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
                   ) : (
-                    <p className="text-center text-base text-slate-500">
-                      Claiming buys your {ticketWord} now, so it&apos;s ready for the next draw.
-                    </p>
+                    <button
+                      onClick={startEditRecipient}
+                      className="w-full h-12 rounded-xl font-semibold text-lg border border-white/10 text-slate-200 hover:bg-white/[0.06] transition-all flex items-center justify-center gap-2"
+                    >
+                      <Pencil className="w-4 h-4" />
+                      Edit recipient
+                    </button>
                   )}
+                </div>
+              )}
+
+              {canClaim && !viewerIsSenderOnly && (
+                <div className="space-y-4">
+                  <p className="text-center text-base text-slate-500">
+                    Claiming buys your {ticketWord} now, so it&apos;s ready for the next draw.
+                  </p>
                   <button
                     onClick={handleClaim}
                     disabled={claiming}

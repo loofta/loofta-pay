@@ -8,10 +8,14 @@ import { fetchApi } from './client';
 export type LotteryGiftStatus = 'pending_payment' | 'unclaimed' | 'claimed' | 'cancelled' | 'failed';
 
 export interface LotteryGiftPublic {
+  /** Only populated when the viewer is the sender — needed to call updateGiftRecipient. */
+  giftId: string | null;
   numTickets: number;
   note: string | null;
   status: LotteryGiftStatus;
   recipientType: 'email' | 'handle';
+  /** Raw recipient identifier (email or handle) — only populated for the sender, who already knows it. */
+  recipientIdentifier: string | null;
   /** True only when the logged-in viewer is the one who sent this gift. */
   isSender: boolean;
   /** True only when the logged-in viewer is the one who actually claimed it. */
@@ -70,4 +74,20 @@ export async function getMyGifts(
     `/lottery/my-gifts?offset=${offset}&limit=${limit}`,
     { userId, accessToken },
   );
+}
+
+/** Fix a typo'd recipient on a gift you sent — only works while it's still unclaimed. */
+export async function updateGiftRecipient(
+  giftId: string,
+  recipientType: 'email' | 'handle',
+  recipientIdentifier: string,
+  userId: string,
+  accessToken?: string | null,
+): Promise<{ claimUrl: string }> {
+  return fetchApi<{ claimUrl: string }>(`/lottery/my-gifts/${giftId}/recipient`, {
+    method: 'POST',
+    body: JSON.stringify({ recipientType, recipientIdentifier }),
+    userId,
+    accessToken,
+  });
 }

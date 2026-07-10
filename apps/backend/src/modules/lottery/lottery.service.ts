@@ -586,14 +586,16 @@ export class LotteryService {
    * payment's recipient username is (see sharePreview.ts on the frontend for the precedent).
    */
   async getGiftPublic(token: string, viewerUserId?: string): Promise<{
+    giftId: string | null;
     numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle';
+    recipientIdentifier: string | null;
     isSender: boolean; isClaimant: boolean;
     senderUsername: string | null; recipientHandle: string | null;
   }> {
     const db = this.supabase.getClient();
     const { data: gift } = await db
       .from('lottery_gifts')
-      .select('num_tickets, note, status, recipient_type, recipient_identifier, created_by_user_id, claimed_by_user_id')
+      .select('id, num_tickets, note, status, recipient_type, recipient_identifier, created_by_user_id, claimed_by_user_id')
       .or(`short_id.eq.${token},claim_token.eq.${token}`)
       .maybeSingle();
     if (!gift) throw new NotFoundException('Gift not found');
@@ -606,6 +608,10 @@ export class LotteryService {
     const isClaimant = Boolean(viewerUserId) && gift.claimed_by_user_id === viewerUserId;
 
     return {
+      // Only the sender needs the raw giftId/recipientIdentifier — to edit the recipient
+      // (see updateGiftRecipient) they already know what they typed, this isn't a new leak.
+      giftId: isSender ? gift.id : null,
+      recipientIdentifier: isSender ? gift.recipient_identifier : null,
       numTickets: gift.num_tickets,
       // The note is private correspondence between sender and recipient — unlike ticket
       // count/status (shown on the public share card), it never goes out over the wire to
@@ -667,6 +673,53 @@ export class LotteryService {
       })),
       total: count ?? 0,
     };
+  }
+
+  /**
+   * Sender action: fix a typo'd recipient on a gift they sent — only while it's still unclaimed
+   * (once claimed, the identity that claimed it is locked in; editing after that would be
+   * meaningless since the ticket is already someone's). Re-sends the notification email when the
+   * new recipient is an email address, since the original recipient (if any) never got a valid
+   * claim link for them.
+   */
+  async updateGiftRecipient(opts: {
+    giftId: string;
+    userId: string;
+    recipientType: 'email' | 'handle';
+    recipientIdentifier: string;
+  }): Promise<{ claimUrl: string }> {
+    const db = this.supabase.getClient();
+    const { data: gift } = await db
+      .from('lottery_gifts')
+      .select('*')
+      .eq('id', opts.giftId)
+      .eq('created_by_user_id', opts.userId)
+      .eq('funding_mode', 'sender_paid')
+      .single();
+    if (!gift) throw new BadRequestException('Gift not found');
+    if (gift.status !== 'unclaimed') throw new BadRequestException('Only unclaimed gifts can be edited');
+
+    const recipientIdentifier = this.normalizeGiftIdentifier(opts.recipientType, opts.recipientIdentifier);
+    if (!recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
+
+    const { error } = await db
+      .from('lottery_gifts')
+      .update({ recipient_type: opts.recipientType, recipient_identifier: recipientIdentifier })
+      .eq('id', opts.giftId)
+      .eq('status', 'unclaimed');
+    if (error) throw new Error(`updateGiftRecipient failed: ${error.message}`);
+
+    const claimUrl = `https://pay.loofta.xyz/gift/${gift.short_id || gift.claim_token}`;
+    if (opts.recipientType === 'email') {
+      await this.emailService.sendGiftTicketEmail({
+        recipientEmail: recipientIdentifier,
+        numTickets: gift.num_tickets,
+        claimUrl,
+        note: gift.note,
+      }).catch(e => this.logger.warn(`updateGiftRecipient ${opts.giftId}: sendGiftTicketEmail failed: ${e.message}`));
+    }
+    this.logger.log(`Gift ${opts.giftId}: recipient updated by sender ${opts.userId}`);
+    return { claimUrl };
   }
 
   /**
