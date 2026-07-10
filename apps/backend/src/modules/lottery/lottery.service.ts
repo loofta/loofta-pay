@@ -20,7 +20,7 @@ import { RhinestoneService } from './rhinestone.service';
 import { LifiService } from './lifi.service';
 import { UsersService } from '../users/users.service';
 import { EmailService } from '../email/email.service';
-import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
+import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, decodeActualSenderDebit, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const TICKET_PRICE_USDC = 1;
@@ -3077,9 +3077,19 @@ export class LotteryService {
     // to reserve for the *separate* flat SOL-gas relay instruction, then invert
     // estimateMagicblockGrossUp to find the largest net amount whose internal gross-up still
     // fits what's left of the burner.
-    const availableForTransfer = Number(burnerBalance) - relayFeeUnits;
-    const transferAmount = availableForTransfer > 0
-      ? Math.floor((availableForTransfer - 1) * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS) / 10_000)
+    //
+    // estimateMagicblockGrossUp is explicitly documented as an approximation of MagicBlock's real
+    // internal gross-up math, not the real thing (see magicblock-private-transfer.ts). A 1-micro-
+    // USDC margin here used to be pure padding-theater: real incident, MagicBlock's actual gross-up
+    // rounded a few units higher than our guess, and the built transaction simulation-failed with
+    // "insufficient funds" — deterministically, on every cron retry, for the same withdrawal,
+    // since none of the inputs change. A real cent of margin absorbs that rounding gap; the
+    // decodeActualSenderDebit check below (against MagicBlock's actual built transaction) is the
+    // real safety net that catches anything this margin doesn't.
+    const GROSSUP_SAFETY_MARGIN_UNITS = 10_000; // $0.01 — headroom for MagicBlock's real rounding vs. our estimate
+    const availableForTransfer = Number(burnerBalance) - relayFeeUnits - GROSSUP_SAFETY_MARGIN_UNITS;
+    let transferAmount = availableForTransfer > 0
+      ? Math.floor(availableForTransfer * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS) / 10_000)
       : 0;
 
     this.logger.log(`${W} step 3/3 MagicBlock: burner ${withdrawal.withdrawal_burner_sol_address.slice(0, 8)}… balance=${burnerBalance} → transferAmount(net, exactOut)=${transferAmount} → ${withdrawal.destination_address}`);
@@ -3091,17 +3101,20 @@ export class LotteryService {
     const canUseGasless = transferAmount >= MAGICBLOCK_GASLESS_MIN_UNITS;
 
     if (canUseGasless) {
+      const conn = await this.getSolanaConnection();
+      const buildTransfer = (amount: number) => requestMagicblockPrivateTransfer({
+        from: withdrawal.withdrawal_burner_sol_address,
+        to: withdrawal.destination_address,
+        mint: USDC_MINT.toBase58(),
+        amount,
+        cluster,
+        gasless: true,
+        exactOut: true,
+      });
+
       let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
       try {
-        txResponse = await requestMagicblockPrivateTransfer({
-          from: withdrawal.withdrawal_burner_sol_address,
-          to: withdrawal.destination_address,
-          mint: USDC_MINT.toBase58(),
-          amount: transferAmount,
-          cluster,
-          gasless: true,
-          exactOut: true,
-        });
+        txResponse = await buildTransfer(transferAmount);
       } catch (err: any) {
         if (String(err?.message).includes('delegated to another validator')) {
           this.logger.warn(`${W} MagicBlock: burner ATA delegated — will retry next cron`);
@@ -3110,8 +3123,41 @@ export class LotteryService {
         throw err;
       }
 
+      // MagicBlock's own built transaction is the ground truth for what it will actually debit —
+      // transferAmount above is only our estimate of its internal gross-up. Decode the real debit
+      // (sum of every SPL transfer sourced from the burner's ATA, which covers both the exactOut
+      // leg and the separate relay-fee leg) and shrink+rebuild once if it would overdraw the
+      // burner, instead of blindly signing and finding out via a simulation failure — which used
+      // to fail identically forever, since none of the inputs change between cron retries.
+      const actualDebit = await decodeActualSenderDebit(
+        txResponse.transactionBase64,
+        withdrawal.withdrawal_burner_sol_address,
+        USDC_MINT,
+        conn,
+      );
+      if (actualDebit != null && actualDebit > Number(burnerBalance)) {
+        const shortfall = actualDebit - Number(burnerBalance);
+        const retryAmount = transferAmount - shortfall - GROSSUP_SAFETY_MARGIN_UNITS;
+        this.logger.warn(`${W} MagicBlock quoted debit=${actualDebit} > burner balance=${burnerBalance} (short ${shortfall}) — rebuilding with amount=${retryAmount}`);
+        if (retryAmount < MAGICBLOCK_GASLESS_MIN_UNITS) {
+          this.logger.warn(`${W} shrunk amount ${retryAmount} below MagicBlock gasless minimum — will retry next cron`);
+          return;
+        }
+        transferAmount = retryAmount;
+        txResponse = await buildTransfer(transferAmount);
+        const recheck = await decodeActualSenderDebit(
+          txResponse.transactionBase64,
+          withdrawal.withdrawal_burner_sol_address,
+          USDC_MINT,
+          conn,
+        );
+        if (recheck != null && recheck > Number(burnerBalance)) {
+          this.logger.warn(`${W} MagicBlock still quoting debit=${recheck} > burner balance=${burnerBalance} after retry — will retry next cron`);
+          return;
+        }
+      }
+
       const txBytes = Buffer.from(txResponse.transactionBase64, 'base64');
-      const conn = await this.getSolanaConnection();
       // MagicBlock may return a v0 (versioned) or legacy transaction
       let rawTx: Buffer;
       try {
