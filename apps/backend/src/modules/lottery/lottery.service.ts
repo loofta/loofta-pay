@@ -20,7 +20,7 @@ import { RhinestoneService } from './rhinestone.service';
 import { LifiService } from './lifi.service';
 import { UsersService } from '../users/users.service';
 import { EmailService } from '../email/email.service';
-import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, decodeActualSenderDebit, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
+import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const TICKET_PRICE_USDC = 1;
@@ -3085,13 +3085,13 @@ export class LotteryService {
     // fits what's left of the burner.
     //
     // estimateMagicblockGrossUp is explicitly documented as an approximation of MagicBlock's real
-    // internal gross-up math, not the real thing (see magicblock-private-transfer.ts). A 1-micro-
-    // USDC margin here used to be pure padding-theater: real incident, MagicBlock's actual gross-up
-    // rounded a few units higher than our guess, and the built transaction simulation-failed with
-    // "insufficient funds" — deterministically, on every cron retry, for the same withdrawal,
-    // since none of the inputs change. A real cent of margin absorbs that rounding gap; the
-    // decodeActualSenderDebit check below (against MagicBlock's actual built transaction) is the
-    // real safety net that catches anything this margin doesn't.
+    // internal gross-up math, not the real thing (see magicblock-private-transfer.ts) — and its
+    // actual debit routes through a vault program's internal CPIs that aren't visible from the
+    // client side at all (see the shrink-and-retry loop below). A 1-micro-USDC margin here used to
+    // be pure padding-theater: real incident, MagicBlock's actual gross-up rounded higher than our
+    // guess, and the built transaction simulation-failed with "insufficient funds" deterministically
+    // on every cron retry, since none of the inputs change. This margin just reduces how often the
+    // shrink loop below has to fire; it is not relied on for correctness.
     const GROSSUP_SAFETY_MARGIN_UNITS = 10_000; // $0.01 — headroom for MagicBlock's real rounding vs. our estimate
     const availableForTransfer = Number(burnerBalance) - relayFeeUnits - GROSSUP_SAFETY_MARGIN_UNITS;
     let transferAmount = availableForTransfer > 0
@@ -3118,64 +3118,66 @@ export class LotteryService {
         exactOut: true,
       });
 
-      let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
-      try {
-        txResponse = await buildTransfer(transferAmount);
-      } catch (err: any) {
-        if (String(err?.message).includes('delegated to another validator')) {
-          this.logger.warn(`${W} MagicBlock: burner ATA delegated — will retry next cron`);
-          return;
+      // MagicBlock's private transfer routes through its own vault program, which then CPIs into
+      // the Token program to move the real balance (visible in simulation logs as "invoke [2]"
+      // inside a MagicBlock-owned program). That nested debit never appears in the unsigned tx's
+      // top-level instruction list, so there's no reliable way to predict "is this amount safe"
+      // by parsing the built transaction client-side — decodeActualSenderDebit (kept in
+      // magicblock-private-transfer.ts) only sees top-level SPL transfers and was proven blind to
+      // this exact failure in production (see git history). The RPC's own preflight simulation
+      // DOES execute those CPIs and is the only ground truth we actually have, so treat a
+      // "custom program error: 0x1 / insufficient funds" from sendRawTransaction as a normal,
+      // expected outcome of our estimate being off — not a fatal error — and shrink + rebuild
+      // against MagicBlock fresh each time. Real incident: without this, the cron retried the
+      // exact same amount every 30s and failed identically forever, since nothing about the
+      // inputs changed between attempts.
+      const SHRINK_STEP_UNITS = 30_000; // $0.03 per attempt
+      const MAX_SHRINK_ATTEMPTS = 6;
+      let attempt = 0;
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
+        try {
+          txResponse = await buildTransfer(transferAmount);
+        } catch (err: any) {
+          if (String(err?.message).includes('delegated to another validator')) {
+            this.logger.warn(`${W} MagicBlock: burner ATA delegated — will retry next cron`);
+            return;
+          }
+          throw err;
         }
-        throw err;
+
+        const txBytes = Buffer.from(txResponse.transactionBase64, 'base64');
+        // MagicBlock may return a v0 (versioned) or legacy transaction
+        let rawTx: Buffer;
+        try {
+          const vTx = VersionedTransaction.deserialize(txBytes);
+          vTx.sign([burnerKeypair]);
+          rawTx = Buffer.from(vTx.serialize());
+        } catch {
+          const tx = Transaction.from(txBytes);
+          tx.partialSign(burnerKeypair);
+          rawTx = tx.serialize() as Buffer;
+        }
+
+        try {
+          sig = await conn.sendRawTransaction(rawTx);
+          break;
+        } catch (err: any) {
+          const msg = String(err?.message ?? '');
+          const insufficientFunds = msg.includes('insufficient funds') || msg.includes('custom program error: 0x1');
+          if (!insufficientFunds || attempt >= MAX_SHRINK_ATTEMPTS) throw err;
+          attempt++;
+          transferAmount -= SHRINK_STEP_UNITS * attempt;
+          if (transferAmount < MAGICBLOCK_GASLESS_MIN_UNITS) {
+            this.logger.warn(`${W} MagicBlock: shrunk below gasless minimum after ${attempt} attempts — will retry next cron`);
+            return;
+          }
+          this.logger.warn(`${W} MagicBlock: insufficient funds on attempt ${attempt} — shrinking to ${transferAmount} and rebuilding`);
+        }
       }
 
-      // MagicBlock's own built transaction is the ground truth for what it will actually debit —
-      // transferAmount above is only our estimate of its internal gross-up. Decode the real debit
-      // (sum of every SPL transfer sourced from the burner's ATA, which covers both the exactOut
-      // leg and the separate relay-fee leg) and shrink+rebuild once if it would overdraw the
-      // burner, instead of blindly signing and finding out via a simulation failure — which used
-      // to fail identically forever, since none of the inputs change between cron retries.
-      const actualDebit = await decodeActualSenderDebit(
-        txResponse.transactionBase64,
-        withdrawal.withdrawal_burner_sol_address,
-        USDC_MINT,
-        conn,
-      );
-      if (actualDebit != null && actualDebit > Number(burnerBalance)) {
-        const shortfall = actualDebit - Number(burnerBalance);
-        const retryAmount = transferAmount - shortfall - GROSSUP_SAFETY_MARGIN_UNITS;
-        this.logger.warn(`${W} MagicBlock quoted debit=${actualDebit} > burner balance=${burnerBalance} (short ${shortfall}) — rebuilding with amount=${retryAmount}`);
-        if (retryAmount < MAGICBLOCK_GASLESS_MIN_UNITS) {
-          this.logger.warn(`${W} shrunk amount ${retryAmount} below MagicBlock gasless minimum — will retry next cron`);
-          return;
-        }
-        transferAmount = retryAmount;
-        txResponse = await buildTransfer(transferAmount);
-        const recheck = await decodeActualSenderDebit(
-          txResponse.transactionBase64,
-          withdrawal.withdrawal_burner_sol_address,
-          USDC_MINT,
-          conn,
-        );
-        if (recheck != null && recheck > Number(burnerBalance)) {
-          this.logger.warn(`${W} MagicBlock still quoting debit=${recheck} > burner balance=${burnerBalance} after retry — will retry next cron`);
-          return;
-        }
-      }
-
-      const txBytes = Buffer.from(txResponse.transactionBase64, 'base64');
-      // MagicBlock may return a v0 (versioned) or legacy transaction
-      let rawTx: Buffer;
-      try {
-        const vTx = VersionedTransaction.deserialize(txBytes);
-        vTx.sign([burnerKeypair]);
-        rawTx = Buffer.from(vTx.serialize());
-      } catch {
-        const tx = Transaction.from(txBytes);
-        tx.partialSign(burnerKeypair);
-        rawTx = tx.serialize() as Buffer;
-      }
-      sig = await conn.sendRawTransaction(rawTx);
       this.logger.log(`${W} MagicBlock private tx: ${sig}`);
 
       // sendRawTransaction only means the RPC accepted it for broadcast — confirmTransaction
