@@ -605,12 +605,18 @@ export class LotteryService {
     const isRecipient = !isSender && !isClaimant && gift.status === 'unclaimed'
       && (await this.isGiftRecipient(gift, viewerUserId));
 
-    // A logged-in viewer who is none of sender/claimant/recipient is treated exactly like a bad
-    // token — this endpoint never confirms "a gift exists here, just not for you" to someone who
-    // isn't part of it. Anonymous (viewerUserId undefined) still gets the public preview below,
-    // same as an unauthenticated visit to a payment share link.
+    // A logged-in viewer who is none of sender/claimant/recipient never gets the gift's contents
+    // (ticket count, sender/note) — but unlike a genuinely bad token, this is a real gift the
+    // viewer just isn't authorized to see from this session, so the message stays actionable
+    // instead of collapsing into an indistinguishable 404 (that regressed a real recipient who
+    // re-opened the link from a different device/session after already claiming — see the "fix
+    // gift claim" follow-up). ForbiddenException (403), not NotFoundException, since the token
+    // did resolve to a real row.
     if (viewerUserId && !isSender && !isClaimant && !isRecipient) {
-      throw new NotFoundException('Gift not found');
+      const message = gift.status === 'claimed'
+        ? "This gift was already claimed. Log in with the account you claimed it with to view it."
+        : 'You are not the intended recipient of this gift. Log in with the email, X account, or Loofta username it was sent to.';
+      throw new ForbiddenException(message);
     }
 
     const { data: senderAppUser } = gift.created_by_user_id
