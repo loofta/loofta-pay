@@ -37,6 +37,7 @@ export function proxy(request: NextRequest) {
     "/privacy",
     "/careers",
     "/payment-links",
+    "/partners",
     "/guides/send-crypto-privately",
     "/vs/paypal",
   ]);
