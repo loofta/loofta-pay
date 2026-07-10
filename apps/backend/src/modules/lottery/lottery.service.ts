@@ -725,6 +725,13 @@ export class LotteryService {
         note: gift.note,
       }).catch(e => this.logger.warn(`updateGiftRecipient ${opts.giftId}: sendGiftTicketEmail failed: ${e.message}`));
     }
+    // The share card's OG image bakes in the recipient handle and is cached immutably in
+    // Storage (see apps/frontend .../api/gift/[token]/og/route.tsx) — the route only ever
+    // re-renders when nothing exists yet at that path, so without deleting the stale file here,
+    // an edited recipient would never show up in the thumbnail. 'v1' must match that route's
+    // DESIGN_VERSION.
+    await db.storage.from('gift-og').remove([`v1/${gift.short_id || gift.claim_token}.png`]).catch(() => {});
+    this.prewarmGiftOg(claimUrl);
     this.logger.log(`Gift ${opts.giftId}: recipient updated by sender ${opts.userId}`);
     return { claimUrl };
   }
@@ -778,6 +785,12 @@ export class LotteryService {
       .select('id');
     if (claimError) throw new Error(`claimGift failed: ${claimError.message}`);
     if (!claimedRows?.length) throw new BadRequestException('This gift has already been claimed');
+
+    // Same cached-OG-image staleness as updateGiftRecipient — the thumbnail's status pill
+    // ("Gift on Loofta" vs "Claimed") would otherwise never update once cached.
+    const shareId = gift.short_id || gift.claim_token;
+    await db.storage.from('gift-og').remove([`v1/${shareId}.png`]).catch(() => {});
+    this.prewarmGiftOg(`https://pay.loofta.xyz/gift/${shareId}`);
 
     const claimedGift = { ...gift, status: 'claimed', claimed_by_user_id: claimantPrivyUserId };
     return this.purchaseGiftTickets(claimedGift, claimantPrivyUserId);
