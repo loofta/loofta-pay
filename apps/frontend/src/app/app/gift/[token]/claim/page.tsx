@@ -168,11 +168,14 @@ export default function LotteryGiftClaimPage() {
     );
   }
 
-  // Gated: only the sender and the intended recipient may see gift details on this page (the
-  // note especially — that's private correspondence, unlike the public /gift/:token share card).
-  // Can't tell who's who without a login, so an anonymous visitor gets a plain sign-in prompt
-  // first; once logged in, anyone who isn't sender/claimant gets a flat "not available" — no
-  // ticket count, no note, nothing that would confirm the gift even exists to them.
+  // Gated, but carefully: isClaimant only becomes true AFTER a successful claim, so a genuine
+  // recipient who hasn't claimed yet is neither isSender nor isClaimant — blocking on that
+  // combo would lock the real recipient out before they ever get a chance to claim. Real
+  // identity verification happens server-side at claim time (claimGift), same as before this
+  // page had any gate at all. What we CAN safely restrict up front: once a gift is claimed, only
+  // the sender and whoever actually claimed it should keep seeing it — a stranger shouldn't see
+  // who claimed what. The note stays hidden from everyone except sender/claimant regardless (see
+  // getGiftPublic), independent of this page-level gate.
   if (!authenticated) {
     return (
       <>
@@ -197,7 +200,7 @@ export default function LotteryGiftClaimPage() {
     );
   }
 
-  if (!data.isSender && !data.isClaimant) {
+  if (data.status === 'claimed' && !data.isSender && !data.isClaimant) {
     return (
       <>
         <div className="fixed inset-0 -z-10 bg-[#0f0f12]" />
