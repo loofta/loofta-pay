@@ -5,19 +5,21 @@ import { useRouter, usePathname } from 'next/navigation';
 import { usePrivy } from '@privy-io/react-auth';
 import { getLotteryGiftPublic, type LotteryGiftPublic } from '@/services/api/lotteryGift';
 import { GradientActionButton } from '@/components/ui/GradientActionButton';
-import { Ticket, AlertCircle, ArrowDown, Lock, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Ticket, AlertCircle, ArrowDown, Lock, CheckCircle2, ArrowRight, LogIn } from 'lucide-react';
 
 /**
  * Public preview page — anyone with the link can see "N Megapot tickets, gifted" (mirrors the
  * payment /share/:short_id card: sender/recipient labels either side of the headline figure), no
  * login required. Kept deliberately simple, same as the payment share card — no share/copy
  * affordances here (this page is public) and no note/message (that stays on the gated claim
- * page). The actual claim interaction lives one click away at /gift/:token/claim, matching the
- * payments pattern of /share/:short_id -> /c/:id.
+ * page). The CTA never lets an anonymous visitor step into the claim flow unverified — it always
+ * asks them to log in first (framed as "log in as the recipient"), and the backend (getGiftPublic)
+ * treats a logged-in viewer who turns out to be neither sender/claimant/recipient exactly like a
+ * bad token, so this page falls back to "Gift not found" for them rather than showing anything.
  */
 export default function GiftShareClient({ token }: { token: string }) {
   const router = useRouter();
-  const { authenticated, getAccessToken } = usePrivy();
+  const { authenticated, login, getAccessToken } = usePrivy();
   // On pay.loofta.xyz, proxy.ts rewrites clean paths to /app/* internally but the URL bar (and
   // any link target) must stay clean — only prefix with /app when we're already under /app
   // (loofta.xyz or localhost hitting /app/* directly). Same pattern as HistoryTab's megapotBase.
@@ -29,15 +31,18 @@ export default function GiftShareClient({ token }: { token: string }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Passing an access token when logged in (still fully public/anonymous otherwise) lets the
-    // CTA below tell "you're the sender" from "you might be the recipient" without gating this
-    // page itself — the note/full details stay reserved for the claim page.
+    // Re-runs on auth change (e.g. a visitor logging in from the CTA below) — reset to loading
+    // rather than rendering stale anonymous data while the identity re-check is in flight, since
+    // a mismatched logged-in viewer must 404 (see getGiftPublic), not flash the old preview.
+    setLoading(true);
+    setError(null);
     (async () => {
       try {
         const accessToken = authenticated ? await getAccessToken() : null;
         const gift = await getLotteryGiftPublic(token, accessToken);
         setData(gift);
       } catch (err: any) {
+        setData(null);
         setError(err?.message || 'Link not found');
       } finally {
         setLoading(false);
@@ -116,15 +121,25 @@ export default function GiftShareClient({ token }: { token: string }) {
             </div>
           </div>
 
-          {/* CTA card — "View gift" if you're the sender (nothing left for you to do), "Claim
-              gift" otherwise (covers the actual recipient and any not-yet-identified visitor,
-              since only the claim page itself can confirm who's who). */}
+          {/* CTA card — anonymous visitors always have to log in first (as the recipient) before
+              stepping into the claim flow; never a direct "View/Claim gift" link for someone
+              we haven't identified yet. Once logged in, "View gift" if you're the sender or
+              already claimed it, "Claim gift" if you're the verified recipient — anyone else
+              never reaches this render at all (see getGiftPublic's 404 for a mismatched viewer). */}
           <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-5 py-5 space-y-3">
-            <GradientActionButton onClick={() => router.push(claimHref)}>
-              <Ticket className="h-4 w-4" />
-              {isClaimed || data.isSender ? 'View gift' : 'Claim gift'}
-              <ArrowRight className="h-4 w-4" />
-            </GradientActionButton>
+            {authenticated ? (
+              <GradientActionButton onClick={() => router.push(claimHref)}>
+                <Ticket className="h-4 w-4" />
+                {isClaimed || data.isSender ? 'View gift' : 'Claim gift'}
+                <ArrowRight className="h-4 w-4" />
+              </GradientActionButton>
+            ) : (
+              <GradientActionButton onClick={() => login()}>
+                <LogIn className="h-4 w-4" />
+                Log in as recipient to view gift
+                <ArrowRight className="h-4 w-4" />
+              </GradientActionButton>
+            )}
           </div>
         </div>
       </main>
