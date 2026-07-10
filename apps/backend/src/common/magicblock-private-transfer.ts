@@ -278,6 +278,15 @@ const TOKEN_PROGRAM_STR = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
  * instructions in the MagicBlock-built transaction. Returns units, or null on parse failure.
  *
  * actualFee = decodedDebit - netBaseUnits
+ *
+ * LIMITATION — only sees TOP-LEVEL instructions in the unsigned tx. MagicBlock's private transfer
+ * routes the real debit through its own vault program, which CPIs into the Token program at
+ * runtime (visible in simulation logs as "invoke [2]" inside a MagicBlock-owned program ID) — that
+ * nested transfer is never present in the raw transaction bytes, so this function cannot see it and
+ * will silently under-report the true debit. Confirmed in production: a caller used this to
+ * "verify sufficient balance before signing" and it passed while the real send still failed
+ * on-chain with insufficient funds. Do not treat this as a sufficient-balance check — the RPC's own
+ * preflight simulation (which does execute CPIs) is the only reliable ground truth for that.
  */
 export async function decodeActualSenderDebit(
   transactionBase64: string,
