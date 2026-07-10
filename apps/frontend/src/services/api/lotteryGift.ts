@@ -20,6 +20,9 @@ export interface LotteryGiftPublic {
   isSender: boolean;
   /** True only when the logged-in viewer is the one who actually claimed it. */
   isClaimant: boolean;
+  /** True only when the logged-in viewer's linked email/X/username matches the gift's recipient
+   *  and it hasn't been claimed yet — lets the genuine recipient see the claim UI pre-claim. */
+  isRecipient: boolean;
   /** Loofta username of whoever sent the gift, or null if unresolved. */
   senderUsername: string | null;
   /** Recipient's X/Loofta handle — only set when the gift targeted a handle, never an email. */
@@ -32,7 +35,9 @@ export interface ClaimLotteryGiftResult {
 }
 
 /** accessToken is optional — the page works for anonymous visitors too, just without
- *  isSender/isClaimant (those require knowing who's looking). */
+ *  isSender/isClaimant/isRecipient (those require knowing who's looking). Throws (404) when
+ *  accessToken identifies a logged-in viewer who is none of sender/claimant/recipient — the
+ *  backend treats that exactly like a bad token. */
 export async function getLotteryGiftPublic(token: string, accessToken?: string | null): Promise<LotteryGiftPublic> {
   return fetchApi<LotteryGiftPublic>(`/lottery/gift/${token}`, { accessToken });
 }

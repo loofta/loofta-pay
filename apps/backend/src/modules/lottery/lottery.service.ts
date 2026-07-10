@@ -589,7 +589,7 @@ export class LotteryService {
     giftId: string | null;
     numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle';
     recipientIdentifier: string | null;
-    isSender: boolean; isClaimant: boolean;
+    isSender: boolean; isClaimant: boolean; isRecipient: boolean;
     senderUsername: string | null; recipientHandle: string | null;
   }> {
     const db = this.supabase.getClient();
@@ -600,12 +600,22 @@ export class LotteryService {
       .maybeSingle();
     if (!gift) throw new NotFoundException('Gift not found');
 
+    const isSender = Boolean(viewerUserId) && gift.created_by_user_id === viewerUserId;
+    const isClaimant = Boolean(viewerUserId) && gift.claimed_by_user_id === viewerUserId;
+    const isRecipient = !isSender && !isClaimant && gift.status === 'unclaimed'
+      && (await this.isGiftRecipient(gift, viewerUserId));
+
+    // A logged-in viewer who is none of sender/claimant/recipient is treated exactly like a bad
+    // token — this endpoint never confirms "a gift exists here, just not for you" to someone who
+    // isn't part of it. Anonymous (viewerUserId undefined) still gets the public preview below,
+    // same as an unauthenticated visit to a payment share link.
+    if (viewerUserId && !isSender && !isClaimant && !isRecipient) {
+      throw new NotFoundException('Gift not found');
+    }
+
     const { data: senderAppUser } = gift.created_by_user_id
       ? await db.from('app_users').select('username').eq('privy_user_id', gift.created_by_user_id).maybeSingle()
       : { data: null };
-
-    const isSender = Boolean(viewerUserId) && gift.created_by_user_id === viewerUserId;
-    const isClaimant = Boolean(viewerUserId) && gift.claimed_by_user_id === viewerUserId;
 
     return {
       // Only the sender needs the raw giftId/recipientIdentifier — to edit the recipient
@@ -621,6 +631,7 @@ export class LotteryService {
       recipientType: gift.recipient_type,
       isSender,
       isClaimant,
+      isRecipient,
       senderUsername: (senderAppUser as { username?: string } | null)?.username ?? null,
       recipientHandle: gift.recipient_type === 'handle' ? gift.recipient_identifier : null,
     };
@@ -737,6 +748,24 @@ export class LotteryService {
   }
 
   /**
+   * Whether viewerUserId's linked identity matches this gift's recipient. Shared by claimGift
+   * (the real authorization gate) and getGiftPublic (a pre-claim check so the genuine recipient,
+   * and only them, sees the claim UI before they've actually claimed — everyone else gets treated
+   * as if the link doesn't exist, see getGiftPublic).
+   *
+   * A gift addressed to a "handle" doesn't declare upfront whether it's an X handle or a Loofta
+   * username — the sender picked one free-text field (matching how Send works), so try both
+   * identity checks and accept either match.
+   */
+  private async isGiftRecipient(gift: any, viewerUserId?: string | null): Promise<boolean> {
+    if (!viewerUserId) return false;
+    return gift.recipient_type === 'handle'
+      ? (await this.usersService.verifyRecipientIdentityForSendPayment(viewerUserId, 'twitter', gift.recipient_identifier))
+        || (await this.usersService.verifyRecipientIdentityForSendPayment(viewerUserId, 'username', gift.recipient_identifier))
+      : await this.usersService.verifyRecipientIdentityForSendPayment(viewerUserId, 'email', gift.recipient_identifier);
+  }
+
+  /**
    * Recipient action: verifies identity, then does the real work — generates wallets, funds the
    * burner from Loofta's own fee wallet (no fee charged, no MagicBlock leg, no signed user tx),
    * and creates a normal lottery_tickets row already owned by the claimant. Buying at claim time
@@ -765,14 +794,7 @@ export class LotteryService {
       throw new BadRequestException(message);
     }
 
-    // A gift addressed to a "handle" doesn't declare upfront whether it's an X handle or a
-    // Loofta username — the sender picked one free-text field (matching how Send works), so try
-    // both identity checks and accept either match.
-    const matches = gift.recipient_type === 'handle'
-      ? (await this.usersService.verifyRecipientIdentityForSendPayment(claimantPrivyUserId, 'twitter', gift.recipient_identifier))
-        || (await this.usersService.verifyRecipientIdentityForSendPayment(claimantPrivyUserId, 'username', gift.recipient_identifier))
-      : await this.usersService.verifyRecipientIdentityForSendPayment(claimantPrivyUserId, 'email', gift.recipient_identifier);
-    if (!matches) {
+    if (!(await this.isGiftRecipient(gift, claimantPrivyUserId))) {
       throw new ForbiddenException('You are not the intended recipient of this gift. Log in with the email, X account, or Loofta username it was sent to.');
     }
 
