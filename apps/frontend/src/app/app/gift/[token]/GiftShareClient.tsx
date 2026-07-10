@@ -17,6 +17,7 @@ import { Ticket, AlertCircle, ArrowDown, Lock, CheckCircle2, ArrowRight } from '
  */
 export default function GiftShareClient({ token }: { token: string }) {
   const router = useRouter();
+  const { authenticated, getAccessToken } = usePrivy();
   // On pay.loofta.xyz, proxy.ts rewrites clean paths to /app/* internally but the URL bar (and
   // any link target) must stay clean — only prefix with /app when we're already under /app
   // (loofta.xyz or localhost hitting /app/* directly). Same pattern as HistoryTab's megapotBase.
@@ -28,11 +29,21 @@ export default function GiftShareClient({ token }: { token: string }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getLotteryGiftPublic(token)
-      .then(setData)
-      .catch((err) => setError(err?.message || 'Link not found'))
-      .finally(() => setLoading(false));
-  }, [token]);
+    // Passing an access token when logged in (still fully public/anonymous otherwise) lets the
+    // CTA below tell "you're the sender" from "you might be the recipient" without gating this
+    // page itself — the note/full details stay reserved for the claim page.
+    (async () => {
+      try {
+        const accessToken = authenticated ? await getAccessToken() : null;
+        const gift = await getLotteryGiftPublic(token, accessToken);
+        setData(gift);
+      } catch (err: any) {
+        setError(err?.message || 'Link not found');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [token, authenticated, getAccessToken]);
 
   if (loading) {
     return (
@@ -105,11 +116,13 @@ export default function GiftShareClient({ token }: { token: string }) {
             </div>
           </div>
 
-          {/* CTA card */}
+          {/* CTA card — "View gift" if you're the sender (nothing left for you to do), "Claim
+              gift" otherwise (covers the actual recipient and any not-yet-identified visitor,
+              since only the claim page itself can confirm who's who). */}
           <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-5 py-5 space-y-3">
             <GradientActionButton onClick={() => router.push(claimHref)}>
               <Ticket className="h-4 w-4" />
-              {isClaimed ? 'View gift' : 'View & claim gift'}
+              {isClaimed || data.isSender ? 'View gift' : 'Claim gift'}
               <ArrowRight className="h-4 w-4" />
             </GradientActionButton>
           </div>
