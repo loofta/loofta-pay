@@ -49,6 +49,14 @@ class BuyGiftDto {
   note?: string;
 }
 
+class UpdateGiftRecipientDto {
+  @IsIn(['email', 'handle'])
+  recipientType: 'email' | 'handle';
+
+  @IsString()
+  recipientIdentifier: string;
+}
+
 class ConfirmSendDto {
   @IsString()
   ticketId: string;
@@ -317,7 +325,9 @@ export class LotteryController {
   @UseGuards(OptionalAuthGuard)
   @ApiOperation({ summary: 'Get public gift details for the claim page — auth optional, used to tell sender/claimant/stranger apart' })
   async getGift(@Param('token') token: string, @Request() req: any): Promise<{
+    giftId: string | null;
     numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle';
+    recipientIdentifier: string | null;
     isSender: boolean; isClaimant: boolean;
     senderUsername: string | null; recipientHandle: string | null;
   }> {
@@ -334,6 +344,23 @@ export class LotteryController {
     const offset = Math.max(0, parseInt(offsetRaw, 10) || 0);
     const limit = Math.min(50, Math.max(1, parseInt(limitRaw, 10) || 20));
     return this.lottery.getMyGifts(req.user.id, offset, limit);
+  }
+
+  @Post('my-gifts/:giftId/recipient')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Edit the recipient of an unclaimed gift you sent (fixes a typo without cancelling)' })
+  async updateGiftRecipient(
+    @Param('giftId') giftId: string,
+    @Body() dto: UpdateGiftRecipientDto,
+    @Request() req: any,
+  ): Promise<{ claimUrl: string }> {
+    if (!dto.recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
+    return this.lottery.updateGiftRecipient({
+      giftId,
+      userId: req.user.id,
+      recipientType: dto.recipientType,
+      recipientIdentifier: dto.recipientIdentifier,
+    });
   }
 
   @Post('gift/:token/claim')
