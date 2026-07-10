@@ -21,25 +21,28 @@ interface MessageInputProps {
   className?: string;
   gifUrl?: string | null;
   onGifChange?: (gifUrl: string | null) => void;
+  /** Search term the GIF picker prefills with when it opens — defaults to "money" (send flow);
+   *  pass e.g. "lottery" for contexts like gifting a Megapot ticket. */
+  defaultGifQuery?: string;
 }
 
-export function MessageInput({ value, onChange, placeholder = "Type a message...", maxLength = 500, className, gifUrl, onGifChange }: MessageInputProps) {
+export function MessageInput({ value, onChange, placeholder = "Type a message...", maxLength = 500, className, gifUrl, onGifChange, defaultGifQuery = 'money' }: MessageInputProps) {
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [gifSearchQuery, setGifSearchQuery] = useState('');
   const [trendingGifs, setTrendingGifs] = useState<any[]>([]);
   const [searchGifs, setSearchGifs] = useState<any[]>([]);
   const [isLoadingGifs, setIsLoadingGifs] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  
+
   // Internal state for GIF if not controlled
   const [internalGifUrl, setInternalGifUrl] = useState<string | null>(null);
   const currentGifUrl = gifUrl !== undefined ? gifUrl : internalGifUrl;
   const handleGifChange = onGifChange || setInternalGifUrl;
 
-  // Load money-related GIFs when GIF picker opens (default to money-related)
+  // Load default-query GIFs when GIF picker opens (e.g. money-related, or lottery-related)
   useEffect(() => {
     if (showGifPicker && trendingGifs.length === 0 && !gifSearchQuery) {
-      loadMoneyGifs();
+      loadDefaultGifs();
     }
   }, [showGifPicker]);
 
@@ -62,7 +65,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
     }
   };
 
-  const loadMoneyGifs = async () => {
+  const loadDefaultGifs = async () => {
     if (!gf) {
       console.warn('Giphy API key not configured');
       setTrendingGifs([]);
@@ -70,10 +73,10 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
     }
     setIsLoadingGifs(true);
     try {
-      const { data } = await gf.search('money', { limit: 20 });
+      const { data } = await gf.search(defaultGifQuery, { limit: 20 });
       setTrendingGifs(data);
     } catch (error: any) {
-      console.error('Error loading money GIFs:', error);
+      console.error('Error loading default GIFs:', error);
       // Set empty array on error to prevent infinite loading
       setTrendingGifs([]);
     } finally {
@@ -89,7 +92,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
     }
     setGifSearchQuery(query);
     if (!query.trim()) {
-      loadMoneyGifs();
+      loadDefaultGifs();
       setSearchGifs([]);
       return;
     }
@@ -225,7 +228,7 @@ export function MessageInput({ value, onChange, placeholder = "Type a message...
                             className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-slate-400 hover:text-white hover:bg-white/[0.08]"
                             onClick={() => {
                               setGifSearchQuery('');
-                              loadMoneyGifs();
+                              loadDefaultGifs();
                               setSearchGifs([]);
                             }}
                           >

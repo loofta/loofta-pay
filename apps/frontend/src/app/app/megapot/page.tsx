@@ -28,15 +28,17 @@ const MAIN_MAX = 30;
 const MAIN_COUNT = 5;
 const BONUS_MAX = 12;
 
+// Net of Loofta's 10% referral cut (taken from every cash win on-chain) — these are what a
+// user actually receives, not Megapot's raw published gross figures.
 const PRIZE_TIERS = [
-  { normal: 5, bonusMatch: true, prize: "$226,165.11" },
-  { normal: 5, bonusMatch: false, prize: "$3,085.05" },
-  { normal: 4, bonusMatch: true, prize: "$272.39" },
-  { normal: 4, bonusMatch: false, prize: "$25.67" },
-  { normal: 3, bonusMatch: true, prize: "$12.30" },
-  { normal: 2, bonusMatch: true, prize: "$3.94" },
-  { normal: 3, bonusMatch: false, prize: "$3.05" },
-  { normal: 1, bonusMatch: true, prize: "$2.07" },
+  { normal: 5, bonusMatch: true, prize: "$203,548.60" },
+  { normal: 5, bonusMatch: false, prize: "$2,776.55" },
+  { normal: 4, bonusMatch: true, prize: "$245.15" },
+  { normal: 4, bonusMatch: false, prize: "$23.10" },
+  { normal: 3, bonusMatch: true, prize: "$11.07" },
+  { normal: 2, bonusMatch: true, prize: "$3.55" },
+  { normal: 3, bonusMatch: false, prize: "$2.75" },
+  { normal: 1, bonusMatch: true, prize: "$1.86" },
   { normal: 2, bonusMatch: false, prize: "Free ticket" },
   { normal: 0, bonusMatch: true, prize: "Free ticket" },
 ] as const;
@@ -1209,6 +1211,14 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
       const { claimUrl } = await confirmRes.json();
       setGiftClaimUrl(claimUrl);
       setGiftStep("done");
+      // Pre-warm the OG image now, the moment the link becomes shareable — cold next/og
+      // rendering measured 1.7-3s in production, which risks X's crawler timeout specifically
+      // (same fix already applied to ShareLinkMenu's own pre-warm for payment links).
+      try {
+        const parsed = new URL(claimUrl);
+        const shareId = parsed.pathname.split("/").filter(Boolean).pop();
+        if (shareId) fetch(`${parsed.origin}/api/gift/${shareId}/og`).catch(() => {});
+      } catch { /* claimUrl wasn't a valid absolute URL — nothing to pre-warm */ }
     } catch (err: any) {
       setGiftStep("error");
       setGiftError(err.message ?? "Unknown error");
@@ -1315,6 +1325,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
                     onGifChange={setGiftGifUrl}
                     placeholder="Add a message…"
                     maxLength={300}
+                    defaultGifQuery="lottery"
                     className="mt-1.5 [&_input]:h-11 [&_input]:bg-white/[0.03] [&_input]:border-white/10 [&_input]:text-slate-100 [&_input]:placeholder:text-slate-600"
                   />
                 </div>
