@@ -84,8 +84,8 @@ export default function GiftShareClient({ token }: { token: string }) {
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-500/10">
               <AlertCircle className="h-7 w-7 text-red-400" />
             </div>
-            <h1 className="text-xl font-semibold text-white">Gift not found</h1>
-            <p className="mt-2 text-slate-400">This link may be invalid.</p>
+            <h1 className="text-xl font-semibold text-white">{error ? 'Not available' : 'Gift not found'}</h1>
+            <p className="mt-2 text-slate-400">{error || 'This link may be invalid.'}</p>
           </div>
         </main>
       </>
