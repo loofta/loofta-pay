@@ -328,7 +328,7 @@ export class LotteryController {
     giftId: string | null;
     numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle';
     recipientIdentifier: string | null;
-    isSender: boolean; isClaimant: boolean;
+    isSender: boolean; isClaimant: boolean; isRecipient: boolean;
     senderUsername: string | null; recipientHandle: string | null;
   }> {
     return this.lottery.getGiftPublic(token, req.user?.id);
