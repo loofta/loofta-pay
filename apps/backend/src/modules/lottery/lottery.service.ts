@@ -702,12 +702,19 @@ export class LotteryService {
     const recipientIdentifier = this.normalizeGiftIdentifier(opts.recipientType, opts.recipientIdentifier);
     if (!recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
 
-    const { error } = await db
+    // Re-check at write time, not just the read above — the recipient could claim in the gap
+    // between this method's SELECT and UPDATE (e.g. sender is mid-edit right as the real
+    // recipient finally claims). The .eq('status', 'unclaimed') guard makes the update itself a
+    // no-op if that happens; .select() + a length check turns that no-op into a real error
+    // instead of silently reporting success while nothing actually changed.
+    const { data: updatedRows, error } = await db
       .from('lottery_gifts')
       .update({ recipient_type: opts.recipientType, recipient_identifier: recipientIdentifier })
       .eq('id', opts.giftId)
-      .eq('status', 'unclaimed');
+      .eq('status', 'unclaimed')
+      .select('id');
     if (error) throw new Error(`updateGiftRecipient failed: ${error.message}`);
+    if (!updatedRows?.length) throw new BadRequestException('This gift was just claimed and can no longer be edited.');
 
     const claimUrl = `https://pay.loofta.xyz/gift/${gift.short_id || gift.claim_token}`;
     if (opts.recipientType === 'email') {
