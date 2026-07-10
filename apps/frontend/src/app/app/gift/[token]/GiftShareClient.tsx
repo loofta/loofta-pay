@@ -108,7 +108,7 @@ export default function GiftShareClient({ token }: { token: string }) {
               <span className="text-xl font-bold text-white">{senderLabel}</span>
               <div className="flex flex-col items-center gap-1.5 py-2">
                 <ArrowDown className={`h-4 w-4 ${isClaimed ? 'text-emerald-500/40' : 'text-white/20'}`} />
-                <span className={`font-display text-5xl font-medium tracking-tight ${isClaimed ? 'text-emerald-400' : 'text-white'}`}>{data.numTickets}</span>
+                <span className={`text-5xl font-bold tracking-tight ${isClaimed ? 'text-emerald-400' : 'text-white'}`}>{data.numTickets}</span>
                 <span className="text-base md:text-sm text-white/30 font-medium tracking-widest uppercase">Megapot {ticketWord}</span>
                 <ArrowDown className={`h-4 w-4 ${isClaimed ? 'text-emerald-500/40' : 'text-white/20'}`} />
               </div>
