@@ -502,8 +502,23 @@ export class LotteryService {
         note: gift.note,
       }).catch(e => this.logger.warn(`confirmGiftSend ${opts.giftId}: sendGiftTicketEmail failed: ${e.message}`));
     }
+    this.prewarmGiftOg(claimUrl);
     this.logger.log(`Gift ${opts.giftId}: payment confirmed, now claimable — tx=${opts.senderTxHash}`);
     return { claimUrl };
+  }
+
+  /**
+   * Fire-and-forget OG image render the moment a gift link becomes real/shareable — cold
+   * next/og rendering measured 1.7-3s in production, which risks X's crawler timing out before
+   * the image is ready (WhatsApp's crawler is more lenient). Warming it here means by the time
+   * anyone actually shares the link, the image is already cached in Supabase Storage.
+   */
+  private prewarmGiftOg(claimUrl: string): void {
+    try {
+      const id = new URL(claimUrl).pathname.split('/').filter(Boolean).pop();
+      if (!id) return;
+      fetch(`https://pay.loofta.xyz/api/gift/${id}/og`).catch(() => {});
+    } catch { /* ignore */ }
   }
 
   /**
@@ -558,6 +573,7 @@ export class LotteryService {
         note: note ?? null,
       }).catch(e => this.logger.warn(`createGift ${gift.id}: sendGiftTicketEmail failed: ${e.message}`));
     }
+    this.prewarmGiftOg(claimUrl);
 
     this.logger.log(`Gift ${gift.id}: created ${numTickets} ticket(s) for ${recipientType}:${recipientIdentifier.slice(0, 3)}*** by admin ${adminUserId}`);
     return { giftId: gift.id, claimToken, claimUrl };
