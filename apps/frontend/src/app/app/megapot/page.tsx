@@ -24,6 +24,10 @@ const LOOFTA_TICKET_FEE_BPS = 150;
 function looftaFee(ticketCostUsd: number) {
   return LOOFTA_TICKET_FEE_FLAT_USD + (ticketCostUsd * LOOFTA_TICKET_FEE_BPS) / 10_000;
 }
+// Below this, the ~$0.16 fixed bridge fee eats a disproportionate share of a lone win (a $1 win
+// redeemed alone nets roughly 25% less after fees) — default those to a free "play again" instead
+// of cash-out. Matches MagicBlock's own gasless/direct-transfer cutover point.
+const PLAY_AGAIN_THRESHOLD_USDC = 5;
 const MAIN_MAX = 30;
 const MAIN_COUNT = 5;
 const BONUS_MAX = 12;
@@ -1467,6 +1471,9 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   const [withdrawalIds, setWithdrawalIds] = useState<string[]>([]);
   const [arrived, setArrived] = useState(false);
   const [transferFailed, setTransferFailed] = useState(false);
+  const [playingAgain, setPlayingAgain] = useState(false);
+  const [playAgainDone, setPlayAgainDone] = useState<{ numTickets: number } | null>(null);
+  const [playAgainError, setPlayAgainError] = useState("");
   const reduceMotion = useReducedMotion();
 
   // Resume an in-flight redeem across a page refresh — without this, a refresh mid-redeem drops
@@ -1518,6 +1525,13 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
 
   const totalAmount = wonTickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
   const isBatch = wonTickets.length > 1;
+  // Play again reinvests the claimed balance at $1/ticket, floored — needs at least $1 to buy
+  // anything. Below PLAY_AGAIN_THRESHOLD_USDC the fixed bridge fee eats a disproportionate share
+  // of a win, so default the primary CTA to a free replay instead of cash-out when there's enough
+  // to actually buy a ticket with (Redeem stays one tap away either way).
+  const playAgainTicketCount = Math.floor(totalAmount);
+  const allSmall = wonTickets.length > 0 && playAgainTicketCount >= 1
+    && wonTickets.every(t => (t.winAmountUsdc ?? 0) < PLAY_AGAIN_THRESHOLD_USDC);
 
   useEffect(() => {
     if (!totalAmount) return;
@@ -1577,12 +1591,54 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
     finally { setLoading(false); }
   }
 
+  /** Claims + reinvests every currently-won ticket via its own companion wallet — no bridge, no
+   *  fee. One call per ticket (play-again is inherently per-companion-wallet). */
+  async function handlePlayAgain() {
+    if (!wonTickets.length) return;
+    setPlayingAgain(true); setPlayAgainError("");
+    try {
+      let numTickets = 0;
+      for (const t of wonTickets) {
+        const res = await fetch(`/api/lottery/tickets/${t.id}/play-again`, {
+          method: "POST",
+          headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.message ?? "Failed");
+        numTickets += data?.numTickets ?? 0;
+      }
+      setPlayAgainDone({ numTickets });
+      onWithdrawn();
+    } catch (err: any) {
+      setPlayAgainError(err.message ?? "Unknown error");
+    } finally {
+      setPlayingAgain(false);
+    }
+  }
+
   if (dashboardLoading) return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4 animate-pulse">
       <div className="h-5 w-36 rounded-lg bg-white/10" />
       <div className="h-16 rounded-xl bg-white/5" />
       <div className="h-16 rounded-xl bg-white/5" />
       <div className="h-12 rounded-xl bg-white/10" />
+    </div>
+  );
+
+  if (playAgainDone) return (
+    <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-emerald-500/[0.08] to-white/[0.02] p-8 text-center space-y-4">
+      <div className="text-5xl select-none" aria-hidden="true">🎟️</div>
+      <div>
+        <p className="text-sm font-bold text-emerald-400 uppercase tracking-[0.2em] mb-2">Played again</p>
+        <h2 className="font-display text-4xl font-bold tracking-tight bg-gradient-to-b from-white via-slate-100 to-emerald-200 bg-clip-text text-transparent">
+          {playAgainDone.numTickets} new ticket{playAgainDone.numTickets === 1 ? "" : "s"}
+        </h2>
+        <p className="text-base text-slate-400 mt-2">Your winnings went straight back into the next draw — no fees.</p>
+      </div>
+      <button onClick={() => setPlayAgainDone(null)}
+        className="text-base text-slate-400 hover:text-white underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 rounded">
+        Back
+      </button>
     </div>
   );
 
@@ -1741,21 +1797,40 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
         </div>
       </div>
 
-      <FeeBreakdown
-        ticketCostUsd={totalAmount}
-        mode="solana_private"
-        solPriceUsd={solPriceUsd}
-        bridgeFeeUsd={bridgeFeeUsd}
-        bridgeReceiveUsdc={bridgeReceiveUsdc}
-        bridgeFeeUnavailable={bridgeFeeUnavailable}
-        onRetryFee={() => setFeeRetryToken(t => t + 1)}
-      />
+      {/* Hidden for the play-again path — showing a fee panel next to "no fees" contradicts the
+          pitch, and quotes on amounts this small are unreliable anyway (see PLAY_AGAIN_THRESHOLD_USDC).
+          Still fetched in the background so the "Redeem instead" link below stays fee-quote-gated. */}
+      {!allSmall && (
+        <FeeBreakdown
+          ticketCostUsd={totalAmount}
+          mode="solana_private"
+          solPriceUsd={solPriceUsd}
+          bridgeFeeUsd={bridgeFeeUsd}
+          bridgeReceiveUsdc={bridgeReceiveUsdc}
+          bridgeFeeUnavailable={bridgeFeeUnavailable}
+          onRetryFee={() => setFeeRetryToken(t => t + 1)}
+        />
+      )}
       {error && <p className="text-base text-red-400">{error}</p>}
+      {playAgainError && <p className="text-base text-red-400">{playAgainError}</p>}
 
-      <button onClick={handleWithdraw} disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
-        className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
-        {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Redeem ${fmt(totalAmount)} privately`}
-      </button>
+      {allSmall ? (
+        <>
+          <button onClick={handlePlayAgain} disabled={playingAgain}
+            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
+            {playingAgain ? "Playing again…" : `Play again — ${playAgainTicketCount} new ticket${playAgainTicketCount === 1 ? "" : "s"}, no fees`}
+          </button>
+          <button onClick={handleWithdraw} disabled={loading || playingAgain || bridgeFeeUsd === null}
+            className="w-full text-center text-sm text-slate-500 hover:text-slate-300 underline underline-offset-2 transition-colors disabled:opacity-40">
+            {loading ? "Processing…" : bridgeFeeUnavailable ? "Fee unavailable, retry" : bridgeFeeUsd === null ? "Getting fee quote…" : `Redeem ${fmt(totalAmount)} privately instead`}
+          </button>
+        </>
+      ) : (
+        <button onClick={handleWithdraw} disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
+          className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
+          {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Redeem ${fmt(totalAmount)} privately`}
+        </button>
+      )}
     </div>
   );
 }
