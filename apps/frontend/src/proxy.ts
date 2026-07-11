@@ -52,6 +52,12 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL(cleanPath, request.url));
   }
 
+  // Marketing pages (e.g. /partners) linked from within the app must still
+  // resolve on pay.loofta.xyz instead of being rewritten to a nonexistent /app/* route.
+  if (isAppDomain && marketingPaths.has(pathname)) {
+    return NextResponse.next();
+  }
+
   // pay.loofta.xyz or localhost non-marketing path → transparently rewrite to /app/*
   // URL in the browser stays the same; only Next.js routing changes
   if (isAppDomain || isLocalAppPath) {
