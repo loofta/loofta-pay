@@ -41,8 +41,10 @@ export class MegapotCampaignService {
   /**
    * Sum of num_tickets across the user's *private* Megapot purchases (burner_sol_address set —
    * see lottery.service.ts's initiatePurchase vs initiatePublicPurchase) that actually completed
-   * (status active/won/lost — pending/failed purchases never delivered tickets), during the
-   * campaign window.
+   * (any delivered status — 'withdrawn' included, since redeeming or playing-again a win flips a
+   * genuinely-purchased ticket to 'withdrawn'; only 'pending_send'/'failed' never delivered a
+   * ticket), during the campaign window. The `burner_sol_address` filter keeps this to real
+   * private PURCHASES — play-again reinvestments create burner-less tickets and don't count.
    */
   private async getPrivateTicketsPurchased(privyUserId: string): Promise<number> {
     try {
@@ -52,7 +54,7 @@ export class MegapotCampaignService {
         .select('num_tickets')
         .eq('user_id', privyUserId)
         .not('burner_sol_address', 'is', null)
-        .in('status', ['active', 'won', 'lost'])
+        .in('status', ['sent', 'bridging', 'buying', 'active', 'won', 'lost', 'withdrawn'])
         .gte('created_at', CAMPAIGN_START.toISOString())
         .lte('created_at', CAMPAIGN_END.toISOString());
 
