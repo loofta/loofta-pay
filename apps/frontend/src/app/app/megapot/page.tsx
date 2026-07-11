@@ -92,7 +92,7 @@ function statusLabel(s: TicketStatus, bridgeStatus?: string | null, drawTime?: s
     if (drawPassed) return "Checking results…";
   }
   const m: Record<TicketStatus, string> = {
-    pending_send: "Awaiting deposit", sent: "Sent privately", bridging: "Bridging to Base",
+    pending_send: "Awaiting deposit", sent: "Sent privately", bridging: "Receiving",
     buying: "Buying tickets", active: "In draw", won: "Won!", lost: "No win", failed: "Failed",
     withdrawn: "Paid out",
   };
@@ -2470,7 +2470,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
               {(t.status === "won" || t.status === "withdrawn")
                 ? <span className="text-emerald-400">+{fmt(t.winAmountUsdc ?? 0)}</span>
                 : t.isGift
-                  ? <span className="text-slate-500">Free</span>
+                  ? null
                   : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
             </span>
             <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${expandedIds.has(t.id) ? "rotate-180" : ""}`} />
@@ -2733,7 +2733,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                   </p>
                   <p className="text-base text-slate-400">
                     {t.status === "sent" && "Waiting for MagicBlock private transfer to arrive in burner wallet (up to 2 min)."}
-                    {t.status === "bridging" && "Bridging from Solana to Base. This takes 5–15 minutes."}
+                    {t.status === "bridging" && "Your ticket(s) will appear soon."}
                     {t.status === "buying" && "Funds arrived on Base — buying your tickets now."}
                   </p>
                   <Link
