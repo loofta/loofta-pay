@@ -84,6 +84,74 @@ export class UsersService {
   }
 
   /**
+   * Creates the app_users row for a Privy user on first login if one doesn't exist yet — ported
+   * from the web app's POST /api/users/check (a Next.js route mobile can't reach: different
+   * origin, coupled to the frontend's Redis cache). Every login method (email, Twitter, SIWS
+   * wallet) lands here needing the same bootstrap: without this row, gift-claim identity
+   * matching, usernames, and referrals have nothing to key off, even though the core ticket
+   * buy/history/redeem flows don't need it (lottery_tickets.user_id is the raw Privy DID).
+   *
+   * Idempotent — safe to call on every login, not just the first.
+   */
+  async ensureAppUser(privyUserId: string): Promise<{ id: string; username: string | null }> {
+    const { data: existing } = await this.supabaseService.appUsers
+      .select('id, username')
+      .eq('privy_user_id', privyUserId)
+      .maybeSingle();
+    if (existing) return existing;
+
+    const privyUser = await this.getPrivyUser(privyUserId);
+    const accounts = privyUser?.linked_accounts ?? [];
+    const twitterAccount = accounts.find((a: any) => ['twitter', 'x', 'twitter_oauth'].includes(a.type));
+    const twitterHandle = twitterAccount
+      ? (twitterAccount.username ?? twitterAccount.name ?? '').replace(/^@/, '').toLowerCase().trim() || null
+      : null;
+    const emailAccount = accounts.find((a: any) => a.type === 'email');
+    const email = emailAccount?.address ?? null;
+
+    const looHandle = twitterHandle
+      ?? (email ? email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16) : null)
+      ?? 'user';
+    const looUsername = await this.generateUniqueLooUsername(looHandle, privyUserId);
+
+    const { data: created, error } = await this.supabaseService.appUsers
+      .insert({
+        privy_user_id: privyUserId,
+        email,
+        username: twitterHandle ?? looUsername,
+        twitter_username: twitterHandle,
+        loo_username: looUsername,
+        // New users are born on mainnet — no ATA migration needed.
+        ata_migrated_mainnet: true,
+        ata_migrated_devnet: true,
+      })
+      .select('id, username')
+      .single();
+    if (error || !created) throw new Error(`ensureAppUser: failed to create app_users row: ${error?.message}`);
+    return created;
+  }
+
+  /**
+   * Generates a unique loo-{handle} username, appending a counter on collision. Ported from
+   * apps/frontend/src/lib/looUsername.ts — see ensureAppUser for why this now also lives here.
+   */
+  private async generateUniqueLooUsername(handle: string, privyUserId: string): Promise<string> {
+    let counter = 0;
+    for (;;) {
+      const counterStr = counter === 0 ? '' : String(counter);
+      const suffix = handle.slice(0, 16 - counterStr.length) + counterStr;
+      const candidate = `loo-${suffix}`;
+
+      const [{ data: byUsername }, { data: byLoo }] = await Promise.all([
+        this.supabaseService.appUsers.select('privy_user_id').eq('username', candidate).neq('privy_user_id', privyUserId).limit(1).maybeSingle(),
+        this.supabaseService.appUsers.select('privy_user_id').eq('loo_username', candidate).neq('privy_user_id', privyUserId).limit(1).maybeSingle(),
+      ]);
+      if (!byUsername && !byLoo) return candidate;
+      counter = counter === 0 ? 2 : counter + 1;
+    }
+  }
+
+  /**
    * Get current user's email by Privy user ID (for recipient-check: compare to PENDING_EMAIL claim)
    */
   async getEmailByPrivyId(privyUserId: string): Promise<string | null> {
@@ -460,6 +528,21 @@ export class UsersService {
     return this.getSolanaWalletBalanceUSDInternal(walletAddress);
   }
 
+  /**
+   * Get native SOL + USDC balances for the mobile Seeker-wallet profile display. Same wallet
+   * resolution as getSolanaWalletBalanceAndAddress (works for an MWA-linked external wallet too,
+   * not just Privy's embedded one — getSolanaWalletAddress just picks the first Solana 'wallet'
+   * linked_account either way), kept as a separate method/endpoint so this doesn't disturb the
+   * existing USD-only balance check used for wallet-regeneration eligibility.
+   */
+  async getSolanaWalletBalances(
+    privyUserId: string,
+  ): Promise<{ walletAddress: string; solBalance: number; usdcBalance: number }> {
+    const walletAddress = await this.getSolanaWalletAddress(privyUserId);
+    const { solBalance, usdcBalance } = await this.getSolAndUsdcBalancesInternal(walletAddress);
+    return { walletAddress, solBalance, usdcBalance };
+  }
+
   private async getSolanaWalletBalanceUSDInternal(walletAddress: string): Promise<number> {
     const cluster =
       process.env.SOLANA_CLUSTER?.trim() ||
@@ -507,6 +590,59 @@ export class UsersService {
     } catch (error) {
       this.logger.error('Error fetching Solana balance:', error);
       return 0;
+    }
+  }
+
+  private async getSolAndUsdcBalancesInternal(
+    walletAddress: string,
+  ): Promise<{ solBalance: number; usdcBalance: number }> {
+    const cluster =
+      process.env.SOLANA_CLUSTER?.trim() ||
+      process.env.NEXT_PUBLIC_SOLANA_CLUSTER?.trim() ||
+      'mainnet-beta';
+    const isDevnet = cluster === 'devnet' || cluster === 'testnet';
+
+    const heliusKey = process.env.HELIUS_API_KEY?.trim();
+    const solanaRpcUrl = isDevnet
+      ? (process.env.SOLANA_DEVNET_RPC_URL?.trim() ||
+         (heliusKey ? `https://devnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.devnet.solana.com'))
+      : (process.env.SOLANA_RPC_URL?.trim() ||
+         (heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com'));
+
+    const usdcMint = isDevnet
+      ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+      : 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+    try {
+      // Batched JSON-RPC request — one round trip for both balances instead of two.
+      const response = await fetch(solanaRpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify([
+          {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getTokenAccountsByOwner',
+            params: [walletAddress, { mint: usdcMint }, { encoding: 'jsonParsed' }],
+          },
+          { jsonrpc: '2.0', id: 2, method: 'getBalance', params: [walletAddress] },
+        ]),
+      });
+
+      const results = await response.json();
+      const tokenResult = results.find((r: any) => r.id === 1);
+      const balanceResult = results.find((r: any) => r.id === 2);
+
+      const usdcAccount = tokenResult?.result?.value?.[0];
+      const usdcBalance = usdcAccount?.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0;
+
+      const lamports = balanceResult?.result?.value ?? 0;
+      const solBalance = lamports / 1e9;
+
+      return { solBalance, usdcBalance };
+    } catch (error) {
+      this.logger.error('Error fetching Solana/USDC balances:', error);
+      return { solBalance: 0, usdcBalance: 0 };
     }
   }
 

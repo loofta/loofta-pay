@@ -2086,12 +2086,30 @@ export class LotteryService {
     return Number(balance) / 1_000_000;
   }
 
-  /** After daily draw: check all active tickets for wins */
+  /**
+   * Checks every still-'active' ticket whose draw has already happened and resolves it to
+   * won/lost. Runs frequently (see lottery-cron.service.ts) rather than once/day — a per-ticket
+   * failure (RPC rate limit, Megapot API hiccup, etc.) leaves status='active' untouched, so at a
+   * daily cadence that ticket would silently wait up to 24h for the next retry. Idempotent: a
+   * ticket that already resolved is no longer 'active' and won't be re-selected.
+   */
+  private checkingResultsRunning = false;
+
   async checkDailyResults(): Promise<void> {
+    // Overlap guard: a run can take a while (NFT metadata fetches are throttled/retried per
+    // token) — without this, a slow run could still be going when the next tick fires.
+    if (this.checkingResultsRunning) return;
+    this.checkingResultsRunning = true;
+    try {
+      await this.checkDailyResultsInner();
+    } finally {
+      this.checkingResultsRunning = false;
+    }
+  }
+
+  private async checkDailyResultsInner(): Promise<void> {
     const db = this.supabase.getClient();
 
-    // Only process tickets that are past their draw time
-    // (cron runs at 00:30 UTC, draw is at ~17:10 UTC the previous day)
     const { data: tickets } = await db
       .from('lottery_tickets')
       .select('*')

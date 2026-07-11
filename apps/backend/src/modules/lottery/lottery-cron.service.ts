@@ -56,11 +56,14 @@ export class LotteryCronService {
     );
   }
 
-  /** Daily at 00:30 UTC: check draw results (draw happens at midnight UTC) */
-  @Cron('30 0 * * *')
+  /** Every 15 minutes: resolve any 'active' ticket whose draw has passed (won/lost). Previously
+   *  ran once/day, which meant a ticket that failed to resolve (RPC hiccup, etc.) silently sat
+   *  unresolved for up to 24h before the next retry — this cadence closes that gap. Safe to run
+   *  often: the query only ever touches tickets still 'active', and the service method itself is
+   *  overlap-guarded. */
+  @Cron('0 */15 * * * *')
   async checkDailyResults(): Promise<void> {
     if (!this.isProd) return;
-    this.logger.log('Cron: checking daily Megapot draw results');
     await this.lottery.checkDailyResults().catch(e =>
       this.logger.error(`checkDailyResults: ${e.message}`),
     );
