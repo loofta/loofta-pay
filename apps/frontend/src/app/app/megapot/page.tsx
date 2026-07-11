@@ -59,6 +59,8 @@ interface TicketSummary {
   ticketNumbers: TicketNumbers[] | null;
   winningNumbers: TicketNumbers | null;
   deletedAt?: string | null;
+  /** True when this ticket came from claiming a gift, not a self-purchase — excluded from spend. */
+  isGift?: boolean;
 }
 interface WithdrawalSummary {
   id: string; ticketId: string; route: "base" | "solana_private";
@@ -2173,7 +2175,9 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
   }
 
   const allForStats = [...activeTickets, ...history];
-  const ticketSpent = allForStats.filter(t => t.status !== "failed").reduce((s, t) => s + t.costUsdc, 0);
+  // Gift-received tickets cost the claimant nothing — don't count them as spend (they still show
+  // up in the list below, just labeled "Gifted" instead of a debit).
+  const ticketSpent = allForStats.filter(t => t.status !== "failed" && !t.isGift).reduce((s, t) => s + t.costUsdc, 0);
   const ticketWon = allForStats.filter(t => t.status === "won" || t.status === "withdrawn").reduce((s, t) => s + (t.winAmountUsdc ?? 0), 0);
   const giftSpent = myGifts.filter(g => g.status !== "failed").reduce((s, g) => s + g.costUsdc, 0);
   // "Spent"/"Won" fold gift spend into one number rather than a separate card — dynamically
@@ -2450,6 +2454,11 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
                 {statusLabel(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}
               </span>
+              {t.isGift && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border border-emerald-500/30 text-emerald-400 bg-emerald-500/10">
+                  Gifted
+                </span>
+              )}
             </div>
             <p className="text-base text-slate-500 mt-0.5">
               {t.roundId ? `Round ${t.roundId} · ` : ""}{dateStr}
@@ -2460,7 +2469,9 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
             <span className="text-base font-semibold font-sans">
               {(t.status === "won" || t.status === "withdrawn")
                 ? <span className="text-emerald-400">+{fmt(t.winAmountUsdc ?? 0)}</span>
-                : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
+                : t.isGift
+                  ? <span className="text-slate-500">Free</span>
+                  : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
             </span>
             <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${expandedIds.has(t.id) ? "rotate-180" : ""}`} />
           </div>

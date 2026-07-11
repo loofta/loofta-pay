@@ -167,6 +167,9 @@ export interface LotteryTicketSummary {
   bridgeExpiresAt: string | null;
   ticketNumbers: { main: number[]; bonus: number }[] | null;
   winningNumbers: { main: number[]; bonus: number } | null;
+  /** True when this ticket came from claiming a gift — the claimant never paid for it, see
+   *  purchaseGiftTickets. Dashboard "spent" excludes these; "won" still counts them. */
+  isGift: boolean;
 }
 
 export interface LotteryWithdrawalSummary {
@@ -3271,6 +3274,7 @@ export class LotteryService {
       bridgeExpiresAt: t.bridge_expires_at ?? null,
       ticketNumbers: t.ticket_numbers ?? null,
       winningNumbers: t.winning_numbers ?? null,
+      isGift: Boolean(t.is_gift),
     };
   }
 
@@ -3312,7 +3316,9 @@ export class LotteryService {
     const activeTickets = tickets.filter(t => ['pending_send', 'sent', 'bridging', 'buying', 'active'].includes(t.status));
     const history = tickets.filter(t => ['won', 'lost', 'failed', 'withdrawn'].includes(t.status));
 
-    const totalSpent = tickets.reduce((sum, t) => sum + t.costUsdc, 0);
+    // Gift-received tickets cost the claimant nothing (see purchaseGiftTickets) — exclude them
+    // from spend, but a gift that goes on to win is still real money the user actually gets.
+    const totalSpent = tickets.filter(t => !t.isGift).reduce((sum, t) => sum + t.costUsdc, 0);
     const totalWon = tickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
 
     let nextDraw = { roundId: null as string | null, drawTime: null as string | null, prizePool: null as string | null };
@@ -3334,22 +3340,7 @@ export class LotteryService {
     const db = this.supabase.getClient();
     const { data } = await db.from('lottery_tickets').select('*').eq('id', ticketId).eq('user_id', userId).single();
     if (!data) return null;
-    return {
-      id: data.id,
-      status: data.status,
-      numTickets: data.num_tickets,
-      costUsdc: parseFloat(data.cost_usdc),
-      roundId: data.round_id,
-      drawTime: data.draw_time,
-      winAmountUsdc: data.win_amount_usdc ? parseFloat(data.win_amount_usdc) : null,
-      winTier: data.win_tier,
-      createdAt: data.created_at,
-      depositAddress: ['pending_send', 'sent', 'bridging'].includes(data.status) ? (data.bridge_deposit_address ?? null) : null,
-      bridgeStatus: data.bridge_status ?? null,
-      bridgeExpiresAt: data.bridge_expires_at ?? null,
-      ticketNumbers: data.ticket_numbers ?? null,
-      winningNumbers: data.winning_numbers ?? null,
-    };
+    return this.mapTicketSummary(data);
   }
 
   /** Fast Solana RPC deposit check — called by frontend every 5s during deposit waiting */
