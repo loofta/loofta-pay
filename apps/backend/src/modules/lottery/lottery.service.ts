@@ -24,6 +24,13 @@ import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const TICKET_PRICE_USDC = 1;
+// A win below this is worth less than a ticket's cash value once the fixed bridge + relay fees
+// are taken out, so cashing it out would deliver a fraction of the figure shown. Below the line a
+// win is treated as a "free ticket" — the only action is Play Again (reinvest into the next draw,
+// no fees); at or above it, withdrawal is allowed. This is the single source of truth for that
+// rule: the withdrawal endpoints enforce it, and the dashboard reports it (withdrawMinUsdc +
+// per-ticket isFreeTicket) so the UI never has to hardcode the number.
+export const WITHDRAW_MIN_USDC = 1.3;
 // A SOL→Base Li.Fi bridge normally quotes single-digit-seconds execution — 20 min with zero
 // destination-side activity means the bridge tool's solver network has abandoned the order,
 // not that it's "just slow". Past this, stop waiting and make the user whole ourselves.
@@ -150,6 +157,9 @@ export interface LotteryDashboard {
   withdrawals: LotteryWithdrawalSummary[];
   stats: { totalSpent: number; totalWon: number; netPnl: number; ticketCount: number };
   nextDraw: { roundId: string | null; drawTime: string | null; prizePool: string | null };
+  /** Minimum win (USDC) that may be withdrawn; below this a win is a "free ticket" (play-again
+   *  only). Sent so the client renders the rule without hardcoding the threshold. */
+  withdrawMinUsdc: number;
 }
 
 export interface LotteryTicketSummary {
@@ -161,6 +171,9 @@ export interface LotteryTicketSummary {
   drawTime: string | null;
   winAmountUsdc: number | null;
   winTier: number | null;
+  /** A won ticket whose amount is below WITHDRAW_MIN_USDC — shown as a "free ticket" (play-again
+   *  only, no withdrawal). False for any non-won ticket. Authoritative; the UI renders off this. */
+  isFreeTicket: boolean;
   createdAt: string;
   depositAddress: string | null;
   bridgeStatus: string | null;
@@ -2349,6 +2362,12 @@ export class LotteryService {
 
     if (tErr || !ticket) throw new BadRequestException('Ticket not found or not won');
     if (!ticket.win_amount_usdc || ticket.win_amount_usdc <= 0) throw new BadRequestException('No winnings to withdraw');
+    // Same free-ticket floor as initiateWithdrawalBatch — see the note there.
+    if (parseFloat(ticket.win_amount_usdc) < WITHDRAW_MIN_USDC) {
+      throw new BadRequestException(
+        `This win is a free ticket — play it again into the next draw instead. (Withdrawals start at $${WITHDRAW_MIN_USDC.toFixed(2)}, since fees would eat most of a smaller amount.)`,
+      );
+    }
 
     // Same idempotency guard as initiateWithdrawalBatch — ticket.status stays 'won' throughout
     // the whole withdrawal pipeline, so a duplicate call (e.g. refresh + re-click) would otherwise
@@ -2425,6 +2444,17 @@ export class LotteryService {
       if (!t.win_amount_usdc || parseFloat(t.win_amount_usdc) <= 0) {
         throw new BadRequestException(`Ticket ${t.id} has no winnings to withdraw`);
       }
+    }
+
+    // Enforce the free-ticket rule server-side (the UI hides withdrawal below this, but the
+    // endpoint is the real gate — a direct API call must not be able to cash out a sub-threshold
+    // win at a loss). The bridge fee is per-batch, so the check is on the batch TOTAL, not each
+    // ticket: several small wins can together clear the bar even if none does alone.
+    const batchTotalUsdc = tickets.reduce((sum, t) => sum + parseFloat(t.win_amount_usdc), 0);
+    if (batchTotalUsdc < WITHDRAW_MIN_USDC) {
+      throw new BadRequestException(
+        `This win is a free ticket — play it again into the next draw instead. (Withdrawals start at $${WITHDRAW_MIN_USDC.toFixed(2)}, since fees would eat most of a smaller amount.)`,
+      );
     }
 
     // Idempotency guard: a ticket's status stays 'won' for the ENTIRE claim → bridge → deliver
@@ -3286,6 +3316,10 @@ export class LotteryService {
       drawTime: t.draw_time,
       winAmountUsdc: t.win_amount_usdc ? parseFloat(t.win_amount_usdc) : null,
       winTier: t.win_tier,
+      isFreeTicket: t.status === 'won'
+        && t.win_amount_usdc != null
+        && parseFloat(t.win_amount_usdc) > 0
+        && parseFloat(t.win_amount_usdc) < WITHDRAW_MIN_USDC,
       createdAt: t.created_at,
       depositAddress: ['pending_send', 'sent', 'bridging'].includes(t.status) ? (t.bridge_deposit_address ?? null) : null,
       bridgeStatus: t.bridge_status ?? null,
@@ -3351,6 +3385,7 @@ export class LotteryService {
       withdrawals,
       stats: { totalSpent, totalWon, netPnl: totalWon - totalSpent, ticketCount: tickets.length },
       nextDraw,
+      withdrawMinUsdc: WITHDRAW_MIN_USDC,
     };
   }
 
@@ -3812,6 +3847,25 @@ export class LotteryService {
       referrers: this.megapot.getReferrers(),
       splits: this.megapot.getSplits(),
     });
+
+    // Step 3b: sweep the sub-$1 change that couldn't buy a whole ticket to Loofta's Base wallet.
+    // We don't carry it forward or return it — returning sub-$1 on-chain costs more in bridge fees
+    // than it's worth, and leaving it in the companion would slowly strand dust. Best-effort:
+    // Rhinestone-sponsored (no gas cost to the user), and if it fails the funds are safe in the
+    // companion we control, so it never blocks the replay.
+    try {
+      const leftover = await this.getCompanionUsdcBalance(ticket.companion_address);
+      if (leftover > 0.01) {
+        await this.rhinestone.rescueUsdc({
+          companionPrivateKey: companionPrivHex,
+          rescueWallet: LOOFTA_WALLET,
+          amountUsdc: leftover,
+        });
+        this.logger.log(`playAgain ${opts.ticketId}: swept $${leftover.toFixed(6)} leftover → Loofta wallet`);
+      }
+    } catch (e: any) {
+      this.logger.warn(`playAgain ${opts.ticketId}: leftover sweep failed (funds safe in companion): ${e.message}`);
+    }
 
     // Step 4: mark old ticket as withdrawn, create new active ticket record
     await db.from('lottery_tickets').update({ status: 'withdrawn', updated_at: new Date().toISOString() }).eq('id', ticket.id);

@@ -24,10 +24,17 @@ const LOOFTA_TICKET_FEE_BPS = 150;
 function looftaFee(ticketCostUsd: number) {
   return LOOFTA_TICKET_FEE_FLAT_USD + (ticketCostUsd * LOOFTA_TICKET_FEE_BPS) / 10_000;
 }
-// Below this, the ~$0.16 fixed bridge fee eats a disproportionate share of a lone win (a $1 win
-// redeemed alone nets roughly 25% less after fees) — default those to a free "play again" instead
-// of cash-out. Matches MagicBlock's own gasless/direct-transfer cutover point.
-const PLAY_AGAIN_THRESHOLD_USDC = 5;
+// The free-ticket threshold is owned and enforced by the backend (see WITHDRAW_MIN_USDC in
+// lottery.service.ts); it's reported per-request as dashboard.withdrawMinUsdc and per-ticket as
+// ticket.isFreeTicket. This is only a fallback for the brief window before the dashboard loads —
+// the UI should prefer the backend values.
+const DEFAULT_WITHDRAW_MIN_USDC = 1.3;
+// Whether an aggregate/total win is below the withdrawal floor (→ "Free ticket", play-again only).
+// For a single ticket, prefer the authoritative ticket.isFreeTicket flag from the backend.
+function isFreeTicketAmount(winUsdc: number | null | undefined, thresholdUsdc: number): boolean {
+  const n = winUsdc ?? 0;
+  return n > 0 && n < thresholdUsdc;
+}
 const MAIN_MAX = 30;
 const MAIN_COUNT = 5;
 const BONUS_MAX = 12;
@@ -65,6 +72,8 @@ interface TicketSummary {
   deletedAt?: string | null;
   /** True when this ticket came from claiming a gift, not a self-purchase — excluded from spend. */
   isGift?: boolean;
+  /** Backend-authoritative: a won ticket below the withdrawal floor, shown as "Free ticket". */
+  isFreeTicket?: boolean;
 }
 interface WithdrawalSummary {
   id: string; ticketId: string; route: "base" | "solana_private";
@@ -74,6 +83,8 @@ interface Dashboard {
   activeTickets: TicketSummary[]; history: TicketSummary[]; withdrawals: WithdrawalSummary[];
   stats: { totalSpent: number; totalWon: number; netPnl: number; ticketCount: number };
   nextDraw: { roundId: string | null; drawTime: string | null; prizePool: string | null };
+  /** Withdrawal floor (USDC) from the backend — below it a win is a "free ticket". */
+  withdrawMinUsdc?: number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1461,11 +1472,12 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
 
 // ─── Withdraw tab ─────────────────────────────────────────────────────────────
 
-function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn, dashboardLoading, previewDone }: {
+function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn, dashboardLoading, previewDone, withdrawMinUsdc }: {
   wonTickets: TicketSummary[]; accessToken: string | null;
   userSolanaAddress: string; solPriceUsd: number; onWithdrawn: () => void;
   dashboardLoading?: boolean;
   previewDone?: boolean; // dev-only: render the post-redeem state directly
+  withdrawMinUsdc?: number; // backend-reported withdrawal floor (fallback until dashboard loads)
 }) {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(!!previewDone);
@@ -1533,17 +1545,16 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
 
   const totalAmount = wonTickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
   const isBatch = wonTickets.length > 1;
-  // Play again reinvests the claimed balance at $1/ticket, floored — needs at least $1 to buy
-  // anything. Below PLAY_AGAIN_THRESHOLD_USDC the fixed bridge fee eats a disproportionate share
-  // of a win, so default the primary CTA to a free replay instead of cash-out when there's enough
-  // to actually buy a ticket with (Redeem stays one tap away either way).
+  // Play again reinvests the claimed balance at $1/ticket, floored; the sub-$1 change is swept to
+  // Loofta's wallet by the backend (not returned), so there's nothing to show the user about it.
   const playAgainTicketCount = Math.floor(totalAmount);
-  // Play again spends whole dollars only — any change stays in the same companion wallet
-  // (reused on the new ticket, see playAgain backend) rather than being lost or redeemed
-  // separately, which would hand a big chunk of it to the bridge fee for no reason.
-  const playAgainRemainder = parseFloat((totalAmount - playAgainTicketCount).toFixed(2));
-  const allSmall = wonTickets.length > 0 && playAgainTicketCount >= 1
-    && wonTickets.every(t => (t.winAmountUsdc ?? 0) < PLAY_AGAIN_THRESHOLD_USDC);
+  const canPlayAgain = playAgainTicketCount >= 1;
+  // Threshold is backend-owned (dashboard.withdrawMinUsdc); fall back only until it loads. Sub-
+  // threshold wins are worth less than a ticket after fees — shown as a "Free ticket", the only
+  // action is Play Again. At/above it the user may also cash out. A win too small to even buy one
+  // ticket (< $1) can't be replayed, so withdrawal is its only option.
+  const minWithdraw = withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC;
+  const isFreeTicket = isFreeTicketAmount(totalAmount, minWithdraw) && canPlayAgain;
 
   useEffect(() => {
     if (!totalAmount) return;
@@ -1766,9 +1777,11 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
           {isBatch ? `${wonTickets.length} winning draws` : "You won"}
         </p>
         <h2 className="font-display text-5xl sm:text-6xl font-bold tracking-tight bg-gradient-to-b from-white via-emerald-50 to-emerald-300 bg-clip-text text-transparent tabular-nums">
-          {fmt(totalAmount)}
+          {isFreeTicket ? "Free ticket" : fmt(totalAmount)}
         </h2>
-        <p className="text-base text-slate-400 mt-1">ready to redeem privately</p>
+        <p className="text-base text-slate-400 mt-1">
+          {isFreeTicket ? "play it again in the next draw" : "ready to redeem privately"}
+        </p>
       </motion.div>
 
       {/* Winning ticket(s) */}
@@ -1794,49 +1807,42 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
                 </p>
               </div>
             </div>
-            <span className="text-emerald-400 font-bold text-lg tabular-nums shrink-0 ml-3">+{fmt(t.winAmountUsdc ?? 0)}</span>
+            <span className="text-emerald-400 font-bold text-lg tabular-nums shrink-0 ml-3">
+              {t.isFreeTicket ? "Free ticket" : `+${fmt(t.winAmountUsdc ?? 0)}`}
+            </span>
           </motion.div>
         ))}
       </div>
 
-      <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 flex items-start gap-3">
-        <ShieldCheck className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-        <div>
-          <p className="text-base text-slate-300 font-medium">
-            {isBatch ? "All your wins arrive as one private transfer" : "Arrives privately in your Loofta balance"}
-          </p>
-          <p className="text-sm text-slate-500 mt-0.5">No on-chain link between your winnings and your wallet</p>
+      {!isFreeTicket && (
+        <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 flex items-start gap-3">
+          <ShieldCheck className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-base text-slate-300 font-medium">
+              {isBatch ? "All your wins arrive as one private transfer" : "Arrives privately in your Loofta balance"}
+            </p>
+            <p className="text-sm text-slate-500 mt-0.5">No on-chain link between your winnings and your wallet</p>
+          </div>
         </div>
-      </div>
-
-      {/* Hidden for the play-again path — showing a fee panel next to "no fees" contradicts the
-          pitch, and quotes on amounts this small are unreliable anyway (see PLAY_AGAIN_THRESHOLD_USDC).
-          Still fetched in the background so the "Redeem instead" link below stays fee-quote-gated. */}
-      {!allSmall && (
-        <FeeBreakdown
-          ticketCostUsd={totalAmount}
-          mode="solana_private"
-          solPriceUsd={solPriceUsd}
-          bridgeFeeUsd={bridgeFeeUsd}
-          bridgeReceiveUsdc={bridgeReceiveUsdc}
-          bridgeFeeUnavailable={bridgeFeeUnavailable}
-          onRetryFee={() => setFeeRetryToken(t => t + 1)}
-        />
       )}
-      {!allSmall && error && <p className="text-base text-red-400">{error}</p>}
+
       {playAgainError && <p className="text-base text-red-400">{playAgainError}</p>}
 
-      {allSmall ? (
+      {isFreeTicket ? (
+        /* Free ticket — worth less than a ticket's cash value after fees, so the only action is
+           to replay it into the next draw (free). No withdraw offered. */
+        <button onClick={handlePlayAgain} disabled={playingAgain}
+          className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
+          {playingAgain ? "Playing again…" : "Play again — enter the next draw, free"}
+        </button>
+      ) : canPlayAgain ? (
+        /* Cash win (≥ $1.30): play again is the featured, fee-free option; withdrawing is one tap
+           away behind a confirmation showing the real net. */
         <>
           <button onClick={handlePlayAgain} disabled={playingAgain}
             className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
             {playingAgain ? "Playing again…" : `Play again — ${playAgainTicketCount} new ticket${playAgainTicketCount === 1 ? "" : "s"}, no fees`}
           </button>
-          {playAgainRemainder > 0 && (
-            <p className="text-sm text-slate-500 text-center -mt-2">
-              {fmt(playAgainRemainder)} left over isn&apos;t enough for another ticket yet — it carries forward automatically toward your next win
-            </p>
-          )}
           {!confirmingRedeem ? (
             <button onClick={() => setConfirmingRedeem(true)} disabled={playingAgain || bridgeFeeUsd === null}
               className="w-full h-11 rounded-xl border border-white/15 text-slate-300 font-medium text-sm hover:bg-white/[0.06] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
@@ -1862,10 +1868,14 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
           )}
         </>
       ) : (
-        <button onClick={handleWithdraw} disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
-          className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
-          {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Redeem ${fmt(totalAmount)} privately`}
-        </button>
+        /* Edge: a win too small to buy even one replay ticket (< $1) — withdrawal is the only path. */
+        <>
+          {error && <p className="text-base text-red-400">{error}</p>}
+          <button onClick={handleWithdraw} disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
+            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
+            {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Redeem ~${fmt(bridgeReceiveUsdc ?? totalAmount)} privately`}
+          </button>
+        </>
       )}
     </div>
   );
@@ -2100,10 +2110,11 @@ function TicketNumberCard({ tn, winningNumbers }: {
   );
 }
 
-function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRefresh, refetch, userSolanaAddress, loading, nextDrawRoundId }: {
+function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRefresh, refetch, userSolanaAddress, loading, nextDrawRoundId, withdrawMinUsdc }: {
   history: TicketSummary[]; withdrawals: WithdrawalSummary[]; activeTickets: TicketSummary[];
   getAccessToken: () => Promise<string | null>; onRefresh: () => void; refetch?: () => void;
   userSolanaAddress: string; loading?: boolean; nextDrawRoundId?: string | null;
+  withdrawMinUsdc?: number;
 }) {
   const isAppPath = usePathname()?.startsWith("/app");
   const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
@@ -2361,7 +2372,9 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
       const data = await res.json();
       if (res.ok) {
         const msg = data.status === "won"
-          ? `Won $${data.winAmountUsdc?.toFixed(2)} (Tier ${data.winTier ?? "?"})! Go to Redeem tab.`
+          ? (isFreeTicketAmount(data.winAmountUsdc, withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC)
+              ? "You won a free ticket! Go to Redeem tab to play it again."
+              : `Won $${data.winAmountUsdc?.toFixed(2)} (Tier ${data.winTier ?? "?"})! Go to Redeem tab.`)
           : data.status === "lost"
             ? "No win this draw — better luck next time!"
             : `Status: ${data.status}`;
@@ -2579,7 +2592,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-base font-semibold font-sans">
               {(t.status === "won" || t.status === "withdrawn")
-                ? <span className="text-emerald-400">+{fmt(t.winAmountUsdc ?? 0)}</span>
+                ? <span className="text-emerald-400">{t.isFreeTicket ? "Free ticket" : `+${fmt(t.winAmountUsdc ?? 0)}`}</span>
                 : t.isGift
                   ? null
                   : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
@@ -3050,17 +3063,19 @@ type DrawResult = {
 
 const WON_MODAL_KEY = "loofta_won_modal_v1";
 
-function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRedeem }: {
+function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRedeem, withdrawMinUsdc }: {
   results: DrawResult[];
   winningNumbers?: { main: number[]; bonus: number } | null;
   ticketNumbers?: { main: number[]; bonus: number }[] | null;
   onClose: () => void;
   onRedeem: () => void;
+  withdrawMinUsdc?: number;
 }) {
   const isAppPath = usePathname()?.startsWith("/app");
   const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
   const anyWon = results.some(r => r.status === "won");
   const totalWon = results.reduce((sum, r) => sum + (r.winAmountUsdc ?? 0), 0);
+  const wonFreeTicket = anyWon && isFreeTicketAmount(totalWon, withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC);
   const [showAllTickets, setShowAllTickets] = useState(false);
 
   const sortedTickets = ticketNumbers ? [...ticketNumbers].sort((a, b) => {
@@ -3090,10 +3105,17 @@ function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRe
           <div>
             <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-0.5">Draw Result</p>
             {anyWon ? (
-              <>
-                <h2 className="text-2xl font-bold text-white">You Won!</h2>
-                <p className="text-xl font-semibold text-emerald-400">+{fmt(totalWon)}</p>
-              </>
+              wonFreeTicket ? (
+                <>
+                  <h2 className="text-2xl font-bold text-white">You won a free ticket!</h2>
+                  <p className="text-base font-semibold text-emerald-400">Play it again in the next draw</p>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-2xl font-bold text-white">You Won!</h2>
+                  <p className="text-xl font-semibold text-emerald-400">+{fmt(totalWon)}</p>
+                </>
+              )
             ) : (
               <>
                 <h2 className="text-xl font-bold text-white">No win this time</h2>
@@ -3361,7 +3383,7 @@ export default function MegapotPage() {
         )}
         {tab === "redeem" && (
           authenticated ? (
-            <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} dashboardLoading={isRedeemPreview ? false : dashboardLoading} previewDone={redeemPreview === "redeem-done"} />
+            <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} dashboardLoading={isRedeemPreview ? false : dashboardLoading} previewDone={redeemPreview === "redeem-done"} withdrawMinUsdc={dashboard?.withdrawMinUsdc} />
           ) : (
             <SignInGate message="Sign in to see and redeem your winnings." login={login} />
           )
@@ -3378,6 +3400,7 @@ export default function MegapotPage() {
               userSolanaAddress={userSolanaAddress}
               loading={dashboardLoading}
               nextDrawRoundId={dashboard?.nextDraw?.roundId ?? null}
+              withdrawMinUsdc={dashboard?.withdrawMinUsdc}
             />
           ) : (
             <SignInGate message="Sign in to see your ticket history." login={login} />
@@ -3398,6 +3421,7 @@ export default function MegapotPage() {
             try { localStorage.removeItem(WON_MODAL_KEY); } catch { /* ignore */ }
             setShowResultModal(false);
           }}
+          withdrawMinUsdc={dashboard?.withdrawMinUsdc}
         />
       )}
 
