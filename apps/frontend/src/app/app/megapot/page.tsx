@@ -870,9 +870,16 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
               ? <span className="text-sm font-normal text-amber-400">couldn&apos;t get a real quote</span>
               : youReceive === null
                 ? <span className="opacity-40 font-normal text-slate-400">estimating…</span>
-                : fmt(youReceive)}
+                : `~${fmt(youReceive)}`}
           </span>
         </div>
+        {!bridgeFeeUnavailable && youReceive !== null && (
+          <div className="px-4 py-2.5">
+            <p className="text-sm text-slate-500">
+              Estimate based on your recorded win — the exact amount is confirmed once your winnings are claimed on-chain, and may come in slightly lower.
+            </p>
+          </div>
+        )}
         {bridgeFeeUnavailable && onRetryFee && (
           <div className="px-4 py-3">
             <button type="button" onClick={onRetryFee} className="text-sm text-amber-400 underline underline-offset-2 hover:text-amber-300">
@@ -1474,6 +1481,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   const [playingAgain, setPlayingAgain] = useState(false);
   const [playAgainDone, setPlayAgainDone] = useState<{ numTickets: number } | null>(null);
   const [playAgainError, setPlayAgainError] = useState("");
+  const [confirmingRedeem, setConfirmingRedeem] = useState(false);
   const reduceMotion = useReducedMotion();
 
   // Resume an in-flight redeem across a page refresh — without this, a refresh mid-redeem drops
@@ -1530,6 +1538,10 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   // of a win, so default the primary CTA to a free replay instead of cash-out when there's enough
   // to actually buy a ticket with (Redeem stays one tap away either way).
   const playAgainTicketCount = Math.floor(totalAmount);
+  // Play again spends whole dollars only — any change stays in the same companion wallet
+  // (reused on the new ticket, see playAgain backend) rather than being lost or redeemed
+  // separately, which would hand a big chunk of it to the bridge fee for no reason.
+  const playAgainRemainder = parseFloat((totalAmount - playAgainTicketCount).toFixed(2));
   const allSmall = wonTickets.length > 0 && playAgainTicketCount >= 1
     && wonTickets.every(t => (t.winAmountUsdc ?? 0) < PLAY_AGAIN_THRESHOLD_USDC);
 
@@ -1811,7 +1823,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
           onRetryFee={() => setFeeRetryToken(t => t + 1)}
         />
       )}
-      {error && <p className="text-base text-red-400">{error}</p>}
+      {!allSmall && error && <p className="text-base text-red-400">{error}</p>}
       {playAgainError && <p className="text-base text-red-400">{playAgainError}</p>}
 
       {allSmall ? (
@@ -1820,10 +1832,34 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
             className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
             {playingAgain ? "Playing again…" : `Play again — ${playAgainTicketCount} new ticket${playAgainTicketCount === 1 ? "" : "s"}, no fees`}
           </button>
-          <button onClick={handleWithdraw} disabled={loading || playingAgain || bridgeFeeUsd === null}
-            className="w-full text-center text-sm text-slate-500 hover:text-slate-300 underline underline-offset-2 transition-colors disabled:opacity-40">
-            {loading ? "Processing…" : bridgeFeeUnavailable ? "Fee unavailable, retry" : bridgeFeeUsd === null ? "Getting fee quote…" : `Redeem ${fmt(totalAmount)} privately instead`}
-          </button>
+          {playAgainRemainder > 0 && (
+            <p className="text-sm text-slate-500 text-center -mt-2">
+              {fmt(playAgainRemainder)} left over isn&apos;t enough for another ticket yet — it carries forward automatically toward your next win
+            </p>
+          )}
+          {!confirmingRedeem ? (
+            <button onClick={() => setConfirmingRedeem(true)} disabled={playingAgain || bridgeFeeUsd === null}
+              className="w-full h-11 rounded-xl border border-white/15 text-slate-300 font-medium text-sm hover:bg-white/[0.06] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              {bridgeFeeUnavailable ? "Fee unavailable, retry" : bridgeFeeUsd === null ? "Getting fee quote…" : `Redeem instead — get ~${fmt(bridgeReceiveUsdc ?? totalAmount)}`}
+            </button>
+          ) : (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+              <p className="text-sm text-slate-400">
+                You&apos;ll receive an estimated <span className="text-white font-semibold">{fmt(bridgeReceiveUsdc ?? totalAmount)}</span> after fees (confirmed once claimed on-chain, may come in slightly lower) — playing again gets you {playAgainTicketCount} full new ticket{playAgainTicketCount === 1 ? "" : "s"} instead, free.
+              </p>
+              {error && <p className="text-sm text-red-400">{error}</p>}
+              <div className="flex items-center gap-3">
+                <button onClick={() => setConfirmingRedeem(false)} disabled={loading}
+                  className="flex-1 h-10 rounded-lg border border-white/15 text-slate-300 font-medium text-sm hover:bg-white/[0.06] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                  Cancel
+                </button>
+                <button onClick={handleWithdraw} disabled={loading}
+                  className="flex-1 h-10 rounded-lg font-semibold text-sm bg-white/10 border border-white/20 text-white hover:bg-white/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                  {loading ? "Processing…" : "Confirm redeem"}
+                </button>
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <button onClick={handleWithdraw} disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
