@@ -20,6 +20,11 @@ export const MEGAPOT_JACKPOT: Address = '0x3bAe643002069dBCbcd62B1A4eb4C4A397d04
 export const MEGAPOT_TICKET_NFT: Address = '0x48ffe35abb9f4780a4f1775c2ce1c46185b366e4';
 export const MEGAPOT_TICKET_PRICE_USDC = 1; // $1 per ticket
 
+// Conservative fallback for getWinClaimFactor when the live on-chain referralWinShare read fails
+// after retries — matches the documented ~10% protocol/referral cut (see lottery.service.ts's
+// "Megapot applies a ~10% protocol fee" comment) instead of assuming a 0% cut.
+const DEFAULT_REFERRAL_WIN_SHARE_FACTOR = 0.9;
+
 const TICKET_NFT_ABI = [
   {
     name: 'tokenURI',
@@ -273,26 +278,41 @@ export class MegapotService {
    * Read `referralWinShare` for a drawing from the Jackpot contract.
    * Returns the fraction the WINNER keeps (1 - referralWinShare).
    * e.g. if referralWinShare = 0.10e18 (10%), returns 0.9.
-   * Falls back to 1.0 (no deduction) on any error, so we err toward showing the gross amount.
+   * Retries transient RPC failures (rate limits are common on the public Base RPC) before giving
+   * up. If it still can't read the real value, falls back to DEFAULT_REFERRAL_WIN_SHARE_FACTOR
+   * (~10% cut, matching the documented protocol fee — see the "~10% protocol fee" comment in
+   * lottery.service.ts) rather than 1.0/no-deduction. This is a display-estimate-only number:
+   * whatever the user actually gets is always trued up from the real claimed on-chain balance at
+   * redemption (see processConsolidatedBatch/processWithdrawal), so this only affects the
+   * pre-claim figure shown before they've redeemed — a wrong fallback here was systematically
+   * overstating that figure, not shortchanging anyone.
    */
   async getWinClaimFactor(drawingId: string): Promise<number> {
-    try {
-      const rpcUrl = this.config.get<string>('BASE_RPC_URL', DEFAULT_BASE_RPC);
-      const client = createPublicClient({ chain: base, transport: http(rpcUrl) });
-      const state = await client.readContract({
-        address: MEGAPOT_JACKPOT,
-        abi: JACKPOT_ABI,
-        functionName: 'getDrawingState',
-        args: [BigInt(drawingId)],
-      }) as any;
-      const referralWinShare = BigInt(state.referralWinShare ?? 0n);
-      const factor = 1 - Number(referralWinShare) / 1e18;
-      this.logger.log(`getWinClaimFactor drawing=${drawingId}: referralWinShare=${Number(referralWinShare) / 1e18} → factor=${factor}`);
-      return Math.max(0, Math.min(1, factor));
-    } catch (e: any) {
-      this.logger.warn(`getWinClaimFactor drawing=${drawingId}: ${e.message} — falling back to gross`);
-      return 1;
+    const rpcUrl = this.config.get<string>('BASE_RPC_URL', DEFAULT_BASE_RPC);
+    const client = createPublicClient({ chain: base, transport: http(rpcUrl) });
+    const attempts = 3;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        const state = await client.readContract({
+          address: MEGAPOT_JACKPOT,
+          abi: JACKPOT_ABI,
+          functionName: 'getDrawingState',
+          args: [BigInt(drawingId)],
+        }) as any;
+        const referralWinShare = BigInt(state.referralWinShare ?? 0n);
+        const factor = 1 - Number(referralWinShare) / 1e18;
+        this.logger.log(`getWinClaimFactor drawing=${drawingId}: referralWinShare=${Number(referralWinShare) / 1e18} → factor=${factor}`);
+        return Math.max(0, Math.min(1, factor));
+      } catch (e: any) {
+        if (attempt < attempts - 1) {
+          await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          continue;
+        }
+        this.logger.warn(`getWinClaimFactor drawing=${drawingId}: ${e.message} — falling back to conservative estimate (${DEFAULT_REFERRAL_WIN_SHARE_FACTOR}) after ${attempts} attempts`);
+        return DEFAULT_REFERRAL_WIN_SHARE_FACTOR;
+      }
     }
+    return DEFAULT_REFERRAL_WIN_SHARE_FACTOR;
   }
 
   /**
