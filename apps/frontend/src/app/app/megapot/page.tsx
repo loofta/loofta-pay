@@ -16,14 +16,8 @@ import { DescriptionWithGif } from "@/components/DescriptionWithGif";
 
 const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
 const MAGICBLOCK_BPS = 10;
-// Loofta per-purchase fee: mirrors backend looftaTicketFee — calibrated to break even against
-// real Sol→Base bridging costs plus a thin volatility buffer, not a profit center (see
-// lottery.service.ts for the live-quoted cost data this was calibrated against).
-const LOOFTA_TICKET_FEE_FLAT_USD = 0.03;
-const LOOFTA_TICKET_FEE_BPS = 150;
-function looftaFee(ticketCostUsd: number) {
-  return LOOFTA_TICKET_FEE_FLAT_USD + (ticketCostUsd * LOOFTA_TICKET_FEE_BPS) / 10_000;
-}
+// Loofta no longer charges a per-purchase service fee — the buyer pays only the ticket cost plus
+// MagicBlock's own transfer fee (mbFee below); the Sol→Base bridge cost is absorbed by Loofta.
 // The free-ticket threshold is owned and enforced by the backend (see WITHDRAW_MIN_USDC in
 // lottery.service.ts); it's reported per-request as dashboard.withdrawMinUsdc and per-ticket as
 // ticket.isFreeTicket. This is only a fallback for the brief window before the dashboard loads —
@@ -924,14 +918,14 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
   }
 
   // MagicBlock exactOut sends exactly ticketCostUsd (no rounding — it's already a whole-dollar
-  // amount for any ticket count) and grosses its own fee up from that same amount. Li.Fi's
-  // bridging cost is funded from the pooled fee reserve, not charged to the user directly — see
-  // backend computePurchaseAmounts / tryStartBridge.
-  const buyFees = mbFee(ticketCostUsd) + looftaFee(ticketCostUsd);
+  // amount for any ticket count) and grosses its own fee up from that same amount. Loofta no
+  // longer adds a service fee, and the Li.Fi bridging cost is absorbed from Loofta's fee reserve
+  // (not charged to the user) — so the only fee shown is MagicBlock's own transfer fee.
+  const buyFees = mbFee(ticketCostUsd);
   const total = ticketCostUsd + buyFees;
-  // Fees are mostly flat, so per-ticket cost falls fast with count — nudge small buys up
+  // The MagicBlock fee is mostly flat ($0.20 relay), so per-ticket cost falls fast with count.
   const feesPerTicket = buyFees / ticketCostUsd;
-  const feesPerTicketAt5 = (mbFee(5) + looftaFee(5)) / 5;
+  const feesPerTicketAt5 = mbFee(5) / 5;
   return (
     <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
       <div className="flex justify-between px-4 py-3.5">
@@ -940,8 +934,8 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
       </div>
       <div className="flex justify-between items-start px-4 py-3.5 gap-4">
         <div className="min-w-0">
-          <p className="text-base text-slate-400">Privacy &amp; processing</p>
-          <p className="text-sm text-slate-500 mt-0.5">Private transfer, bridging &amp; service — all included</p>
+          <p className="text-base text-slate-400">Private transfer</p>
+          <p className="text-sm text-slate-500 mt-0.5">MagicBlock transfer fee — bridging &amp; service on us</p>
         </div>
         <span className="text-base text-slate-400 tabular-nums shrink-0">~{fmt(buyFees)}</span>
       </div>
@@ -1133,23 +1127,10 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
         body: JSON.stringify({ numTickets, userSolanaAddress: embeddedWallet?.address }),
       });
       if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
-      const { ticketId, feeTxBase64, txBase64 } = await initRes.json();
+      const { ticketId, txBase64 } = await initRes.json();
 
-      // 1. Sign + send the upfront fee payment first — a plain transfer, separate from the
-      // MagicBlock private transfer (can't be combined into the same transaction).
-      const feeTxBytes = Buffer.from(feeTxBase64, "base64");
-      const { signature: feeSigBytes } = await signAndSendTransaction({
-        transaction: feeTxBytes as unknown as Uint8Array,
-        wallet: embeddedWallet as any,
-      });
-      const feeSignature = bs58.encode(feeSigBytes as Uint8Array);
-      await fetch("/api/lottery/buy-fee-confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ ticketId, feeTxHash: feeSignature }),
-      });
-
-      // 2. Sign + send the MagicBlock private transfer.
+      // Sign + send the MagicBlock private transfer — the only tx the buyer signs now. Loofta no
+      // longer collects a separate upfront fee.
       const txBytes = Buffer.from(txBase64, "base64");
       const { signature: sigBytes } = await signAndSendTransaction({
         transaction: txBytes as unknown as Uint8Array,
@@ -1202,24 +1183,11 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
         }),
       });
       if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
-      const { giftId, feeTxBase64, txBase64 } = await initRes.json();
+      const { giftId, txBase64 } = await initRes.json();
 
-      // Two signatures, same as a normal purchase: the fee tx first (can't be combined into
-      // MagicBlock's own pre-built tx), then the MagicBlock private transfer. Nothing is bought
-      // yet — this just funds a holding burner. The actual Megapot purchase happens when the
-      // recipient claims (see /app/gift/[token]), not here.
-      const feeTxBytes = Buffer.from(feeTxBase64, "base64");
-      const { signature: feeSigBytes } = await signAndSendTransaction({
-        transaction: feeTxBytes as unknown as Uint8Array,
-        wallet: embeddedWallet as any,
-      });
-      const feeSignature = bs58.encode(feeSigBytes as Uint8Array);
-      await fetch("/api/lottery/buy-gift-fee-confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ giftId, feeTxHash: feeSignature }),
-      });
-
+      // One signature: the MagicBlock private transfer that funds the holding burner (Loofta no
+      // longer collects a separate fee). Nothing is bought yet — the actual Megapot purchase
+      // happens when the recipient claims (see /app/gift/[token]), not here.
       const txBytes = Buffer.from(txBase64, "base64");
       const { signature: sigBytes } = await signAndSendTransaction({
         transaction: txBytes as unknown as Uint8Array,
@@ -1446,7 +1414,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
               ) : giftStep === "signing" ? "Signing…" : (
                 <>
                   <Gift className="w-5 h-5" />
-                  {drawCutoff ? "Sales paused" : `Gift privately · ${fmt(numTickets + mbFee(numTickets) + looftaFee(numTickets))}`}
+                  {drawCutoff ? "Sales paused" : `Gift privately · ${fmt(numTickets + mbFee(numTickets))}`}
                 </>
               )}
             </button>
@@ -1459,7 +1427,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
                   <LogIn className="w-5 h-5" />
                   Sign in to continue
                 </>
-              ) : (drawCutoff ? "Sales paused" : `Buy privately · ${fmt(numTickets + mbFee(numTickets) + looftaFee(numTickets))}`)}
+              ) : (drawCutoff ? "Sales paused" : `Buy privately · ${fmt(numTickets + mbFee(numTickets))}`)}
             </button>
           )}
         </>

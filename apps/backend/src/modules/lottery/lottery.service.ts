@@ -31,6 +31,16 @@ const TICKET_PRICE_USDC = 1;
 // rule: the withdrawal endpoints enforce it, and the dashboard reports it (withdrawMinUsdc +
 // per-ticket isFreeTicket) so the UI never has to hardcode the number.
 export const WITHDRAW_MIN_USDC = 1.3;
+
+// Fee-wallet low-balance alert (see checkFeeWalletBalance). The fee wallet funds bridge top-ups
+// (USDC) and gas/relay (SOL) and — since purchases no longer collect a Loofta fee — is no longer
+// auto-replenished, so it must be watched. Defaults overridable via env; recipient defaults to the
+// operator's address.
+const FEE_WALLET_MIN_SOL = 0.15;
+const FEE_WALLET_MIN_USDC = 20;
+const FEE_WALLET_ALERT_DEFAULT_EMAIL = 'lisa.bechina@gmail.com';
+// Re-alert cadence while still low, so one email doesn't get buried and forgotten.
+const FEE_WALLET_REALERT_MS = 24 * 60 * 60_000;
 // A SOL→Base Li.Fi bridge normally quotes single-digit-seconds execution — 20 min with zero
 // destination-side activity means the bridge tool's solver network has abandoned the order,
 // not that it's "just slow". Past this, stop waiting and make the user whole ourselves.
@@ -131,15 +141,15 @@ export type TicketStatus =
 
 export interface InitiatePurchaseResult {
   ticketId: string;
-  /** Sign + send this FIRST — plain USDC transfer collecting Loofta's fee upfront. */
-  feeTxBase64: string;
-  feeWalletAddress: string;
-  /** Sign + send this SECOND, after the fee tx confirms — the MagicBlock private transfer. */
+  /** Sign + send — the MagicBlock private transfer of exactly the ticket cost. This is now the
+   *  only tx the buyer signs; Loofta no longer collects a separate service fee (the bridge cost
+   *  is absorbed from Loofta's fee-wallet reserve). */
   txBase64: string;
   requiredSigners: string[];
   feeBreakdown: {
     ticketCostUsdc: number;
     magicblockFeeUsdc: number;
+    /** Always 0 now — kept for response-shape compatibility with older clients. */
     looftaFeeUsdc: number;
     totalUsdc: number;
   };
@@ -276,20 +286,15 @@ export class LotteryService {
     // `costUnits` with exactOut:true and lets MagicBlock gross up the sender's debit internally.
     const grossAmount = estimateMagicblockGrossUp(costUnits);
     const magicblockFeeUsdc = parseFloat(((grossAmount - costUnits) / 1_000_000 + MAGICBLOCK_GAS_USDC).toFixed(6));
-    const looftaFeeUsdc = looftaTicketFee(costUsdc);
-    const totalUsdc = costUsdc + magicblockFeeUsdc + looftaFeeUsdc;
+    // Loofta no longer charges a separate service fee on purchases — the buyer pays only the
+    // ticket cost + MagicBlock's own transfer fee. The Li.Fi bridge cost is absorbed from Loofta's
+    // fee-wallet reserve (see tryStartBridge), not passed to the buyer.
+    const totalUsdc = costUsdc + magicblockFeeUsdc;
 
-    // 4. Fee collection: a plain USDC transfer, user → fee wallet, BEFORE the MagicBlock
-    // transfer — we can't append this as an instruction onto MagicBlock's own pre-built tx, so
-    // it has to be its own transaction. The frontend signs+sends this one first.
-    const { transactionBase64: feeTxBase64, feeWalletAddress } = await this.buildFeeCollectionTx(
-      userSolanaAddress, looftaFeeUsdc,
-    );
-
-    // 5. Build MagicBlock private transfer: user → burner. Amount is exactly costUsdc — already
+    // 4. Build MagicBlock private transfer: user → burner. Amount is exactly costUsdc — already
     // a whole-dollar figure for any ticket count, so no rounding is needed for the exactOut leg
     // to avoid fingerprinting. Li.Fi's bridging cost is funded later from the fee wallet, not
-    // baked into this amount (see tryStartBridge).
+    // baked into this amount (see tryStartBridge). This is now the ONLY tx the buyer signs.
     const cluster = this.getSolanaCluster();
     let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
     try {
@@ -335,11 +340,9 @@ export class LotteryService {
 
     return {
       ticketId: ticket.id,
-      feeTxBase64,
-      feeWalletAddress,
       txBase64: txResponse.transactionBase64,
       requiredSigners: txResponse.requiredSigners,
-      feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, looftaFeeUsdc, totalUsdc },
+      feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, looftaFeeUsdc: 0, totalUsdc },
     };
   }
 
@@ -371,7 +374,7 @@ export class LotteryService {
     recipientType: 'email' | 'handle';
     recipientIdentifier: string;
     note?: string;
-  }): Promise<{ giftId: string; feeTxBase64: string; feeWalletAddress: string; txBase64: string; requiredSigners: string[] }> {
+  }): Promise<{ giftId: string; txBase64: string; requiredSigners: string[] }> {
     const { userId, userSolanaAddress, numTickets } = opts;
     await this.assertNotInDrawCutoff();
     if (!numTickets || numTickets < 1 || numTickets > 100) throw new BadRequestException('1–100 tickets per gift');
@@ -397,13 +400,8 @@ export class LotteryService {
 
     const costUsdc = numTickets * TICKET_PRICE_USDC;
     const costUnits = Math.round(costUsdc * 1_000_000);
-    const looftaFeeUsdc = looftaTicketFee(costUsdc);
-
-    // Fee collection: a plain USDC transfer, user → fee wallet, same as initiatePurchase — has to
-    // be its own transaction, can't be appended to MagicBlock's own pre-built tx.
-    const { transactionBase64: feeTxBase64, feeWalletAddress } = await this.buildFeeCollectionTx(
-      userSolanaAddress, looftaFeeUsdc,
-    );
+    // No Loofta service fee on gifted purchases either — the sender signs only the MagicBlock
+    // transfer (see initiatePurchase). Bridge cost is absorbed from the fee-wallet reserve.
 
     const cluster = this.getSolanaCluster();
     let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
@@ -452,8 +450,6 @@ export class LotteryService {
 
     return {
       giftId: gift.id,
-      feeTxBase64,
-      feeWalletAddress,
       txBase64: txResponse.transactionBase64,
       requiredSigners: txResponse.requiredSigners,
     };
@@ -1324,19 +1320,15 @@ export class LotteryService {
   }
 
   private async tryStartBridge(ticket: any): Promise<void> {
-    // No verified fee, no service — UNLESS this is an admin-issued gift (is_gift), where Loofta
-    // never charges a fee in the first place, so there's nothing to verify. Without this gate a
-    // client that skips the fee tx (calling buy-confirm directly) would still get bridging +
-    // ticket purchase for free.
-    if (!ticket.fee_tx_hash && !ticket.is_gift) {
-      this.logger.warn(`Ticket ${ticket.id}: no fee recorded — not bridging (funds stay rescuable from the burner)`);
-      return;
-    }
     const burnerBalance = await this.getBurnerUsdcBalance(ticket.burner_sol_address);
     const costUnits = BigInt(Math.round(ticket.cost_usdc * 1_000_000));
 
-    // MagicBlock splits mainnet transfers into several parts that land separately across the
-    // delay window — wait for the full costUsdc to arrive before touching the burner.
+    // The buyer's payment IS the MagicBlock transfer of `costUsdc` into this burner — there's no
+    // longer a separate Loofta fee tx to verify (Loofta absorbs the bridge cost). So the only gate
+    // needed is that the full amount has actually landed: MagicBlock splits mainnet transfers into
+    // several parts across the delay window, so wait for the whole `costUsdc` before touching the
+    // burner. An underfunded burner can't be bridged, which is exactly the anti-freeloading check
+    // the old fee gate provided.
     if (burnerBalance < costUnits) {
       this.logger.log(`Ticket ${ticket.id}: burner not yet funded (${burnerBalance} < ${costUnits})`);
       return;
@@ -3590,6 +3582,68 @@ export class LotteryService {
     }
     this.logger.log(`topUpFromFeeWallet: sent ${(Number(amount) / 1_000_000).toFixed(6)} USDC → ${toAddress.slice(0, 8)}…, sig=${sig}`);
     return sig;
+  }
+
+  // In-memory de-dupe so the alert cron doesn't email on every tick — 0 means "not currently in a
+  // low state" (also the reset value once the wallet recovers), so a fresh drop alerts immediately.
+  private feeWalletAlertLastSentAt = 0;
+
+  /**
+   * Cron: watch the Solana fee wallet (SOLANA_FEE_PAYER_PRIVATE_KEY) that funds Megapot bridge
+   * top-ups (USDC) and gas/relay (SOL). Since purchases no longer collect a Loofta fee, nothing
+   * refills it automatically — if it runs dry, bridge top-ups fail and purchases stall. Emails an
+   * alert to FEE_WALLET_ALERT_EMAIL when SOL and/or USDC drops below threshold. Alerts once per
+   * drop-below event, then at most once per FEE_WALLET_REALERT_MS while still low; resets (so the
+   * next drop alerts immediately) once the balance recovers above both thresholds.
+   */
+  async checkFeeWalletBalance(): Promise<void> {
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) return;
+
+    const minSol = Number(this.config.get<string>('FEE_WALLET_MIN_SOL')) || FEE_WALLET_MIN_SOL;
+    const minUsdc = Number(this.config.get<string>('FEE_WALLET_MIN_USDC')) || FEE_WALLET_MIN_USDC;
+    const alertEmail = this.config.get<string>('FEE_WALLET_ALERT_EMAIL') || FEE_WALLET_ALERT_DEFAULT_EMAIL;
+
+    let solBalance: number;
+    let usdcBalance: number;
+    let walletAddress: string;
+    try {
+      const bs58Mod = await import('bs58');
+      const feePayer = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey));
+      walletAddress = feePayer.publicKey.toBase58();
+      const conn = await this.getSolanaConnection();
+      const lamports = await conn.getBalance(feePayer.publicKey);
+      solBalance = lamports / 1e9;
+      usdcBalance = Number(await this.getBurnerUsdcBalance(walletAddress)) / 1e6;
+    } catch (e: any) {
+      this.logger.warn(`checkFeeWalletBalance: could not read fee wallet balance: ${e.message}`);
+      return;
+    }
+
+    const low: Array<'SOL' | 'USDC'> = [];
+    if (solBalance < minSol) low.push('SOL');
+    if (usdcBalance < minUsdc) low.push('USDC');
+
+    if (!low.length) {
+      // Recovered (or never low) — reset so the next drop-below alerts right away.
+      this.feeWalletAlertLastSentAt = 0;
+      return;
+    }
+
+    if (this.feeWalletAlertLastSentAt && Date.now() - this.feeWalletAlertLastSentAt < FEE_WALLET_REALERT_MS) {
+      return; // already alerted recently; wait out the re-alert window
+    }
+    this.feeWalletAlertLastSentAt = Date.now();
+    this.logger.warn(`Fee wallet low (${low.join('+')}): SOL=${solBalance.toFixed(4)} (min ${minSol}), USDC=$${usdcBalance.toFixed(2)} (min $${minUsdc}) — alerting ${alertEmail}`);
+    await this.emailService.sendFeeWalletLowBalanceEmail({
+      to: alertEmail,
+      walletAddress,
+      solBalance,
+      solThreshold: minSol,
+      usdcBalance,
+      usdcThreshold: minUsdc,
+      low,
+    }).catch(e => this.logger.error(`checkFeeWalletBalance: alert email failed: ${e.message}`));
   }
 
   /**

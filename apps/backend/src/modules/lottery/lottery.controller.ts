@@ -141,7 +141,7 @@ export class LotteryController {
 
   @Post('buy')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Initiate ticket purchase — returns fee tx + MagicBlock tx for user to sign, in that order' })
+  @ApiOperation({ summary: 'Initiate ticket purchase — returns the MagicBlock tx for the user to sign (no separate Loofta fee tx)' })
   async buy(@Body() dto: BuyTicketsDto, @Request() req: any): Promise<InitiatePurchaseResult> {
     if (!dto.numTickets || dto.numTickets < 1) throw new BadRequestException('numTickets required');
     if (!dto.userSolanaAddress) throw new BadRequestException('userSolanaAddress required');
@@ -175,8 +175,8 @@ export class LotteryController {
 
   @Post('buy-gift')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Pay for a gift (N tickets for someone else) — returns fee tx + MagicBlock tx to sign, in that order. The Megapot purchase itself only happens when the recipient claims (see gift/:token/claim).' })
-  async buyGift(@Body() dto: BuyGiftDto, @Request() req: any): Promise<{ giftId: string; feeTxBase64: string; feeWalletAddress: string; txBase64: string; requiredSigners: string[] }> {
+  @ApiOperation({ summary: 'Pay for a gift (N tickets for someone else) — returns the MagicBlock tx to sign (no separate fee tx). The Megapot purchase itself only happens when the recipient claims (see gift/:token/claim).' })
+  async buyGift(@Body() dto: BuyGiftDto, @Request() req: any): Promise<{ giftId: string; txBase64: string; requiredSigners: string[] }> {
     if (!dto.numTickets || dto.numTickets < 1) throw new BadRequestException('numTickets required');
     if (!dto.userSolanaAddress) throw new BadRequestException('userSolanaAddress required');
     if (!dto.recipientIdentifier) throw new BadRequestException('recipientIdentifier required');

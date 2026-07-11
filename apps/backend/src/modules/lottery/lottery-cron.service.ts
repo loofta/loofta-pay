@@ -37,8 +37,11 @@ export class LotteryCronService {
     );
   }
 
-  /** Every 10 seconds: check bridging tickets + buy on Megapot (overlap-guarded in service) */
-  @Cron('*/10 * * * * *')
+  /** Every 5 seconds: check bridging tickets + buy on Megapot (overlap-guarded in service). Was
+   *  10s — the SOL→Base bridge finishes in single-digit seconds, so a 10s poll left a ticket
+   *  sitting up to 10s after the bridge was already DONE before the buy fired. 5s halves that
+   *  tail; the in-service overlap guard + atomic status claims keep it safe to run more often. */
+  @Cron('*/5 * * * * *')
   async processBridging(): Promise<void> {
     if (!this.isProd) return;
     await this.lottery.processBridgingTickets().catch(e =>
@@ -111,6 +114,16 @@ export class LotteryCronService {
     if (!this.isProd) return;
     await this.lottery.recoverStuckConsolidatedBatches().catch(e =>
       this.logger.error(`recoverStuckConsolidatedBatches: ${e.message}`),
+    );
+  }
+
+  /** Every 30 minutes: alert the operator by email if the fee wallet (funds bridge top-ups + gas)
+   *  is running low. De-duped in the service so this cadence never spams. */
+  @Cron('0 */30 * * * *')
+  async checkFeeWalletBalance(): Promise<void> {
+    if (!this.isProd) return;
+    await this.lottery.checkFeeWalletBalance().catch(e =>
+      this.logger.error(`checkFeeWalletBalance: ${e.message}`),
     );
   }
 }
