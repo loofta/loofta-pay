@@ -2086,6 +2086,9 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
 }) {
   const isAppPath = usePathname()?.startsWith("/app");
   const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
+  // Backend-owned threshold; below it a win is a "free ticket" and shown as "Free" in history
+  // (works for won AND already-played-again/withdrawn rows, unlike the won-only isFreeTicket flag).
+  const minWithdraw = withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC;
   const [copied, setCopied] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [historyFilter, setHistoryFilter] = useState<"all" | "mine" | "gifted">("all");
@@ -2560,7 +2563,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-base font-semibold font-sans">
               {(t.status === "won" || t.status === "withdrawn")
-                ? <span className="text-emerald-400">{t.isFreeTicket ? "Free ticket" : `+${fmt(t.winAmountUsdc ?? 0)}`}</span>
+                ? <span className="text-emerald-400">{isFreeTicketAmount(t.winAmountUsdc, minWithdraw) ? "Free" : `+${fmt(t.winAmountUsdc ?? 0)}`}</span>
                 : t.isGift
                   ? null
                   : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
