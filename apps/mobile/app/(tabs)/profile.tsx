@@ -1,17 +1,18 @@
 import { usePrivy } from '@privy-io/expo';
 import * as Clipboard from 'expo-clipboard';
-import { Check, ChevronDown, ChevronUp, Copy, LifeBuoy, Ticket, Wallet } from 'lucide-react-native';
+import { Check, ChevronDown, ChevronRight, ChevronUp, Copy, LifeBuoy, Wallet } from 'lucide-react-native';
 import { useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSeekerLogin, logoutSeeker } from '../../lib/auth/useSeekerLogin';
 import { ensureProfile, getWalletBalances } from '../../lib/api/users';
+import { getCachedSeekerIdentity, setCachedSeekerIdentity } from '../../lib/storage/seekerIdentity';
 import { SolIcon } from '../../components/TokenIcons';
 import { Wordmark } from '../../components/Wordmark';
 import { WalletConnectSheet } from '../../components/WalletConnectSheet';
+import { HowToPlayModal } from '../../components/HowToPlayModal';
 import { PoweredByFooter } from '../../components/PoweredByFooter';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { GradientText } from '../../components/ui/GradientText';
-import { ShieldNote } from '../../components/ui/ShieldNote';
 import { Card } from '../../components/ui/Card';
 import { GhostButton } from '../../components/ui/GhostButton';
 import { color, radius, space } from '../../lib/theme';
@@ -36,13 +37,6 @@ const PRIZE_TIERS: { match: string; prize: string }[] = [
   { match: '1 + bonus', prize: '$2.66' },
   { match: '2 numbers', prize: 'Free ticket' },
   { match: 'Bonus only', prize: 'Free ticket' },
-];
-
-const HOW_TO_PLAY: { title: string; body: string }[] = [
-  { title: '1. Pick your numbers', body: 'Choose 5 numbers (1–30) plus a bonus (1–12), or let us pick them randomly.' },
-  { title: '2. Pay privately', body: 'Tickets are $1 each, paid from your Seeker wallet and shielded via MagicBlock. Buy as many as you like.' },
-  { title: '3. Daily draw', body: 'A draw happens every day. The more of your numbers match, the bigger the prize.' },
-  { title: '4. Collect your win', body: 'Small wins come back as a free ticket to play again (no fees). Bigger wins can be redeemed privately to your wallet.' },
 ];
 
 function CollapsibleSection({ title, children }: { title: string; children: ReactNode }) {
@@ -95,26 +89,25 @@ export default function ProfileScreen() {
 
   return (
     <View style={styles.connectScreen}>
-      <View style={styles.connectIconTile}>
-        <Ticket size={28} color={color.fg} />
+      <View style={styles.connectContent}>
+        <Wordmark width={140} />
+        <View style={styles.connectHeadlineGroup}>
+          <Text style={styles.headline}>Play private.</Text>
+          <GradientText style={styles.headline}>Win private.</GradientText>
+        </View>
+        <Text style={styles.subtitle}>
+          Buy tickets directly from your Seeker wallet — every entry and every payout is shielded on-chain via
+          MagicBlock.
+        </Text>
+        {error && <Text style={styles.error}>{error}</Text>}
       </View>
-      <Wordmark width={140} />
-      <Text style={styles.eyebrow}>Private lottery · Solana</Text>
-      <Text style={styles.headline}>Play private.</Text>
-      <GradientText style={styles.headline}>Win private.</GradientText>
-      <Text style={styles.subtitle}>
-        Buy tickets directly from your Seeker wallet — every entry and every payout is shielded on-chain via
-        MagicBlock.
-      </Text>
 
-      {error && <Text style={styles.error}>{error}</Text>}
-
+      {/* Full-width CTA pinned above the tab bar, like a native app footer button. */}
       <View style={styles.connectFooter}>
         <PrimaryButton onPress={() => setSheetOpen(true)} disabled={busy}>
           <Wallet size={18} color={color.fg} />
-          <Text style={styles.connectButtonText}>{busy ? statusLabel : 'Connect Seeker wallet'}</Text>
+          <Text style={styles.connectButtonText}>{busy ? statusLabel : 'Connect wallet'}</Text>
         </PrimaryButton>
-        <ShieldNote text="No custody · no embedded wallet · you hold the keys" />
       </View>
 
       <WalletConnectSheet
@@ -137,24 +130,35 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
   const walletAddress = findWalletAddress(accounts);
 
   const [skrDomain, setSkrDomain] = useState<string | null>(null);
+  const [username, setUsername] = useState<string | null>(null);
   const [solBalance, setSolBalance] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [howToPlayOpen, setHowToPlayOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // Paint the cached Seeker ID immediately (no spinner/"Not connected" flash on every
+      // profile visit), then refresh it from the network in the background below.
+      const cached = await getCachedSeekerIdentity();
+      if (cached && !cancelled) {
+        setSkrDomain(cached.skrDomain);
+        setUsername(cached.username);
+      }
       try {
         const accessToken = await getAccessToken();
         // ensureProfile bootstraps the app_users row (idempotent, harmless if useSeekerLogin
-        // already did it) — its username is no longer shown here, the .skr domain replaces it.
-        const [, balances] = await Promise.all([
+        // already did it); its username is the Seeker ID fallback when there's no .skr domain.
+        const [profile, balances] = await Promise.all([
           ensureProfile(accessToken),
           getWalletBalances(accessToken),
         ]);
         if (cancelled) return;
+        setUsername(profile.username);
         setSkrDomain(balances.skrDomain);
         setSolBalance(balances.solBalance);
+        void setCachedSeekerIdentity({ skrDomain: balances.skrDomain, username: profile.username });
       } catch (e: any) {
         if (!cancelled) setError(e?.message ?? 'Could not load wallet info');
       }
@@ -164,8 +168,8 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
     };
   }, [getAccessToken]);
 
-  const identity = skrDomain ?? (walletAddress ? truncateAddress(walletAddress) : 'Not connected');
-  const copyValue = skrDomain ?? walletAddress;
+  const identity = skrDomain ?? username ?? (walletAddress ? truncateAddress(walletAddress) : 'Not connected');
+  const copyValue = skrDomain ?? username ?? walletAddress;
 
   const handleCopy = async () => {
     if (!copyValue) return;
@@ -175,91 +179,90 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.containerContent}>
-      <Text style={styles.title}>Settings</Text>
+    <View style={styles.screen}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.containerContent}>
+        <Text style={styles.title}>Settings</Text>
 
-      <Card style={styles.identityCard}>
-        <Text style={styles.label}>Seeker ID</Text>
-        <View style={styles.identityRow}>
-          <Text style={styles.value}>{identity}</Text>
-          {copyValue && (
-            <TouchableOpacity style={styles.copyButton} onPress={handleCopy} activeOpacity={0.7}>
-              {copied ? <Check size={16} color={color.success} /> : <Copy size={16} color={color.fg3} />}
-            </TouchableOpacity>
-          )}
-        </View>
-        {copied && <Text style={styles.copiedHint}>Copied</Text>}
-      </Card>
-
-      {error && <Text style={styles.error}>{error}</Text>}
-
-      <Card style={styles.walletCard}>
-        <View style={styles.walletHeaderRow}>
-          <View style={styles.walletHeaderLeft}>
-            <View style={styles.statusDot} />
-            <Text style={styles.walletHeaderText}>Seeker wallet</Text>
+        <Card style={styles.identityCard}>
+          <Text style={styles.label}>Seeker ID</Text>
+          <View style={styles.identityRow}>
+            <Text style={styles.value}>{identity}</Text>
+            {copyValue && (
+              <TouchableOpacity style={styles.copyButton} onPress={handleCopy} activeOpacity={0.7}>
+                {copied ? <Check size={16} color={color.success} /> : <Copy size={16} color={color.fg3} />}
+              </TouchableOpacity>
+            )}
           </View>
-          <GhostButton label="Disconnect" tone="danger" onPress={onLogout} />
-        </View>
-        <View style={styles.walletBalanceRow}>
-          <SolIcon size={16} />
-          <Text style={styles.walletAddress}>{walletAddress ? truncateAddress(walletAddress) : '--'}</Text>
-          <Text style={styles.walletBalance}>{solBalance !== null ? `${formatToken(solBalance, 4)} SOL` : '--'}</Text>
-        </View>
-      </Card>
+          {copied && <Text style={styles.copiedHint}>Copied</Text>}
 
-      <CollapsibleSection title="How to play">
-        {HOW_TO_PLAY.map((s) => (
-          <View key={s.title} style={styles.howRow}>
-            <Text style={styles.howTitle}>{s.title}</Text>
-            <Text style={styles.howBody}>{s.body}</Text>
-          </View>
-        ))}
-      </CollapsibleSection>
+          <View style={styles.cardDivider} />
 
-      <CollapsibleSection title="Prize tiers">
-        {PRIZE_TIERS.map((t) => {
-          const free = t.prize === 'Free ticket';
-          return (
-            <View key={t.match} style={styles.tierRow}>
-              <Text style={styles.tierMatch}>{t.match}</Text>
-              <Text style={[styles.tierPrize, free && styles.tierPrizeFree]}>{t.prize}</Text>
+          <View style={styles.walletHeaderRow}>
+            <View style={styles.walletHeaderLeft}>
+              <View style={styles.statusDot} />
+              <Text style={styles.walletHeaderText}>Seeker wallet</Text>
             </View>
-          );
-        })}
-        <Text style={styles.tierNote}>All prize tiers are automatically paid out from the total prize pool every day.</Text>
-      </CollapsibleSection>
+            <GhostButton label="Disconnect" tone="danger" onPress={onLogout} />
+          </View>
+          <View style={styles.walletBalanceRow}>
+            <SolIcon size={16} />
+            <Text style={styles.walletAddress}>{walletAddress ? truncateAddress(walletAddress) : '--'}</Text>
+            <Text style={styles.walletBalance}>{solBalance !== null ? `${formatToken(solBalance, 4)} SOL` : '--'}</Text>
+          </View>
+        </Card>
 
-      <TouchableOpacity style={styles.supportRow} onPress={() => Linking.openURL(SUPPORT_URL)} activeOpacity={0.7}>
-        <LifeBuoy size={18} color={color.fg2} />
-        <Text style={styles.supportText}>Contact support</Text>
-      </TouchableOpacity>
+        {error && <Text style={styles.error}>{error}</Text>}
+
+        <Card style={styles.section}>
+          <TouchableOpacity style={styles.sectionHeader} onPress={() => setHowToPlayOpen(true)} activeOpacity={0.7}>
+            <Text style={styles.sectionTitle}>How to play</Text>
+            <ChevronRight size={18} color={color.fg3} />
+          </TouchableOpacity>
+        </Card>
+
+        <CollapsibleSection title="Prize tiers">
+          {PRIZE_TIERS.map((t) => {
+            const free = t.prize === 'Free ticket';
+            return (
+              <View key={t.match} style={styles.tierRow}>
+                <Text style={styles.tierMatch}>{t.match}</Text>
+                <Text style={[styles.tierPrize, free && styles.tierPrizeFree]}>{t.prize}</Text>
+              </View>
+            );
+          })}
+          <Text style={styles.tierNote}>All prize tiers are automatically paid out from the total prize pool every day.</Text>
+        </CollapsibleSection>
+
+        <TouchableOpacity style={styles.supportCard} onPress={() => Linking.openURL(SUPPORT_URL)} activeOpacity={0.7}>
+          <View style={styles.supportIconTile}>
+            <LifeBuoy size={20} color={color.fg} />
+          </View>
+          <Text style={styles.supportText}>Contact support</Text>
+          <ChevronRight size={20} color={color.fg3} />
+        </TouchableOpacity>
+      </ScrollView>
 
       <PoweredByFooter />
-    </ScrollView>
+
+      <HowToPlayModal visible={howToPlayOpen} onClose={() => setHowToPlayOpen(false)} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: color.bgInk },
+  screen: { flex: 1, backgroundColor: color.bgInk },
+  container: { flex: 1 },
   containerContent: { padding: space[5], gap: space[4] },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0f0f12', padding: 20 },
   title: { color: color.fg, fontSize: 24, fontFamily: FONT_TITLE, marginTop: 12 },
-  subtitle: { color: color.fg2, fontFamily: FONT_BODY, fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  subtitle: { color: color.fg2, fontFamily: FONT_BODY, fontSize: 17, textAlign: 'center', lineHeight: 24 },
   // Connect screen
-  connectScreen: { flex: 1, backgroundColor: color.bgInk, alignItems: 'center', justifyContent: 'center', padding: space[6], gap: space[2] },
-  connectIconTile: {
-    width: 72,
-    height: 72,
-    borderRadius: radius.xl,
-    backgroundColor: color.brandOrange,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: space[4],
-  },
-  eyebrow: { color: color.fg3, fontFamily: FONT_BODY, fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', marginTop: space[5], marginBottom: space[2] },
+  connectScreen: { flex: 1, backgroundColor: color.bgInk },
+  connectContent: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space[6], gap: space[5] },
+  connectHeadlineGroup: { alignItems: 'center', marginTop: space[2] },
   headline: { color: color.fg, fontFamily: FONT_TITLE_SEMIBOLD, fontSize: 32, textAlign: 'center' },
-  connectFooter: { width: '100%', maxWidth: 360, marginTop: space[8], gap: space[4], alignItems: 'center' },
+  // Full-width CTA footer, pinned above the tab bar (not centered/shrink-wrapped like before).
+  connectFooter: { paddingHorizontal: space[5], paddingBottom: space[5], paddingTop: space[3] },
   connectButtonText: { color: color.fg, fontFamily: FONT_TITLE_SEMIBOLD, fontSize: 16 },
   buttonOutline: {
     borderWidth: 1,
@@ -271,8 +274,8 @@ const styles = StyleSheet.create({
   buttonOutlineText: { color: '#fff', fontWeight: '600', fontSize: 16 },
   error: { color: color.danger, fontFamily: FONT_BODY, fontSize: 13, textAlign: 'center' },
 
-  // Identity card
-  identityCard: { gap: space[2] },
+  // Identity card — Seeker ID + connected wallet, merged into one card
+  identityCard: { gap: space[3] },
   identityRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space[3] },
   label: { color: color.fg3, fontFamily: FONT_BODY_MEDIUM, fontSize: 12, letterSpacing: 1, textTransform: 'uppercase' },
   value: { color: color.fg, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 16, flexShrink: 1 },
@@ -285,32 +288,21 @@ const styles = StyleSheet.create({
     backgroundColor: color.surface3,
   },
   copiedHint: { color: color.success, fontFamily: FONT_BODY_MEDIUM, fontSize: 12 },
+  cardDivider: { height: 1, backgroundColor: color.borderSofter },
 
-  // Connected wallet card
-  walletCard: { gap: space[3] },
   walletHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   walletHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: space[2] },
   statusDot: { width: 8, height: 8, borderRadius: radius.pill, backgroundColor: color.success },
   walletHeaderText: { color: color.fg, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 14 },
-  walletBalanceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[2],
-    paddingTop: space[3],
-    borderTopWidth: 1,
-    borderTopColor: color.borderSofter,
-  },
+  walletBalanceRow: { flexDirection: 'row', alignItems: 'center', gap: space[2] },
   walletAddress: { color: color.fg2, fontFamily: FONT_BODY_MEDIUM, fontSize: 13, flex: 1 },
   walletBalance: { color: color.fg, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 13 },
 
-  // How to play / Prize tiers collapsibles
+  // How to play (opens modal) / Prize tiers (inline collapsible)
   section: { padding: 0, overflow: 'hidden' },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: space[4] },
   sectionTitle: { color: color.fg, fontSize: 16, fontFamily: FONT_BODY_SEMIBOLD },
   sectionBody: { paddingHorizontal: space[4], paddingBottom: space[4], gap: space[3], borderTopWidth: 1, borderTopColor: color.borderSofter, paddingTop: space[3] },
-  howRow: { gap: 2 },
-  howTitle: { color: color.fg, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 14 },
-  howBody: { color: color.fg2, fontFamily: FONT_BODY, fontSize: 13, lineHeight: 19 },
   tierRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   tierMatch: { color: color.fg2, fontFamily: FONT_BODY, fontSize: 14 },
   tierPrize: { color: color.fg, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 14 },
@@ -318,6 +310,23 @@ const styles = StyleSheet.create({
   tierNote: { color: color.fg3, fontFamily: FONT_BODY, fontSize: 12, lineHeight: 17, marginTop: space[1] },
 
   // Contact support
-  supportRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space[2], paddingVertical: space[3] },
-  supportText: { color: color.fg2, fontFamily: FONT_BODY_MEDIUM, fontSize: 14 },
+  supportCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space[3],
+    backgroundColor: color.surface1,
+    borderWidth: 1,
+    borderColor: color.borderSoft,
+    borderRadius: radius.lg,
+    padding: space[4],
+  },
+  supportIconTile: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: color.surface3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  supportText: { flex: 1, color: color.fg, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 16 },
 });

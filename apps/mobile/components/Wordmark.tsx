@@ -28,6 +28,6 @@ export function Wordmark({ width = 96 }: { width?: number }) {
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'flex-end', gap: 4 },
-  potText: { color: '#fff', fontFamily: FONT_TITLE, fontSize: 15, letterSpacing: 1.5, marginBottom: 2 },
+  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 4 },
+  potText: { color: '#fff', fontFamily: FONT_TITLE, fontSize: 15, letterSpacing: 1.5, marginTop: -2 },
 });

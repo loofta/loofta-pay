@@ -1,11 +1,13 @@
 import { usePrivy } from '@privy-io/expo';
 import { Ticket, Trophy } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AuthGate } from '../../components/AuthGate';
 import { Pill } from '../../components/ui/Pill';
 import { StatTile } from '../../components/ui/StatTile';
 import { TicketRow } from '../../components/ui/TicketRow';
+import { TicketNumberRow } from '../../components/ui/TicketNumberRow';
+import { TicketNumbersModal } from '../../components/TicketNumbersModal';
 import type { StatusChipTone } from '../../components/ui/StatusChip';
 import {
   getDashboard,
@@ -74,9 +76,10 @@ function matchesFilter(ticket: LotteryTicketSummary, filter: FilterKey): boolean
   return ticket.status === 'lost';
 }
 
-const MAX_NUMBER_ROWS_SHOWN = 5;
+const MAX_NUMBER_ROWS_SHOWN = 3;
 
 function HistoryTicketRow({ ticket, withdrawMinUsdc }: { ticket: LotteryTicketSummary; withdrawMinUsdc: number }) {
+  const [showAll, setShowAll] = useState(false);
   const winAmount = winAmountOf(ticket);
   const showFree = winAmount != null && isFreeTicketAmount(winAmount, withdrawMinUsdc);
 
@@ -103,21 +106,16 @@ function HistoryTicketRow({ ticket, withdrawMinUsdc }: { ticket: LotteryTicketSu
       {shownNumbers.length > 0 && (
         <View style={styles.numbersBlock}>
           {shownNumbers.map((n, i) => (
-            <View key={i} style={styles.numbersRow}>
-              {n.main.map((m) => (
-                <View key={m} style={styles.numberBubble}>
-                  <Text style={styles.numberBubbleText}>{m}</Text>
-                </View>
-              ))}
-              <View style={styles.numberDivider} />
-              <View style={styles.bonusBubble}>
-                <Text style={styles.bonusBubbleText}>{n.bonus}</Text>
-              </View>
-            </View>
+            <TicketNumberRow key={i} main={n.main} bonus={n.bonus} />
           ))}
-          {hiddenCount > 0 && <Text style={styles.numbersMore}>+{hiddenCount} more ticket{hiddenCount === 1 ? '' : 's'}</Text>}
+          {hiddenCount > 0 && (
+            <TouchableOpacity onPress={() => setShowAll(true)} activeOpacity={0.7}>
+              <Text style={styles.numbersMore}>+{hiddenCount} more ticket{hiddenCount === 1 ? '' : 's'}</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
+      <TicketNumbersModal visible={showAll} onClose={() => setShowAll(false)} title={title} numbers={numbers} />
     </View>
   );
 }
@@ -158,6 +156,16 @@ function HistoryList() {
   useEffect(() => {
     setLoading(true);
     load().finally(() => setLoading(false));
+  }, [load]);
+
+  // "Check results when the user opens the app" — draw results resolve server-side on a cron
+  // independent of any client request; refetching on every foreground transition (not just once
+  // on mount) is what keeps this screen from showing stale win/loss state.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') load();
+    });
+    return () => sub.remove();
   }, [load]);
 
   const onRefresh = useCallback(async () => {
@@ -245,11 +253,5 @@ const styles = StyleSheet.create({
 
   // Per-ticket numbers, shown under each row
   numbersBlock: { gap: space[2], paddingBottom: space[3] },
-  numbersRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  numberBubble: { width: 30, height: 30, borderRadius: 15, backgroundColor: color.surface3, alignItems: 'center', justifyContent: 'center' },
-  numberBubbleText: { color: color.fg, fontFamily: FONT_BODY_MEDIUM, fontSize: 13 },
-  numberDivider: { width: 1, height: 18, backgroundColor: color.borderSoft, marginHorizontal: 2 },
-  bonusBubble: { width: 30, height: 30, borderRadius: 15, backgroundColor: color.fg, alignItems: 'center', justifyContent: 'center' },
-  bonusBubbleText: { color: color.bgInk, fontFamily: FONT_BODY_MEDIUM, fontSize: 13 },
-  numbersMore: { color: color.fg3, fontFamily: FONT_BODY, fontSize: 12 },
+  numbersMore: { color: color.brandOrange, fontFamily: FONT_BODY_MEDIUM, fontSize: 12 },
 });

@@ -2,6 +2,7 @@ import { useLoginWithSiws, usePrivy } from '@privy-io/expo';
 import { useState } from 'react';
 import { connectAndSignMessage, disconnectSeekerWallet } from '../wallet/mwa';
 import { ensureProfile } from '../api/users';
+import { clearCachedSeekerIdentity } from '../storage/seekerIdentity';
 
 const DOMAIN = 'pay.loofta.xyz';
 const URI = 'https://pay.loofta.xyz';
@@ -85,5 +86,6 @@ export function useSeekerLogin() {
 
 export async function logoutSeeker(logout: () => Promise<void>) {
   await disconnectSeekerWallet();
+  await clearCachedSeekerIdentity();
   await logout();
 }
