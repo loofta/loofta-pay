@@ -436,11 +436,13 @@ export class MegapotService {
   ): Promise<{ tokenIds: string[]; ticketNumbers: { main: number[]; bonus: number }[] }> {
     const client = this.getPublicClient();
 
-    // Scan Transfer(from=0x0, to=companion) mint events in the last ~28 hours on Base.
-    // Base mainnet public RPC caps eth_getLogs at 10,000 blocks per call — paginate in 9,900-block chunks.
+    // Scan Transfer(from=0x0, to=companion) mint events in the last ~28 hours on Base, newest
+    // block first — a companion smart account is created fresh per ticket and only ever receives
+    // NFTs from the one purchase it made, so the mint events are always near `latest` and scanning
+    // backwards lets us stop as soon as we've paged past them instead of always walking the whole
+    // window.
     const latest = await client.getBlockNumber();
-    const fromBlock = latest > 150_000n ? latest - 150_000n : 0n;
-    const CHUNK = 9_900n;
+    const floorBlock = latest > 150_000n ? latest - 150_000n : 0n;
 
     const transferEvent = {
       type: 'event',
@@ -453,7 +455,7 @@ export class MegapotService {
     } as const;
 
     // Helper keeps the event-typed overload so log.args is properly typed downstream
-    const fetchChunk = (from: bigint, to: bigint) => client.getLogs({
+    const fetchRange = (from: bigint, to: bigint) => client.getLogs({
       address: MEGAPOT_TICKET_NFT,
       event: transferEvent,
       args: {
@@ -464,12 +466,51 @@ export class MegapotService {
       toBlock: to,
     });
 
-    const logChunks: Awaited<ReturnType<typeof fetchChunk>>[] = [];
-    for (let from = fromBlock; from <= latest; from += CHUNK) {
-      const to = from + CHUNK - 1n < latest ? from + CHUNK - 1n : latest;
-      logChunks.push(await fetchChunk(from, to));
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    // Adaptive chunk size: this used to assume the RPC allows 9,900-block eth_getLogs calls, but
+    // some tiers (e.g. Alchemy's free plan) cap it as low as 10 blocks — every single call failed
+    // outright in that case (surfaced as "playAgain: NFT number fetch for new ticket: ..." warnings
+    // that left ticket_nft_ids permanently unpopulated). On a range-limit error, parse the
+    // provider's suggested max (or just halve) and retry that same sub-range, so this self-adapts
+    // to whatever the configured RPC actually allows instead of needing per-provider tuning.
+    let chunk = 9_900n;
+    let logs: Awaited<ReturnType<typeof fetchRange>> = [];
+    let to = latest;
+    let blocksSinceLastHit = 0n;
+    let iterations = 0;
+    const MAX_ITERATIONS = 300; // bounds worst-case latency for a cold/never-synced old ticket
+
+    while (to >= floorBlock && iterations < MAX_ITERATIONS) {
+      iterations++;
+      const from = to - chunk + 1n > floorBlock ? to - chunk + 1n : floorBlock;
+      try {
+        const found = await fetchRange(from, to);
+        if (found.length) {
+          logs = logs.concat(found);
+          blocksSinceLastHit = 0n;
+        } else {
+          blocksSinceLastHit += to - from + 1n;
+        }
+        to = from - 1n;
+        await sleep(120);
+      } catch (e: any) {
+        const errText = [e?.details, e?.shortMessage, e?.message, e?.cause?.details, e?.cause?.shortMessage, e?.cause?.message]
+          .filter(Boolean).join(' ');
+        const suggested = /up to an? (\d+) block range/i.exec(errText)?.[1];
+        const next = suggested ? BigInt(suggested) : chunk > 1n ? chunk / 2n : null;
+        if (!next) throw e;
+        chunk = next;
+        await sleep(150);
+        continue;
+      }
+      // All mint events for a companion share one purchase block — once we've found some and
+      // scanned safely past them with no more turning up, the rest of the window won't have any.
+      if (logs.length && blocksSinceLastHit >= 500n) break;
     }
-    const logs = logChunks.flat();
+    if (iterations >= MAX_ITERATIONS && !logs.length) {
+      this.logger.warn(`getTicketNumbersFromNft: companion=${companionAddress} gave up after ${iterations} chunked eth_getLogs calls without finding a mint event — check BASE_RPC_URL's eth_getLogs block-range limit`);
+    }
 
     this.logger.log(`getTicketNumbersFromNft: companion=${companionAddress} roundId=${roundId} → ${logs.length} mint events`);
 
@@ -477,8 +518,6 @@ export class MegapotService {
 
     const tokenIds: string[] = [];
     const ticketNumbers: { main: number[]; bonus: number }[] = [];
-
-    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
     for (const log of logs) {
       const tokenId = log.args.tokenId?.toString();

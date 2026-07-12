@@ -4299,9 +4299,23 @@ export class LotteryService {
       const allNftIds: string[] = ticket.ticket_nft_ids ?? [];
       if (!allNftIds.length) throw new BadRequestException('No NFT IDs stored — sync ticket numbers first');
 
-      const nftResults = await this.megapot.checkTicketResultsFromNft(allNftIds);
-      const winningNftIds = nftResults.filter(r => r.winAmountUsdc > 0).map(r => BigInt(r.tokenId));
-      if (!winningNftIds.length) throw new BadRequestException('No winning NFTs found — draw may not have settled yet');
+      // ticket.win_amount_usdc is already trusted here (cross-checked against Megapot's Data API —
+      // see resolveTicketWin/reconcileUnclaimedResults — before the ticket was ever marked 'won'),
+      // so this on-chain metadata read is only needed to learn which token IDs to hand
+      // claimWinnings, not to re-decide whether the ticket won. That metadata read has proven
+      // unreliable/laggy right after settlement (the exact incident resolveTicketWin was added
+      // for — 23% of audited 'lost' tickets had actually won), so retry a few times before giving
+      // up instead of surfacing a misleading "draw may not have settled" when the ticket's status
+      // already proves it has.
+      let winningNftIds: bigint[] = [];
+      for (let attempt = 0; attempt < 4 && !winningNftIds.length; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 1500 * attempt));
+        const nftResults = await this.megapot.checkTicketResultsFromNft(allNftIds);
+        winningNftIds = nftResults.filter(r => r.winAmountUsdc > 0).map(r => BigInt(r.tokenId));
+      }
+      if (!winningNftIds.length) {
+        throw new BadRequestException('Could not confirm your win on-chain yet — please try again in a minute');
+      }
 
       this.logger.log(`playAgain ${opts.ticketId}: claiming ${winningNftIds.length} winning NFT(s) via Rhinestone`);
       const claimTx = await this.rhinestone.claimWinnings({ companionPrivateKey: companionPrivHex, ticketNftIds: winningNftIds });
@@ -4445,9 +4459,15 @@ export class LotteryService {
         if (!ticket.claim_tx_hash) {
           const allNftIds: string[] = ticket.ticket_nft_ids ?? [];
           if (!allNftIds.length) throw new Error('No NFT IDs stored — sync ticket numbers first');
-          const nftResults = await this.megapot.checkTicketResultsFromNft(allNftIds);
-          const winningNftIds = nftResults.filter(r => r.winAmountUsdc > 0).map(r => BigInt(r.tokenId));
-          if (!winningNftIds.length) throw new Error('No winning NFTs found — draw may not have settled yet');
+          // See playAgain's identical retry for why: win_amount_usdc is already Data-API-trusted,
+          // this metadata read can just be lagging right after settlement.
+          let winningNftIds: bigint[] = [];
+          for (let attempt = 0; attempt < 4 && !winningNftIds.length; attempt++) {
+            if (attempt > 0) await new Promise(r => setTimeout(r, 1500 * attempt));
+            const nftResults = await this.megapot.checkTicketResultsFromNft(allNftIds);
+            winningNftIds = nftResults.filter(r => r.winAmountUsdc > 0).map(r => BigInt(r.tokenId));
+          }
+          if (!winningNftIds.length) throw new Error('Could not confirm winnings on-chain yet — please try again in a minute');
           const claimTx = await this.rhinestone.claimWinnings({ companionPrivateKey: companionPrivHex, ticketNftIds: winningNftIds });
           await db.from('lottery_tickets').update({ claim_tx_hash: claimTx, updated_at: new Date().toISOString() }).eq('id', ticket.id);
           this.logger.log(`${tag(ticket.id)} claimed → ${claimTx}`);
