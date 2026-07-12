@@ -160,12 +160,46 @@ export interface MegapotWalletStats {
   totalSpent: string;
 }
 
+export interface PrizeTierInfo {
+  normalMatches: number;
+  bonusMatch: boolean;
+  grossUsdc: number;
+  netUsdc: number;
+  ticketCount: number;
+}
+
+export interface PrizeTiersSnapshot {
+  sourceRoundId: string;
+  settledAt: string | null;
+  claimFactor: number;
+  tiers: PrizeTierInfo[];
+}
+
+// The 10 tiers Megapot markets publicly, in their published display order. Two other
+// (normalMatches, bonusMatch) combos exist in the raw /rounds/{id} response — (0,false) and
+// (1,false) — but those are "matched nothing" non-wins Megapot doesn't list, so they're excluded
+// here and any prize_tiers entry not in this set is dropped.
+const PUBLIC_TIER_ORDER: Array<{ normalMatches: number; bonusMatch: boolean }> = [
+  { normalMatches: 5, bonusMatch: true },
+  { normalMatches: 5, bonusMatch: false },
+  { normalMatches: 4, bonusMatch: true },
+  { normalMatches: 4, bonusMatch: false },
+  { normalMatches: 3, bonusMatch: true },
+  { normalMatches: 2, bonusMatch: true },
+  { normalMatches: 3, bonusMatch: false },
+  { normalMatches: 1, bonusMatch: true },
+  { normalMatches: 2, bonusMatch: false },
+  { normalMatches: 0, bonusMatch: true },
+];
+
 @Injectable()
 export class MegapotService {
   private readonly logger = new Logger(MegapotService.name);
   private readonly apiKey: string;
   private readonly referrerWallet: Address | null;
   private readonly sourceId: `0x${string}`;
+  private prizeTiersCache: { data: PrizeTiersSnapshot; fetchedAt: number } | null = null;
+  private static readonly PRIZE_TIERS_CACHE_TTL_MS = 60 * 60 * 1000; // 1h — tiers only change once/day at draw settlement
 
   constructor(private readonly config: ConfigService) {
     this.apiKey = this.config.get<string>('MEGAPOT_API_KEY', '');
@@ -256,6 +290,64 @@ export class MegapotService {
   async getRound(roundId: string): Promise<MegapotRound> {
     const raw = await this.apiGet<any>(`/rounds/${roundId}`);
     return this.normalizeRound(raw);
+  }
+
+  /**
+   * Real per-tier payouts from the most recently SETTLED round — not an estimate. Megapot's
+   * `/rounds/{id}` only populates `prize_tiers` once a round settles (it's `null` while active),
+   * because non-jackpot tiers are split pari-mutuel among however many tickets actually hit that
+   * tier that day — a number nobody, including Megapot's own live UI, knows before the draw
+   * closes. So "the most recent settled round's real numbers" is the closest thing to ground
+   * truth that can be shown; a live/projected figure for the still-open round isn't obtainable.
+   * Net figures apply DEFAULT_REFERRAL_WIN_SHARE_FACTOR (the same display-estimate cut used
+   * elsewhere) — an individual ticket's actual claim factor is still read live at payout time via
+   * getWinClaimFactor().
+   */
+  async getLatestSettledPrizeTiers(): Promise<PrizeTiersSnapshot | null> {
+    if (this.prizeTiersCache && Date.now() - this.prizeTiersCache.fetchedAt < MegapotService.PRIZE_TIERS_CACHE_TTL_MS) {
+      return this.prizeTiersCache.data;
+    }
+    try {
+      const active = await this.apiGet<any>('/rounds/active');
+      const activeId = Number(active.id);
+      if (!Number.isFinite(activeId)) return this.prizeTiersCache?.data ?? null;
+
+      // Normally one hop back from the active round is settled; walk a few further back
+      // defensively in case a round was skipped or is still finalizing.
+      for (let candidate = activeId - 1; candidate > activeId - 5 && candidate > 0; candidate--) {
+        const round = await this.apiGet<any>(`/rounds/${candidate}`);
+        if (round.status !== 'settled' || !Array.isArray(round.prize_tiers)) continue;
+
+        const byKey = new Map<string, any>(
+          round.prize_tiers.map((t: any) => [`${t.normal_matches}:${!!t.bonusball_match}`, t]),
+        );
+        const tiers: PrizeTierInfo[] = PUBLIC_TIER_ORDER.map(({ normalMatches, bonusMatch }) => {
+          const t = byKey.get(`${normalMatches}:${bonusMatch}`);
+          const gross = t ? Number(t.payout?.amount ?? 0) / 10 ** (t.payout?.decimals ?? 6) : 0;
+          return {
+            normalMatches,
+            bonusMatch,
+            grossUsdc: gross,
+            netUsdc: parseFloat((gross * DEFAULT_REFERRAL_WIN_SHARE_FACTOR).toFixed(6)),
+            ticketCount: t?.ticket_count ?? 0,
+          };
+        });
+
+        const data: PrizeTiersSnapshot = {
+          sourceRoundId: String(candidate),
+          settledAt: round.settled_at ?? null,
+          claimFactor: DEFAULT_REFERRAL_WIN_SHARE_FACTOR,
+          tiers,
+        };
+        this.prizeTiersCache = { data, fetchedAt: Date.now() };
+        return data;
+      }
+      this.logger.warn(`getLatestSettledPrizeTiers: no settled round with prize_tiers found within 4 rounds of active (${activeId})`);
+      return this.prizeTiersCache?.data ?? null;
+    } catch (e: any) {
+      this.logger.warn(`getLatestSettledPrizeTiers: ${e.message} — serving stale cache if available`);
+      return this.prizeTiersCache?.data ?? null;
+    }
   }
 
   /** Fetch the winning numbers for a settled round. Returns null if not yet drawn or unknown format. */

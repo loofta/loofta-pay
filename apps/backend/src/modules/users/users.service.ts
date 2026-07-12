@@ -4,6 +4,8 @@ import { ConfigService } from '@nestjs/config';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { MAINNET_WALLET_UPDATE_ID } from '@/common/force-update';
 import { RedisService } from '@/redis/redis.service';
+import { Connection } from '@solana/web3.js';
+import { TldParser } from '@onsol/tldparser';
 
 const FORCE_UPDATE_TTL = 60 * 60 * 24 * 7; // 7 days — completed state is permanent
 function forceUpdateKey(privyUserId: string, updateId: string) {
@@ -25,6 +27,12 @@ function computeTierKey(volumeUsd: number): string {
     if (volumeUsd >= min) return key;
   }
   return 'noob';
+}
+
+function randomDigits(length: number): string {
+  let out = '';
+  for (let i = 0; i < length; i++) out += Math.floor(Math.random() * 10);
+  return out;
 }
 
 const _WALLET_CACHE_TTL = 120; // 2 min — wallet address rarely changes
@@ -109,8 +117,19 @@ export class UsersService {
     const emailAccount = accounts.find((a: any) => a.type === 'email');
     const email = emailAccount?.address ?? null;
 
+    // Mobile's Seeker login (useSeekerLogin.ts) is wallet-only — no email/Twitter — and passes
+    // wallet_client_type: 'seed_vault' / connector_type: 'solana_mobile_wallet_adapter' to Privy
+    // at SIWS login, which echoes them back on the linked wallet account. There's no login-method
+    // column on app_users, so this is encoded into the username itself (loo-skr-xxxxxx) to keep
+    // Seeker users identifiable without a schema change.
+    const walletAccount = accounts.find((a: any) => a.type === 'wallet');
+    const isSeekerWallet = !!walletAccount && (
+      walletAccount.wallet_client_type === 'seed_vault' || walletAccount.connector_type === 'solana_mobile_wallet_adapter'
+    );
+
     const looHandle = twitterHandle
       ?? (email ? email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16) : null)
+      ?? (isSeekerWallet ? `skr-${randomDigits(6)}` : null)
       ?? 'user';
     const looUsername = await this.generateUniqueLooUsername(looHandle, privyUserId);
 
@@ -537,10 +556,44 @@ export class UsersService {
    */
   async getSolanaWalletBalances(
     privyUserId: string,
-  ): Promise<{ walletAddress: string; solBalance: number; usdcBalance: number }> {
+  ): Promise<{ walletAddress: string; solBalance: number; usdcBalance: number; skrDomain: string | null }> {
     const walletAddress = await this.getSolanaWalletAddress(privyUserId);
-    const { solBalance, usdcBalance } = await this.getSolAndUsdcBalancesInternal(walletAddress);
-    return { walletAddress, solBalance, usdcBalance };
+    const [{ solBalance, usdcBalance }, skrDomain] = await Promise.all([
+      this.getSolAndUsdcBalancesInternal(walletAddress),
+      this.getSkrDomain(walletAddress),
+    ]);
+    return { walletAddress, solBalance, usdcBalance, skrDomain };
+  }
+
+  private getSolanaRpcUrl(): string {
+    const cluster =
+      process.env.SOLANA_CLUSTER?.trim() ||
+      process.env.NEXT_PUBLIC_SOLANA_CLUSTER?.trim() ||
+      'mainnet-beta';
+    const isDevnet = cluster === 'devnet' || cluster === 'testnet';
+    const heliusKey = process.env.HELIUS_API_KEY?.trim();
+    return isDevnet
+      ? (process.env.SOLANA_DEVNET_RPC_URL?.trim() ||
+         (heliusKey ? `https://devnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.devnet.solana.com'))
+      : (process.env.SOLANA_RPC_URL?.trim() ||
+         (heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com'));
+  }
+
+  /**
+   * Reverse-resolves a wallet's Solana Mobile Seeker ID — the ".skr" domain claimed on-device
+   * during Seeker setup, issued by AllDomains/ANS (not Bonfida's .sol SNS). Best-effort: not
+   * every wallet has claimed one, and devnet has no .skr registry.
+   */
+  async getSkrDomain(walletAddress: string): Promise<string | null> {
+    try {
+      const connection = new Connection(this.getSolanaRpcUrl());
+      const parser = new TldParser(connection);
+      const domains = (await parser.getParsedAllUserDomainsFromTld(walletAddress, 'skr')) as { domain: string }[];
+      return domains[0]?.domain ?? null;
+    } catch (error) {
+      this.logger.warn(`getSkrDomain failed for ${walletAddress.slice(0, 8)}...: ${error}`);
+      return null;
+    }
   }
 
   private async getSolanaWalletBalanceUSDInternal(walletAddress: string): Promise<number> {

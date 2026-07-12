@@ -1,10 +1,11 @@
 import { Injectable, Logger, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { randomUUID, randomBytes } from 'crypto';
 import { ConfigService } from '@nestjs/config';
-import { Keypair, PublicKey, Connection, Transaction, VersionedTransaction, TransactionMessage, SystemProgram } from '@solana/web3.js';
+import { Keypair, PublicKey, Connection, Transaction, TransactionInstruction, VersionedTransaction, TransactionMessage, SystemProgram } from '@solana/web3.js';
 import {
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
+  createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
   getAssociatedTokenAddress,
   getAccount,
@@ -15,7 +16,7 @@ import type { Address } from 'viem';
 import { SupabaseService } from '@/database/supabase.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
-import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI } from './megapot.service';
+import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI, PrizeTiersSnapshot } from './megapot.service';
 import { RhinestoneService } from './rhinestone.service';
 import { LifiService } from './lifi.service';
 import { RelayService } from './relay.service';
@@ -160,6 +161,9 @@ export interface InitiatePublicPurchaseResult {
   ticketId: string;
   depositAddress: string;
   amountUsdc: number;
+  /** Client-signable USDC transfer to `depositAddress` — Loofta's fee wallet sponsors gas + ATA
+   *  rent (see buildPublicPurchaseTransferTx), the user's signature is the only thing missing. */
+  txBase64: string;
 }
 
 export interface LotteryDashboard {
@@ -1200,16 +1204,15 @@ export class LotteryService {
   async initiatePublicPurchase(opts: {
     userId: string;
     numTickets: number;
+    userSolanaAddress: string;
   }): Promise<InitiatePublicPurchaseResult> {
-    const { userId, numTickets } = opts;
+    const { userId, numTickets, userSolanaAddress } = opts;
     if (numTickets < 1 || numTickets > 500) throw new BadRequestException('1–500 tickets per public purchase');
     await this.assertNotInDrawCutoff();
 
-    // Fresh companion wallet on Base
-    const companionPrivKey = generatePrivateKey();
-    const companionAccount = privateKeyToAccount(companionPrivKey);
-    const companionAddress = companionAccount.address;
-    const companionKeyEnc = this.enc.encrypt(Buffer.from(companionPrivKey.slice(2), 'hex'), companionAddress);
+    // Bridge SOL USDC → Base ETH directly to companion.
+    // ETH covers gas for Uniswap swap + ticket purchase. 15% buffer over ticket cost.
+    const BRIDGE_FEE_BUFFER = 0.15;
 
     const costUsdc = numTickets * TICKET_PRICE_USDC;
 
@@ -1217,7 +1220,7 @@ export class LotteryService {
     const db = this.supabase.getClient();
     const { data: existing } = await db
       .from('lottery_tickets')
-      .select('id, bridge_deposit_address, cost_usdc')
+      .select('id, bridge_deposit_address, bridge_memo, cost_usdc')
       .eq('user_id', userId)
       .eq('status', 'pending_send')
       .eq('num_tickets', numTickets)
@@ -1229,12 +1232,22 @@ export class LotteryService {
 
     if (existing?.bridge_deposit_address) {
       this.logger.log(`Public ticket: returning existing pending ticket ${existing.id} for user ${userId}`);
-      return { ticketId: existing.id, depositAddress: existing.bridge_deposit_address, amountUsdc: existing.cost_usdc };
+      const txBase64 = await this.buildPublicPurchaseTransferTx({
+        fromAddress: userSolanaAddress,
+        toAddress: existing.bridge_deposit_address,
+        userAmountUsdc: existing.cost_usdc,
+        looftaAmountUsdc: BRIDGE_FEE_BUFFER,
+        memo: existing.bridge_memo,
+      });
+      return { ticketId: existing.id, depositAddress: existing.bridge_deposit_address, amountUsdc: existing.cost_usdc, txBase64 };
     }
 
-    // Bridge SOL USDC → Base ETH directly to companion.
-    // ETH covers gas for Uniswap swap + ticket purchase. 15% buffer over ticket cost.
-    const BRIDGE_FEE_BUFFER = 0.15;
+    // Fresh companion wallet on Base
+    const companionPrivKey = generatePrivateKey();
+    const companionAccount = privateKeyToAccount(companionPrivKey);
+    const companionAddress = companionAccount.address;
+    const companionKeyEnc = this.enc.encrypt(Buffer.from(companionPrivKey.slice(2), 'hex'), companionAddress);
+
     const amountToSend = parseFloat((costUsdc + BRIDGE_FEE_BUFFER).toFixed(6));
 
     const quote = await this.nearIntents.getDepositQuote({
@@ -1268,8 +1281,72 @@ export class LotteryService {
 
     if (error || !ticket) throw new Error(`Failed to create public ticket: ${error?.message}`);
 
-    this.logger.log(`Public ticket ${ticket.id}: send ${amountToSend} USDC to ${quote.depositAddress}`);
-    return { ticketId: ticket.id, depositAddress: quote.depositAddress, amountUsdc: amountToSend };
+    const txBase64 = await this.buildPublicPurchaseTransferTx({
+      fromAddress: userSolanaAddress,
+      toAddress: quote.depositAddress,
+      userAmountUsdc: costUsdc,
+      looftaAmountUsdc: BRIDGE_FEE_BUFFER,
+      memo: quote.memo,
+    });
+
+    this.logger.log(`Public ticket ${ticket.id}: user sends ${costUsdc} USDC, Loofta covers ${BRIDGE_FEE_BUFFER} USDC bridge fee, both to ${quote.depositAddress}`);
+    return { ticketId: ticket.id, depositAddress: quote.depositAddress, amountUsdc: costUsdc, txBase64 };
+  }
+
+  /**
+   * Builds a client-signable USDC transfer from the user's own wallet straight to a NEAR Intents
+   * deposit address — the "pay without MagicBlock privacy" path. The user only pays the ticket
+   * cost (`userAmountUsdc`); Loofta's fee wallet tops up the deposit with its own USDC
+   * (`looftaAmountUsdc`, the bridge-fee buffer) in the same transaction so the address still
+   * receives what the NEAR Intents quote expects, and also sponsors gas + destination ATA rent.
+   * Same co-signing pattern as the gasless MagicBlock transfer in requestMagicblockPrivateTransfer
+   * — the fee wallet partial-signs now, the user's signature (added by Seeker) is all that's left.
+   */
+  private async buildPublicPurchaseTransferTx(opts: {
+    fromAddress: string;
+    toAddress: string;
+    userAmountUsdc: number;
+    looftaAmountUsdc: number;
+    memo?: string | null;
+  }): Promise<string> {
+    const { fromAddress, toAddress, userAmountUsdc, looftaAmountUsdc, memo } = opts;
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
+    const bs58Mod = await import('bs58');
+    const feePayerKeypair = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey));
+
+    const conn = await this.getSolanaConnection();
+    const fromPubkey = new PublicKey(fromAddress);
+    const toPubkey = new PublicKey(toAddress);
+    const fromAta = await getAssociatedTokenAddress(USDC_MINT, fromPubkey);
+    const feeWalletAta = await getAssociatedTokenAddress(USDC_MINT, feePayerKeypair.publicKey);
+    const toAta = await getAssociatedTokenAddress(USDC_MINT, toPubkey);
+
+    const instructions: TransactionInstruction[] = [];
+    if (memo && memo.trim()) {
+      instructions.push(new TransactionInstruction({
+        programId: new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
+        keys: [],
+        data: Buffer.from(memo.trim(), 'utf8'),
+      }));
+    }
+    instructions.push(createAssociatedTokenAccountIdempotentInstruction(feePayerKeypair.publicKey, toAta, toPubkey, USDC_MINT));
+    instructions.push(createTransferInstruction(fromAta, toAta, fromPubkey, Math.round(userAmountUsdc * 1_000_000)));
+    if (looftaAmountUsdc > 0) {
+      instructions.push(createTransferInstruction(feeWalletAta, toAta, feePayerKeypair.publicKey, Math.round(looftaAmountUsdc * 1_000_000)));
+    }
+
+    const { blockhash } = await conn.getLatestBlockhash();
+    const message = new TransactionMessage({
+      payerKey: feePayerKeypair.publicKey,
+      recentBlockhash: blockhash,
+      instructions,
+    }).compileToV0Message();
+
+    const tx = new VersionedTransaction(message);
+    tx.sign([feePayerKeypair]); // fee wallet partial-signs to sponsor gas + ATA rent + its own bridge-fee transfer; user signs client-side
+
+    return Buffer.from(tx.serialize()).toString('base64');
   }
 
   // ─── Cron processing ───────────────────────────────────────────────────────
@@ -3435,6 +3512,13 @@ export class LotteryService {
     return { tickets: (data ?? []).map(t => this.mapTicketSummary(t)), total: count ?? 0 };
   }
 
+  /** Real per-tier prize amounts from the most recently settled draw — see getLatestSettledPrizeTiers
+   *  for why this is the closest thing to ground truth Megapot's own API can offer. Public/no auth
+   *  required, same as bridge-fee. */
+  async getPrizeTiers(): Promise<PrizeTiersSnapshot | null> {
+    return this.megapot.getLatestSettledPrizeTiers();
+  }
+
   async getDashboard(userId: string): Promise<LotteryDashboard> {
     const db = this.supabase.getClient();
     const [ticketsRes, withdrawalsRes] = await Promise.all([
@@ -3945,9 +4029,53 @@ export class LotteryService {
   }
 
   /**
-   * "Play again" — claim winnings from a won ticket and immediately reinvest
-   * them into new Megapot tickets on Base. No bridge needed, no fees.
-   * Returns the new ticket ID and number of tickets purchased.
+   * Round-up funding for play-again: bridge `gapUsdc` (< $1) of USDC from Loofta's Solana fee
+   * wallet to `companionAddress` on Base via Relay, so a play-again can buy a whole extra ticket
+   * instead of leaving change. Waits (polls the companion balance) until the funds land. Returns
+   * true on success, false if it can't be confirmed in time (caller falls back to floor). Requires
+   * RELAY_API_KEY; the fee wallet must hold a little USDC + SOL (watched by checkFeeWalletBalance).
+   */
+  private async fundCompanionRoundUp(companionAddress: string, gapUsdc: number, preBalanceUsdc: number): Promise<boolean> {
+    if (!this.config.get<string>('RELAY_API_KEY')) {
+      this.logger.warn('fundCompanionRoundUp: RELAY_API_KEY not set — cannot round up');
+      return false;
+    }
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) return false;
+    const bs58Mod = await import('bs58');
+    const feePayer = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey));
+    // + $0.002 pad so the companion clears numTickets exactly after Relay's cut/rounding.
+    const gapUnits = BigInt(Math.ceil(gapUsdc * 1_000_000) + 2_000);
+
+    const quote = await this.relay.getSolToBaseQuote({
+      fromAddress: feePayer.publicKey.toBase58(),
+      toAddress: companionAddress,
+      outputUnits: gapUnits,
+    });
+    await this.relay.executeSolanaQuote({
+      burnerSecretKey: Buffer.from(feePayer.secretKey),
+      quote,
+      feePayerSecretKey: feePayerKey,
+    });
+
+    // Wait for the bridged gap to land on the companion (Relay ~1–3s; poll up to ~30s).
+    const target = preBalanceUsdc + gapUsdc - 0.005;
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const bal = await this.getCompanionUsdcBalance(companionAddress).catch(() => 0);
+      if (bal >= target) {
+        this.logger.log(`fundCompanionRoundUp: companion at $${bal.toFixed(4)} (target $${target.toFixed(4)}) — round-up funded`);
+        return true;
+      }
+    }
+    this.logger.warn(`fundCompanionRoundUp: gap didn't land within timeout — caller falls back to floor`);
+    return false;
+  }
+
+  /**
+   * "Play again" — claim winnings from a won ticket and immediately reinvest them into new Megapot
+   * tickets on Base. Rounds UP to the next whole ticket (funding the <$1 gap from the fee wallet),
+   * so the user keeps playing instead of leaving change. Returns the new ticket ID and count.
    */
   async playAgain(opts: {
     ticketId: string;
@@ -3985,13 +4113,41 @@ export class LotteryService {
       this.logger.log(`playAgain ${opts.ticketId}: claimed — tx=${claimTx}`);
     }
 
-    // Step 2: check actual USDC balance in companion smart account
-    const usdcBalance = await this.getCompanionUsdcBalance(ticket.companion_address);
-    const numTickets = Math.floor(usdcBalance / TICKET_PRICE_USDC);
-    if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy tickets ($${usdcBalance.toFixed(6)} USDC)`);
+    // Step 2: decide the ticket count.
+    //  • FREE-TICKET win (< WITHDRAW_MIN_USDC): there's no withdraw alternative to beat, so just
+    //    replay the whole ticket(s) it buys (floor) and sweep the sub-$1 change to Loofta. No
+    //    round-up for the smallest wins.
+    //  • CASH win (≥ WITHDRAW_MIN_USDC): round UP and fund the <$1 gap from Loofta's fee wallet
+    //    (bridged Solana→Base via Relay) so "N tickets" beats withdrawing — a retention play the
+    //    ~10% Megapot referral roughly pays for. If funding can't be arranged, fall back to floor
+    //    and leave the change in the companion (carries to their next play-again, never swept).
+    const claimedBalance = await this.getCompanionUsdcBalance(ticket.companion_address);
+    if (claimedBalance < 0.001) throw new BadRequestException(`Companion balance too low to reinvest ($${claimedBalance.toFixed(6)} USDC)`);
 
-    // Step 3: buy new tickets using existing companion smart account — no bridge
-    this.logger.log(`playAgain ${opts.ticketId}: buying ${numTickets} new ticket(s) with $${usdcBalance.toFixed(6)} USDC`);
+    const isFreeTicketWin = claimedBalance < WITHDRAW_MIN_USDC;
+    let numTickets: number;
+    let sweepLeftover = false;
+
+    if (isFreeTicketWin) {
+      numTickets = Math.floor(claimedBalance / TICKET_PRICE_USDC);
+      if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy a ticket ($${claimedBalance.toFixed(6)} USDC)`);
+      sweepLeftover = true;
+    } else {
+      numTickets = Math.max(1, Math.ceil(claimedBalance));
+      const gapUsdc = parseFloat((numTickets * TICKET_PRICE_USDC - claimedBalance).toFixed(6));
+      if (gapUsdc > 0.0005) {
+        const funded = await this.fundCompanionRoundUp(ticket.companion_address, gapUsdc, claimedBalance)
+          .catch(e => { this.logger.warn(`playAgain ${opts.ticketId}: round-up funding failed (${e.message})`); return false; });
+        if (!funded) {
+          numTickets = Math.floor(claimedBalance / TICKET_PRICE_USDC);
+          if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy a whole ticket ($${claimedBalance.toFixed(6)} USDC)`);
+          this.logger.warn(`playAgain ${opts.ticketId}: round-up unavailable — buying ${numTickets} (floor), leftover carries forward`);
+        }
+      }
+    }
+
+    // Step 3: buy the tickets from the existing companion smart account — no user-facing fee.
+    this.logger.log(`playAgain ${opts.ticketId}: buying ${numTickets} ticket(s) (won $${claimedBalance.toFixed(4)}, ${isFreeTicketWin ? 'free-ticket → floor + sweep' : 'cash → rounded up'})`);
     await this.rhinestone.buyMegapotTickets({
       companionPrivateKey: companionPrivHex,
       numTickets,
@@ -4001,23 +4157,18 @@ export class LotteryService {
       splits: this.megapot.getSplits(),
     });
 
-    // Step 3b: sweep the sub-$1 change that couldn't buy a whole ticket to Loofta's Base wallet.
-    // We don't carry it forward or return it — returning sub-$1 on-chain costs more in bridge fees
-    // than it's worth, and leaving it in the companion would slowly strand dust. Best-effort:
-    // Rhinestone-sponsored (no gas cost to the user), and if it fails the funds are safe in the
-    // companion we control, so it never blocks the replay.
-    try {
-      const leftover = await this.getCompanionUsdcBalance(ticket.companion_address);
-      if (leftover > 0.01) {
-        await this.rhinestone.rescueUsdc({
-          companionPrivateKey: companionPrivHex,
-          rescueWallet: LOOFTA_WALLET,
-          amountUsdc: leftover,
-        });
-        this.logger.log(`playAgain ${opts.ticketId}: swept $${leftover.toFixed(6)} leftover → Loofta wallet`);
+    // Step 3b: free-ticket wins only — sweep the sub-$1 change to Loofta (best-effort, Rhinestone-
+    // sponsored; funds stay safe in the companion we control if it fails, so it never blocks play).
+    if (sweepLeftover) {
+      try {
+        const leftover = await this.getCompanionUsdcBalance(ticket.companion_address);
+        if (leftover > 0.01) {
+          await this.rhinestone.rescueUsdc({ companionPrivateKey: companionPrivHex, rescueWallet: LOOFTA_WALLET, amountUsdc: leftover });
+          this.logger.log(`playAgain ${opts.ticketId}: swept $${leftover.toFixed(6)} free-ticket change → Loofta wallet`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`playAgain ${opts.ticketId}: leftover sweep failed (funds safe in companion): ${e.message}`);
       }
-    } catch (e: any) {
-      this.logger.warn(`playAgain ${opts.ticketId}: leftover sweep failed (funds safe in companion): ${e.message}`);
     }
 
     // Step 4: mark old ticket as withdrawn, create new active ticket record

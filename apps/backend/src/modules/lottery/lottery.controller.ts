@@ -17,6 +17,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { IsNumber, IsString, IsIn, IsArray, IsOptional, Min, Max } from 'class-validator';
 import { AuthGuard, Public, OptionalAuthGuard } from '@/common/guards';
 import { LotteryService, InitiatePurchaseResult, InitiatePublicPurchaseResult, LotteryDashboard, LotteryTicketSummary } from './lottery.service';
+import { PrizeTiersSnapshot } from './megapot.service';
 import { LifiService } from './lifi.service';
 
 class BuyTicketsDto {
@@ -139,6 +140,13 @@ export class LotteryController {
     }
   }
 
+  @Get('prize-tiers')
+  @Public()
+  @ApiOperation({ summary: 'Real per-tier payouts from the most recently settled draw (net of referral cut) — not a live/projected estimate' })
+  async prizeTiers(): Promise<PrizeTiersSnapshot | null> {
+    return this.lottery.getPrizeTiers();
+  }
+
   @Post('buy')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Initiate ticket purchase — returns the MagicBlock tx for the user to sign (no separate Loofta fee tx)' })
@@ -163,13 +171,15 @@ export class LotteryController {
 
   @Post('buy-public')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Initiate public (non-private) ticket purchase — returns NEAR Intents deposit address' })
+  @ApiOperation({ summary: 'Initiate public (non-private) ticket purchase — returns a NEAR Intents deposit address and a client-signable USDC transfer tx to fund it' })
   async buyPublic(@Body() body: any, @Request() req: any): Promise<InitiatePublicPurchaseResult> {
     const numTickets = Number(body?.numTickets);
     if (!numTickets || numTickets < 1) throw new BadRequestException('numTickets required');
+    if (!body?.userSolanaAddress) throw new BadRequestException('userSolanaAddress required');
     return this.lottery.initiatePublicPurchase({
       userId: req.user.id,
       numTickets,
+      userSolanaAddress: body.userSolanaAddress,
     });
   }
 

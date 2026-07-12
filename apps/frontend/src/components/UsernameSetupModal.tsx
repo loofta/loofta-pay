@@ -65,6 +65,10 @@ export function UsernameSetupModal({
       setError("After loo- use 1–16 letters, numbers, and underscores only.");
       return;
     }
+    if (!twitterUsername && looSuffix.trim().toLowerCase().startsWith("skr-")) {
+      setError("The skr- prefix is reserved for Seeker device logins.");
+      return;
+    }
 
     setLoading(true);
     try {
