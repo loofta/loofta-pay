@@ -10,6 +10,7 @@ import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { getBridgeFee, getDashboard, playAgain, withdrawBatch, type LotteryTicketSummary, type LotteryWithdrawalSummary } from '../../lib/api/lottery';
 import { fmt, DEFAULT_WITHDRAW_MIN_USDC, WITHDRAW_FEATURED_THRESHOLD_USDC, isFreeTicketAmount } from '../../lib/lottery/fees';
 import { connectSeekerWallet } from '../../lib/wallet/mwa';
+import { updateCachedSkrDomain } from '../../lib/storage/seekerIdentity';
 import { color, radius, space } from '../../lib/theme';
 import { FONT_TITLE, FONT_TITLE_SEMIBOLD, FONT_BODY, FONT_BODY_MEDIUM, FONT_BODY_SEMIBOLD, FONT_BODY_BOLD } from '../../lib/fonts';
 
@@ -300,7 +301,8 @@ function RedeemInner() {
     setRedeeming(true);
     setRedeemError(null);
     try {
-      const { base58Address } = await connectSeekerWallet();
+      const { base58Address, label } = await connectSeekerWallet();
+      void updateCachedSkrDomain(label);
       const accessToken = await getAccessToken();
       const { withdrawalIds: ids } = await withdrawBatch(wonTickets.map((t) => t.id), base58Address, accessToken);
       setWithdrawalIds(ids);

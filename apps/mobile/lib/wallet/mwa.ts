@@ -22,6 +22,11 @@ interface Connected {
   wallet: Web3MobileWallet;
   mwaAddress: string; // base64, for wallet API calls (signMessages addresses field)
   base58Address: string; // for app/backend use
+  // The wallet's own human-readable label for this account (MWA's Account.label) — on the
+  // Seeker's Seed Vault this is the claimed .skr Seeker ID when one exists. Reading it straight
+  // off the connect/reauthorize response avoids depending on a separate backend RPC lookup
+  // (getSkrDomain) for the exact same information the wallet already hands us for free.
+  label: string | null;
 }
 
 /**
@@ -45,14 +50,16 @@ async function withWallet<T>(fn: (c: Connected) => Promise<T>): Promise<T> {
     }
     await SecureStore.setItemAsync(AUTH_TOKEN_KEY, authResult.auth_token);
 
-    const mwaAddress = authResult.accounts[0].address;
-    return fn({ wallet, mwaAddress, base58Address: toBase58(mwaAddress) });
+    const account = authResult.accounts[0];
+    const mwaAddress = account.address;
+    return fn({ wallet, mwaAddress, base58Address: toBase58(mwaAddress), label: account.label ?? null });
   });
 }
 
-/** Connects (or silently resumes a connection to) the Seeker wallet. Returns its Solana address. */
-export async function connectSeekerWallet(): Promise<{ base58Address: string }> {
-  return withWallet(async ({ base58Address }) => ({ base58Address }));
+/** Connects (or silently resumes a connection to) the Seeker wallet. Returns its Solana address
+ *  and the wallet's own label for it (see Connected.label). */
+export async function connectSeekerWallet(): Promise<{ base58Address: string; label: string | null }> {
+  return withWallet(async ({ base58Address, label }) => ({ base58Address, label }));
 }
 
 /**
@@ -76,8 +83,8 @@ export async function connectSeekerWallet(): Promise<{ base58Address: string }> 
  */
 export async function connectAndSignMessage(
   buildMessage: (base58Address: string) => Promise<string>,
-): Promise<{ base58Address: string; message: string; signatureBase64: string }> {
-  return withWallet(async ({ wallet, mwaAddress, base58Address }) => {
+): Promise<{ base58Address: string; message: string; signatureBase64: string; label: string | null }> {
+  return withWallet(async ({ wallet, mwaAddress, base58Address, label }) => {
     const message = await buildMessage(base58Address);
     const payload = new TextEncoder().encode(message);
     const [signedPayload] = await wallet.signMessages({ addresses: [mwaAddress], payloads: [payload] });
@@ -87,7 +94,7 @@ export async function connectAndSignMessage(
       console.warn('[mwa] Signed message failed local verification — signature extraction may be wrong for this wallet.');
     }
 
-    return { base58Address, message, signatureBase64: Buffer.from(signature).toString('base64') };
+    return { base58Address, message, signatureBase64: Buffer.from(signature).toString('base64'), label };
   });
 }
 
