@@ -212,6 +212,7 @@ export class UsersController {
         walletAddress: { type: 'string' },
         solBalance: { type: 'number' },
         usdcBalance: { type: 'number' },
+        skrDomain: { type: 'string', nullable: true },
       },
     },
   })

@@ -1442,6 +1442,43 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
 
 
 
+/**
+ * The featured "Play again" CTA — a moving lightning-glow border to sell it as the better deal vs.
+ * withdrawing. Reduced-motion falls back to a static glow.
+ */
+function GlowPlayAgainButton({ onClick, disabled, children }: {
+  onClick: () => void; disabled?: boolean; children: React.ReactNode;
+}) {
+  const reduceMotion = useReducedMotion();
+  return (
+    <div className="relative">
+      <style>{`
+        @keyframes looftaGlowShift { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+        @keyframes looftaGlowPulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+      `}</style>
+      <div
+        aria-hidden
+        className="absolute -inset-[2.5px] rounded-2xl blur-[7px]"
+        style={{
+          background: "linear-gradient(110deg,#34d399,#22d3ee,#fbbf24,#a78bfa,#34d399)",
+          backgroundSize: "220% 100%",
+          animation: reduceMotion ? undefined : "looftaGlowShift 2.4s linear infinite, looftaGlowPulse 2.4s ease-in-out infinite",
+          opacity: reduceMotion ? 0.7 : undefined,
+        }}
+      />
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className="relative w-full h-14 rounded-2xl font-bold text-lg bg-[#0d0d11] border border-white/10 text-white active:scale-[0.99] transition-transform disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300"
+      >
+        <span className="bg-gradient-to-r from-emerald-300 via-teal-200 to-amber-200 bg-clip-text text-transparent">
+          {children}
+        </span>
+      </button>
+    </div>
+  );
+}
+
 // ─── Withdraw tab ─────────────────────────────────────────────────────────────
 
 function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn, dashboardLoading, previewDone, withdrawMinUsdc }: {
@@ -1517,15 +1554,18 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
 
   const totalAmount = wonTickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
   const isBatch = wonTickets.length > 1;
-  // Play again reinvests the claimed balance at $1/ticket, floored; the sub-$1 change is swept to
-  // Loofta's wallet by the backend (not returned), so there's nothing to show the user about it.
-  const playAgainTicketCount = Math.floor(totalAmount);
-  const canPlayAgain = playAgainTicketCount >= 1;
   // Threshold is backend-owned (dashboard.withdrawMinUsdc); fall back only until it loads. Sub-
   // threshold wins are worth less than a ticket after fees — shown as a "Free ticket", the only
-  // action is Play Again. At/above it the user may also cash out. A win too small to even buy one
-  // ticket (< $1) can't be replayed, so withdrawal is its only option.
+  // action is Play Again. At/above it the user may also cash out.
   const minWithdraw = withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC;
+  // Play-again ticket count, matching the backend playAgain rule: a cash win (≥ threshold) is
+  // ROUNDED UP (backend funds the <$1 gap from the fee wallet), a free-ticket win (< threshold) is
+  // floored (backend sweeps the small change to us — no round-up when there's no withdraw to beat).
+  const playAgainTicketCount = wonTickets.reduce((sum, t) => {
+    const n = t.winAmountUsdc ?? 0;
+    return sum + (n >= minWithdraw ? Math.max(1, Math.ceil(n)) : Math.floor(n));
+  }, 0);
+  const canPlayAgain = wonTickets.some(t => (t.winAmountUsdc ?? 0) > 0);
   const isFreeTicket = isFreeTicketAmount(totalAmount, minWithdraw) && canPlayAgain;
 
   useEffect(() => {
@@ -1802,23 +1842,27 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
 
       {isFreeTicket ? (
         /* Free ticket — worth less than a ticket's cash value after fees, so the only action is
-           to replay it into the next draw (free). No withdraw offered. */
-        <button onClick={handlePlayAgain} disabled={playingAgain}
-          className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
-          {playingAgain ? "Playing again…" : "Play again — enter the next draw, free"}
-        </button>
-      ) : canPlayAgain ? (
-        /* Cash win (≥ $1.30): play again is the featured, fee-free option; withdrawing is one tap
-           away behind a confirmation showing the real net. */
+           to replay it into the next draw (free), rounded up to a whole ticket. No withdraw. */
         <>
-          <button onClick={handlePlayAgain} disabled={playingAgain}
-            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
-            {playingAgain ? "Playing again…" : `Play again — ${playAgainTicketCount} new ticket${playAgainTicketCount === 1 ? "" : "s"}, no fees`}
-          </button>
+          <GlowPlayAgainButton onClick={handlePlayAgain} disabled={playingAgain}>
+            {playingAgain ? "Playing again…" : `⚡ Play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? "" : "s"}, free`}
+          </GlowPlayAgainButton>
+          <p className="text-center text-sm text-slate-500">Your win goes straight into the next draw — no fees.</p>
+        </>
+      ) : canPlayAgain ? (
+        /* Cash win (≥ $1.30): play again is the featured, rounded-up, fee-free deal; withdrawing is
+           one tap away, de-emphasised, behind a confirmation showing the real net. */
+        <>
+          <GlowPlayAgainButton onClick={handlePlayAgain} disabled={playingAgain}>
+            {playingAgain ? "Playing again…" : `⚡ Play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? "" : "s"}`}
+          </GlowPlayAgainButton>
+          <p className="text-center text-sm text-emerald-300/80 font-medium -mt-1">
+            Best value — we round you up to {playAgainTicketCount} whole ticket{playAgainTicketCount === 1 ? "" : "s"}, no fees
+          </p>
           {!confirmingRedeem ? (
             <button onClick={() => setConfirmingRedeem(true)} disabled={playingAgain || bridgeFeeUsd === null}
-              className="w-full h-11 rounded-xl border border-white/15 text-slate-300 font-medium text-sm hover:bg-white/[0.06] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-              {bridgeFeeUnavailable ? "Fee unavailable, retry" : bridgeFeeUsd === null ? "Getting fee quote…" : `Redeem instead — get ~${fmt(bridgeReceiveUsdc ?? totalAmount)}`}
+              className="w-full text-center text-sm text-slate-500 hover:text-slate-300 underline underline-offset-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              {bridgeFeeUnavailable ? "Fee unavailable, retry" : bridgeFeeUsd === null ? "Getting fee quote…" : `or withdraw ~${fmt(bridgeReceiveUsdc ?? totalAmount)} instead`}
             </button>
           ) : (
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
