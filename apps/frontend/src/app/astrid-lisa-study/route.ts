@@ -226,9 +226,9 @@ const HTML = String.raw`<!DOCTYPE html>
     <div class="qnum">Question 01 / 06 — vérification d'identité</div>
     <div class="question">Tu es bien Astrid?</div>
     <div class="answers">
-      <button class="btn" onclick="go(2)">oui</button>
-      <button class="btn" onclick="go(2)">aux dernières nouvelles</button>
-      <button class="btn" onclick="go(2)">qui d'autre recevrait ce lien</button>
+      <button class="btn" onclick="pick('q1','oui',2)">oui</button>
+      <button class="btn" onclick="pick('q1','aux dernières nouvelles',2)">aux dernières nouvelles</button>
+      <button class="btn" onclick="pick('q1','qui d\'autre recevrait ce lien',2)">qui d'autre recevrait ce lien</button>
     </div>
   </section>
 
@@ -238,9 +238,9 @@ const HTML = String.raw`<!DOCTYPE html>
     <div class="qnum">Question 02 / 06 — information capitale</div>
     <div class="question">Nacho a une nouvelle coupe. Tu veux voir?</div>
     <div class="answers" id="nachoAnswers">
-      <button class="btn" onclick="revealNacho()">oui</button>
-      <button class="btn" onclick="revealNacho()">évidemment</button>
-      <button class="btn" onclick="revealNacho()">c'est la seule raison de ma venue</button>
+      <button class="btn" onclick="revealNacho('oui')">oui</button>
+      <button class="btn" onclick="revealNacho('évidemment')">évidemment</button>
+      <button class="btn" onclick="revealNacho('c\'est la seule raison de ma venue')">c'est la seule raison de ma venue</button>
     </div>
     <div id="nachoReveal" class="hidden" style="margin-top:8px">
       <img src="/IMG_1284.JPG" alt="Nacho et sa nouvelle coupe" id="nachoImg"
@@ -256,9 +256,9 @@ const HTML = String.raw`<!DOCTYPE html>
     <div class="qnum">Question 03 / 06</div>
     <div class="question">L'institut a adoré les moments passés avec toi. Réaction:</div>
     <div class="answers">
-      <button class="btn" onclick="go(4)">pareil</button>
-      <button class="btn" onclick="go(4)">c'est réciproque</button>
-      <button class="btn" onclick="go(4)">objection retenue nulle part</button>
+      <button class="btn" onclick="pick('q3','pareil',4)">pareil</button>
+      <button class="btn" onclick="pick('q3','c\'est réciproque',4)">c'est réciproque</button>
+      <button class="btn" onclick="pick('q3','objection retenue nulle part',4)">objection retenue nulle part</button>
     </div>
   </section>
 
@@ -268,9 +268,9 @@ const HTML = String.raw`<!DOCTYPE html>
     <div class="qnum">Question 04 / 06</div>
     <div class="question">Sois honnête: tu as souri depuis la photo de Nacho?</div>
     <div class="answers">
-      <button class="btn" onclick="go(5)">oui</button>
-      <button class="btn" onclick="go(5)">un peu</button>
-      <button class="btn" onclick="go(5)">non — <em>mensonge détecté par nos capteurs</em></button>
+      <button class="btn" onclick="pick('q4','oui',5)">oui</button>
+      <button class="btn" onclick="pick('q4','un peu',5)">un peu</button>
+      <button class="btn" onclick="pick('q4','non',5)">non — <em>mensonge détecté par nos capteurs</em></button>
     </div>
   </section>
 
@@ -280,9 +280,9 @@ const HTML = String.raw`<!DOCTYPE html>
     <div class="qnum">Question 05 / 06</div>
     <div class="question">Hypothèse purement théorique: on se revoit. Ce serait plutôt:</div>
     <div class="answers">
-      <button class="btn" onclick="go(6)">un açaï</button>
-      <button class="btn" onclick="go(6)">une balade</button>
-      <button class="btn" onclick="go(6)">les deux, dans le désordre</button>
+      <button class="btn" onclick="pick('q5','un açaï',6)">un açaï</button>
+      <button class="btn" onclick="pick('q5','une balade',6)">une balade</button>
+      <button class="btn" onclick="pick('q5','les deux, dans le désordre',6)">les deux, dans le désordre</button>
     </div>
   </section>
 
@@ -292,7 +292,7 @@ const HTML = String.raw`<!DOCTYPE html>
     <div class="qnum">Question 06 / 06 — question de contrôle</div>
     <div class="question">Donc. On devrait se revoir?</div>
     <div class="duel" id="duelZone">
-      <button class="btn primary" onclick="showResult()">Oui</button>
+      <button class="btn primary" onclick="pickFinal('oui')">Oui</button>
       <button class="btn" id="noBtn">Non</button>
     </div>
     <p class="hint" id="hint"></p>
@@ -322,6 +322,7 @@ const HTML = String.raw`<!DOCTYPE html>
 
 <script>
   let current = 'intro';
+  const answers = {};
   function show(id){
     document.getElementById(current).classList.add('hidden');
     const el = document.getElementById(id);
@@ -332,10 +333,29 @@ const HTML = String.raw`<!DOCTYPE html>
     current = id;
   }
   function go(n){ show('q' + n); }
+  function pick(key, value, next){
+    answers[key] = value;
+    go(next);
+  }
+  function pickFinal(value){
+    answers.q6 = value;
+    showResult();
+  }
 
-  function revealNacho(){
+  function revealNacho(value){
+    answers.q2 = value;
     document.getElementById('nachoAnswers').classList.add('hidden');
     document.getElementById('nachoReveal').classList.remove('hidden');
+  }
+
+  function submitAnswers(){
+    try {
+      fetch('/api/astrid-lisa-study', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answers: answers })
+      }).catch(function(){});
+    } catch (e) {}
   }
 
   // The fleeing "Non" button
@@ -368,7 +388,7 @@ const HTML = String.raw`<!DOCTYPE html>
       noBtn.textContent = 'ok, oui alors';
       noBtn.classList.add('primary');
       noBtn.style.transform = 'scale(1)';
-      noBtn.onclick = showResult;
+      noBtn.onclick = function(){ pickFinal('non (' + dodges + ' fuites) puis oui'); };
       noBtn.onmouseenter = null;
       noBtn.ontouchstart = null;
       noBtn.onpointerdown = null;
@@ -381,6 +401,7 @@ const HTML = String.raw`<!DOCTYPE html>
 
   // gentle heart rain on result
   function showResult(){
+    submitAnswers();
     show('analysis');
     const line = document.getElementById('analysisLine');
     const seq = [
