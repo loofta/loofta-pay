@@ -183,7 +183,7 @@ export default function TestTransferPage() {
 
         {/* Network */}
         <div className="mb-5">
-          <label className="block text-sm md:text-xs text-zinc-400 mb-2 uppercase tracking-wide">Network</label>
+          <label className="block text-sm text-zinc-400 mb-2 uppercase tracking-wide">Network</label>
           <div className="flex gap-2">
             {(["devnet", "mainnet"] as Cluster[]).map((c) => (
               <button
@@ -204,7 +204,7 @@ export default function TestTransferPage() {
 
         {/* Wallet */}
         <div className="mb-5">
-          <label className="block text-sm md:text-xs text-zinc-400 mb-2 uppercase tracking-wide">Sender wallet</label>
+          <label className="block text-sm text-zinc-400 mb-2 uppercase tracking-wide">Sender wallet</label>
           {walletAddress ? (
             <div className="flex items-center gap-2 bg-zinc-800 rounded-lg px-3 py-2">
               <div className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
@@ -223,7 +223,7 @@ export default function TestTransferPage() {
 
         {/* Recipient */}
         <div className="mb-5">
-          <label className="block text-sm md:text-xs text-zinc-400 mb-2 uppercase tracking-wide">Recipient address</label>
+          <label className="block text-sm text-zinc-400 mb-2 uppercase tracking-wide">Recipient address</label>
           <input
             type="text"
             value={recipient}
@@ -236,7 +236,7 @@ export default function TestTransferPage() {
 
         {/* Amount */}
         <div className="mb-7">
-          <label className="block text-sm md:text-xs text-zinc-400 mb-2 uppercase tracking-wide">Amount (USDC)</label>
+          <label className="block text-sm text-zinc-400 mb-2 uppercase tracking-wide">Amount (USDC)</label>
           <div className="relative">
             <input
               type="number"
@@ -248,7 +248,7 @@ export default function TestTransferPage() {
               disabled={busy}
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 pr-16 text-base md:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-violet-500 disabled:opacity-50"
             />
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm md:text-xs text-zinc-400">USDC</span>
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">USDC</span>
           </div>
         </div>
 
@@ -268,7 +268,7 @@ export default function TestTransferPage() {
               href={inspectorUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm md:text-xs text-zinc-400 hover:text-zinc-200 underline underline-offset-2"
+              className="text-sm text-zinc-400 hover:text-zinc-200 underline underline-offset-2"
             >
               Open in TX Inspector →
             </a>
@@ -288,13 +288,13 @@ export default function TestTransferPage() {
               <div className="w-2 h-2 rounded-full bg-green-400" />
               <span className="text-green-300 text-base md:text-sm font-medium">Transaction confirmed</span>
             </div>
-            <p className="text-sm md:text-xs text-zinc-400 mb-1">Signature</p>
-            <p className="text-sm md:text-xs font-mono text-zinc-200 break-all mb-3">{status.signature}</p>
+            <p className="text-sm text-zinc-400 mb-1">Signature</p>
+            <p className="text-sm font-mono text-zinc-200 break-all mb-3">{status.signature}</p>
             <a
               href={explorerUrl!}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm md:text-xs text-violet-400 hover:text-violet-300 underline underline-offset-2"
+              className="text-sm text-violet-400 hover:text-violet-300 underline underline-offset-2"
             >
               View on Explorer →
             </a>
@@ -302,7 +302,7 @@ export default function TestTransferPage() {
         )}
 
         {/* Note */}
-        <p className="mt-6 text-sm md:text-xs text-zinc-600 text-center">
+        <p className="mt-6 text-sm text-zinc-600 text-center">
           Private transfers have a random delay (devnet: 30s–5min) before the recipient sees funds.
         </p>
       </div>

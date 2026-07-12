@@ -557,12 +557,40 @@ export class UsersService {
   async getSolanaWalletBalances(
     privyUserId: string,
   ): Promise<{ walletAddress: string; solBalance: number; usdcBalance: number; skrDomain: string | null }> {
-    const walletAddress = await this.getSolanaWalletAddress(privyUserId);
+    const walletAddress = await this.getMobileWalletAddress(privyUserId);
     const [{ solBalance, usdcBalance }, skrDomain] = await Promise.all([
       this.getSolAndUsdcBalancesInternal(walletAddress),
       this.getSkrDomain(walletAddress),
     ]);
     return { walletAddress, solBalance, usdcBalance, skrDomain };
+  }
+
+  /**
+   * Same resolution as getSolanaWalletAddress, but when a user has more than one 'wallet' linked
+   * account — e.g. an old web-created embedded wallet alongside the mobile Seeker/MWA wallet on
+   * the same Privy user — prefers the Seeker one. That's the wallet actually holding funds and
+   * signing transactions in the mobile app; getSolanaWalletAddress's plain `.find()` would
+   * otherwise silently return whichever wallet account happens to come first (often the older,
+   * empty one), showing $0 balances even though the Seeker wallet is funded. Detection mirrors
+   * ensureAppUser's wallet_client_type/connector_type check.
+   */
+  private async getMobileWalletAddress(privyUserId: string): Promise<string> {
+    const privyUser = await this.getPrivyUser(privyUserId);
+    const linkedAccounts: any[] = privyUser?.linked_accounts || [];
+    const isSolanaAddress = (addr: string) => addr && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr);
+
+    const seeker = linkedAccounts.find(
+      (account: any) =>
+        account.type === 'wallet' &&
+        isSolanaAddress(account.address) &&
+        (account.wallet_client_type === 'seed_vault' || account.connector_type === 'solana_mobile_wallet_adapter'),
+    );
+    if (seeker?.address) {
+      this.logger.debug(`Using Seeker wallet for balances: ${seeker.address.slice(0, 8)}...`);
+      return seeker.address;
+    }
+
+    return this.getSolanaWalletAddress(privyUserId);
   }
 
   private getSolanaRpcUrl(): string {
@@ -667,24 +695,32 @@ export class UsersService {
       : 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
     try {
-      // Batched JSON-RPC request — one round trip for both balances instead of two.
-      const response = await fetch(solanaRpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify([
-          {
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'getTokenAccountsByOwner',
-            params: [walletAddress, { mint: usdcMint }, { encoding: 'jsonParsed' }],
-          },
-          { jsonrpc: '2.0', id: 2, method: 'getBalance', params: [walletAddress] },
-        ]),
-      });
+      // Two individual requests, not a batched array — many RPC providers (e.g. Alchemy's free
+      // tier) reject batch JSON-RPC with a 200 OK + error body ({"error":{"code":-32403,...}}),
+      // which isn't an HTTP failure so fetch() doesn't throw; it silently fell through to the
+      // catch-all $0 fallback below on every call.
+      const post = (body: unknown) =>
+        fetch(solanaRpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }).then((r) => r.json());
 
-      const results = await response.json();
-      const tokenResult = results.find((r: any) => r.id === 1);
-      const balanceResult = results.find((r: any) => r.id === 2);
+      const [tokenResult, balanceResult] = await Promise.all([
+        post({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getTokenAccountsByOwner',
+          params: [walletAddress, { mint: usdcMint }, { encoding: 'jsonParsed' }],
+        }),
+        post({ jsonrpc: '2.0', id: 2, method: 'getBalance', params: [walletAddress] }),
+      ]);
+
+      if (tokenResult?.error || balanceResult?.error) {
+        throw new Error(
+          `RPC error: ${JSON.stringify(tokenResult?.error ?? balanceResult?.error).slice(0, 300)}`,
+        );
+      }
 
       const usdcAccount = tokenResult?.result?.value?.[0];
       const usdcBalance = usdcAccount?.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0;

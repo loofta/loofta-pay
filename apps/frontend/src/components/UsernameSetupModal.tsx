@@ -151,7 +151,7 @@ export function UsernameSetupModal({
                 </div>
               )}
               {!hasTwitter && (
-                <p className="mt-1 text-sm md:text-xs text-gray-500">1–16 letters, numbers, underscores after loo-</p>
+                <p className="mt-1 text-sm text-gray-500">1–16 letters, numbers, underscores after loo-</p>
               )}
             </div>
 

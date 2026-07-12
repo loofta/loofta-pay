@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   let query = supabase
     .from("lottery_tickets")
     .select(
-      "id, created_at, updated_at, user_id, num_tickets, cost_usdc, status, round_id, draw_time, win_amount_usdc, win_tier, burner_sol_address, companion_address",
+      "id, created_at, updated_at, user_id, num_tickets, cost_usdc, status, round_id, draw_time, win_amount_usdc, win_tier, burner_sol_address, companion_address, user_solana_address, sender_tx_hash, claim_tx_hash, bridge_status, ticket_numbers, winning_numbers, fee_amount_usdc",
       { count: "exact" }
     )
     .order("created_at", { ascending: false })

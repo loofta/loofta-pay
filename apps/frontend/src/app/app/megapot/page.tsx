@@ -559,7 +559,7 @@ const STEALTH_PHRASES = [
   "shh, it's between us 🤐",
   "ninjas are moving your money to megapot 🥷",
   "printing tickets in the basement... 🎟️",
-  "taking the scenic route so no one follows 🕵️",
+  "cutting through back alleys so nobody can trace it 🕵️",
 ];
 
 const PURCHASE_STEP_LABEL: Partial<Record<BuyStep, string>> = {

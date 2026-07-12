@@ -1376,19 +1376,23 @@ export class LotteryService {
         );
       }
 
-      // Closed-tab resilience: a user can sign the MagicBlock tx but close the window before
-      // buy-confirm reaches us — the ticket then sits in pending_send and the refund cron would
-      // wrongly refund a purchase whose money is about to land. The burner balance is the
-      // ground truth: any USDC there means the transfer really was sent, so promote to 'sent'.
-      // Normal purchases sign a fee tx before the MagicBlock tx, so fee_tx_hash being set proves
-      // they got that far; gift purchases (is_gift) have no separate fee tx at all (MagicBlock
-      // collects it inline), so they're eligible here purely on age + a funded burner instead.
+      // Closed-tab resilience: a user can sign the MagicBlock tx but the client never reaches
+      // buy-confirm (closed the app, or the wallet's MWA session throws a CancellationException
+      // even though it already signed+broadcast — a known Android/MWA quirk) — the ticket then
+      // sits in pending_send and would otherwise look abandoned. The burner balance is the ground
+      // truth: any USDC there means the transfer really was sent, so promote to 'sent' regardless
+      // of how the client's own request resolved.
+      // NOTE: this used to also require `fee_tx_hash IS NOT NULL` (or is_gift) as a "proof of
+      // intent" gate, back when purchases signed a separate upfront fee tx. Loofta no longer
+      // charges that fee at all (see initiatePurchase — single MagicBlock signature now), so
+      // fee_tx_hash is never set on a normal purchase and that gate silently excluded every
+      // normal ticket from this safety net. Removed — a funded burner is sufficient proof on its
+      // own; nothing else could have put USDC there.
       const { data: pending } = await db
         .from('lottery_tickets')
         .select('*')
         .eq('status', 'pending_send')
         .not('burner_sol_address', 'is', null)
-        .or('fee_tx_hash.not.is.null,is_gift.eq.true')
         .gte('created_at', new Date(Date.now() - 30 * 60_000).toISOString())
         .limit(20);
 
@@ -3635,6 +3639,69 @@ export class LotteryService {
       .select('id')
       .single();
     if (error || !data) throw new BadRequestException('Ticket cannot be cancelled — funds are already in transit. Use rescue instead if it looks stuck.');
+  }
+
+  /**
+   * Cron safety net: a ticket abandoned before ever signing (user cancelled the wallet prompt,
+   * app crashed, etc.) sits in 'pending_send' with no `sender_tx_hash` forever — nothing else
+   * ever revisits it (cancelTicket only runs when the client explicitly calls it).
+   *
+   * IMPORTANT: `sender_tx_hash IS NULL` does NOT prove no funds moved — a signature can succeed
+   * on-chain while the client-side promise still rejects (e.g. a CancellationException from the
+   * Android/MWA session), in which case confirmBuy never gets called and sender_tx_hash never
+   * gets set even though the transfer landed. `processSentTickets`' closed-tab-resilience check
+   * (same file, runs every 5s) is the primary defense against that — by the time this runs
+   * (10min+ later), a genuinely-funded ticket should already have been promoted out of
+   * pending_send. This is still a real on-chain balance check before deleting anything, not just
+   * a time-based guess, in case that faster check ever misses one (RPC hiccup, etc.) — never
+   * delete a ticket whose burner/deposit address actually received funds.
+   */
+  async cancelAbandonedPendingSends(): Promise<void> {
+    const db = this.supabase.getClient();
+    const staleBefore = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { data: stale } = await db
+      .from('lottery_tickets')
+      .select('id, burner_sol_address, bridge_deposit_address')
+      .eq('status', 'pending_send')
+      .is('sender_tx_hash', null)
+      .is('deleted_at', null)
+      .lt('created_at', staleBefore)
+      .limit(50);
+
+    if (!stale?.length) return;
+
+    const ids: string[] = [];
+    for (const t of stale) {
+      try {
+        if (t.burner_sol_address) {
+          const balance = await this.getBurnerUsdcBalance(t.burner_sol_address);
+          if (balance > 0n) {
+            this.logger.warn(`cancelAbandonedPendingSends: ticket ${t.id} has a funded burner but is still pending_send — leaving it for processSentTickets to promote, NOT cancelling`);
+            continue;
+          }
+        } else if (t.bridge_deposit_address) {
+          const balance = await this.checkSolanaUsdcDeposit(t.bridge_deposit_address);
+          if (balance > 0) {
+            this.logger.warn(`cancelAbandonedPendingSends: ticket ${t.id} has a funded deposit address but is still pending_send — leaving it, NOT cancelling`);
+            continue;
+          }
+        }
+        ids.push(t.id);
+      } catch (e: any) {
+        this.logger.warn(`cancelAbandonedPendingSends: balance check failed for ${t.id}, skipping to be safe: ${e.message}`);
+      }
+    }
+
+    if (!ids.length) return;
+
+    await db.from('lottery_tickets').update({
+      status: 'failed',
+      bridge_status: 'CANCELLED',
+      deleted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).in('id', ids);
+
+    this.logger.log(`cancelAbandonedPendingSends: cleaned up ${ids.length} abandoned pending_send ticket(s)`);
   }
 
   async retryTicket(ticketId: string, userId: string): Promise<{ ok: boolean }> {

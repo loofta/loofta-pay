@@ -797,7 +797,7 @@ function Privacy() {
                     </div>
                   ))}
                 </div>
-                <div className="flex items-center gap-2 border-t border-white/[0.06] bg-white/[0.02] px-6 py-3.5 font-grotesk text-sm md:text-xs text-slate-500">
+                <div className="flex items-center gap-2 border-t border-white/[0.06] bg-white/[0.02] px-6 py-3.5 font-grotesk text-sm text-slate-500">
                   <Image src="/images/icons/shield-icon.png" alt="" width={18} height={18} />
                   {t('privacy.rollupVerified')}
                 </div>
@@ -1161,7 +1161,7 @@ function Business() {
             </p>
             <div className="inline-flex items-center gap-2.5 rounded-full border border-[rgba(255,19,1,0.3)] bg-[rgba(255,19,1,0.1)] px-3.5 py-2">
               <span className="h-1.5 w-1.5 rounded-full bg-[#FF1301] shadow-[0_0_8px_#FF1301]" />
-              <span className="font-grotesk text-sm md:text-xs font-medium text-white">{t('business.bulkBadge')}</span>
+              <span className="font-grotesk text-sm font-medium text-white">{t('business.bulkBadge')}</span>
             </div>
           </div>
 
@@ -1182,7 +1182,7 @@ function Business() {
             {bulkRows.map((r, i) => (
               <div
                 key={i}
-                className={`grid grid-cols-[auto_1fr_auto_auto] items-center gap-3.5 px-[18px] py-[11px] font-grotesk text-sm md:text-xs ${i < bulkRows.length - 1 ? "border-b border-white/[0.04]" : ""
+                className={`grid grid-cols-[auto_1fr_auto_auto] items-center gap-3.5 px-[18px] py-[11px] font-grotesk text-sm ${i < bulkRows.length - 1 ? "border-b border-white/[0.04]" : ""
                   }`}
               >
                 <span className="w-5 text-center text-base">{r.flag}</span>
@@ -1230,7 +1230,7 @@ function Business() {
             style={{ background: "radial-gradient(ellipse, #FF1301, transparent 70%)" }}
           />
           <div className="relative min-w-[280px] flex-1 basis-[420px]">
-            <div className="mb-2.5 font-grotesk text-sm md:text-xs font-medium uppercase tracking-[0.14em] text-[#FF6A00]">
+            <div className="mb-2.5 font-grotesk text-sm font-medium uppercase tracking-[0.14em] text-[#FF6A00]">
               {t('business.ctaEyebrow')}
             </div>
             <h3 className="mb-2.5 font-display text-[clamp(1.8rem,2.8vw,2.6rem)] font-medium leading-[1.05] tracking-[-0.025em] text-white">

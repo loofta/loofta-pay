@@ -76,14 +76,14 @@ function TierBadge({ volumeUsd, dark }: { volumeUsd: number; dark: boolean }) {
           <span className={`text-sm font-semibold ${dark ? "text-gray-100" : "text-gray-800"}`}>
             {formatVolume(volumeUsd)}
           </span>
-          <span className={`text-xs ${dark ? "text-gray-500" : "text-gray-400"}`}>sent &amp; received</span>
+          <span className={`text-sm ${dark ? "text-gray-500" : "text-gray-400"}`}>sent &amp; received</span>
         </div>
         {nextTier && (
           <div className="flex flex-col items-end">
             <span className={`text-sm font-semibold ${dark ? "text-gray-100" : "text-gray-800"}`}>
               {formatVolume(nextTier.minVolume - volumeUsd)}
             </span>
-            <span className={`text-xs ${dark ? "text-gray-500" : "text-gray-400"}`}>to {nextTier.label}</span>
+            <span className={`text-sm ${dark ? "text-gray-500" : "text-gray-400"}`}>to {nextTier.label}</span>
           </div>
         )}
       </div>
@@ -91,7 +91,7 @@ function TierBadge({ volumeUsd, dark }: { volumeUsd: number; dark: boolean }) {
       {/* Tier info panel */}
       {showTiers && (
         <div className={`mt-3 rounded-xl border p-3 ${dark ? "bg-white/[0.04] border-white/[0.07]" : "bg-gray-50 border-gray-200"}`}>
-          <p className={`text-xs font-semibold uppercase tracking-widest mb-2 ${dark ? "text-gray-500" : "text-gray-400"}`}>All tiers</p>
+          <p className={`text-sm font-semibold uppercase tracking-widest mb-2 ${dark ? "text-gray-500" : "text-gray-400"}`}>All tiers</p>
           <div className="space-y-1">
             {TIERS.map((t) => (
               <div
@@ -99,7 +99,7 @@ function TierBadge({ volumeUsd, dark }: { volumeUsd: number; dark: boolean }) {
                 className={`flex items-center justify-between rounded-lg px-2 py-1.5 ${info.key === t.key ? (dark ? "bg-white/[0.07]" : "bg-white shadow-sm") : ""}`}
               >
                 <span className={`text-sm font-medium ${t.color}`}>{t.label}</span>
-                <span className={`text-xs tabular-nums ${dark ? "text-gray-500" : "text-gray-400"}`}>
+                <span className={`text-sm tabular-nums ${dark ? "text-gray-500" : "text-gray-400"}`}>
                   {t.maxVolume
                     ? `$${t.minVolume.toLocaleString()} – $${t.maxVolume.toLocaleString()}`
                     : `$${t.minVolume.toLocaleString()}+`}
@@ -961,11 +961,11 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           {t('privatePayments')}
                         </span>
                         {PRIVATE_PAYMENT_ENABLED ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm md:text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                             {t('enabled')}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm md:text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
                             {t('comingSoon')}
                           </span>
                         )}
@@ -1651,7 +1651,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                 <div className="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
                   <Label className="text-base md:text-sm font-medium mb-2 block">Your Private Key:</Label>
                   <div className="flex items-center gap-2">
-                    <code className="flex-1 text-sm md:text-xs font-mono break-all p-2 bg-white dark:bg-gray-800 rounded border">
+                    <code className="flex-1 text-sm font-mono break-all p-2 bg-white dark:bg-gray-800 rounded border">
                       {exportedPrivateKey}
                     </code>
                     <button

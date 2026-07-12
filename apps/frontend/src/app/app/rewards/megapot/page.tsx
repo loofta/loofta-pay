@@ -95,13 +95,13 @@ function CampaignHeader({ daysLeft }: { daysLeft: number | null }) {
       <div className="relative z-10 p-5">
         <div className="flex items-center gap-2 mb-3">
           <span
-            className="text-xs font-bold px-2.5 py-1 rounded-full border"
+            className="text-sm font-bold px-2.5 py-1 rounded-full border"
             style={{ backgroundColor: `${ACCENT}26`, color: ACCENT, borderColor: `${ACCENT}40` }}
           >
             Mainnet
           </span>
           {daysLeft !== null && (
-            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-black/30 text-slate-300 border border-white/15">
+            <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-black/30 text-slate-300 border border-white/15">
               Ends in {daysLeft}d
             </span>
           )}
@@ -119,7 +119,7 @@ function CampaignHeader({ daysLeft }: { daysLeft: number | null }) {
           The prize pool is split among eligible participants in a lucky draw after the campaign ends.
         </p>
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: `${ACCENT}99` }}>
+          <p className="text-sm font-semibold uppercase tracking-wider mb-1" style={{ color: `${ACCENT}99` }}>
             Total reward pool
           </p>
           <p className="text-3xl font-bold leading-none" style={{ color: ACCENT }}>$1,000</p>
@@ -204,7 +204,7 @@ export default function RewardsMegapotPage() {
           ) : data ? (
             <>
               <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Quest</p>
+                <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Quest</p>
                 <button
                   type="button"
                   onClick={() => refetch()}

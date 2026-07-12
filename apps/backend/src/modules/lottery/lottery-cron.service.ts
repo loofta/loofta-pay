@@ -126,4 +126,16 @@ export class LotteryCronService {
       this.logger.error(`checkFeeWalletBalance: ${e.message}`),
     );
   }
+
+  /** Every 5 minutes: clean up pending_send tickets abandoned before ever signing (10min+ old,
+   *  no sender_tx_hash) — e.g. the user cancelled the wallet prompt and the app never got a
+   *  chance to call cancelTicket itself (killed, crashed, lost network). No funds ever moved for
+   *  these, so it's always safe. */
+  @Cron('0 */5 * * * *')
+  async cancelAbandonedPendingSends(): Promise<void> {
+    if (!this.isProd) return;
+    await this.lottery.cancelAbandonedPendingSends().catch(e =>
+      this.logger.error(`cancelAbandonedPendingSends: ${e.message}`),
+    );
+  }
 }

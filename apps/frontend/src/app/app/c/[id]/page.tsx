@@ -262,7 +262,7 @@ function ClaimPageSenderShareView({
           <Input
             readOnly
             value={claimLink}
-            className="font-mono text-sm md:text-xs flex-1 bg-gray-50"
+            className="font-mono text-sm flex-1 bg-gray-50"
           />
           <Button
             type="button"

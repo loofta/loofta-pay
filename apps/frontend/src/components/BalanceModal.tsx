@@ -182,7 +182,7 @@ function ProgressSteps({
               {s.status === "active" && <Loader2 className="h-5 w-5 text-blue-400 animate-spin" />}
               {s.status === "failed" && <AlertTriangle className="h-5 w-5 text-red-400" />}
               {s.status === "pending" && (
-                <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-base md:text-xs font-bold ${dark ? "border-white/20 text-slate-500" : "border-gray-300 text-gray-400"}`}>
+                <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-base font-bold ${dark ? "border-white/20 text-slate-500" : "border-gray-300 text-gray-400"}`}>
                   {i + 1}
                 </span>
               )}
@@ -2429,7 +2429,7 @@ export function BalanceModal({
 
                     {/* Address row */}
                     <div className="px-4 py-3">
-                      <p className={`text-xs font-medium mb-1.5 uppercase tracking-wide ${dark ? "text-slate-500" : "text-gray-400"}`}>Deposit address</p>
+                      <p className={`text-sm font-medium mb-1.5 uppercase tracking-wide ${dark ? "text-slate-500" : "text-gray-400"}`}>Deposit address</p>
                       <div className="flex items-center gap-2">
                         <p className={`text-base font-mono flex-1 break-all ${dark ? "text-slate-300" : "text-gray-700"}`}>{depositAddr}</p>
                         <button type="button" onClick={() => { navigator.clipboard.writeText(depositAddr!); toast({ title: "Copied!", description: "Deposit address copied." }); }}
@@ -2442,7 +2442,7 @@ export function BalanceModal({
                     {/* Memo row (only if present) */}
                     {depositMemo && (
                       <div className={`px-4 py-3 border-t ${dark ? "border-white/[0.06]" : "border-gray-100"}`}>
-                        <p className={`text-xs font-medium mb-1.5 uppercase tracking-wide text-amber-500`}>⚠ Memo — required</p>
+                        <p className={`text-sm font-medium mb-1.5 uppercase tracking-wide text-amber-500`}>⚠ Memo — required</p>
                         <div className="flex items-center gap-2">
                           <p className={`text-base font-mono flex-1 break-all ${dark ? "text-slate-300" : "text-gray-700"}`}>{depositMemo}</p>
                           <button type="button" onClick={() => { navigator.clipboard.writeText(depositMemo!); toast({ title: "Copied!", description: "Memo copied." }); }}
@@ -3188,8 +3188,8 @@ export function BalanceModal({
                       <img src={p.logo} alt={p.name} className="w-10 h-10 rounded-xl object-cover" />
                       <span className={`text-base font-medium leading-tight ${dark ? "text-white" : "text-gray-900"}`}>{p.name}</span>
                       {inCooldown
-                        ? <span className="text-xs text-amber-400 leading-tight">{formatCooldown(cooldownMins)}</span>
-                        : <span className={`text-xs leading-tight ${dark ? "text-slate-500" : "text-gray-400"}`}>${p.maxUSDC} max</span>
+                        ? <span className="text-sm text-amber-400 leading-tight">{formatCooldown(cooldownMins)}</span>
+                        : <span className={`text-sm leading-tight ${dark ? "text-slate-500" : "text-gray-400"}`}>${p.maxUSDC} max</span>
                       }
                     </button>
                   );
@@ -3328,7 +3328,7 @@ export function BalanceModal({
                       <div className="mt-0.5 shrink-0 w-6 h-6 flex items-center justify-center">
                         {step.status === "done" && <CheckCircle2 className="h-5 w-5 text-emerald-400" />}
                         {step.status === "active" && <Loader2 className="h-5 w-5 text-blue-400 animate-spin" />}
-                        {step.status === "pending" && <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-xs font-bold ${dark ? "border-white/20 text-slate-500" : "border-gray-300 text-gray-400"}`}>{i + 1}</span>}
+                        {step.status === "pending" && <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-sm font-bold ${dark ? "border-white/20 text-slate-500" : "border-gray-300 text-gray-400"}`}>{i + 1}</span>}
                       </div>
                       <div>
                         <p className={`text-base font-medium ${dark ? "text-white" : "text-gray-900"}`}>{step.label}</p>
@@ -3516,7 +3516,7 @@ export function BalanceModal({
                       <div className="mt-0.5 shrink-0 w-6 h-6 flex items-center justify-center">
                         {s.status === "done" && <CheckCircle2 className="h-5 w-5 text-emerald-400" />}
                         {s.status === "active" && <Loader2 className="h-5 w-5 text-orange-400 animate-spin" />}
-                        {s.status === "pending" && <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-xs font-bold ${dark ? "border-white/20 text-slate-500" : "border-gray-300 text-gray-400"}`}>{i + 1}</span>}
+                        {s.status === "pending" && <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-sm font-bold ${dark ? "border-white/20 text-slate-500" : "border-gray-300 text-gray-400"}`}>{i + 1}</span>}
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className={`text-base font-medium ${s.status === "pending" ? (dark ? "text-slate-500" : "text-gray-400") : (dark ? "text-white" : "text-gray-900")}`}>{s.label}</p>
