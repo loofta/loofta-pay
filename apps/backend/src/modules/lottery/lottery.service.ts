@@ -2238,7 +2238,12 @@ export class LotteryService {
     const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
     const rpc = this.config.get<string>('BASE_RPC_URL', 'https://mainnet.base.org');
     const client = createPublicClient({ chain: base, transport: http(rpc) });
-    const attempts = 3;
+    // 5 attempts with a longer backoff — playAgainBatch and reconcileUnclaimedResults now call
+    // this far more often than before, and without BASE_RPC_URL configured this still falls back
+    // to the free, heavily-rate-limited public RPC (see the fee-payer/round-up code paths for the
+    // same issue). This only rides out transient rate limits; it is not a substitute for a real
+    // paid RPC endpoint.
+    const attempts = 5;
     for (let attempt = 0; attempt < attempts; attempt++) {
       try {
         const balance = await client.readContract({
@@ -2250,8 +2255,9 @@ export class LotteryService {
         return Number(balance) / 1_000_000;
       } catch (e: any) {
         if (attempt >= attempts - 1) throw e;
-        this.logger.warn(`getCompanionUsdcBalance ${companionAddress}: attempt ${attempt + 1}/${attempts} failed (${e.message}) — retrying`);
-        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+        const backoffMs = 600 * (attempt + 1) + Math.floor(Math.random() * 300);
+        this.logger.warn(`getCompanionUsdcBalance ${companionAddress}: attempt ${attempt + 1}/${attempts} failed (${e.message}) — retrying in ${backoffMs}ms`);
+        await new Promise(r => setTimeout(r, backoffMs));
       }
     }
     throw new Error('unreachable');
