@@ -1,15 +1,17 @@
 import { usePrivy } from '@privy-io/expo';
 import * as Clipboard from 'expo-clipboard';
-import { Check, ChevronDown, ChevronRight, ChevronUp, Copy, LifeBuoy, Wallet } from 'lucide-react-native';
-import { useEffect, useState, type ReactNode } from 'react';
+import { Check, ChevronRight, Copy, LifeBuoy, Wallet } from 'lucide-react-native';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSeekerLogin, logoutSeeker } from '../../lib/auth/useSeekerLogin';
-import { ensureProfile, getWalletBalances } from '../../lib/api/users';
+import { ensureProfile } from '../../lib/api/users';
 import { getCachedSeekerIdentity, setCachedSeekerIdentity } from '../../lib/storage/seekerIdentity';
+import { useBalances } from '../../lib/wallet/BalanceProvider';
 import { SolIcon } from '../../components/TokenIcons';
 import { Wordmark } from '../../components/Wordmark';
 import { WalletConnectSheet } from '../../components/WalletConnectSheet';
 import { HowToPlayModal } from '../../components/HowToPlayModal';
+import { PrizeTiersModal } from '../../components/PrizeTiersModal';
 import { PoweredByFooter } from '../../components/PoweredByFooter';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { GradientText } from '../../components/ui/GradientText';
@@ -19,38 +21,6 @@ import { color, radius, space } from '../../lib/theme';
 import { FONT_BODY, FONT_BODY_MEDIUM, FONT_BODY_SEMIBOLD, FONT_TITLE, FONT_TITLE_SEMIBOLD } from '../../lib/fonts';
 
 const SUPPORT_URL = 'https://t.me/looftapay';
-
-// Snapshot of Megapot's published tiers (docs.megapot.io/learn/prize-structure, taken
-// 2026-07-12 against a ~$1.1M pool), net of the ~10% on-chain referral cut Loofta actually
-// takes on every cash win (mirrors the web prize table and DEFAULT_REFERRAL_WIN_SHARE_FACTOR
-// in megapot.service.ts). Megapot's pool grows daily, so these drift out of date — re-pull
-// from the docs page periodically. Wins below the withdrawal floor pay out as a "Free ticket"
-// (play again, no fees).
-const PRIZE_TIERS: { match: string; prize: string }[] = [
-  { match: '5 + bonus', prize: '$183,918.03' },
-  { match: '5 numbers', prize: '$1,858.64' },
-  { match: '4 + bonus', prize: '$179.24' },
-  { match: '4 numbers', prize: '$20.71' },
-  { match: '3 + bonus', prize: '$8.33' },
-  { match: '2 + bonus', prize: '$4.77' },
-  { match: '3 numbers', prize: '$4.19' },
-  { match: '1 + bonus', prize: '$2.66' },
-  { match: '2 numbers', prize: 'Free ticket' },
-  { match: 'Bonus only', prize: 'Free ticket' },
-];
-
-function CollapsibleSection({ title, children }: { title: string; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Card style={styles.section}>
-      <TouchableOpacity style={styles.sectionHeader} onPress={() => setOpen((v) => !v)} activeOpacity={0.7}>
-        <Text style={styles.sectionTitle}>{title}</Text>
-        {open ? <ChevronUp size={18} color={color.fg3} /> : <ChevronDown size={18} color={color.fg3} />}
-      </TouchableOpacity>
-      {open && <View style={styles.sectionBody}>{children}</View>}
-    </Card>
-  );
-}
 
 function truncateAddress(address: string) {
   return `${address.slice(0, 4)}…${address.slice(-4)}`;
@@ -128,13 +98,16 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
   const { getAccessToken } = usePrivy();
   const accounts = user.linked_accounts ?? [];
   const walletAddress = findWalletAddress(accounts);
+  // solBalance/skrDomain come from the shared BalanceProvider (same fetch the header chip uses)
+  // instead of a separate call here, so a purchase's refreshBalances() updates both at once.
+  const { solBalance, skrDomain: liveSkrDomain, balancesLoaded } = useBalances();
 
-  const [skrDomain, setSkrDomain] = useState<string | null>(null);
+  const [cachedIdentity, setCachedIdentity] = useState<{ skrDomain: string | null; username: string | null } | null>(null);
   const [username, setUsername] = useState<string | null>(null);
-  const [solBalance, setSolBalance] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [howToPlayOpen, setHowToPlayOpen] = useState(false);
+  const [prizeTiersOpen, setPrizeTiersOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,25 +115,15 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
       // Paint the cached Seeker ID immediately (no spinner/"Not connected" flash on every
       // profile visit), then refresh it from the network in the background below.
       const cached = await getCachedSeekerIdentity();
-      if (cached && !cancelled) {
-        setSkrDomain(cached.skrDomain);
-        setUsername(cached.username);
-      }
+      if (cached && !cancelled) setCachedIdentity(cached);
       try {
         const accessToken = await getAccessToken();
         // ensureProfile bootstraps the app_users row (idempotent, harmless if useSeekerLogin
         // already did it); its username is the Seeker ID fallback when there's no .skr domain.
-        const [profile, balances] = await Promise.all([
-          ensureProfile(accessToken),
-          getWalletBalances(accessToken),
-        ]);
-        if (cancelled) return;
-        setUsername(profile.username);
-        setSkrDomain(balances.skrDomain);
-        setSolBalance(balances.solBalance);
-        void setCachedSeekerIdentity({ skrDomain: balances.skrDomain, username: profile.username });
+        const profile = await ensureProfile(accessToken);
+        if (!cancelled) setUsername(profile.username);
       } catch (e: any) {
-        if (!cancelled) setError(e?.message ?? 'Could not load wallet info');
+        if (!cancelled) setError(e?.message ?? 'Could not load profile');
       }
     })();
     return () => {
@@ -168,8 +131,17 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
     };
   }, [getAccessToken]);
 
-  const identity = skrDomain ?? username ?? (walletAddress ? truncateAddress(walletAddress) : 'Not connected');
-  const copyValue = skrDomain ?? username ?? walletAddress;
+  // Once the shared balance fetch has settled, its skrDomain is authoritative — persist the
+  // combined identity so the next launch paints instantly from cache again.
+  useEffect(() => {
+    if (!balancesLoaded) return;
+    void setCachedSeekerIdentity({ skrDomain: liveSkrDomain, username });
+  }, [balancesLoaded, liveSkrDomain, username]);
+
+  const skrDomain = balancesLoaded ? liveSkrDomain : (cachedIdentity?.skrDomain ?? null);
+  const effectiveUsername = username ?? cachedIdentity?.username ?? null;
+  const identity = skrDomain ?? effectiveUsername ?? (walletAddress ? truncateAddress(walletAddress) : 'Not connected');
+  const copyValue = skrDomain ?? effectiveUsername ?? walletAddress;
 
   const handleCopy = async () => {
     if (!copyValue) return;

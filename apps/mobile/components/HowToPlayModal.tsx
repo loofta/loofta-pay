@@ -65,6 +65,6 @@ const styles = StyleSheet.create({
   },
   bodyContent: { gap: space[4], paddingBottom: space[2] },
   step: { gap: 4 },
-  stepTitle: { color: color.fg, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 15 },
-  stepBody: { color: color.fg2, fontFamily: FONT_BODY, fontSize: 14, lineHeight: 20 },
+  stepTitle: { color: color.fg, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 16 },
+  stepBody: { color: color.fg2, fontFamily: FONT_BODY, fontSize: 16, lineHeight: 22 },
 });

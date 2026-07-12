@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { connectAndSignMessage, disconnectSeekerWallet } from '../wallet/mwa';
 import { ensureProfile } from '../api/users';
 import { clearCachedSeekerIdentity } from '../storage/seekerIdentity';
+import { clearCachedWalletBalances } from '../storage/walletBalances';
 
 const DOMAIN = 'pay.loofta.xyz';
 const URI = 'https://pay.loofta.xyz';
@@ -87,5 +88,6 @@ export function useSeekerLogin() {
 export async function logoutSeeker(logout: () => Promise<void>) {
   await disconnectSeekerWallet();
   await clearCachedSeekerIdentity();
+  await clearCachedWalletBalances();
   await logout();
 }

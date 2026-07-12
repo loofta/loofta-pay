@@ -1,8 +1,11 @@
 import { usePrivy } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
-import { ChevronDown, ChevronUp, Shuffle, X } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as SecureStore from 'expo-secure-store';
+import { CheckCircle2, ChevronDown, ChevronUp, Lock, Shuffle, Store, X } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, AppState, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SvgXml } from 'react-native-svg';
 import { AuthGate } from '../../components/AuthGate';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { GhostButton } from '../../components/ui/GhostButton';
@@ -12,6 +15,7 @@ import { GradientText } from '../../components/ui/GradientText';
 import { buyTickets, cancelTicket, confirmBuy, getDashboard, getTicketStatus, type TicketStatus } from '../../lib/api/lottery';
 import { fmt, mbFee, totalCost, TICKET_PRICE_USDC } from '../../lib/lottery/fees';
 import { connectSeekerWallet, signAndSendTransactionWithSeeker } from '../../lib/wallet/mwa';
+import { useBalances } from '../../lib/wallet/BalanceProvider';
 import { color, radius, space } from '../../lib/theme';
 import { FONT_TITLE, FONT_TITLE_SEMIBOLD, FONT_BODY, FONT_BODY_MEDIUM, FONT_BODY_SEMIBOLD, FONT_BODY_BOLD } from '../../lib/fonts';
 
@@ -195,9 +199,266 @@ const STATUS_TO_STEP: Partial<Record<TicketStatus, BuyStep>> = {
   failed: 'error',
 };
 
+// ─── Hang-tight tap game ────────────────────────────────────────────────────
+// A purely cosmetic diversion for the ~minute a purchase is in flight — taps have zero effect
+// on the purchase itself. Charge + unlocked auras persist on-device (expo-secure-store) across
+// every future wait, so it slowly becomes a little collection game instead of just a spinner.
+// Mirrors apps/frontend's TapGame in apps/frontend/src/app/app/megapot/page.tsx.
+
+const MAGICBLOCK_MARK_XML = `
+<svg width="96" height="88" viewBox="0 0 96 88" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M12.2048 58.8714C13.176 59.0257 14.1988 59.1499 15.2688 59.2528C14.1988 59.1542 13.176 59.0257 12.2048 58.8714Z" fill="white"/>
+<path d="M21.0014 21.4288C21.7191 23.293 23.0856 24.583 24.7616 25.2944C25.939 25.7915 27.2712 25.7701 28.4615 25.3029C33.0124 23.5245 37.8597 21.9217 42.8962 20.5546C48.8694 18.9304 54.7868 17.7176 60.4335 16.9376L23.0383 0.331256C20.4127 -0.804405 17.4819 1.11979 17.4905 3.97394L17.5593 30.1113C20.4213 28.2771 21.9167 24.8144 21.0057 21.4288H21.0014Z" fill="white"/>
+<path d="M95.8176 26.1943C94.7561 22.3074 88.77 19.7018 79.3932 19.0375C75.2506 18.7461 70.6482 18.8447 65.7622 19.3032C58.822 19.9589 51.3103 21.3431 43.6783 23.4173C39.1446 24.6515 34.7743 26.0743 30.6446 27.6428C30.0343 27.8743 29.4327 28.1057 28.8354 28.3457C27.8556 28.7314 27.0133 29.417 26.4762 30.317C25.4835 31.9883 25.1569 33.9982 25.7714 36.0596C25.4491 35.1553 25.0065 34.4268 24.4693 33.8568C22.9868 32.2798 20.5803 31.9755 18.6594 32.9783C15.7501 34.4954 13.0686 36.081 10.6836 37.7224C7.06953 40.2037 3.22774 43.195 1.09627 47.1205C0.417298 48.3761 -0.0897845 49.7989 0.0133509 51.2432C0.155162 53.2188 1.43146 54.5773 2.98709 55.6787C3.82077 56.2701 4.7232 56.7672 5.66861 57.1572C8.65094 58.3914 12.0501 58.9571 15.2731 59.2528V50.9989C15.2731 50.1932 15.879 49.4732 16.6826 49.4347C17.5421 49.3918 18.2511 50.0689 18.2511 50.9175C18.2511 50.9175 18.2511 60.607 18.2511 60.6027V71.2651C18.2511 73.1078 19.2438 74.8306 20.8424 75.7563L40.7475 87.2972C41.5468 87.76 42.4579 88 43.3732 88C44.0436 88 44.714 87.8714 45.3457 87.6143L74.5072 75.6963C76.4711 74.8949 77.7431 73.005 77.7431 70.888V45.192L78.0697 45.0377C90.4115 38.468 97.2099 31.2641 95.8218 26.1943H95.8176ZM56.9097 55.7601C56.9097 58.7899 55.9428 60.5513 54.2282 60.5513C52.5136 60.5513 51.3791 58.9228 51.3791 55.2115V49.3104C51.3791 46.2805 52.346 44.5192 54.0606 44.5192C55.7752 44.5192 56.9097 46.1477 56.9097 49.8589V55.7601ZM68.8562 52.7945C68.8562 55.8244 67.8893 57.5857 66.1747 57.5857C64.4601 57.5857 63.3256 55.9572 63.3256 52.246V46.3448C63.3256 43.315 64.2925 41.5536 66.0071 41.5536C67.7217 41.5536 68.8562 43.1821 68.8562 46.8934V52.7945Z" fill="white"/>
+</svg>
+`;
+
+interface TapAura { id: string; name: string; price: number; colors: [string, string]; glow: string; }
+
+const TAP_AURAS: TapAura[] = [
+  { id: 'ember', name: 'Classic Ember', price: 0, colors: ['#FF4A26', '#E1A041'], glow: 'rgba(255,122,42,0.5)' },
+  { id: 'mint', name: 'Neon Mint', price: 50, colors: ['#10b981', '#5eead4'], glow: 'rgba(45,212,191,0.5)' },
+  { id: 'violet', name: 'Cosmic Violet', price: 150, colors: ['#7c3aed', '#e9d5ff'], glow: 'rgba(167,139,250,0.5)' },
+  { id: 'gold', name: 'Solar Gold', price: 400, colors: ['#f59e0b', '#fef08a'], glow: 'rgba(251,191,36,0.5)' },
+  { id: 'aurora', name: 'Aurora', price: 1000, colors: ['#34d399', '#22d3ee'], glow: 'rgba(34,211,238,0.5)' },
+];
+
+const TAP_KEYS = { charge: 'loofta_tap_charge', owned: 'loofta_tap_owned', active: 'loofta_tap_active' } as const;
+
+interface TapParticle { id: number; value: number; crit: boolean; x: number; anim: Animated.Value; }
+
+function TapGame() {
+  const [ready, setReady] = useState(false);
+  const [charge, setCharge] = useState(0);
+  const [owned, setOwned] = useState<string[]>(['ember']);
+  const [activeId, setActiveId] = useState('ember');
+  const [storeOpen, setStoreOpen] = useState(false);
+  const [particles, setParticles] = useState<TapParticle[]>([]);
+  const [combo, setCombo] = useState(0);
+
+  const lastTapRef = useRef(0);
+  const particleIdRef = useRef(0);
+  const comboTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bounce = useRef(new Animated.Value(1)).current;
+  const glowPulse = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [savedCharge, savedOwned, savedActive] = await Promise.all([
+          SecureStore.getItemAsync(TAP_KEYS.charge),
+          SecureStore.getItemAsync(TAP_KEYS.owned),
+          SecureStore.getItemAsync(TAP_KEYS.active),
+        ]);
+        const parsedOwned: unknown = savedOwned ? JSON.parse(savedOwned) : ['ember'];
+        const nextOwned = Array.isArray(parsedOwned) ? (parsedOwned as string[]) : ['ember'];
+        setCharge(Number(savedCharge) || 0);
+        setOwned(nextOwned.includes('ember') ? nextOwned : ['ember', ...nextOwned]);
+        setActiveId(savedActive ?? 'ember');
+      } catch {
+        // keep defaults
+      } finally {
+        setReady(true);
+      }
+    })();
+  }, []);
+
+  // Debounced so a rapid tap burst doesn't hammer the native keychain with a write per tap.
+  useEffect(() => {
+    if (!ready) return;
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      SecureStore.setItemAsync(TAP_KEYS.charge, String(Math.floor(charge))).catch(() => {});
+      SecureStore.setItemAsync(TAP_KEYS.owned, JSON.stringify(owned)).catch(() => {});
+      SecureStore.setItemAsync(TAP_KEYS.active, activeId).catch(() => {});
+    }, 400);
+    return () => { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); };
+  }, [charge, owned, activeId, ready]);
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(glowPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [glowPulse]);
+
+  useEffect(() => () => { if (comboTimeoutRef.current) clearTimeout(comboTimeoutRef.current); }, []);
+
+  const active = TAP_AURAS.find((a) => a.id === activeId) ?? TAP_AURAS[0];
+  const comboMultiplier = 1 + Math.floor(combo / 8);
+  const glowScale = glowPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.14] });
+  const glowOpacity = glowPulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0.85] });
+
+  function spawnParticle(value: number, crit: boolean) {
+    const id = particleIdRef.current++;
+    const anim = new Animated.Value(0);
+    const x = 22 + Math.random() * 46;
+    setParticles((ps) => [...ps, { id, value, crit, x, anim }]);
+    Animated.timing(anim, { toValue: 1, duration: 800, useNativeDriver: true }).start(() => {
+      setParticles((ps) => ps.filter((p) => p.id !== id));
+    });
+  }
+
+  function handleTap() {
+    const now = Date.now();
+    const withinCombo = now - lastTapRef.current < 550;
+    lastTapRef.current = now;
+    const nextCombo = withinCombo ? Math.min(combo + 1, 50) : 1;
+    setCombo(nextCombo);
+    if (comboTimeoutRef.current) clearTimeout(comboTimeoutRef.current);
+    comboTimeoutRef.current = setTimeout(() => setCombo(0), 700);
+
+    const multiplier = 1 + Math.floor(nextCombo / 8);
+    const roll = Math.random();
+    const crit = roll < 0.06;
+    const gain = (crit ? 5 : roll < 0.22 ? 2 : 1) * multiplier;
+    setCharge((c) => c + gain);
+    spawnParticle(gain, crit);
+
+    bounce.setValue(0.86);
+    Animated.spring(bounce, { toValue: 1, friction: 3, tension: 140, useNativeDriver: true }).start();
+  }
+
+  function buyAura(a: TapAura) {
+    if (owned.includes(a.id) || charge < a.price) return;
+    setCharge((c) => c - a.price);
+    setOwned((o) => [...o, a.id]);
+    setActiveId(a.id);
+  }
+
+  if (!ready) return <View style={styles.tapWrap} />;
+
+  return (
+    <View style={styles.tapWrap}>
+      <View style={styles.tapTopBar}>
+        <View style={styles.chargePill}>
+          <Text style={styles.chargePillText}>⚡ {charge.toLocaleString()}</Text>
+        </View>
+        <TouchableOpacity style={styles.tapStoreButton} onPress={() => setStoreOpen(true)} activeOpacity={0.7}>
+          <Store size={16} color={color.fg2} />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.tapButtonZone}>
+        <Animated.View
+          style={[styles.tapGlow, { backgroundColor: active.glow, transform: [{ scale: glowScale }], opacity: glowOpacity }]}
+        />
+        <Animated.View style={{ transform: [{ scale: bounce }] }}>
+          <TouchableOpacity activeOpacity={0.9} onPress={handleTap}>
+            <LinearGradient colors={active.colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.tapButton}>
+              <SvgXml xml={MAGICBLOCK_MARK_XML} width={40} height={37} />
+              {particles.map((p) => {
+                const translateY = p.anim.interpolate({ inputRange: [0, 1], outputRange: [0, -46] });
+                const opacity = p.anim.interpolate({ inputRange: [0, 0.15, 0.85, 1], outputRange: [0, 1, 1, 0] });
+                return (
+                  <Animated.Text
+                    key={p.id}
+                    style={[
+                      styles.tapParticle,
+                      p.crit && styles.tapParticleCrit,
+                      { left: `${p.x}%`, transform: [{ translateY }], opacity },
+                    ]}
+                  >
+                    {p.crit ? `CRIT +${p.value}!` : `+${p.value}`}
+                  </Animated.Text>
+                );
+              })}
+            </LinearGradient>
+          </TouchableOpacity>
+        </Animated.View>
+        <View style={styles.comboSlot}>
+          {comboMultiplier > 1 && <Text style={styles.comboText}>x{comboMultiplier} combo!</Text>}
+        </View>
+      </View>
+
+      <Text style={styles.tapHint}>tap to charge up ⚡</Text>
+
+      <Modal visible={storeOpen} transparent animationType="slide" onRequestClose={() => setStoreOpen(false)}>
+        <View style={styles.storeBackdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setStoreOpen(false)} />
+          <View style={styles.storeSheet}>
+            <View style={styles.storeGrabber} />
+            <View style={styles.storeHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.storeTitle}>Aura store</Text>
+                <Text style={styles.storeSubtitle}>Spend Charge on a new look — yours to keep</Text>
+              </View>
+              <TouchableOpacity style={styles.storeCloseButton} onPress={() => setStoreOpen(false)} activeOpacity={0.7}>
+                <X size={18} color={color.fg3} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView contentContainerStyle={styles.storeList}>
+              {TAP_AURAS.map((a) => {
+                const isOwned = owned.includes(a.id);
+                const isActive = activeId === a.id;
+                const canAfford = charge >= a.price;
+                return (
+                  <TouchableOpacity
+                    key={a.id}
+                    style={[styles.storeRow, isActive && styles.storeRowActive, !isOwned && !canAfford && styles.storeRowDisabled]}
+                    disabled={!isOwned && !canAfford}
+                    onPress={() => (isOwned ? setActiveId(a.id) : buyAura(a))}
+                    activeOpacity={0.8}
+                  >
+                    <LinearGradient colors={a.colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.storeSwatch} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.storeRowName}>{a.name}</Text>
+                      <Text style={styles.storeRowStatus}>
+                        {isActive ? 'Equipped' : isOwned ? 'Owned — tap to equip' : a.price === 0 ? 'Free' : `⚡ ${a.price}`}
+                      </Text>
+                    </View>
+                    {isActive && <CheckCircle2 size={18} color={color.success} />}
+                    {!isOwned && !canAfford && <Lock size={16} color={color.fg4} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+// Dev-only: jump straight into the "Hang tight" purchase screen (so the tap game can be previewed)
+// without going through a real buy. Mirrors redeem.tsx's DevPreviewPanel — same chip styling,
+// same __DEV__ gate, never rendered in production/TestFlight builds.
+type BuyPreviewMode = 'buying' | null;
+
+const BUY_DEV_PREVIEW_OPTIONS: { key: BuyPreviewMode; label: string }[] = [
+  { key: 'buying', label: 'Hang tight (tap game)' },
+  { key: null, label: 'Reset (live)' },
+];
+
+function BuyDevPreviewPanel({ mode, onSelect }: { mode: BuyPreviewMode; onSelect: (m: BuyPreviewMode) => void }) {
+  if (!__DEV__) return null;
+  return (
+    <View style={styles.devPanel}>
+      <Text style={styles.devPanelTitle}>DEV PREVIEW</Text>
+      <View style={styles.devPanelRow}>
+        {BUY_DEV_PREVIEW_OPTIONS.map((opt) => (
+          <TouchableOpacity
+            key={String(opt.key)}
+            style={[styles.devPanelChip, mode === opt.key && styles.devPanelChipActive]}
+            onPress={() => onSelect(opt.key)}
+          >
+            <Text style={[styles.devPanelChipText, mode === opt.key && styles.devPanelChipTextActive]}>{opt.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function BuyScreenInner() {
   const { getAccessToken } = usePrivy();
   const router = useRouter();
+  const { refreshBalances } = useBalances();
 
   const [numTickets, setNumTicketsRaw] = useState(5);
   const [tickets, setTickets] = useState<TicketNumbers[]>(() => Array.from({ length: 5 }, randomTicket));
@@ -219,6 +480,13 @@ function BuyScreenInner() {
   const [step, setStep] = useState<BuyStep>('idle');
   const [stepError, setStepError] = useState('');
   const isRunning = !['idle', 'done', 'error'].includes(step);
+
+  const [previewMode, setPreviewMode] = useState<BuyPreviewMode>(null);
+  useEffect(() => {
+    if (previewMode === 'buying') setStep('buying');
+    else if (previewMode === null) setStep('idle');
+  }, [previewMode]);
+  const devPanel = <BuyDevPreviewPanel mode={previewMode} onSelect={setPreviewMode} />;
 
   // Which ticket a poll/AppState-triggered check should look at — a ref (not state) since it's
   // read from a setInterval callback and an AppState listener, neither of which should re-subscribe
@@ -244,13 +512,17 @@ function BuyScreenInner() {
         if (next === 'done' || next === 'error') {
           stopPoll();
           activeTicketIdRef.current = null;
+          // Covers the resumed-purchase path (app was killed/backgrounded mid-buy and this poll
+          // picks it up on relaunch) — the immediate refresh below the signed transaction only
+          // fires on the live handleBuy() path, not this one.
+          if (next === 'done') void refreshBalances();
         }
         if (next) setStep(next);
       } catch {
         // transient — next tick / next foreground will retry
       }
     },
-    [getAccessToken, stopPoll],
+    [getAccessToken, stopPoll, refreshBalances],
   );
 
   const pollStatus = useCallback(
@@ -357,6 +629,10 @@ function BuyScreenInner() {
       signAttempted = true;
       const signature = await signAndSendTransactionWithSeeker(txBase64);
       setStep('sent');
+      // The transfer has already landed on-chain at this point — refresh now instead of waiting
+      // for the header chip's next mount, so the balance doesn't sit stale through the rest of
+      // the purchase flow (bridging/buying can take a while).
+      void refreshBalances();
       await confirmBuy(ticketId, signature, accessToken);
       pollStatus(ticketId);
     } catch (e: any) {
@@ -387,6 +663,7 @@ function BuyScreenInner() {
           <Text style={styles.progressLabel}>{STEP_LABEL[step] ?? 'Processing'}</Text>
           <Text style={styles.progressTitle}>Hang tight</Text>
           <Text style={styles.progressHint}>{STEALTH_PHRASES[phraseIdx]}</Text>
+          <TapGame />
           {stuckHint && (
             <TouchableOpacity onPress={() => router.push('/history')}>
               <Text style={styles.stuckHint}>Taking longer than usual — check History for status</Text>
@@ -394,6 +671,7 @@ function BuyScreenInner() {
           )}
         </View>
         <Text style={styles.progressSubHint}>🔒 Don&apos;t close the app — usually takes a minute.</Text>
+        {devPanel}
       </View>
     );
   }
@@ -567,6 +845,7 @@ function BuyScreenInner() {
           onClose={() => setEditingIdx(null)}
         />
       )}
+      {devPanel}
     </View>
   );
 }
@@ -779,6 +1058,72 @@ const styles = StyleSheet.create({
   progressHint: { color: color.fg2, fontSize: 19, fontFamily: FONT_BODY_MEDIUM, textAlign: 'center' },
   progressSubHint: { color: color.fg3, fontSize: 14, fontFamily: FONT_BODY, textAlign: 'center' },
   stuckHint: { color: color.brandOrange, fontSize: 15, fontFamily: FONT_BODY_MEDIUM, textAlign: 'center', textDecorationLine: 'underline', marginTop: space[2] },
+
+  // Hang-tight tap game
+  tapWrap: { width: '100%', alignItems: 'center', gap: space[2], marginTop: space[2] },
+  tapTopBar: { width: '100%', flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: space[2] },
+  chargePill: { paddingHorizontal: space[3], paddingVertical: 5, borderRadius: radius.pill, backgroundColor: color.surface3, borderWidth: 1, borderColor: color.borderSoft },
+  chargePillText: { color: '#e2e8f0', fontSize: 12, fontFamily: FONT_BODY_BOLD, fontVariant: ['tabular-nums'] },
+  tapStoreButton: { width: 32, height: 32, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: color.surface3, borderWidth: 1, borderColor: color.borderSoft },
+  tapButtonZone: { alignItems: 'center', justifyContent: 'center', marginTop: space[2] },
+  tapGlow: { position: 'absolute', width: 128, height: 128, borderRadius: 64 },
+  tapButton: { width: 104, height: 104, borderRadius: 52, alignItems: 'center', justifyContent: 'center' },
+  tapParticle: { position: 'absolute', top: 8, color: '#fff', fontSize: 14, fontFamily: FONT_BODY_BOLD },
+  tapParticleCrit: { color: '#fbbf24' },
+  comboSlot: { height: 20, marginTop: space[1], alignItems: 'center', justifyContent: 'center' },
+  comboText: { color: '#fbbf24', fontSize: 12, fontFamily: FONT_BODY_BOLD, letterSpacing: 0.5, textTransform: 'uppercase' },
+  tapHint: { color: color.fg4, fontSize: 12, fontFamily: FONT_BODY },
+
+  storeBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  storeSheet: {
+    backgroundColor: color.bgInkSoft,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    paddingHorizontal: space[6],
+    paddingTop: space[3],
+    paddingBottom: space[8],
+    maxHeight: '75%',
+    gap: space[4],
+  },
+  storeGrabber: { width: 40, height: 4, borderRadius: radius.pill, backgroundColor: color.borderStrong, alignSelf: 'center', marginBottom: space[2] },
+  storeHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  storeTitle: { color: color.fg, fontFamily: FONT_TITLE_SEMIBOLD, fontSize: 20 },
+  storeSubtitle: { color: color.fg3, fontFamily: FONT_BODY, fontSize: 13, marginTop: 2 },
+  storeCloseButton: { width: 32, height: 32, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: color.surface3 },
+  storeList: { gap: space[2], paddingBottom: space[2] },
+  storeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space[3],
+    paddingHorizontal: space[3] + 1,
+    paddingVertical: space[3],
+    borderRadius: radius.md + 2,
+    borderWidth: 1,
+    borderColor: color.borderSoft,
+    backgroundColor: color.surface1,
+  },
+  storeRowActive: { borderColor: color.borderStrong, backgroundColor: color.surface3 },
+  storeRowDisabled: { opacity: 0.4 },
+  storeSwatch: { width: 40, height: 40, borderRadius: 20 },
+  storeRowName: { color: color.fg, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 15 },
+  storeRowStatus: { color: color.fg3, fontFamily: FONT_BODY, fontSize: 12, marginTop: 2 },
+
+  // Dev preview panel (Buy tab) — mirrors redeem.tsx's devPanel exactly
+  devPanel: {
+    borderTopWidth: 1,
+    borderTopColor: color.borderSofter,
+    backgroundColor: color.bgInkSoft,
+    paddingHorizontal: space[4],
+    paddingTop: space[2],
+    paddingBottom: space[3],
+    gap: space[2],
+  },
+  devPanelTitle: { color: color.fg4, fontFamily: FONT_BODY_BOLD, fontSize: 10, letterSpacing: 1.5 },
+  devPanelRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space[2] },
+  devPanelChip: { paddingHorizontal: space[2] + 2, paddingVertical: 6, borderRadius: radius.sm + 2, borderWidth: 1, borderColor: color.borderSoft, backgroundColor: color.surface1 },
+  devPanelChipActive: { borderColor: color.brandOrange, backgroundColor: 'rgba(255,74,38,0.16)' },
+  devPanelChipText: { color: color.fg2, fontFamily: FONT_BODY_MEDIUM, fontSize: 11 },
+  devPanelChipTextActive: { color: color.brandOrange },
 
   // number picker (full screen)
   pickerScreen: { flex: 1, backgroundColor: color.bgInk, paddingTop: 60 },

@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn } from "lucide-react";
+import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, Store, Lock } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { getMyGifts, updateGiftRecipient, type MyGiftItem } from "@/services/api/lotteryGift";
 import { MessageInput } from "@/components/MessageInput";
@@ -572,6 +572,226 @@ const PURCHASE_STEP_LABEL: Partial<Record<BuyStep, string>> = {
   buying: "Buying your tickets",
 };
 
+// ─── Hang-tight tap game ────────────────────────────────────────────────────────
+// A purely cosmetic diversion for the ~minute a purchase is in flight — taps have zero effect
+// on the purchase itself. Charge + unlocked auras persist in localStorage across every future
+// wait, so it slowly becomes a little collection game instead of just a spinner.
+
+interface TapAura { id: string; name: string; price: number; colors: [string, string, string]; glow: string; }
+
+const TAP_AURAS: TapAura[] = [
+  { id: "ember", name: "Classic Ember", price: 0, colors: ["#FF4A26", "#FF7A2A", "#E1A041"], glow: "rgba(255,122,42,0.55)" },
+  { id: "mint", name: "Neon Mint", price: 50, colors: ["#10b981", "#2dd4bf", "#5eead4"], glow: "rgba(45,212,191,0.55)" },
+  { id: "violet", name: "Cosmic Violet", price: 150, colors: ["#7c3aed", "#a78bfa", "#e9d5ff"], glow: "rgba(167,139,250,0.55)" },
+  { id: "gold", name: "Solar Gold", price: 400, colors: ["#f59e0b", "#fbbf24", "#fef08a"], glow: "rgba(251,191,36,0.55)" },
+  { id: "aurora", name: "Aurora", price: 1000, colors: ["#34d399", "#22d3ee", "#c084fc"], glow: "rgba(34,211,238,0.55)" },
+];
+
+const TAP_STORAGE_KEYS = { charge: "loofta_tap_charge", owned: "loofta_tap_owned", active: "loofta_tap_active" } as const;
+
+function loadTapState(): { charge: number; owned: string[]; active: string } {
+  if (typeof window === "undefined") return { charge: 0, owned: ["ember"], active: "ember" };
+  try {
+    const charge = Number(localStorage.getItem(TAP_STORAGE_KEYS.charge)) || 0;
+    const parsedOwned: unknown = JSON.parse(localStorage.getItem(TAP_STORAGE_KEYS.owned) ?? '["ember"]');
+    const owned = Array.isArray(parsedOwned) ? parsedOwned as string[] : ["ember"];
+    const active = localStorage.getItem(TAP_STORAGE_KEYS.active) ?? "ember";
+    return { charge, owned: owned.includes("ember") ? owned : ["ember", ...owned], active };
+  } catch {
+    return { charge: 0, owned: ["ember"], active: "ember" };
+  }
+}
+
+interface TapParticle { id: number; x: number; y: number; value: number; crit: boolean; }
+
+function TapGame() {
+  const [ready, setReady] = useState(false);
+  const [charge, setCharge] = useState(0);
+  const [owned, setOwned] = useState<string[]>(["ember"]);
+  const [activeId, setActiveId] = useState("ember");
+  const [storeOpen, setStoreOpen] = useState(false);
+  const [particles, setParticles] = useState<TapParticle[]>([]);
+  const [combo, setCombo] = useState(0);
+  const lastTapRef = useRef(0);
+  const particleIdRef = useRef(0);
+  const comboTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reduceMotion = useReducedMotion();
+
+  useEffect(() => {
+    const s = loadTapState();
+    setCharge(s.charge); setOwned(s.owned); setActiveId(s.active);
+    setReady(true);
+  }, []);
+  useEffect(() => { if (ready) localStorage.setItem(TAP_STORAGE_KEYS.charge, String(Math.floor(charge))); }, [charge, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(TAP_STORAGE_KEYS.owned, JSON.stringify(owned)); }, [owned, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(TAP_STORAGE_KEYS.active, activeId); }, [activeId, ready]);
+  useEffect(() => () => { if (comboTimeoutRef.current) clearTimeout(comboTimeoutRef.current); }, []);
+
+  const active = TAP_AURAS.find(a => a.id === activeId) ?? TAP_AURAS[0];
+  const comboMultiplier = 1 + Math.floor(combo / 8);
+
+  function handleTap() {
+    const now = Date.now();
+    const withinCombo = now - lastTapRef.current < 550;
+    lastTapRef.current = now;
+    const nextCombo = withinCombo ? Math.min(combo + 1, 50) : 1;
+    setCombo(nextCombo);
+    if (comboTimeoutRef.current) clearTimeout(comboTimeoutRef.current);
+    comboTimeoutRef.current = setTimeout(() => setCombo(0), 700);
+
+    const multiplier = 1 + Math.floor(nextCombo / 8);
+    const roll = Math.random();
+    const crit = roll < 0.06;
+    const gain = (crit ? 5 : roll < 0.22 ? 2 : 1) * multiplier;
+    setCharge(c => c + gain);
+
+    const id = particleIdRef.current++;
+    const x = 28 + Math.random() * 44;
+    const y = 8 + Math.random() * 24;
+    setParticles(ps => [...ps, { id, x, y, value: gain, crit }]);
+    setTimeout(() => setParticles(ps => ps.filter(p => p.id !== id)), 900);
+  }
+
+  function buyAura(a: TapAura) {
+    if (owned.includes(a.id) || charge < a.price) return;
+    setCharge(c => c - a.price);
+    setOwned(o => [...o, a.id]);
+    setActiveId(a.id);
+  }
+
+  if (!ready) return <div className="h-[13.5rem]" aria-hidden="true" />;
+
+  return (
+    <div className="w-full flex flex-col items-center gap-2 relative pt-3">
+      {/* Charge balance + store, top-right */}
+      <div className="absolute -top-1 right-0 flex items-center gap-2">
+        <span className="text-xs font-bold tabular-nums text-white/70 bg-white/[0.06] border border-white/10 rounded-full px-2.5 py-1">
+          ⚡ {charge.toLocaleString()}
+        </span>
+        <button
+          onClick={() => setStoreOpen(true)}
+          aria-label="Open aura store"
+          className="w-8 h-8 rounded-full bg-white/[0.06] border border-white/10 flex items-center justify-center text-white/80 hover:bg-white/[0.12] hover:text-white transition-colors"
+        >
+          <Store className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Tap target */}
+      <div className="relative mt-3">
+        <motion.div
+          aria-hidden="true"
+          className="absolute -inset-3 rounded-full blur-xl"
+          style={{ background: `radial-gradient(circle, ${active.glow}, transparent 65%)` }}
+          animate={reduceMotion ? {} : { scale: [1, 1.12, 1], opacity: [0.6, 0.9, 0.6] }}
+          transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+        />
+        <motion.button
+          onClick={handleTap}
+          whileTap={reduceMotion ? undefined : { scale: 0.86, rotate: -6 }}
+          whileHover={reduceMotion ? undefined : { scale: 1.04 }}
+          aria-label="Tap to charge up"
+          className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-full flex items-center justify-center select-none"
+          style={{
+            background: `linear-gradient(135deg, ${active.colors[0]}, ${active.colors[1]} 55%, ${active.colors[2]})`,
+            boxShadow: `0 10px 30px ${active.glow}`,
+          }}
+        >
+          <img src="/images/logo/magicblock-mark.svg" alt="" draggable={false} className="w-10 h-10 sm:w-12 sm:h-12 pointer-events-none" />
+          <AnimatePresence>
+            {particles.map(p => (
+              <motion.span
+                key={p.id}
+                initial={{ opacity: 0, y: 0, scale: 0.6 }}
+                animate={{ opacity: [0, 1, 0], y: -46, scale: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.85, ease: "easeOut" }}
+                className={["absolute text-sm font-bold pointer-events-none whitespace-nowrap", p.crit ? "text-amber-300" : "text-white"].join(" ")}
+                style={{ left: `${p.x}%`, top: `${p.y}%` }}
+              >
+                {p.crit ? `CRIT +${p.value}!` : `+${p.value}`}
+              </motion.span>
+            ))}
+          </AnimatePresence>
+        </motion.button>
+
+        <AnimatePresence>
+          {comboMultiplier > 1 && (
+            <motion.p
+              key="combo"
+              initial={{ opacity: 0, y: 6, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-xs font-bold uppercase tracking-wider text-amber-300 whitespace-nowrap"
+            >
+              x{comboMultiplier} combo!
+            </motion.p>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <p className="text-xs text-slate-500 mt-3">tap to charge up ⚡</p>
+
+      {/* Aura store */}
+      <AnimatePresence>
+        {storeOpen && (
+          <motion.div
+            className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/70 p-0 sm:p-4"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setStoreOpen(false)}
+            role="dialog" aria-modal="true" aria-label="Aura store"
+          >
+            <motion.div
+              initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }}
+              className="w-full max-w-sm bg-[#0f0f16] rounded-t-3xl sm:rounded-2xl border border-white/10 shadow-2xl overflow-hidden max-h-[80svh] flex flex-col"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 pt-4 pb-2 shrink-0">
+                <div>
+                  <h3 className="text-white font-bold text-lg">Aura store</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Spend Charge on a new look — yours to keep</p>
+                </div>
+                <button onClick={() => setStoreOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="px-5 pb-5 pt-1 space-y-2 overflow-y-auto">
+                {TAP_AURAS.map(a => {
+                  const isOwned = owned.includes(a.id);
+                  const isActive = activeId === a.id;
+                  const canAfford = charge >= a.price;
+                  return (
+                    <button
+                      key={a.id}
+                      onClick={() => isOwned ? setActiveId(a.id) : buyAura(a)}
+                      disabled={!isOwned && !canAfford}
+                      className={[
+                        "w-full flex items-center gap-3 px-3.5 py-3 rounded-xl border transition-all text-left",
+                        isActive ? "border-white/30 bg-white/[0.08]" : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]",
+                        !isOwned && !canAfford ? "opacity-40 cursor-not-allowed" : "",
+                      ].join(" ")}
+                    >
+                      <span className="w-10 h-10 rounded-full shrink-0" style={{ background: `linear-gradient(135deg, ${a.colors[0]}, ${a.colors[1]}, ${a.colors[2]})` }} />
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-white text-sm font-semibold truncate">{a.name}</span>
+                        <span className="block text-xs text-slate-500 mt-0.5">
+                          {isActive ? "Equipped" : isOwned ? "Owned — tap to equip" : a.price === 0 ? "Free" : `⚡ ${a.price}`}
+                        </span>
+                      </span>
+                      {isActive && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
+                      {!isOwned && !canAfford && <Lock className="w-4 h-4 text-slate-600 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 /**
  * Full-screen, uncloseable overlay shown while a purchase is in flight. No backdrop
  * dismiss, no Escape, no X — the underlying transfer/bridge/buy chain can't be
@@ -587,7 +807,7 @@ function PurchaseProgressModal({ step, error, devReset }: { step: BuyStep; error
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 backdrop-blur-md p-4" role="dialog" aria-modal="true" aria-label="Purchasing tickets">
-      <div className="w-full max-w-md bg-[#0f0f16] rounded-3xl border border-white/10 shadow-2xl px-5 sm:px-6 py-8 sm:py-10 flex flex-col items-center text-center gap-5 sm:gap-6">
+      <div className="w-full max-w-md bg-[#0f0f16] rounded-3xl border border-white/10 shadow-2xl px-5 sm:px-6 py-8 sm:py-10 flex flex-col items-center text-center gap-4 sm:gap-5 max-h-[92svh] overflow-y-auto">
         <motion.div
           className="text-6xl sm:text-7xl select-none"
           aria-hidden="true"
@@ -621,6 +841,8 @@ function PurchaseProgressModal({ step, error, devReset }: { step: BuyStep; error
             </motion.p>
           </AnimatePresence>
         </div>
+
+        <TapGame />
 
         {error && <p className="text-base font-semibold text-red-400">{error}</p>}
 
