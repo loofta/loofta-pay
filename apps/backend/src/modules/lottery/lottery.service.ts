@@ -2363,6 +2363,60 @@ export class LotteryService {
         this.logger.warn(`checkDailyResults ticket ${ticket.id}: ${err.message}`);
       }
     }
+
+    await this.reconcileUnclaimedResults();
+  }
+
+  /**
+   * Real incident: this ticket's first settlement pass read a Win Amount of $0 off one of its two
+   * winning NFTs' on-chain metadata (Megapot hadn't finished writing that NFT's result yet, so
+   * soon after the draw the read just came back looking like a loss) and stored $4.67 as the win —
+   * the true total, confirmed by the actual on-chain claim, was $9.98. Once a ticket is 'won'/'lost'
+   * nothing ever re-checks it, so a bad read like that is otherwise permanent and the user only
+   * discovers the shortfall if they happen to withdraw/replay (those paths already trust the real
+   * claimed balance over the stored figure — see processConsolidatedBatch). This re-verifies every
+   * not-yet-claimed result against fresh NFT metadata each cron tick and corrects it before that
+   * point, so History shows the truth from the start. Bounded to a small, cheap set: unclaimed
+   * tickets settled in the last 6 hours. Only ever corrects UPWARD (a previously-missed win) —
+   * never silently lowers a figure a user has already seen, that needs a human, not a cron.
+   */
+  private async reconcileUnclaimedResults(): Promise<void> {
+    const db = this.supabase.getClient();
+    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+    const { data: tickets } = await db
+      .from('lottery_tickets')
+      .select('*')
+      .in('status', ['won', 'lost'])
+      .is('claim_tx_hash', null)
+      .gte('updated_at', sixHoursAgo);
+    if (!tickets?.length) return;
+
+    for (const ticket of tickets) {
+      try {
+        const tokenIds: string[] = Array.isArray(ticket.ticket_nft_ids) ? ticket.ticket_nft_ids : [];
+        if (!tokenIds.length) continue;
+
+        const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
+        const grossWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
+        const onChainDrawingId = results.find(r => r.drawingId)?.drawingId;
+        const claimFactor = onChainDrawingId ? await this.megapot.getWinClaimFactor(onChainDrawingId) : 1;
+        const totalWinUsdc = parseFloat((grossWinUsdc * claimFactor).toFixed(6));
+        const topWin = results.find(r => r.winAmountUsdc > 0);
+        const storedWin = ticket.win_amount_usdc ?? 0;
+
+        if (totalWinUsdc > storedWin + 0.000001) {
+          await db.from('lottery_tickets').update({
+            status: 'won',
+            win_amount_usdc: totalWinUsdc,
+            win_tier: topWin?.tier ?? ticket.win_tier,
+            updated_at: new Date().toISOString(),
+          }).eq('id', ticket.id);
+          this.logger.warn(`reconcileUnclaimedResults: ticket ${ticket.id} was under-recorded — $${storedWin} → $${totalWinUsdc}`);
+        }
+      } catch (err: any) {
+        this.logger.warn(`reconcileUnclaimedResults ticket ${ticket.id}: ${err.message}`);
+      }
+    }
   }
 
   /** Manually check win/loss result for a single ticket. Useful after draw when cron is bypassed. */
