@@ -2,6 +2,7 @@ import { Tabs, TabList, TabSlot, TabTrigger } from 'expo-router/ui';
 import { View, StyleSheet } from 'react-native';
 import { Header } from '../../components/Header';
 import { TabBar } from '../../components/TabBar';
+import { BalanceProvider } from '../../lib/wallet/BalanceProvider';
 import { color } from '../../lib/theme';
 
 // SDK 57 replaced the old @react-navigation/bottom-tabs-based `Tabs`/`tabBar` render prop with
@@ -14,19 +15,21 @@ import { color } from '../../lib/theme';
 // TabList's own nesting matters. Names here must match components/TabBar.tsx's TAB_ITEMS names.
 export default function TabsLayout() {
   return (
-    <Tabs style={styles.root}>
-      <Header />
-      <View style={styles.content}>
-        <TabSlot />
-      </View>
-      <TabList style={styles.hidden}>
-        <TabTrigger name="buy" href="/" />
-        <TabTrigger name="redeem" href="/redeem" />
-        <TabTrigger name="history" href="/history" />
-        <TabTrigger name="profile" href="/profile" />
-      </TabList>
-      <TabBar />
-    </Tabs>
+    <BalanceProvider>
+      <Tabs style={styles.root}>
+        <Header />
+        <View style={styles.content}>
+          <TabSlot />
+        </View>
+        <TabList style={styles.hidden}>
+          <TabTrigger name="buy" href="/" />
+          <TabTrigger name="redeem" href="/redeem" />
+          <TabTrigger name="history" href="/history" />
+          <TabTrigger name="profile" href="/profile" />
+        </TabList>
+        <TabBar />
+      </Tabs>
+    </BalanceProvider>
   );
 }
 

@@ -1,35 +1,20 @@
 import { usePrivy } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
 import { ChevronRight } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { getWalletBalances } from '../lib/api/users';
+import { useBalances } from '../lib/wallet/BalanceProvider';
 import { color, radius, space } from '../lib/theme';
 import { FONT_BODY_SEMIBOLD } from '../lib/fonts';
 import { UsdcIcon } from './TokenIcons';
 
 /** Live USDC balance chip — dot + USDC mark + amount + chevron. Taps route to the Profile tab,
- *  which already has the full wallet detail card + Disconnect (no separate detail sheet needed). */
+ *  which already has the full wallet detail card + Disconnect (no separate detail sheet needed).
+ *  Balance comes from the shared BalanceProvider (cache-first, refreshed on demand after any
+ *  action that moves funds) rather than its own fetch, so it never sits on a stale number. */
 export function WalletChip() {
-  const { user, getAccessToken } = usePrivy();
+  const { user } = usePrivy();
   const router = useRouter();
-  const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!user) {
-      setUsdcBalance(null);
-      return;
-    }
-    (async () => {
-      try {
-        const accessToken = await getAccessToken();
-        const balances = await getWalletBalances(accessToken);
-        setUsdcBalance(balances.usdcBalance);
-      } catch {
-        // chip just shows a dash — Profile tab is the source of truth
-      }
-    })();
-  }, [user, getAccessToken]);
+  const { usdcBalance } = useBalances();
 
   if (!user) return null;
 
