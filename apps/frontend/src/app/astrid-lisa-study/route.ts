@@ -243,9 +243,8 @@ const HTML = String.raw`<!DOCTYPE html>
       <button class="btn" onclick="revealNacho()">c'est la seule raison de ma venue</button>
     </div>
     <div id="nachoReveal" class="hidden" style="margin-top:8px">
-      <img src="https://i.ibb.co/whD1PQS4/IMG-1284.jpg" alt="Nacho et sa nouvelle coupe" id="nachoImg"
-           style="width:100%;border-radius:16px;border:1.5px solid var(--line);display:block"
-           onerror="this.outerHTML='&lt;div style=&quot;font-size:64px;text-align:center;padding:30px 0&quot;&gt;🐕&lt;/div&gt;'">
+      <img src="/IMG_1284.JPG" alt="Nacho et sa nouvelle coupe" id="nachoImg"
+           style="width:100%;border-radius:16px;border:1.5px solid var(--line);display:block">
       <p class="hint" style="margin-top:10px">la coupe.</p>
       <button class="btn primary" style="margin-top:14px" onclick="go(3)">Continuer l'étude</button>
     </div>
