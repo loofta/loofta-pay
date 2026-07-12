@@ -6,6 +6,7 @@ import { LotteryCronService } from './lottery-cron.service';
 import { MegapotService } from './megapot.service';
 import { RhinestoneService } from './rhinestone.service';
 import { LifiService } from './lifi.service';
+import { RelayService } from './relay.service';
 import { IntentsModule } from '../intents/intents.module';
 import { SendPaymentModule } from '../send-payment/send-payment.module';
 import { UsersModule } from '../users/users.module';
@@ -15,7 +16,7 @@ import { DatabaseModule } from '@/database/database.module';
 @Module({
   imports: [IntentsModule, SendPaymentModule, UsersModule, EmailModule, DatabaseModule],
   controllers: [LotteryController, AdminLotteryController],
-  providers: [LotteryService, LotteryCronService, MegapotService, RhinestoneService, LifiService],
+  providers: [LotteryService, LotteryCronService, MegapotService, RhinestoneService, LifiService, RelayService],
   exports: [LotteryService],
 })
 export class LotteryModule {}

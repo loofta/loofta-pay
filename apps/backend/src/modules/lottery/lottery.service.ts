@@ -18,6 +18,7 @@ import { SendPaymentEncryptionService } from '../send-payment/encryption.service
 import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI } from './megapot.service';
 import { RhinestoneService } from './rhinestone.service';
 import { LifiService } from './lifi.service';
+import { RelayService } from './relay.service';
 import { UsersService } from '../users/users.service';
 import { EmailService } from '../email/email.service';
 import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
@@ -217,9 +218,18 @@ export class LotteryService {
     private readonly megapot: MegapotService,
     private readonly rhinestone: RhinestoneService,
     private readonly lifi: LifiService,
+    private readonly relay: RelayService,
     private readonly usersService: UsersService,
     private readonly emailService: EmailService,
   ) {}
+
+  /** Which bridge to use for the Sol↔Base legs (both purchase and withdrawal). 'relay' (faster,
+   *  ~1–3s) or 'lifi' (default, unchanged). Set BRIDGE_PROVIDER=relay to switch. In-flight tickets
+   *  keep whichever tool they started with — the status checks branch on the stored tool, not this
+   *  flag — so toggling never orphans a bridge mid-flight. */
+  private get bridgeProvider(): 'relay' | 'lifi' {
+    return this.config.get<string>('BRIDGE_PROVIDER') === 'relay' ? 'relay' : 'lifi';
+  }
 
   // ─── Purchase initiation ───────────────────────────────────────────────────
 
@@ -1137,7 +1147,9 @@ export class LotteryService {
   private async claimStalledTicket(ticket: any): Promise<void> {
     // Don't even attempt the claim if the bridge actually completed in this same window —
     // saves a wasted conditional write, though the update guard below is what actually matters.
-    const lifiStatus = await this.lifi.getStatus(ticket.lifi_buy_tx_hash, ticket.lifi_buy_tool, 'sol_to_base');
+    const lifiStatus = ticket.lifi_buy_tool === 'relay'
+      ? await this.relay.getStatus(ticket.lifi_buy_tx_hash)
+      : await this.lifi.getStatus(ticket.lifi_buy_tx_hash, ticket.lifi_buy_tool, 'sol_to_base');
     if (lifiStatus === 'DONE') return;
 
     // Atomic claim: races against processBridgingTickets, which can flip this same ticket to
@@ -1385,6 +1397,52 @@ export class LotteryService {
     // cover the gap, then bridge the corrected amount so the companion still nets exactly
     // costUsdc — this is an internal operational transfer, not the user's payment, so it doesn't
     // need MagicBlock privacy.
+    // ── Relay path (BRIDGE_PROVIDER=relay) — faster ~3s bridge. Quote EXACT_OUTPUT so the
+    // companion is guaranteed to net exactly costUnits; top the burner up to Relay's required
+    // input (cost + fee) from the fee wallet, then send the deposit. Status is later polled by
+    // requestId (stored in lifi_buy_tx_hash) with lifi_buy_tool='relay'. ──────────────────────
+    if (this.bridgeProvider === 'relay') {
+      const RELAY_PAD_UNITS = 2_000n; // $0.002 buffer so the quote's required input is covered
+      let rQuote = await this.relay.getSolToBaseQuote({
+        fromAddress: ticket.burner_sol_address,
+        toAddress: ticket.companion_address,
+        outputUnits: costUnits,
+      });
+      let rBurnerBalance = burnerBalance;
+      let rAttempts = 0;
+      while (rBurnerBalance < rQuote.requiredInputUnits) {
+        if (++rAttempts > 3) throw new Error(`Relay bridge: burner still short of required input after ${rAttempts - 1} top-ups (${rBurnerBalance} < ${rQuote.requiredInputUnits}) — will retry next cron`);
+        const shortfallUnits = rQuote.requiredInputUnits - rBurnerBalance + RELAY_PAD_UNITS;
+        await this.topUpFromFeeWallet(ticket.burner_sol_address, shortfallUnits);
+        rBurnerBalance += shortfallUnits;
+        rQuote = await this.relay.getSolToBaseQuote({
+          fromAddress: ticket.burner_sol_address,
+          toAddress: ticket.companion_address,
+          outputUnits: costUnits,
+        });
+        this.logger.log(`Ticket ${ticket.id}: topped up burner by ${(Number(shortfallUnits) / 1_000_000).toFixed(6)} USDC for Relay's required input (${rQuote.requiredInputUnits})`);
+      }
+
+      const relaySig = await this.relay.executeSolanaQuote({
+        burnerSecretKey: burnerKey,
+        quote: rQuote,
+        feePayerSecretKey: feePayerKey,
+      });
+
+      const dbR = this.supabase.getClient();
+      await dbR.from('lottery_tickets').update({
+        status: 'bridging',
+        bridge_deposit_address: relaySig,
+        bridge_status: 'pending',
+        lifi_buy_tx_hash: rQuote.requestId, // repurpose: Relay status is keyed by requestId
+        lifi_buy_tool: 'relay',
+        updated_at: new Date().toISOString(),
+      }).eq('id', ticket.id);
+      this.logger.log(`Ticket ${ticket.id}: Relay bridge started, requestId=${rQuote.requestId}, sig=${relaySig}`);
+      return;
+    }
+
+    // ── Li.Fi path (default) ──────────────────────────────────────────────────
     // Bridge the burner's full balance (costUnits normally; also reuses any top-up from an
     // aborted earlier attempt instead of stranding it).
     let bridgeAmountUnits = Number(burnerBalance);
@@ -1464,9 +1522,12 @@ export class LotteryService {
     // If already in 'buying' (retry after Rhinestone failure) skip bridge status check
     if (ticket.status !== 'buying') {
       if (ticket.lifi_buy_tx_hash) {
-        // New flow: Li.Fi bridge (SOL → Base)
-        const lifiStatus = await this.lifi.getStatus(ticket.lifi_buy_tx_hash, ticket.lifi_buy_tool, 'sol_to_base');
-        this.logger.log(`Ticket ${ticket.id}: Li.Fi buy status=${lifiStatus} tx=${ticket.lifi_buy_tx_hash}`);
+        // Bridge status: Relay is keyed by requestId (stored in lifi_buy_tx_hash, tool='relay');
+        // Li.Fi is keyed by the on-chain tx hash. Same DONE/PENDING/FAILED contract either way.
+        const lifiStatus = ticket.lifi_buy_tool === 'relay'
+          ? await this.relay.getStatus(ticket.lifi_buy_tx_hash)
+          : await this.lifi.getStatus(ticket.lifi_buy_tx_hash, ticket.lifi_buy_tool, 'sol_to_base');
+        this.logger.log(`Ticket ${ticket.id}: ${ticket.lifi_buy_tool} buy status=${lifiStatus} ref=${ticket.lifi_buy_tx_hash}`);
 
         if (lifiStatus === 'FAILED') {
           await db.from('lottery_tickets').update({
@@ -2744,8 +2805,11 @@ export class LotteryService {
   }
 
   async estimatePrivateWithdrawalNet(amountUsdc: number): Promise<{ feeUsd: number; receiveUsdc: number }> {
-    // 1. Bridge leg: what actually lands in the burner (Li.Fi's guaranteed min out).
-    const bridge = await this.lifi.getWithdrawalFeeEstimate(amountUsdc);
+    // 1. Bridge leg: what actually lands in the burner (guaranteed min out). Use whichever bridge
+    // the withdrawal will actually run through, so the estimate matches delivery.
+    const bridge = this.bridgeProvider === 'relay'
+      ? await this.relay.getWithdrawalFeeEstimate(amountUsdc)
+      : await this.lifi.getWithdrawalFeeEstimate(amountUsdc);
     const bridgeReceive = bridge.receiveUsdc;
 
     // 2. MagicBlock leg — mirror doMagicBlockTransfer exactly:
@@ -2896,6 +2960,37 @@ export class LotteryService {
   }): Promise<string> {
     const db = this.supabase.getClient();
     const W = `[Withdrawal ${opts.withdrawalId.slice(0, 8)}]`;
+
+    // ── Relay path (BRIDGE_PROVIDER=relay): Base companion → Solana burner, ~1–3s. The deposit is
+    // a Rhinestone-sponsored userOp (approve Relay's router, then call it). Status is later polled
+    // by requestId (stored in lifi_tx_hash) with lifi_step_tool='relay'. ────────────────────────
+    if (this.bridgeProvider === 'relay') {
+      const rq = await this.relay.getBaseToSolQuote({
+        fromAddress: opts.companionAddress,
+        toAddress: opts.burnerAddress,
+        amountUnits: BigInt(Math.round(opts.amountUsdc * 1_000_000)),
+      });
+      this.logger.log(`${W} Relay: send ${opts.amountUsdc.toFixed(6)} USDC → receive min ${(Number(rq.toAmountMinUnits) / 1e6).toFixed(4)}, fee ~$${rq.feeUsd.toFixed(4)}`);
+      const relayTxHash = await this.rhinestone.executeLifiSwap({
+        companionPrivateKey: opts.companionPrivHex as `0x${string}`,
+        approvalAddress: rq.approvalAddress as Address,
+        fromAmountRaw: rq.fromAmountUnits,
+        swapTo: rq.depositTo as Address,
+        swapData: rq.depositData as `0x${string}`,
+        swapValue: rq.depositValue,
+        toChainAddress: opts.burnerAddress,
+      });
+      await db.from('lottery_withdrawals').update({
+        lifi_tx_hash: rq.requestId, // repurpose: Relay status is keyed by requestId
+        lifi_step_tool: 'relay',
+        bridge_status: 'pending',
+        updated_at: new Date().toISOString(),
+      }).eq('id', opts.withdrawalId);
+      this.logger.log(`${W} Relay bridge submitted — requestId=${rq.requestId}, onchainTx=${relayTxHash} → waiting for DONE`);
+      return relayTxHash;
+    }
+
+    // ── Li.Fi path (default) ──────────────────────────────────────────────────
     const quote = await this.lifi.getBaseToSolQuote({
       fromAddress: opts.companionAddress,
       toAddress: opts.burnerAddress,
@@ -3001,8 +3096,12 @@ export class LotteryService {
   private async checkLifiWithdrawal(withdrawal: any): Promise<void> {
     const db = this.supabase.getClient();
     const W = `[Withdrawal ${withdrawal.id.slice(0, 8)}]`;
-    const status = await this.lifi.getStatus(withdrawal.lifi_tx_hash, withdrawal.lifi_step_tool, 'base_to_sol');
-    this.logger.log(`${W} Li.Fi bridge status=${status} tool=${withdrawal.lifi_step_tool} tx=${withdrawal.lifi_tx_hash?.slice(0, 16)}…`);
+    // Relay is keyed by requestId (stored in lifi_tx_hash, tool='relay'); Li.Fi by the on-chain
+    // tx hash. Same DONE/PENDING/FAILED contract either way.
+    const status = withdrawal.lifi_step_tool === 'relay'
+      ? await this.relay.getStatus(withdrawal.lifi_tx_hash)
+      : await this.lifi.getStatus(withdrawal.lifi_tx_hash, withdrawal.lifi_step_tool, 'base_to_sol');
+    this.logger.log(`${W} ${withdrawal.lifi_step_tool} bridge status=${status} ref=${withdrawal.lifi_tx_hash?.slice(0, 16)}…`);
 
     if (status === 'FAILED') {
       await db.from('lottery_withdrawals').update({

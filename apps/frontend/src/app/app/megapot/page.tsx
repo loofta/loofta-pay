@@ -33,17 +33,21 @@ const MAIN_MAX = 30;
 const MAIN_COUNT = 5;
 const BONUS_MAX = 12;
 
-// Net of Loofta's 10% referral cut (taken from every cash win on-chain) — these are what a
-// user actually receives, not Megapot's raw published gross figures.
+// Snapshot of Megapot's published tiers (docs.megapot.io/learn/prize-structure, taken
+// 2026-07-12 against a ~$1.1M pool), net of the ~10% on-chain referral cut Loofta actually
+// takes on every cash win (mirrors DEFAULT_REFERRAL_WIN_SHARE_FACTOR in megapot.service.ts —
+// the real per-drawing cut is read live on payout via getWinClaimFactor, this is just the
+// display estimate). Megapot's pool grows daily, so these dollar figures drift out of date —
+// re-pull from the docs page periodically rather than assuming they still match.
 const PRIZE_TIERS = [
-  { normal: 5, bonusMatch: true, prize: "$203,548.60" },
-  { normal: 5, bonusMatch: false, prize: "$2,776.55" },
-  { normal: 4, bonusMatch: true, prize: "$245.15" },
-  { normal: 4, bonusMatch: false, prize: "$23.10" },
-  { normal: 3, bonusMatch: true, prize: "$11.07" },
-  { normal: 2, bonusMatch: true, prize: "$3.55" },
-  { normal: 3, bonusMatch: false, prize: "$2.75" },
-  { normal: 1, bonusMatch: true, prize: "$1.86" },
+  { normal: 5, bonusMatch: true, prize: "$183,918.03" },
+  { normal: 5, bonusMatch: false, prize: "$1,858.64" },
+  { normal: 4, bonusMatch: true, prize: "$179.24" },
+  { normal: 4, bonusMatch: false, prize: "$20.71" },
+  { normal: 3, bonusMatch: true, prize: "$8.33" },
+  { normal: 2, bonusMatch: true, prize: "$4.77" },
+  { normal: 3, bonusMatch: false, prize: "$4.19" },
+  { normal: 1, bonusMatch: true, prize: "$2.66" },
   { normal: 2, bonusMatch: false, prize: "Free ticket" },
   { normal: 0, bonusMatch: true, prize: "Free ticket" },
 ] as const;
