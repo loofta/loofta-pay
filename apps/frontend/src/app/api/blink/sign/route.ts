@@ -5,6 +5,13 @@ import { getVerifiedUserId } from "@/lib/serverAuth";
 const MERCHANT_ID = process.env.BLINK_MERCHANT_ID ?? "";
 const SOLANA_CHAIN_ID = 792703809;
 const USDC_SOLANA = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const BASE_CHAIN_ID = 8453;
+const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+const SUPPORTED_CHAINS: Record<number, { token: string; isValidAddress: (address: string) => boolean }> = {
+  [SOLANA_CHAIN_ID]: { token: USDC_SOLANA, isValidAddress: isValidSolanaAddress },
+  [BASE_CHAIN_ID]: { token: USDC_BASE, isValidAddress: isValidEvmAddress },
+};
 
 function getPrivateKey(): string {
   const raw = process.env.BLINK_MERCHANT_PRIVATE_KEY ?? "";
@@ -14,6 +21,10 @@ function getPrivateKey(): string {
 
 function isValidSolanaAddress(address: string): boolean {
   return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+}
+
+function isValidEvmAddress(address: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(address);
 }
 
 export async function POST(req: NextRequest) {
@@ -51,14 +62,15 @@ export async function POST(req: NextRequest) {
 
   // Validate fields
 
-  if (chainId !== SOLANA_CHAIN_ID) {
-    return NextResponse.json({ error: "Unsupported chainId — only Solana (792703809) is accepted" }, { status: 400 });
+  const chain = typeof chainId === "number" ? SUPPORTED_CHAINS[chainId] : undefined;
+  if (!chain) {
+    return NextResponse.json({ error: "Unsupported chainId — only Solana (792703809) or Base (8453) are accepted" }, { status: 400 });
   }
-  if (typeof address !== "string" || !isValidSolanaAddress(address)) {
-    return NextResponse.json({ error: "Invalid Solana address" }, { status: 400 });
+  if (typeof address !== "string" || !chain.isValidAddress(address)) {
+    return NextResponse.json({ error: "Invalid address for the given chainId" }, { status: 400 });
   }
-  if (token !== USDC_SOLANA) {
-    return NextResponse.json({ error: "Unsupported token — only USDC on Solana is accepted" }, { status: 400 });
+  if (token !== chain.token) {
+    return NextResponse.json({ error: "Unsupported token — only native USDC for the given chain is accepted" }, { status: 400 });
   }
 
   const idempotencyKey = randomUUID();

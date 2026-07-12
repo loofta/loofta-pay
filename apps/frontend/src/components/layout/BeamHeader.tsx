@@ -17,6 +17,12 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useToast } from "@/components/ui/use-toast";
 import { assertEvmSponsorAllowed, BASE_USDC_ADDRESS } from "@/lib/zkp2pClient";
 import { useTranslations } from "next-intl";
+import { Settings as SettingsIcon, Copy, ExternalLink } from "lucide-react";
+
+function formatAddress(address: string) {
+  if (!address) return "";
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
 
 const HEADER_HEIGHT = 64;
 const basePublicClient = createPublicClient({ chain: base, transport: http("https://mainnet.base.org") });
@@ -27,7 +33,7 @@ const basePublicClient = createPublicClient({ chain: base, transport: http("http
 // with a way to withdraw it back out.
 export function BeamHeader() {
   const t = useTranslations('MinimalHeader');
-  const { authenticated, userId, logout, getAccessToken } = useAuth();
+  const { authenticated, userId, email, logout, getAccessToken } = useAuth();
   const { login: privyLogin } = usePrivy();
   const { wallets: evmWallets } = useEvmWallets();
   const { sendTransaction: privySendEvmTx } = useEvmSendTransaction();
@@ -41,6 +47,7 @@ export function BeamHeader() {
   const [withdrawAddr, setWithdrawAddr] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const refreshBalance = useCallback(async () => {
     if (!baseWallet) return;
@@ -114,6 +121,19 @@ export function BeamHeader() {
                   </button>
                 </PopoverTrigger>
                 <PopoverContent align="end" className="bg-[#17171b] border-white/10 text-white w-64 p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    {email && (
+                      <p className="text-sm text-slate-300 truncate">{email}</p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => { setMenuOpen(false); setSettingsOpen(true); }}
+                      className="shrink-0 p-1 -m-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                      aria-label="Settings"
+                    >
+                      <SettingsIcon className="w-4 h-4" />
+                    </button>
+                  </div>
                   <div>
                     <p className="text-xs text-slate-400 uppercase tracking-wide">Balance</p>
                     <p className="text-2xl font-bold text-white tabular-nums">${balance !== null ? balance.toFixed(2) : "0.00"}</p>
@@ -184,6 +204,48 @@ export function BeamHeader() {
             >
               {withdrawing ? "Sending…" : "Withdraw"}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="bg-[#0f0f12] border border-white/10 text-white sm:max-w-md rounded-2xl p-7">
+          <DialogTitle className="text-xl font-bold text-white">Settings</DialogTitle>
+          <div className="space-y-4 mt-2">
+            <div>
+              <label className="text-sm text-slate-300 block mb-1.5">Email</label>
+              <p className="text-sm text-white">{email ?? "—"}</p>
+            </div>
+            <div>
+              <label className="text-sm text-slate-300 block mb-1.5">Wallet address (Base)</label>
+              {baseWallet ? (
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-mono text-white truncate">{formatAddress(baseWallet.address)}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(baseWallet.address);
+                      toast({ title: "Address copied" });
+                    }}
+                    className="shrink-0 p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                    aria-label="Copy address"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                  <a
+                    href={`https://basescan.org/address/${baseWallet.address}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                    aria-label="View on Basescan"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">—</p>
+              )}
+            </div>
           </div>
         </DialogContent>
       </Dialog>
