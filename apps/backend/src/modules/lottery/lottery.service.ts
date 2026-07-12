@@ -2278,6 +2278,41 @@ export class LotteryService {
     }
   }
 
+  /**
+   * Real incident: an audit of every 'lost' ticket in the system found 6 out of 26 (23%!) had
+   * actually won — one for $23.02, effectively that round's top prize — because the on-chain NFT
+   * `tokenURI` metadata read (checkTicketResultsFromNft) is simply unreliable as a source of truth,
+   * not just occasionally slow. Megapot's own Data API (`getWalletWinsForRound`) caught every one
+   * of those 6 correctly and instantly, and its `amount` is already net of any referral-share cut
+   * (confirmed: matches gross tier payout × ~0.9 exactly). So treat the NFT-metadata result as a
+   * first pass only, and let the Data API override it whenever it reports a HIGHER total — never
+   * lower, since the metadata path is still needed to know exactly which NFTs to hand claimWinnings
+   * for.
+   */
+  private async resolveTicketWin(
+    companionAddress: string,
+    roundId: string | null,
+    nftResults: { tokenId: string; tier: number | null; winAmountUsdc: number; drawingId: string | null }[],
+  ): Promise<{ totalWinUsdc: number; tier: number | null }> {
+    const nftGross = nftResults.reduce((sum, r) => sum + r.winAmountUsdc, 0);
+    const onChainDrawingId = nftResults.find(r => r.drawingId)?.drawingId;
+    const claimFactor = onChainDrawingId ? await this.megapot.getWinClaimFactor(onChainDrawingId) : 1;
+    const nftNet = parseFloat((nftGross * claimFactor).toFixed(6));
+    const nftTier = nftResults.find(r => r.winAmountUsdc > 0)?.tier ?? null;
+
+    const apiWin = roundId
+      ? await this.megapot.getWalletWinsForRound(companionAddress as Address, roundId).catch(() => null)
+      : null;
+
+    if (apiWin && apiWin.winAmountUsdc > nftNet) {
+      if (nftNet > 0) {
+        this.logger.warn(`resolveTicketWin: NFT metadata undercounted for ${companionAddress} round ${roundId} — $${nftNet} vs Data API $${apiWin.winAmountUsdc}`);
+      }
+      return { totalWinUsdc: apiWin.winAmountUsdc, tier: apiWin.tier ?? nftTier };
+    }
+    return { totalWinUsdc: nftNet, tier: nftTier };
+  }
+
   private async checkDailyResultsInner(): Promise<void> {
     const db = this.supabase.getClient();
 
@@ -2331,26 +2366,20 @@ export class LotteryService {
           ? await this.megapot.getWinningNumbersForRound(ticket.round_id)
           : null;
 
-        // Read on-chain NFT metadata to check Tier + Win Amount post-draw
+        // Read on-chain NFT metadata to check Tier + Win Amount post-draw, cross-checked against
+        // Megapot's Data API (see resolveTicketWin) since the metadata read alone has proven unreliable.
         const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
-        const grossWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
-        // Use the NFT metadata's own on-chain "Drawing ID", NOT ticket.round_id (that's Megapot's
-        // off-chain Data-API round id — passing it to getDrawingState() silently reads a zeroed
-        // struct instead of reverting, understating the real referral-win-share deduction).
-        const onChainDrawingId = results.find(r => r.drawingId)?.drawingId;
-        const claimFactor = onChainDrawingId ? await this.megapot.getWinClaimFactor(onChainDrawingId) : 1;
-        const totalWinUsdc = parseFloat((grossWinUsdc * claimFactor).toFixed(6));
-        const topWin = results.find(r => r.winAmountUsdc > 0);
+        const { totalWinUsdc, tier: winTier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results);
 
         if (totalWinUsdc > 0) {
           await db.from('lottery_tickets').update({
             status: 'won',
             win_amount_usdc: totalWinUsdc,
-            win_tier: topWin?.tier ?? null,
+            win_tier: winTier,
             ...(winningNumbers ? { winning_numbers: winningNumbers } : {}),
             updated_at: new Date().toISOString(),
           }).eq('id', ticket.id);
-          this.logger.log(`Ticket ${ticket.id}: WON $${grossWinUsdc} gross → $${totalWinUsdc} net (tier ${topWin?.tier}, claimFactor=${claimFactor})`);
+          this.logger.log(`Ticket ${ticket.id}: WON $${totalWinUsdc} net (tier ${winTier})`);
         } else {
           await db.from('lottery_tickets').update({
             status: 'lost',
@@ -2368,27 +2397,26 @@ export class LotteryService {
   }
 
   /**
-   * Real incident: this ticket's first settlement pass read a Win Amount of $0 off one of its two
-   * winning NFTs' on-chain metadata (Megapot hadn't finished writing that NFT's result yet, so
-   * soon after the draw the read just came back looking like a loss) and stored $4.67 as the win —
-   * the true total, confirmed by the actual on-chain claim, was $9.98. Once a ticket is 'won'/'lost'
-   * nothing ever re-checks it, so a bad read like that is otherwise permanent and the user only
-   * discovers the shortfall if they happen to withdraw/replay (those paths already trust the real
-   * claimed balance over the stored figure — see processConsolidatedBatch). This re-verifies every
-   * not-yet-claimed result against fresh NFT metadata each cron tick and corrects it before that
-   * point, so History shows the truth from the start. Bounded to a small, cheap set: unclaimed
-   * tickets settled in the last 6 hours. Only ever corrects UPWARD (a previously-missed win) —
-   * never silently lowers a figure a user has already seen, that needs a human, not a cron.
+   * Real incident: an audit of every 'lost' ticket in the whole system found 6 of 26 (23%) had
+   * actually won — one was that round's effective top prize at $23.02 — because the settlement
+   * pass's on-chain NFT-metadata read is unreliable, not just occasionally slow. This is NOT a
+   * narrow just-after-settlement race (the mismarked tickets spanned from same-day back to two
+   * weeks old), so this deliberately covers EVERY unclaimed won/lost ticket, not just recent ones —
+   * the total set is small (a few dozen at most, since claimed tickets are dropped) so re-checking
+   * all of them each cron tick is cheap. Once a ticket is 'won'/'lost' nothing else ever re-checks
+   * it, so a bad read is otherwise permanent and the user only discovers a shortfall if they happen
+   * to withdraw/replay (those paths already trust the real claimed balance over the stored figure —
+   * see processConsolidatedBatch). Uses the same Data-API-cross-checked resolver as settlement
+   * (resolveTicketWin) and only ever corrects UPWARD — never silently lowers a figure a user has
+   * already seen, that needs a human, not a cron.
    */
   private async reconcileUnclaimedResults(): Promise<void> {
     const db = this.supabase.getClient();
-    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
     const { data: tickets } = await db
       .from('lottery_tickets')
       .select('*')
       .in('status', ['won', 'lost'])
-      .is('claim_tx_hash', null)
-      .gte('updated_at', sixHoursAgo);
+      .is('claim_tx_hash', null);
     if (!tickets?.length) return;
 
     for (const ticket of tickets) {
@@ -2397,18 +2425,14 @@ export class LotteryService {
         if (!tokenIds.length) continue;
 
         const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
-        const grossWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
-        const onChainDrawingId = results.find(r => r.drawingId)?.drawingId;
-        const claimFactor = onChainDrawingId ? await this.megapot.getWinClaimFactor(onChainDrawingId) : 1;
-        const totalWinUsdc = parseFloat((grossWinUsdc * claimFactor).toFixed(6));
-        const topWin = results.find(r => r.winAmountUsdc > 0);
+        const { totalWinUsdc, tier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results);
         const storedWin = ticket.win_amount_usdc ?? 0;
 
         if (totalWinUsdc > storedWin + 0.000001) {
           await db.from('lottery_tickets').update({
             status: 'won',
             win_amount_usdc: totalWinUsdc,
-            win_tier: topWin?.tier ?? ticket.win_tier,
+            win_tier: tier ?? ticket.win_tier,
             updated_at: new Date().toISOString(),
           }).eq('id', ticket.id);
           this.logger.warn(`reconcileUnclaimedResults: ticket ${ticket.id} was under-recorded — $${storedWin} → $${totalWinUsdc}`);
@@ -2514,25 +2538,21 @@ export class LotteryService {
       ? await this.megapot.getWinningNumbersForRound(ticket.round_id)
       : null;
 
+    // NFT metadata cross-checked against Megapot's Data API — see resolveTicketWin for why the
+    // metadata read alone isn't trustworthy (23% of 'lost' tickets audited had actually won).
     const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
-    const grossWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
-    // Real on-chain drawing id from the NFT metadata itself — see checkDailyResults for why
-    // ticket.round_id (Megapot's off-chain Data-API id) must not be used here.
-    const onChainDrawingId = results.find(r => r.drawingId)?.drawingId;
-    const nftClaimFactor = onChainDrawingId ? await this.megapot.getWinClaimFactor(onChainDrawingId) : 1;
-    const totalWinUsdc = parseFloat((grossWinUsdc * nftClaimFactor).toFixed(6));
-    const topWin = results.find(r => r.winAmountUsdc > 0);
+    const { totalWinUsdc, tier: winTier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results);
 
     if (totalWinUsdc > 0) {
       await db.from('lottery_tickets').update({
         status: 'won',
         win_amount_usdc: totalWinUsdc,
-        win_tier: topWin?.tier ?? null,
+        win_tier: winTier,
         ...(winningNumbers ? { winning_numbers: winningNumbers } : {}),
         updated_at: new Date().toISOString(),
       }).eq('id', ticketId);
-      this.logger.log(`checkTicketResult ${ticketId}: WON $${grossWinUsdc} gross → $${totalWinUsdc} net (tier ${topWin?.tier}, claimFactor=${nftClaimFactor})`);
-      return { status: 'won', winAmountUsdc: totalWinUsdc, winTier: topWin?.tier ?? null, winningNumbers: winningNumbers ?? null, ticketNumbers: ticket.ticket_numbers ?? null };
+      this.logger.log(`checkTicketResult ${ticketId}: WON $${totalWinUsdc} net (tier ${winTier})`);
+      return { status: 'won', winAmountUsdc: totalWinUsdc, winTier, winningNumbers: winningNumbers ?? null, ticketNumbers: ticket.ticket_numbers ?? null };
     } else {
       await db.from('lottery_tickets').update({
         status: 'lost',
