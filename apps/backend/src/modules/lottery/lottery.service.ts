@@ -1809,47 +1809,73 @@ export class LotteryService {
     }
   }
 
-  /** Backfill ball numbers for active tickets that don't have them yet (existing tickets). */
+  /**
+   * Tries the Megapot REST API first (no RPC needed), but only accepts it as the final answer
+   * once it has ALL `requiredCount` numbers — the API can lag the chain and return a partial set
+   * (e.g. 2 of 5 minted NFTs indexed so far). Anything short of that falls back to an on-chain
+   * NFT Transfer event scan, and the result is whichever of {stored, API, on-chain} is most
+   * complete, so a partial result from one source never regresses or gets stuck behind another.
+   */
+  private async resolveTicketNumbers(
+    companionAddress: Address,
+    roundId: string | null | undefined,
+    requiredCount: number,
+    storedNumbers: { main: number[]; bonus: number }[],
+  ): Promise<{ numbers: { main: number[]; bonus: number }[]; nftIds: string[] | null }> {
+    const { ticketNumbers: apiNumbers } = await this.megapot.getTicketNumbersFromApi(companionAddress, roundId ?? undefined);
+    if (apiNumbers.length >= requiredCount) {
+      return { numbers: apiNumbers, nftIds: null };
+    }
+
+    const { tokenIds, ticketNumbers: nftNumbers } = await this.megapot.getTicketNumbersFromNft(companionAddress, roundId ?? undefined);
+
+    return [
+      { numbers: storedNumbers, nftIds: null as string[] | null },
+      { numbers: apiNumbers, nftIds: null as string[] | null },
+      { numbers: nftNumbers, nftIds: tokenIds },
+    ].reduce((a, b) => (b.numbers.length > a.numbers.length ? b : a));
+  }
+
+  /**
+   * Backfill ball numbers for tickets that are missing some. Covers 'active' (pre-draw) as well
+   * as already-resolved 'won'/'lost' tickets — a ticket can resolve before its numbers ever
+   * finish backfilling, and history/dashboard read whatever partial set is stored, forever, if
+   * nothing keeps trying after resolution.
+   */
   async backfillTicketNumbers(): Promise<void> {
     const db = this.supabase.getClient();
     const { data: tickets } = await db
       .from('lottery_tickets')
-      .select('id, companion_address, round_id')
-      .eq('status', 'active')
-      .is('ticket_numbers', null)
+      .select('id, companion_address, round_id, ticket_numbers, num_tickets')
+      .in('status', ['active', 'won', 'lost'])
       .not('companion_address', 'is', null)
-      .limit(10);
+      .limit(50);
 
-    if (!tickets?.length) return;
+    // Filter in-memory rather than in the query: a ticket with a *partial* ticket_numbers array
+    // (not null, just short of num_tickets) still needs backfilling, and Postgres can't easily
+    // compare jsonb array length to another column in a Supabase filter chain.
+    const incomplete = (tickets ?? [])
+      .filter((t) => (Array.isArray(t.ticket_numbers) ? t.ticket_numbers.length : 0) < t.num_tickets)
+      .slice(0, 10);
 
-    for (const ticket of tickets) {
+    if (!incomplete.length) return;
+
+    for (const ticket of incomplete) {
+      const storedCount = Array.isArray(ticket.ticket_numbers) ? ticket.ticket_numbers.length : 0;
       try {
-        // Try API first (no RPC needed), fall back to on-chain scan
-        const { ticketNumbers: apiNumbers } = await this.megapot.getTicketNumbersFromApi(
+        const { numbers, nftIds } = await this.resolveTicketNumbers(
           ticket.companion_address as Address,
-          ticket.round_id ?? undefined,
+          ticket.round_id,
+          ticket.num_tickets,
+          ticket.ticket_numbers ?? [],
         );
-
-        if (apiNumbers.length > 0) {
+        if (numbers.length > storedCount) {
           await db.from('lottery_tickets').update({
-            ticket_numbers: apiNumbers,
+            ticket_numbers: numbers,
+            ...(nftIds ? { ticket_nft_ids: nftIds } : {}),
             updated_at: new Date().toISOString(),
           }).eq('id', ticket.id);
-          this.logger.log(`Backfill: stored ${apiNumbers.length} numbers via API for ticket ${ticket.id}`);
-          continue;
-        }
-
-        const { tokenIds, ticketNumbers } = await this.megapot.getTicketNumbersFromNft(
-          ticket.companion_address as Address,
-          ticket.round_id ?? undefined,
-        );
-        if (ticketNumbers.length > 0) {
-          await db.from('lottery_tickets').update({
-            ticket_numbers: ticketNumbers,
-            ticket_nft_ids: tokenIds,
-            updated_at: new Date().toISOString(),
-          }).eq('id', ticket.id);
-          this.logger.log(`Backfill: stored ${ticketNumbers.length} numbers on-chain for ticket ${ticket.id}`);
+          this.logger.log(`Backfill: stored ${numbers.length} numbers for ticket ${ticket.id} (was ${storedCount})`);
         }
       } catch (e: any) {
         this.logger.warn(`Backfill failed for ticket ${ticket.id}: ${e.message}`);
@@ -1874,42 +1900,23 @@ export class LotteryService {
       return { ok: true, count: storedCount };
     }
 
-    // Try Megapot API first (no RPC, fastest path)
-    const { ticketNumbers: apiNumbers } = await this.megapot.getTicketNumbersFromApi(
+    const { numbers, nftIds } = await this.resolveTicketNumbers(
       ticket.companion_address as Address,
-      ticket.round_id ?? undefined,
+      ticket.round_id,
+      ticket.num_tickets,
+      ticket.ticket_numbers ?? [],
     );
 
-    if (apiNumbers.length > 0) {
+    if (numbers.length > storedCount) {
       await db.from('lottery_tickets').update({
-        ticket_numbers: apiNumbers,
+        ticket_numbers: numbers,
+        ...(nftIds ? { ticket_nft_ids: nftIds } : {}),
         updated_at: new Date().toISOString(),
       }).eq('id', ticketId);
-      this.logger.log(`syncTicketNumbers ${ticketId}: stored ${apiNumbers.length} numbers via API`);
-      return { ok: true, count: apiNumbers.length };
+      this.logger.log(`syncTicketNumbers ${ticketId}: stored ${numbers.length} numbers (was ${storedCount})`);
     }
 
-    // Fall back to on-chain NFT Transfer event scan (also retrieves NFT IDs for claimWinnings)
-    const { tokenIds, ticketNumbers } = await this.megapot.getTicketNumbersFromNft(
-      ticket.companion_address as Address,
-      ticket.round_id ?? undefined,
-    );
-
-    this.logger.log(`syncTicketNumbers ${ticketId}: found ${ticketNumbers.length} NFT numbers on-chain, tokenIds=${tokenIds.slice(0, 3).join(',')}`);
-
-    if (ticketNumbers.length > 0) {
-      // Merge: if new scan has more tickets than stored, use the larger set
-      const merged = ticketNumbers.length >= storedCount ? ticketNumbers : (ticket.ticket_numbers ?? ticketNumbers);
-      const mergedIds = ticketNumbers.length >= storedCount ? tokenIds : (ticket.ticket_nft_ids ?? tokenIds);
-      await db.from('lottery_tickets').update({
-        ticket_numbers: merged,
-        ticket_nft_ids: mergedIds,
-        updated_at: new Date().toISOString(),
-      }).eq('id', ticketId);
-      this.logger.log(`syncTicketNumbers ${ticketId}: stored ${merged.length} numbers (was ${storedCount}, scan returned ${ticketNumbers.length})`);
-    }
-
-    return { ok: true, count: Math.max(ticketNumbers.length, storedCount) };
+    return { ok: true, count: Math.max(numbers.length, storedCount) };
   }
 
   async rescueCompanionFunds(ticketId: string, userId: string): Promise<{ ok: boolean; rescued: boolean; amountUsdc: number; message: string }> {

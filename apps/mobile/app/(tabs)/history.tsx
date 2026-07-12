@@ -1,12 +1,11 @@
 import { usePrivy } from '@privy-io/expo';
 import { Ticket, Trophy } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, AppState, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, AppState, FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { AuthGate } from '../../components/AuthGate';
 import { Pill } from '../../components/ui/Pill';
 import { StatTile } from '../../components/ui/StatTile';
 import { TicketRow } from '../../components/ui/TicketRow';
-import { TicketNumberRow } from '../../components/ui/TicketNumberRow';
 import { TicketNumbersModal } from '../../components/TicketNumbersModal';
 import type { StatusChipTone } from '../../components/ui/StatusChip';
 import {
@@ -76,10 +75,8 @@ function matchesFilter(ticket: LotteryTicketSummary, filter: FilterKey): boolean
   return ticket.status === 'lost';
 }
 
-const MAX_NUMBER_ROWS_SHOWN = 3;
-
 function HistoryTicketRow({ ticket, withdrawMinUsdc }: { ticket: LotteryTicketSummary; withdrawMinUsdc: number }) {
-  const [showAll, setShowAll] = useState(false);
+  const [showNumbers, setShowNumbers] = useState(false);
   const winAmount = winAmountOf(ticket);
   const showFree = winAmount != null && isFreeTicketAmount(winAmount, withdrawMinUsdc);
 
@@ -91,8 +88,6 @@ function HistoryTicketRow({ ticket, withdrawMinUsdc }: { ticket: LotteryTicketSu
   const amountLabel = winAmount != null ? (showFree ? 'Free' : `+${fmt(winAmount)}`) : `−${fmt(ticket.costUsdc)}`;
 
   const numbers = ticket.ticketNumbers ?? [];
-  const shownNumbers = numbers.slice(0, MAX_NUMBER_ROWS_SHOWN);
-  const hiddenCount = numbers.length - shownNumbers.length;
 
   return (
     <View>
@@ -102,20 +97,9 @@ function HistoryTicketRow({ ticket, withdrawMinUsdc }: { ticket: LotteryTicketSu
         statusLabel={STATUS_LABEL[ticket.status]}
         statusTone={statusTone(ticket, winAmount != null)}
         amountLabel={amountLabel}
+        onPress={numbers.length > 0 ? () => setShowNumbers(true) : undefined}
       />
-      {shownNumbers.length > 0 && (
-        <View style={styles.numbersBlock}>
-          {shownNumbers.map((n, i) => (
-            <TicketNumberRow key={i} main={n.main} bonus={n.bonus} />
-          ))}
-          {hiddenCount > 0 && (
-            <TouchableOpacity onPress={() => setShowAll(true)} activeOpacity={0.7}>
-              <Text style={styles.numbersMore}>+{hiddenCount} more ticket{hiddenCount === 1 ? '' : 's'}</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
-      <TicketNumbersModal visible={showAll} onClose={() => setShowAll(false)} title={title} numbers={numbers} />
+      <TicketNumbersModal visible={showNumbers} onClose={() => setShowNumbers(false)} title={title} numbers={numbers} />
     </View>
   );
 }
@@ -250,8 +234,4 @@ const styles = StyleSheet.create({
   separator: { height: 1, backgroundColor: color.borderSofter },
   empty: { color: color.fg2, fontFamily: FONT_BODY_MEDIUM, fontSize: 17, textAlign: 'center', marginTop: space[8] },
   error: { color: color.danger, fontFamily: FONT_BODY, fontSize: 14 },
-
-  // Per-ticket numbers, shown under each row
-  numbersBlock: { gap: space[2], paddingBottom: space[3] },
-  numbersMore: { color: color.brandOrange, fontFamily: FONT_BODY_MEDIUM, fontSize: 12 },
 });

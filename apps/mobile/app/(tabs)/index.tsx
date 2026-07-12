@@ -16,6 +16,7 @@ import { fmt, mbFee, totalCost, TICKET_PRICE_USDC } from '../../lib/lottery/fees
 import { connectSeekerWallet, signAndSendTransactionWithSeeker } from '../../lib/wallet/mwa';
 import { useBalances } from '../../lib/wallet/BalanceProvider';
 import { updateCachedSkrDomain } from '../../lib/storage/seekerIdentity';
+import { getTapHighScore, setTapHighScore } from '../../lib/storage/tapHighScore';
 import { color, radius, space } from '../../lib/theme';
 import { FONT_TITLE, FONT_TITLE_SEMIBOLD, FONT_BODY, FONT_BODY_MEDIUM, FONT_BODY_SEMIBOLD, FONT_BODY_BOLD } from '../../lib/fonts';
 
@@ -235,10 +236,13 @@ const TAP_COLOR_FADE_MS = 700;
 
 interface TapParticle { id: number; value: number; crit: boolean; x: number; anim: Animated.Value; }
 
-// Score is purely per-wait — no persistence — so a new purchase (or re-selecting the dev preview)
-// always starts fresh. The parent forces that reset by remounting via a `key` prop.
+// Current charge is purely per-wait — no persistence — so a new purchase (or re-selecting the
+// dev preview) always starts fresh. The parent forces that reset by remounting via a `key` prop.
+// The high score is the exception: it's read from/written to SecureStore so it survives across
+// every future wait, giving players something to beat next time.
 function TapGame() {
   const [charge, setCharge] = useState(0);
+  const [highScore, setHighScore] = useState(0);
   const [particles, setParticles] = useState<TapParticle[]>([]);
   const [combo, setCombo] = useState(0);
 
@@ -248,6 +252,18 @@ function TapGame() {
   const bounce = useRef(new Animated.Value(1)).current;
   const glowPulse = useRef(new Animated.Value(0)).current;
   const colorFade = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    let cancelled = false;
+    getTapHighScore().then((v) => { if (!cancelled) setHighScore(v); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (charge <= highScore) return;
+    setHighScore(charge);
+    void setTapHighScore(charge);
+  }, [charge, highScore]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -316,6 +332,10 @@ function TapGame() {
         <View style={styles.chargePill}>
           <Text style={styles.chargePillText}>⚡ {charge.toLocaleString()}</Text>
         </View>
+        <View style={styles.bestPill}>
+          <Text style={styles.bestPillLabel}>BEST</Text>
+          <Text style={styles.bestPillText}>{Math.max(highScore, charge).toLocaleString()}</Text>
+        </View>
       </View>
 
       <View style={styles.tapCenterZone}>
@@ -372,6 +392,7 @@ const BUY_DEV_PREVIEW_OPTIONS: { key: BuyPreviewMode; label: string }[] = [
 ];
 
 function BuyDevPreviewPanel({ mode, onSelect }: { mode: BuyPreviewMode; onSelect: (m: BuyPreviewMode) => void }) {
+  if (true) return null; // disabled for demo recording — re-enable by reverting this line
   if (!__DEV__) return null;
   return (
     <View style={styles.devPanel}>
@@ -837,7 +858,6 @@ function BuyScreenInner() {
                               <Text style={styles.numberBubbleSmallText}>{n}</Text>
                             </View>
                           ))}
-                          <View style={styles.ticketDivider} />
                           <View style={styles.bonusBubbleSmall}>
                             <Text style={styles.bonusBubbleSmallText}>{t.bonus}</Text>
                           </View>
@@ -1108,13 +1128,12 @@ const styles = StyleSheet.create({
   shuffleAllButton: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.md, paddingHorizontal: space[3], paddingVertical: space[2] },
   shuffleAllText: { color: color.fg2, fontSize: 13, fontFamily: FONT_BODY_MEDIUM },
   ticketList: { borderWidth: 1, borderColor: color.borderSofter, borderRadius: radius.md, overflow: 'hidden' },
-  ticketRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: space[3] + 2, paddingHorizontal: space[3], borderBottomWidth: 1, borderBottomColor: color.borderSofter },
-  ticketRowNumbers: { flex: 1, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
-  ticketDivider: { width: 1, height: 24, backgroundColor: color.borderSoft, marginHorizontal: 4 },
-  numberBubbleSmall: { width: 36, height: 36, borderRadius: radius.pill, backgroundColor: color.surface3, alignItems: 'center', justifyContent: 'center' },
-  numberBubbleSmallText: { color: color.fg, fontSize: 15, fontFamily: FONT_BODY_BOLD },
-  bonusBubbleSmall: { width: 36, height: 36, borderRadius: radius.pill, backgroundColor: color.fg, alignItems: 'center', justifyContent: 'center' },
-  bonusBubbleSmallText: { color: color.bgInk, fontSize: 15, fontFamily: FONT_BODY_BOLD },
+  ticketRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: space[3], paddingHorizontal: space[3], borderBottomWidth: 1, borderBottomColor: color.borderSofter },
+  ticketRowNumbers: { flex: 1, flexDirection: 'row', alignItems: 'center', flexWrap: 'nowrap', gap: 6 },
+  numberBubbleSmall: { width: 28, height: 28, borderRadius: radius.pill, backgroundColor: color.surface3, alignItems: 'center', justifyContent: 'center' },
+  numberBubbleSmallText: { color: color.fg, fontSize: 13, fontFamily: FONT_BODY_BOLD },
+  bonusBubbleSmall: { width: 28, height: 28, borderRadius: radius.pill, backgroundColor: color.fg, alignItems: 'center', justifyContent: 'center', marginLeft: 6 },
+  bonusBubbleSmallText: { color: color.bgInk, fontSize: 13, fontFamily: FONT_BODY_BOLD },
   addTicketButton: { alignItems: 'center', paddingVertical: space[3], borderWidth: 1, borderColor: color.borderSofter, borderRadius: radius.md },
   addTicketButtonText: { color: color.fg2, fontSize: 14, fontFamily: FONT_BODY_MEDIUM },
   chooseHint: { color: color.fg4, fontSize: 12, fontFamily: FONT_BODY, textAlign: 'center' },
@@ -1142,6 +1161,9 @@ const styles = StyleSheet.create({
   tapTopBar: { width: '100%', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: space[2], marginTop: space[8] },
   chargePill: { paddingHorizontal: space[5], paddingVertical: space[2] + 2, borderRadius: radius.pill, backgroundColor: color.surface3, borderWidth: 1, borderColor: color.borderSoft },
   chargePillText: { color: '#e2e8f0', fontSize: 22, fontFamily: FONT_BODY_BOLD, fontVariant: ['tabular-nums'] },
+  bestPill: { flexDirection: 'row', alignItems: 'baseline', gap: space[1], paddingHorizontal: space[4], paddingVertical: space[2] + 2, borderRadius: radius.pill, backgroundColor: 'transparent', borderWidth: 1, borderColor: color.borderSofter },
+  bestPillLabel: { color: color.fg3, fontSize: 12, fontFamily: FONT_BODY_SEMIBOLD, letterSpacing: 0.5 },
+  bestPillText: { color: color.fg2, fontSize: 16, fontFamily: FONT_BODY_BOLD, fontVariant: ['tabular-nums'] },
   tapCenterZone: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', gap: space[3] },
   tapButtonZone: { alignItems: 'center', justifyContent: 'center' },
   tapGlow: { position: 'absolute', width: 168, height: 168, borderRadius: 84 },

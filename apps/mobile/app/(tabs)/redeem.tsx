@@ -72,6 +72,7 @@ const DEV_PREVIEW_OPTIONS: { key: PreviewMode; label: string }[] = [
  *  Redeem UI state can be inspected without needing a real win/withdrawal. Never rendered when
  *  __DEV__ is false (production/TestFlight/etc.). */
 function DevPreviewPanel({ mode, onSelect }: { mode: PreviewMode; onSelect: (m: PreviewMode) => void }) {
+  if (true) return null; // disabled for demo recording — re-enable by reverting this line
   if (!__DEV__) return null;
   return (
     <View style={styles.devPanel}>

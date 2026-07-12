@@ -587,18 +587,19 @@ const TAP_AURAS: TapAura[] = [
   { id: "aurora", name: "Aurora", price: 1000, colors: ["#34d399", "#22d3ee", "#c084fc"], glow: "rgba(34,211,238,0.55)" },
 ];
 
-const TAP_STORAGE_KEYS = { charge: "loofta_tap_charge", owned: "loofta_tap_owned", active: "loofta_tap_active" } as const;
+const TAP_STORAGE_KEYS = { charge: "loofta_tap_charge", best: "loofta_tap_best", owned: "loofta_tap_owned", active: "loofta_tap_active" } as const;
 
-function loadTapState(): { charge: number; owned: string[]; active: string } {
-  if (typeof window === "undefined") return { charge: 0, owned: ["ember"], active: "ember" };
+function loadTapState(): { charge: number; best: number; owned: string[]; active: string } {
+  if (typeof window === "undefined") return { charge: 0, best: 0, owned: ["ember"], active: "ember" };
   try {
     const charge = Number(localStorage.getItem(TAP_STORAGE_KEYS.charge)) || 0;
+    const best = Math.max(Number(localStorage.getItem(TAP_STORAGE_KEYS.best)) || 0, charge);
     const parsedOwned: unknown = JSON.parse(localStorage.getItem(TAP_STORAGE_KEYS.owned) ?? '["ember"]');
     const owned = Array.isArray(parsedOwned) ? parsedOwned as string[] : ["ember"];
     const active = localStorage.getItem(TAP_STORAGE_KEYS.active) ?? "ember";
-    return { charge, owned: owned.includes("ember") ? owned : ["ember", ...owned], active };
+    return { charge, best, owned: owned.includes("ember") ? owned : ["ember", ...owned], active };
   } catch {
-    return { charge: 0, owned: ["ember"], active: "ember" };
+    return { charge: 0, best: 0, owned: ["ember"], active: "ember" };
   }
 }
 
@@ -607,6 +608,7 @@ interface TapParticle { id: number; x: number; y: number; value: number; crit: b
 function TapGame() {
   const [ready, setReady] = useState(false);
   const [charge, setCharge] = useState(0);
+  const [best, setBest] = useState(0);
   const [owned, setOwned] = useState<string[]>(["ember"]);
   const [activeId, setActiveId] = useState("ember");
   const [storeOpen, setStoreOpen] = useState(false);
@@ -619,10 +621,13 @@ function TapGame() {
 
   useEffect(() => {
     const s = loadTapState();
-    setCharge(s.charge); setOwned(s.owned); setActiveId(s.active);
+    setCharge(s.charge); setBest(s.best); setOwned(s.owned); setActiveId(s.active);
     setReady(true);
   }, []);
   useEffect(() => { if (ready) localStorage.setItem(TAP_STORAGE_KEYS.charge, String(Math.floor(charge))); }, [charge, ready]);
+  // Best only ever goes up — buying an aura spends down `charge`, but shouldn't erase the record.
+  useEffect(() => { if (ready && charge > best) setBest(charge); }, [charge, best, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(TAP_STORAGE_KEYS.best, String(Math.floor(best))); }, [best, ready]);
   useEffect(() => { if (ready) localStorage.setItem(TAP_STORAGE_KEYS.owned, JSON.stringify(owned)); }, [owned, ready]);
   useEffect(() => { if (ready) localStorage.setItem(TAP_STORAGE_KEYS.active, activeId); }, [activeId, ready]);
   useEffect(() => () => { if (comboTimeoutRef.current) clearTimeout(comboTimeoutRef.current); }, []);
@@ -667,6 +672,10 @@ function TapGame() {
       <div className="absolute -top-1 right-0 flex items-center gap-2">
         <span className="text-xs font-bold tabular-nums text-white/70 bg-white/[0.06] border border-white/10 rounded-full px-2.5 py-1">
           ⚡ {charge.toLocaleString()}
+        </span>
+        <span className="flex items-center gap-1 text-xs font-bold tabular-nums text-white/50 border border-white/10 rounded-full px-2.5 py-1">
+          <span className="font-semibold tracking-wide text-white/35">BEST</span>
+          {Math.max(best, charge).toLocaleString()}
         </span>
         <button
           onClick={() => setStoreOpen(true)}

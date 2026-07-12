@@ -1,7 +1,7 @@
 import { FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { X } from 'lucide-react-native';
 import { color, radius, space } from '../lib/theme';
-import { FONT_TITLE_SEMIBOLD } from '../lib/fonts';
+import { FONT_BODY_MEDIUM, FONT_TITLE_SEMIBOLD } from '../lib/fonts';
 import { TicketNumberRow } from './ui/TicketNumberRow';
 
 export function TicketNumbersModal({
@@ -30,7 +30,12 @@ export function TicketNumbersModal({
           <FlatList
             data={numbers}
             keyExtractor={(_, i) => String(i)}
-            renderItem={({ item }) => <TicketNumberRow main={item.main} bonus={item.bonus} />}
+            renderItem={({ item, index }) => (
+              <View style={styles.ticketBlock}>
+                {numbers.length > 1 && <Text style={styles.ticketLabel}>Ticket {index + 1}</Text>}
+                <TicketNumberRow main={item.main} bonus={item.bonus} />
+              </View>
+            )}
             ItemSeparatorComponent={() => <View style={styles.separator} />}
             contentContainerStyle={styles.bodyContent}
           />
@@ -65,5 +70,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.surface3,
   },
   bodyContent: { gap: space[3], paddingVertical: space[2] },
-  separator: { height: space[2] },
+  separator: { height: space[4] },
+  ticketBlock: { gap: space[2] },
+  ticketLabel: { color: color.fg3, fontFamily: FONT_BODY_MEDIUM, fontSize: 15 },
 });
