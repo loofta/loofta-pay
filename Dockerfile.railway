@@ -7,6 +7,15 @@ WORKDIR /app
 COPY apps/backend/package.json apps/backend/package-lock.json ./
 RUN npm ci --legacy-peer-deps
 
+# @onsol/tldparser (used for .skr Seeker ID lookups) declares "borsh": "^2.0.0", but npm hoists
+# the root's own borsh@0.7.0 (needed by @coral-xyz/anchor) over it instead, which throws
+# "schema.get is not a function" at runtime. In local dev this is fixed by the monorepo root's
+# postinstall hook (patches/fix-tldparser-borsh.js) — but this build installs apps/backend
+# standalone from the monorepo root and never runs that hook, so prod silently kept the broken
+# version. Same fix, applied explicitly here.
+COPY patches ./patches
+RUN node patches/fix-tldparser-borsh.js
+
 # Copy backend source
 COPY apps/backend .
 
