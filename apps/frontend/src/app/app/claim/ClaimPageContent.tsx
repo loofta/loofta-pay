@@ -147,7 +147,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
 
   useEffect(() => {
     setIsPrivateMode(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Prefill recipient with logged-in user's Solana wallet when they have one
@@ -230,7 +230,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         setToSel({ symbol: usdcSolana.symbol, chain: usdcSolana.chain });
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokens]);
 
   function sanitizeNumberInput(v: string, maxDecimals: number = 9) {
@@ -606,7 +606,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         </a>
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm md:text-xs text-gray-700 hover:bg-gray-50"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
                           onClick={async () => {
                             try {
                               await navigator.clipboard.writeText(createdLink);
@@ -739,7 +739,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                               </span>
                             </div>
                             {receiveDestination === "loofta" && solanaWallet?.address && defaultLooftaToken && (
-                              <span className="text-sm md:text-xs font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Ready</span>
+                              <span className="text-sm font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Ready</span>
                             )}
                           </button>
 
@@ -767,7 +767,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                               <span className="text-base md:text-sm text-gray-500">{crossChainEnabled ? "Different token or network" : "USDC on Solana"}</span>
                             </div>
                             {receiveDestination === "other" ? (
-                              <span className="text-sm md:text-xs font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Selected</span>
+                              <span className="text-sm font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Selected</span>
                             ) : (
                               <ArrowRight className="w-5 h-5 text-gray-400 shrink-0" />
                             )}
@@ -955,7 +955,6 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         loadingText="Creating…"
                       >
                         <>
-                          <ShieldIcon className="w-5 h-5" />
                           Create payment link
                         </>
                       </GradientActionButton>

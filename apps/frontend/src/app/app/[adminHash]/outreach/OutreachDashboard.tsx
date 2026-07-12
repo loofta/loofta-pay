@@ -11,14 +11,14 @@ import { useToast } from "@/components/ui/use-toast";
 import {
   Loader2, Play, Trash2, Zap, Check, X, RefreshCw,
   SlidersHorizontal, Target, SendHorizonal, ArrowLeft, Search,
-  Mic2, Briefcase, Building2, ChevronDown, ChevronUp, MapPin, Users,
+  Mic2, Briefcase, Building2, Gift, ChevronDown, ChevronUp, MapPin, Users,
   Copy, MessageCircle, UserCheck, Activity, Square, CheckSquare2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ProspectType   = "creator" | "freelancer" | "web3_project";
+type ProspectType   = "creator" | "freelancer" | "web3_project" | "giveaway_project";
 type ProspectStatus = "new" | "drafting" | "drafted" | "approved" | "rejected" | "sent" | "follow_pending";
 type Filter         = "all" | "approved" | "sent" | "rejected";
 
@@ -49,6 +49,7 @@ type OutreachConfig = {
   creator_pitch: string;
   freelancer_pitch: string;
   web3_project_pitch: string;
+  giveaway_project_pitch: string;
 };
 
 const DEFAULT_CONFIG: OutreachConfig = {
@@ -64,14 +65,17 @@ const DEFAULT_CONFIG: OutreachConfig = {
     "When a client pays you on-chain, they can see your full income history - who else paid you, how much, every project. Loofta pays you privately in any token your client has. No forced conversions, no exposed history. Early users get priority setup.",
   web3_project_pitch:
     "Hey, Lisa here from Loofta Pay. I'm reaching out to a few projects that pay their team in crypto - is that your case? We're offering free access to our platform to pay your teammates privately, just using their email address. They claim it however they want. Would love to have you in.",
+  giveaway_project_pitch:
+    "Hey, Lisa here from Loofta Pay. Saw you're running a giveaway right now, is that still live? We'd love to co-market it with you and cover payouts through Loofta Pay, so winners can claim straight to their bank or wallet, no crypto knowledge needed. Want to chat?",
 };
 
 // ─── Type metadata ────────────────────────────────────────────────────────────
 
 const TYPE_META: Record<ProspectType, { label: string; icon: React.ReactNode; badge: string }> = {
-  creator:      { label: "Creator",      icon: <Mic2      className="h-3 w-3" />, badge: "border-orange-500/30 text-orange-300 bg-orange-500/10" },
-  freelancer:   { label: "Freelancer",   icon: <Briefcase className="h-3 w-3" />, badge: "border-sky-500/30    text-sky-300    bg-sky-500/10"    },
-  web3_project: { label: "Web3 Project", icon: <Building2 className="h-3 w-3" />, badge: "border-emerald-500/30 text-emerald-300 bg-emerald-500/10" },
+  creator:          { label: "Creator",       icon: <Mic2      className="h-3 w-3" />, badge: "border-orange-500/30 text-orange-300 bg-orange-500/10" },
+  freelancer:       { label: "Freelancer",    icon: <Briefcase className="h-3 w-3" />, badge: "border-sky-500/30    text-sky-300    bg-sky-500/10"    },
+  web3_project:     { label: "Web3 Project",  icon: <Building2 className="h-3 w-3" />, badge: "border-emerald-500/30 text-emerald-300 bg-emerald-500/10" },
+  giveaway_project: { label: "Giveaway",      icon: <Gift      className="h-3 w-3" />, badge: "border-fuchsia-500/30 text-fuchsia-300 bg-fuchsia-500/10" },
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -86,7 +90,7 @@ function fmtFollowers(n: number | null): string {
 // ─── Small pieces ─────────────────────────────────────────────────────────────
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <span className="block mb-1.5 text-xs font-mono font-medium uppercase tracking-widest text-gray-400">{children}</span>;
+  return <span className="block mb-1.5 text-sm font-mono font-medium uppercase tracking-widest text-gray-400">{children}</span>;
 }
 
 function SectionHeading({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
@@ -102,7 +106,7 @@ function StatBox({ value, label, highlight }: { value: number; label: string; hi
   return (
     <div className="flex flex-col items-center justify-center w-20 h-16 rounded-lg bg-white/[0.04] border border-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
       <span className={cn("text-2xl font-medium leading-none tabular-nums", highlight && value > 0 ? "text-orange-400" : "text-gray-100")}>{value}</span>
-      <span className="mt-1 text-xs font-mono uppercase tracking-wider text-gray-500">{label}</span>
+      <span className="mt-1 text-sm font-mono uppercase tracking-wider text-gray-500">{label}</span>
     </div>
   );
 }
@@ -110,7 +114,7 @@ function StatBox({ value, label, highlight }: { value: number; label: string; hi
 function TypeBadge({ type }: { type: ProspectType }) {
   const meta = TYPE_META[type] ?? TYPE_META.freelancer;
   return (
-    <span className={cn("inline-flex items-center gap-1 text-xs font-mono font-medium uppercase tracking-wide px-2 py-0.5 rounded border", meta.badge)}>
+    <span className={cn("inline-flex items-center gap-1 text-sm font-mono font-medium uppercase tracking-wide px-2 py-0.5 rounded border", meta.badge)}>
       {meta.icon}{meta.label}
     </span>
   );
@@ -129,7 +133,7 @@ const STATUS_PILL: Record<string, string> = {
 
 function StatusPill({ label }: { label: string }) {
   return (
-    <span className={cn("text-xs font-mono font-medium uppercase tracking-wide px-2 py-0.5 rounded border", STATUS_PILL[label] ?? "bg-white/[0.04] text-gray-400 border-white/[0.08]")}>
+    <span className={cn("text-sm font-mono font-medium uppercase tracking-wide px-2 py-0.5 rounded border", STATUS_PILL[label] ?? "bg-white/[0.04] text-gray-400 border-white/[0.08]")}>
       {label.replace(/_/g, " ")}
     </span>
   );
@@ -338,7 +342,7 @@ function ProspectCard({
           <div className="flex items-center justify-between mb-2">
             <FieldLabel>{isSent ? "sent message" : isApproved ? "approved message" : "draft message"}</FieldLabel>
             {qualified && !isEditing && (
-              <button onClick={() => setIsEditing(true)} className="text-xs font-mono font-medium uppercase tracking-wide text-slate-500 hover:text-white transition-colors">
+              <button onClick={() => setIsEditing(true)} className="text-sm font-mono font-medium uppercase tracking-wide text-slate-500 hover:text-white transition-colors">
                 edit
               </button>
             )}
@@ -483,12 +487,13 @@ function TypePitchConfig({
       {open && (
         <div className="px-4 pb-4 space-y-3 border-t border-white/[0.06]">
           {([
-            { key: "creator_pitch",      label: "Creator / KOL angle", color: "text-orange-400" },
-            { key: "freelancer_pitch",   label: "Freelancer angle",    color: "text-sky-400"    },
-            { key: "web3_project_pitch", label: "Web3 Project angle",  color: "text-emerald-400"},
+            { key: "creator_pitch",          label: "Creator / KOL angle", color: "text-orange-400" },
+            { key: "freelancer_pitch",        label: "Freelancer angle",    color: "text-sky-400"    },
+            { key: "web3_project_pitch",      label: "Web3 Project angle",  color: "text-emerald-400"},
+            { key: "giveaway_project_pitch",  label: "Giveaway angle",      color: "text-fuchsia-400"},
           ] as const).map(({ key, label, color }) => (
             <div key={key} className="pt-3">
-              <span className={cn("block mb-1.5 text-xs font-mono font-medium uppercase tracking-wider", color)}>{label}</span>
+              <span className={cn("block mb-1.5 text-sm font-mono font-medium uppercase tracking-wider", color)}>{label}</span>
               <Textarea
                 value={config[key] ?? ""}
                 onChange={(e) => onChange({ [key]: e.target.value })}
@@ -897,11 +902,11 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
                 placeholder="bio / signal…"
                 className="text-sm bg-white/[0.04] border-white/[0.08] min-h-[64px] resize-none text-gray-200 placeholder:text-gray-600 focus:border-orange-500/40" />
 
-              <div className="grid grid-cols-3 gap-1.5">
-                {(["creator","freelancer","web3_project"] as ProspectType[]).map((t) => (
+              <div className="grid grid-cols-2 gap-1.5">
+                {(["creator","freelancer","web3_project","giveaway_project"] as ProspectType[]).map((t) => (
                   <button key={t} onClick={() => setNewType(t)}
                     className={cn(
-                      "h-8 rounded-lg text-xs font-mono font-medium uppercase tracking-wide border transition-colors",
+                      "h-8 rounded-lg text-sm font-mono font-medium uppercase tracking-wide border transition-colors",
                       newType === t ? glassBtnActive : glassBtn,
                     )}>
                     {TYPE_META[t].label}
@@ -935,7 +940,7 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
             <Zap className="h-4 w-4" />
             run agent on queue
             {newCount > 0 && (
-              <span className="ml-1.5 rounded bg-white/20 px-2 py-0.5 text-xs font-mono font-medium">{newCount}</span>
+              <span className="ml-1.5 rounded bg-white/20 px-2 py-0.5 text-sm font-mono font-medium">{newCount}</span>
             )}
           </GradientActionButton>
 
@@ -1038,7 +1043,7 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
                     return next;
                   })}
                   className={cn(
-                    "inline-flex items-center gap-1 text-xs font-mono font-medium uppercase px-2.5 py-1 rounded-lg border transition-all",
+                    "inline-flex items-center gap-1 text-sm font-mono font-medium uppercase px-2.5 py-1 rounded-lg border transition-all",
                     m.badge,
                     typeFilter.has(t)
                       ? "opacity-100 ring-1 ring-white/20 scale-105"

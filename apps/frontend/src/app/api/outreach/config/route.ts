@@ -8,6 +8,7 @@ const DEFAULT_CONFIG = {
   creator_pitch:        "Get paid for your content and collabs in USDC instantly, with no wallet history exposed to brands.",
   freelancer_pitch:     "Get paid across borders in USDC instantly. No bank account required, no fees, no wallet history.",
   web3_project_pitch:   "Hey, Lisa here from Loofta Pay. I'm reaching out to a few projects that pay their team in crypto - is that your case? We're offering free access to our platform to pay your teammates privately, just using their email address. They claim it however they want. Would love to have you in.",
+  giveaway_project_pitch: "Hey, Lisa here from Loofta Pay. Saw you're running a giveaway right now, is that still live? We'd love to co-market it with you and cover payouts through Loofta Pay, so winners can claim straight to their bank or wallet, no crypto knowledge needed. Want to chat?",
 };
 
 function checkSecret(req: NextRequest) {
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("outreach_config")
-      .select("product_pitch, message_tone, call_to_action, creator_pitch, freelancer_pitch, web3_project_pitch, updated_at")
+      .select("product_pitch, message_tone, call_to_action, creator_pitch, freelancer_pitch, web3_project_pitch, giveaway_project_pitch, updated_at")
       .eq("id", 1)
       .single();
     if (error) {
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     const { data, error } = await supabase
       .from("outreach_config")
       .upsert({ id: 1, ...body, updated_at: new Date().toISOString() })
-      .select("product_pitch, message_tone, call_to_action, creator_pitch, freelancer_pitch, web3_project_pitch, updated_at")
+      .select("product_pitch, message_tone, call_to_action, creator_pitch, freelancer_pitch, web3_project_pitch, giveaway_project_pitch, updated_at")
       .single();
     if (error) {
       console.error("[outreach/config] POST upsert error:", error.message);

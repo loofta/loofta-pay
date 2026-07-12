@@ -38,6 +38,15 @@ export async function POST(request: NextRequest) {
     const normalized = username.toLowerCase();
     const isLoo = normalized.startsWith("loo-");
 
+    // loo-skr- is auto-generated for genuine Seeker mobile-wallet logins (see
+    // UsersService.ensureAppUser) — reserved so no one can self-claim it and impersonate one.
+    if (normalized.startsWith("loo-skr-")) {
+      return NextResponse.json(
+        { error: "This username prefix is reserved for Seeker device logins." },
+        { status: 403 }
+      );
+    }
+
     // Non-loo usernames must match the user's actual linked Twitter/X handle.
     // Prevents anyone from claiming a Twitter username they don't own.
     if (!isLoo) {

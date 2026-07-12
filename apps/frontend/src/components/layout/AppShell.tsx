@@ -32,7 +32,8 @@ function ShellContent({ children }: { children: ReactNode }) {
     pathname === '/history' || pathname === '/app/history' ||
     pathname === '/settings' || pathname === '/app/settings' || pathname === '/app/profile' ||
     pathname?.startsWith('/c/') || pathname?.startsWith('/app/c/') ||
-    pathname === '/sparks' || pathname === '/app/sparks'
+    pathname === '/sparks' || pathname === '/app/sparks' ||
+    pathname === '/megapot' || pathname === '/app/megapot'
   );
   const showMinimalHeader = !isCheckoutPage && !isBeamPage;
   const showBanner = showMinimalHeader && !bannerDismissed;

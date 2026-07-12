@@ -144,6 +144,146 @@ export class EmailService {
     }
   }
 
+  async sendMegapotResultsFixEmail(recipientEmail: string): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: recipientEmail,
+        subject: 'go check your Megapot tickets again 👀',
+        html: this.buildMegapotResultsFixHtml(),
+      });
+      this.logger.log(`Megapot results-fix email sent to ${recipientEmail}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send Megapot results-fix email to ${recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
+  async sendGiftTicketEmail(data: { recipientEmail: string; numTickets: number; claimUrl: string; note?: string | null }): Promise<void> {
+    if (!this.resend) return;
+    const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject: `You've been gifted ${data.numTickets} Megapot ${ticketWord} 🎁`,
+        html: this.buildGiftTicketHtml(data),
+      });
+      this.logger.log(`Gift ticket email sent to ${data.recipientEmail} (${data.numTickets} tickets)`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send gift ticket email to ${data.recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
+  /**
+   * Operational alert (to the team, not a user) — the Solana fee wallet that funds Megapot bridge
+   * top-ups + gas is running low. Sent when SOL and/or USDC drops under threshold. Plain internal
+   * email; deliberately not branded like the user-facing ones.
+   */
+  async sendFeeWalletLowBalanceEmail(data: {
+    to: string;
+    walletAddress: string;
+    solBalance: number;
+    solThreshold: number;
+    usdcBalance: number;
+    usdcThreshold: number;
+    low: Array<'SOL' | 'USDC'>;
+  }): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(`Fee-wallet low-balance alert NOT sent (RESEND_API_KEY unset): SOL=${data.solBalance}, USDC=${data.usdcBalance}`);
+      return;
+    }
+    const solLow = data.low.includes('SOL');
+    const usdcLow = data.low.includes('USDC');
+    const subject = `⚠️ Loofta fee wallet low: ${data.low.join(' + ')} below threshold`;
+    const row = (label: string, val: string, isLow: boolean) =>
+      `<tr><td style="padding:6px 12px;color:#475569;">${label}</td><td style="padding:6px 12px;font-weight:600;color:${isLow ? '#dc2626' : '#0f172a'};">${val}${isLow ? ' ⚠️' : ''}</td></tr>`;
+    const html = `
+      <div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
+        <h2 style="color:#0f172a;margin:0 0 4px;">Fee wallet running low</h2>
+        <p style="color:#64748b;margin:0 0 16px;font-size:14px;">
+          The Solana fee wallet funds Megapot bridge top-ups and gas. It no longer collects a per-purchase fee,
+          so top it up manually before it runs dry (purchases will stall once it can't cover a bridge top-up).
+        </p>
+        <table style="border-collapse:collapse;width:100%;background:#f8fafc;border-radius:8px;font-size:14px;">
+          ${row('Wallet', data.walletAddress, false)}
+          ${row('SOL balance', `${data.solBalance.toFixed(4)} SOL (min ${data.solThreshold})`, solLow)}
+          ${row('USDC balance', `$${data.usdcBalance.toFixed(2)} (min $${data.usdcThreshold})`, usdcLow)}
+        </table>
+        <p style="color:#94a3b8;margin:16px 0 0;font-size:12px;">
+          Automated alert from the Loofta backend · <a href="https://solscan.io/account/${data.walletAddress}" style="color:#6366f1;">view on Solscan</a>
+        </p>
+      </div>`;
+    try {
+      await this.resend.emails.send({
+        from: `Loofta Ops <${this.fromEmail}>`,
+        to: data.to,
+        subject,
+        html,
+      });
+      this.logger.log(`Fee-wallet low-balance alert sent to ${data.to} (low: ${data.low.join(',')})`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send fee-wallet low-balance alert to ${data.to}: ${err?.message ?? err}`);
+    }
+  }
+
+  private buildGiftTicketHtml(data: { numTickets: number; claimUrl: string; note?: string | null }): string {
+    const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
+    const noteBlock = data.note
+      ? `<div style="background:#1e1e23;border-radius:12px;padding:16px 18px;margin:0 0 28px;">
+           <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#9ca3af;">Message</p>
+           <p style="margin:0;font-size:14px;line-height:1.5;color:#d1d5db;">${data.note}</p>
+         </div>`
+      : '';
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>You've been gifted a Megapot ticket</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Gift</span>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px 8px;">
+              <p style="margin:0 0 12px;font-size:28px;line-height:1.15;color:#ffffff;font-weight:700;text-align:center;">You've been gifted<br/>${data.numTickets} Megapot ${ticketWord}</p>
+              <p style="margin:0 0 28px;font-size:14px;color:#9ca3af;text-align:center;">Claim it to enter the next draw — Loofta covers the cost, no wallet needed yet.</p>
+              ${noteBlock}
+              <div style="text-align:center;margin-bottom:8px;">
+                <a href="${data.claimUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Claim your ${ticketWord}
+                </a>
+              </div>
+              <p style="margin:20px 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
   private buildMegapotLaunchHtml(): string {
     return `<!DOCTYPE html>
 <html lang="en">
@@ -199,6 +339,54 @@ export class EmailService {
                 Giveaway details: <a href="https://pay.loofta.xyz/rewards/megapot" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz/rewards/megapot</a>
               </p>
               <p style="margin:0 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildMegapotResultsFixHtml(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Megapot results fix</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
+              <p style="margin:0 0 16px;">hey, this is Lisa from Loofta.</p>
+              <p style="margin:0 0 16px;">We found a bug in how Megapot results were tracked, some tickets showed no win when they'd actually won, real money just sitting unclaimed. Nothing was ever at risk, it was a display issue, not a funds issue, and we've already fixed every case we found.</p>
+              <p style="margin:0 0 28px;">Take two minutes and check your ticket history. If anything looks off, just reply and I'll look into it myself.</p>
+              <div style="text-align:center;margin-bottom:24px;">
+                <a href="https://pay.loofta.xyz/app/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Check my tickets
+                </a>
+              </div>
+              <p style="margin:0;">Sorry for the trouble, and thanks for playing.</p>
+              <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
             </td>
           </tr>
           <!-- Footer -->

@@ -15,7 +15,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import {
   Loader2, RefreshCw, Shield, Search, ChevronDown, ChevronRight,
-  ExternalLink, Pencil, AlertTriangle, Copy, Zap, BarChart2, SendHorizonal,
+  ExternalLink, Pencil, AlertTriangle, Copy, Zap, BarChart2, SendHorizonal, Mail, AtSign,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -214,10 +214,34 @@ function TxCell({ hash, chain, isDevnet }: { hash: string | null; chain: string 
   );
 }
 
-function UserChip({ user, privyId }: { user: AppUser | null; privyId: string | null }) {
-  if (!privyId) return <span className="text-gray-600 text-sm md:text-xs">anon</span>;
+/** Companion smart accounts live on Base — always basescan, unlike TxCell which varies by chain. */
+function AddressCell({ address }: { address: string | null }) {
+  if (!address) return <span className="text-gray-600">—</span>;
+  const url = `https://basescan.org/address/${address}`;
   return (
-    <span className="inline-flex items-center gap-1 text-sm md:text-xs">
+    <span className="inline-flex items-center gap-0.5">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className="font-mono text-blue-400 hover:text-blue-200 hover:underline"
+        title={address}
+      >
+        {trunc(address, 14)}
+      </a>
+      <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+        <ExternalLink className="w-2.5 h-2.5 text-gray-500 hover:text-gray-300" />
+      </a>
+      <CopyButton value={address} />
+    </span>
+  );
+}
+
+function UserChip({ user, privyId }: { user: AppUser | null; privyId: string | null }) {
+  if (!privyId) return <span className="text-gray-600 text-sm">anon</span>;
+  return (
+    <span className="inline-flex items-center gap-1 text-sm">
       {user ? (
         <span>
           {user.username && <span className="text-white font-medium">@{user.username}</span>}
@@ -256,7 +280,7 @@ function SortableHeader({ col, label, sortCol, sortDir, onSort }: {
 function RecipientCell({ p }: { p: Payment }) {
   const hasUserIdButNoProfile = p.recipient_user_id && !p.recipient_user;
   return (
-    <span className="inline-flex items-center gap-1 text-sm md:text-xs">
+    <span className="inline-flex items-center gap-1 text-sm">
       {p.recipient_username && <span className="text-white font-medium">@{p.recipient_username}</span>}
       {!p.recipient_username && p.recipient_email && (
         <span className="text-gray-300">{trunc(p.recipient_email, 18)}</span>
@@ -316,9 +340,9 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-0.5">
           {rawFields.map(([k, v]) => (
             <div key={k} className="flex gap-2 min-w-0">
-              <span className="text-gray-500 text-sm md:text-xs w-40 shrink-0">{k}</span>
+              <span className="text-gray-500 text-sm w-40 shrink-0">{k}</span>
               <span
-                className="font-mono text-sm md:text-xs text-gray-300 break-all cursor-pointer hover:text-white"
+                className="font-mono text-sm text-gray-300 break-all cursor-pointer hover:text-white"
                 onClick={() => v != null && onCopy(String(v))}
                 title="Click to copy"
               >
@@ -337,7 +361,7 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
             {p.sender_user && (
               <div className="bg-gray-800 rounded p-3">
                 <div className="text-[9px] text-gray-500 uppercase mb-1">Sender</div>
-                <div className="font-mono text-sm md:text-xs space-y-0.5 text-gray-300">
+                <div className="font-mono text-sm space-y-0.5 text-gray-300">
                   <div>@{p.sender_user.username ?? <span className="text-gray-600">no username</span>}</div>
                   <div>{p.sender_user.email ?? <span className="text-gray-600">no email</span>}</div>
                   <div className="text-gray-500 text-[10px] break-all">{p.sender_user.privy_user_id}</div>
@@ -347,7 +371,7 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
             {p.recipient_user && (
               <div className="bg-gray-800 rounded p-3">
                 <div className="text-[9px] text-gray-500 uppercase mb-1">Recipient</div>
-                <div className="font-mono text-sm md:text-xs space-y-0.5 text-gray-300">
+                <div className="font-mono text-sm space-y-0.5 text-gray-300">
                   <div>@{p.recipient_user.username ?? <span className="text-gray-600">no username</span>}</div>
                   <div>{p.recipient_user.email ?? <span className="text-gray-600">no email</span>}</div>
                   <div className="text-gray-500 text-[10px] break-all">{p.recipient_user.privy_user_id}</div>
@@ -367,7 +391,7 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
           </h4>
           <div className="space-y-2">
             {intents.map((intent) => (
-              <div key={intent.id} className="bg-gray-800 rounded p-3 font-mono text-sm md:text-xs">
+              <div key={intent.id} className="bg-gray-800 rounded p-3 font-mono text-sm">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-gray-400">{trunc(intent.id, 16)}</span>
                   <span className={`px-1.5 py-0.5 rounded border text-[10px] ${
@@ -412,7 +436,7 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
           </h4>
           <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
             {events.map((ev) => (
-              <div key={ev.id} className="bg-gray-800 rounded p-2 text-sm md:text-xs">
+              <div key={ev.id} className="bg-gray-800 rounded p-2 text-sm">
                 <div className="flex items-center gap-3">
                   <span className="text-gray-500 font-mono text-[10px]">{fmtFull(ev.created_at)}</span>
                   <span className="font-semibold text-blue-400">{ev.type}</span>
@@ -432,7 +456,7 @@ function DetailPanel({ detail, onCopy }: { detail: PaymentDetail; onCopy: (s: st
       )}
 
       {intents.length === 0 && events.length === 0 && (
-        <p className="text-gray-600 text-sm md:text-xs">No intents or events recorded.</p>
+        <p className="text-gray-600 text-sm">No intents or events recorded.</p>
       )}
     </div>
   );
@@ -527,6 +551,26 @@ export default function AdminDashboard() {
   const [lotteryTotal, setLotteryTotal] = useState(0);
   const [lotteryPage, setLotteryPage] = useState(1);
   const [lotteryStatusFilter, setLotteryStatusFilter] = useState("");
+  const [lotteryExpandedId, setLotteryExpandedId] = useState<string | null>(null);
+
+  // Gift a Megapot ticket — one field accepts an email, X handle, or Loofta username, same as Send
+  const [giftIdentifierInput, setGiftIdentifierInput] = useState("");
+  const [giftNumTicketsInput, setGiftNumTicketsInput] = useState("1");
+  const [giftNoteInput, setGiftNoteInput] = useState("");
+  const [gifting, setGifting] = useState(false);
+  const [lastGiftLink, setLastGiftLink] = useState<string | null>(null);
+  const [giftsData, setGiftsData] = useState<any[]>([]);
+  const [giftsLoading, setGiftsLoading] = useState(false);
+  const [giftsLoaded, setGiftsLoaded] = useState(false);
+  const [giftsTotal, setGiftsTotal] = useState(0);
+  const [giftsPage, setGiftsPage] = useState(1);
+
+  // Megapot referral fees — read-only balance; claiming is manual (see AdminDashboard UI note)
+  const [referralFeesBalance, setReferralFeesBalance] = useState<number | null>(null);
+  const [referralFeesLoading, setReferralFeesLoading] = useState(false);
+  const [referralFeesLoaded, setReferralFeesLoaded] = useState(false);
+  const [referralFeesWallet, setReferralFeesWallet] = useState<string | null>(null);
+  const [referralFeesBasescanUrl, setReferralFeesBasescanUrl] = useState<string | null>(null);
 
   // Analytics
   type AnalyticsData = {
@@ -748,6 +792,77 @@ export default function AdminDashboard() {
       setLotteryLoading(false);
     }
   }, [authHeaders, toast]);
+
+  const fetchGifts = useCallback(async (page = 1) => {
+    setGiftsLoading(true);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(`/api/admin/lottery/gifts?page=${page}`, { headers });
+      if (!res.ok) throw new Error("Failed to load gifts");
+      const data = await res.json();
+      setGiftsData(data.data ?? []);
+      setGiftsTotal(data.total ?? 0);
+      setGiftsPage(page);
+      setGiftsLoaded(true);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load gifts" });
+    } finally {
+      setGiftsLoading(false);
+    }
+  }, [authHeaders, toast]);
+
+  const fetchReferralFees = useCallback(async () => {
+    setReferralFeesLoading(true);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch("/api/admin/lottery/referral-fees", { headers });
+      if (!res.ok) throw new Error("Failed to load referral fees");
+      const data = await res.json();
+      setReferralFeesBalance(data.balanceUsdc ?? 0);
+      setReferralFeesWallet(data.referrerWallet ?? null);
+      setReferralFeesBasescanUrl(data.basescanWriteUrl ?? null);
+      setReferralFeesLoaded(true);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load referral fees" });
+    } finally {
+      setReferralFeesLoading(false);
+    }
+  }, [authHeaders, toast]);
+
+  const createGiftTicket = useCallback(async () => {
+    const recipientIdentifier = giftIdentifierInput.trim().replace(/^@+/, "");
+    const numTickets = parseInt(giftNumTicketsInput, 10);
+    if (!recipientIdentifier || !numTickets || numTickets < 1 || numTickets > 100) return;
+    const recipientType = recipientIdentifier.includes("@") && recipientIdentifier.includes(".") ? "email" : "handle";
+    setGifting(true);
+    try {
+      const res = await fetch("/api/admin/lottery/gift", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({
+          recipientType,
+          recipientIdentifier,
+          numTickets,
+          note: giftNoteInput.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message ?? "Failed");
+      }
+      const data = await res.json();
+      setLastGiftLink(data.claimUrl);
+      toast({ title: `Gifted ${numTickets} ticket${numTickets === 1 ? "" : "s"} to ${recipientIdentifier}` });
+      setGiftIdentifierInput("");
+      setGiftNoteInput("");
+      setGiftNumTicketsInput("1");
+      fetchGifts(1);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Failed to create gift", description: err.message });
+    } finally {
+      setGifting(false);
+    }
+  }, [giftIdentifierInput, giftNumTicketsInput, giftNoteInput, authHeaders, toast, fetchGifts]);
 
   // ── Grant access by email ────────────────────────────────────────────────────
   const grantAccessByEmail = useCallback(async () => {
@@ -1016,7 +1131,7 @@ export default function AdminDashboard() {
             activeTab === "blink" ? fetchBlink :
             activeTab === "analytics" ? fetchAnalytics :
             activeTab === "cashout" ? () => fetchCashOuts(cashoutPage, cashoutStatusFilter) :
-            activeTab === "lottery" ? () => fetchLottery(lotteryPage, lotteryStatusFilter) :
+            activeTab === "lottery" ? () => { fetchLottery(lotteryPage, lotteryStatusFilter); fetchGifts(giftsPage); fetchReferralFees(); } :
             () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })
           }
           disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading || cashoutLoading || lotteryLoading}
@@ -1057,7 +1172,7 @@ export default function AdminDashboard() {
           className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "waitlist" ? "border-green-500 text-green-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
           Waitlist
-          {waitlistLoaded && <span className="text-sm md:text-xs bg-green-900/50 text-green-400 rounded px-1.5 py-0.5">{waitlistTotal}</span>}
+          {waitlistLoaded && <span className="text-sm bg-green-900/50 text-green-400 rounded px-1.5 py-0.5">{waitlistTotal}</span>}
         </button>
         <button
           type="button"
@@ -1073,15 +1188,15 @@ export default function AdminDashboard() {
           className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "cashout" ? "border-orange-500 text-orange-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
           Cash Out
-          {cashoutLoaded && <span className="text-sm md:text-xs bg-orange-900/50 text-orange-400 rounded px-1.5 py-0.5">{cashoutTotal}</span>}
+          {cashoutLoaded && <span className="text-sm bg-orange-900/50 text-orange-400 rounded px-1.5 py-0.5">{cashoutTotal}</span>}
         </button>
         <button
           type="button"
-          onClick={() => { setActiveTab("lottery"); if (!lotteryLoaded) fetchLottery(1, ""); }}
+          onClick={() => { setActiveTab("lottery"); if (!lotteryLoaded) fetchLottery(1, ""); if (!giftsLoaded) fetchGifts(1); if (!referralFeesLoaded) fetchReferralFees(); }}
           className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "lottery" ? "border-teal-500 text-teal-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
           Lottery Tickets
-          {lotteryLoaded && <span className="text-sm md:text-xs bg-teal-900/50 text-teal-400 rounded px-1.5 py-0.5">{lotteryTotal}</span>}
+          {lotteryLoaded && <span className="text-sm bg-teal-900/50 text-teal-400 rounded px-1.5 py-0.5">{lotteryTotal}</span>}
         </button>
         <Link
           href={outreachUrl}
@@ -1172,7 +1287,7 @@ export default function AdminDashboard() {
               </div>
             )}
             {!waitlistLoading && waitlistLoaded && (
-              <table className="w-full text-sm md:text-xs text-gray-300">
+              <table className="w-full text-sm text-gray-300">
                 <thead>
                   <tr className="border-b border-gray-800 bg-gray-900/60 text-gray-500 uppercase tracking-wider text-left text-[10px]">
                     <th className="px-4 py-2.5">#</th>
@@ -1208,7 +1323,7 @@ export default function AdminDashboard() {
                               type="button"
                               disabled={grantingAccess === e.id}
                               onClick={() => grantWaitlistAccess(e.id, false)}
-                              className="group px-2.5 py-1 rounded-full text-sm md:text-xs font-medium transition-colors disabled:opacity-50 bg-green-900/60 text-green-400 hover:bg-red-900/60 hover:text-red-400"
+                              className="group px-2.5 py-1 rounded-full text-sm font-medium transition-colors disabled:opacity-50 bg-green-900/60 text-green-400 hover:bg-red-900/60 hover:text-red-400"
                             >
                               {grantingAccess === e.id ? "…" : <><span className="group-hover:hidden">Granted</span><span className="hidden group-hover:inline">Revoke</span></>}
                             </button>
@@ -1217,7 +1332,7 @@ export default function AdminDashboard() {
                               type="button"
                               disabled={grantingAccess === e.id}
                               onClick={() => grantWaitlistAccess(e.id, true)}
-                              className="px-2.5 py-1 rounded-full text-sm md:text-xs font-medium transition-colors disabled:opacity-50 bg-gray-800 text-gray-500 hover:bg-gray-700 hover:text-gray-300"
+                              className="px-2.5 py-1 rounded-full text-sm font-medium transition-colors disabled:opacity-50 bg-gray-800 text-gray-500 hover:bg-gray-700 hover:text-gray-300"
                             >
                               {grantingAccess === e.id ? "…" : "Grant"}
                             </button>
@@ -1227,7 +1342,7 @@ export default function AdminDashboard() {
                               type="button"
                               disabled={resendingEmail === e.id}
                               onClick={() => resendBetaEmail(e.id)}
-                              className="px-2.5 py-1 rounded-full text-sm md:text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-50"
+                              className="px-2.5 py-1 rounded-full text-sm font-medium bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-50"
                               title="Resend beta access email"
                             >
                               {resendingEmail === e.id ? "…" : "✉︎"}
@@ -1379,6 +1494,135 @@ export default function AdminDashboard() {
       {/* ── Lottery tickets tab ── */}
       {activeTab === "lottery" && (
         <div className="space-y-3">
+          {/* Gift a Megapot ticket */}
+          <div className="rounded-xl border border-gray-800 p-4 space-y-3">
+            <div className="text-base font-semibold text-gray-200">Gift a Megapot ticket</div>
+            <div className="flex flex-wrap gap-2">
+              <div className="relative flex-1 min-w-[220px]">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
+                  {giftIdentifierInput.includes("@") && giftIdentifierInput.includes(".")
+                    ? <Mail className="w-4 h-4" /> : <AtSign className="w-4 h-4" />}
+                </span>
+                <Input
+                  placeholder="Email, X handle, or Loofta username"
+                  value={giftIdentifierInput}
+                  onChange={(e) => setGiftIdentifierInput(e.target.value.replace(/^@+/, ""))}
+                  className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-base md:text-sm pl-9 w-full"
+                />
+              </div>
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                value={giftNumTicketsInput}
+                onChange={(e) => setGiftNumTicketsInput(e.target.value)}
+                className="bg-gray-900 border-gray-700 text-gray-100 text-base md:text-sm w-24"
+              />
+            </div>
+            <Textarea
+              placeholder="Optional note to include in the email…"
+              value={giftNoteInput}
+              onChange={(e) => setGiftNoteInput(e.target.value)}
+              className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-base md:text-sm min-h-[60px]"
+            />
+            <Button
+              size="sm"
+              onClick={createGiftTicket}
+              disabled={gifting || !giftIdentifierInput.trim()}
+              className="bg-teal-700 hover:bg-teal-600 text-white"
+            >
+              {gifting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Gift ticket(s)"}
+            </Button>
+            {lastGiftLink && (
+              <div className="flex items-center gap-2 text-base md:text-sm text-gray-400">
+                <span className="truncate">{lastGiftLink}</span>
+                <button type="button" onClick={() => copyText(lastGiftLink)} title="Copy" className="shrink-0">
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Megapot referral fees — read-only balance, claim is manual */}
+          <div className="rounded-xl border border-gray-800 p-4 space-y-2">
+            <div className="text-base font-semibold text-gray-200">Megapot referral fees</div>
+            <p className="text-sm text-gray-500">
+              Accrues automatically from Loofta-referred tickets (10% of winners&apos; payouts). This backend never
+              holds that wallet&apos;s private key — claiming is a manual on-chain action from whatever wallet controls it.
+            </p>
+            {referralFeesLoading && (
+              <div className="flex items-center gap-2 text-base text-gray-400 py-2">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading balance…
+              </div>
+            )}
+            {!referralFeesLoading && referralFeesLoaded && (
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <div>
+                  <div className="text-2xl font-semibold text-emerald-400 tabular-nums">
+                    ${(referralFeesBalance ?? 0).toFixed(6)}
+                  </div>
+                  {referralFeesWallet && (
+                    <div className="text-sm text-gray-500 font-mono">{referralFeesWallet}</div>
+                  )}
+                </div>
+                {referralFeesBasescanUrl && (
+                  <a
+                    href={referralFeesBasescanUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-base md:text-sm text-teal-400 hover:text-teal-300 underline underline-offset-2"
+                  >
+                    Claim on Basescan <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Gifts list */}
+          {giftsLoaded && giftsData.length > 0 && (
+            <div className="overflow-x-auto rounded-xl border border-gray-800">
+              <table className="w-full text-base text-gray-300">
+                <thead>
+                  <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
+                    <th className="text-left px-4 py-2.5">Date</th>
+                    <th className="text-left px-4 py-2.5">Recipient</th>
+                    <th className="text-right px-4 py-2.5">Tickets</th>
+                    <th className="text-left px-4 py-2.5">Status</th>
+                    <th className="text-left px-4 py-2.5">Ticket</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {giftsData.map((row: any) => {
+                    const giftStatusColors: Record<string, string> = {
+                      unclaimed: "text-amber-400",
+                      claimed: "text-emerald-400",
+                      cancelled: "text-gray-500",
+                      failed: "text-red-400",
+                    };
+                    return (
+                      <tr key={row.id} className="border-b border-gray-800/50 hover:bg-gray-900/40">
+                        <td className="px-4 py-2.5 whitespace-nowrap tabular-nums text-gray-500">
+                          {new Date(row.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          {row.recipient_type === "handle" ? `@${row.recipient_identifier}` : row.recipient_identifier}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">{row.num_tickets}</td>
+                        <td className={`px-4 py-2.5 font-medium ${giftStatusColors[row.status] ?? "text-gray-400"}`}>
+                          {row.status}{row.failure_reason ? ` — ${row.failure_reason}` : ""}
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-sm text-gray-500">
+                          {row.resulting_ticket_id ?? <span className="text-gray-700">—</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {/* Filter bar */}
           <div className="flex flex-wrap gap-2 items-center">
             <select
@@ -1411,10 +1655,12 @@ export default function AdminDashboard() {
               <table className="w-full text-base text-gray-300">
                 <thead>
                   <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
+                    <th className="text-left px-4 py-2.5 w-6"></th>
                     <th className="text-left px-4 py-2.5">Date</th>
                     <th className="text-right px-4 py-2.5">Tickets</th>
                     <th className="text-right px-4 py-2.5">Cost</th>
                     <th className="text-left px-4 py-2.5">Route</th>
+                    <th className="text-left px-4 py-2.5">Platform</th>
                     <th className="text-left px-4 py-2.5">Status</th>
                     <th className="text-left px-4 py-2.5">Round</th>
                     <th className="text-right px-4 py-2.5">Win</th>
@@ -1423,7 +1669,7 @@ export default function AdminDashboard() {
                 </thead>
                 <tbody>
                   {lotteryData.length === 0 && (
-                    <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-600">No lottery tickets found.</td></tr>
+                    <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-600">No lottery tickets found.</td></tr>
                   )}
                   {lotteryData.map((row: any) => {
                     const statusColors: Record<string, string> = {
@@ -1437,29 +1683,92 @@ export default function AdminDashboard() {
                       bridging: "text-amber-400",
                       buying: "text-amber-400",
                     };
+                    const isSeeker = !!row.user?.username?.startsWith("skr-");
+                    const isExpanded = lotteryExpandedId === row.id;
                     return (
-                      <tr key={row.id} className="border-b border-gray-800/50 hover:bg-gray-900/40">
-                        <td className="px-4 py-2.5 whitespace-nowrap tabular-nums text-gray-500">
-                          {new Date(row.created_at).toLocaleDateString()} {new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                        </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums">{row.num_tickets}</td>
-                        <td className="px-4 py-2.5 text-right tabular-nums font-medium">${Number(row.cost_usdc).toFixed(2)}</td>
-                        <td className="px-4 py-2.5">{row.burner_sol_address ? "Private" : "Public"}</td>
-                        <td className={`px-4 py-2.5 font-medium ${statusColors[row.status] ?? "text-gray-400"}`}>{row.status}</td>
-                        <td className="px-4 py-2.5 text-gray-400">{row.round_id ?? <span className="text-gray-700">—</span>}</td>
-                        <td className="px-4 py-2.5 text-right tabular-nums">
-                          {row.win_amount_usdc ? <span className="text-emerald-400 font-medium">${Number(row.win_amount_usdc).toFixed(2)}</span> : <span className="text-gray-700">—</span>}
-                        </td>
-                        <td className="px-4 py-2.5 max-w-[160px] truncate">
-                          {row.user?.username ? (
-                            <span className="text-gray-200">@{row.user.username}</span>
-                          ) : row.user?.email ? (
-                            <span className="text-gray-300">{row.user.email}</span>
-                          ) : (
-                            <span className="text-gray-600 font-mono text-sm">{row.user_id}</span>
-                          )}
-                        </td>
-                      </tr>
+                      <React.Fragment key={row.id}>
+                        <tr
+                          className="border-b border-gray-800/50 hover:bg-gray-900/40 cursor-pointer"
+                          onClick={() => setLotteryExpandedId(isExpanded ? null : row.id)}
+                        >
+                          <td className="px-4 py-2.5 text-gray-500">
+                            {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                          </td>
+                          <td className="px-4 py-2.5 whitespace-nowrap tabular-nums text-gray-500">
+                            {new Date(row.created_at).toLocaleDateString()} {new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums">{row.num_tickets}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums font-medium">${Number(row.cost_usdc).toFixed(2)}</td>
+                          <td className="px-4 py-2.5">{row.burner_sol_address ? "Private" : "Public"}</td>
+                          <td className="px-4 py-2.5">
+                            {isSeeker ? (
+                              <span className="text-purple-400 font-medium">Seeker</span>
+                            ) : (
+                              <span className="text-gray-400">Web</span>
+                            )}
+                          </td>
+                          <td className={`px-4 py-2.5 font-medium ${statusColors[row.status] ?? "text-gray-400"}`}>{row.status}</td>
+                          <td className="px-4 py-2.5 text-gray-400">{row.round_id ?? <span className="text-gray-700">—</span>}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums">
+                            {row.win_amount_usdc ? <span className="text-emerald-400 font-medium">${Number(row.win_amount_usdc).toFixed(2)}</span> : <span className="text-gray-700">—</span>}
+                          </td>
+                          <td className="px-4 py-2.5 max-w-[160px] truncate">
+                            {row.user?.username ? (
+                              <span className="text-gray-200">@{row.user.username}</span>
+                            ) : row.user?.email ? (
+                              <span className="text-gray-300">{row.user.email}</span>
+                            ) : (
+                              <span className="text-gray-600 font-mono text-sm">{row.user_id}</span>
+                            )}
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr className="border-b border-gray-800/50 bg-gray-900/30">
+                            <td colSpan={10} className="px-4 py-3">
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+                                <div>
+                                  <span className="text-gray-500">Ticket ID </span>
+                                  <span className="font-mono text-gray-300">{row.id}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Solana address </span>
+                                  {row.user_solana_address ? (
+                                    <span className="font-mono text-gray-300">{trunc(row.user_solana_address, 14)}</span>
+                                  ) : <span className="text-gray-700">—</span>}
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Bridge status </span>
+                                  <span className="text-gray-300">{row.bridge_status ?? <span className="text-gray-700">—</span>}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Buy tx </span>
+                                  <TxCell hash={row.sender_tx_hash} chain="solana" isDevnet={false} />
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Claim tx </span>
+                                  <TxCell hash={row.claim_tx_hash} chain="base" isDevnet={false} />
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Fee </span>
+                                  <span className="text-gray-300">{row.fee_amount_usdc ? `$${Number(row.fee_amount_usdc).toFixed(4)}` : <span className="text-gray-700">—</span>}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Ticket numbers </span>
+                                  <span className="font-mono text-gray-300">{row.ticket_numbers ? JSON.stringify(row.ticket_numbers) : <span className="text-gray-700">—</span>}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Winning numbers </span>
+                                  <span className="font-mono text-gray-300">{row.winning_numbers ? JSON.stringify(row.winning_numbers) : <span className="text-gray-700">—</span>}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Companion address </span>
+                                  <AddressCell address={row.companion_address} />
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -1514,13 +1823,13 @@ export default function AdminDashboard() {
               <>
                 {/* Volume section */}
                 <div>
-                  <h3 className="text-sm md:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Transaction Volume</h3>
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Transaction Volume</h3>
                   <div className="bg-gray-900 border border-amber-900 rounded-lg p-4 mb-3">
                     <div className="text-[10px] text-amber-400 uppercase tracking-wider mb-1 font-medium">Total Platform Volume</div>
                     <div className="text-3xl font-bold text-white tabular-nums">
                       {analyticsData.volume_total_all.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
-                    <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC · payments + lottery + deposits + withdrawals (mainnet)</div>
+                    <div className="text-sm text-gray-500 mt-0.5">USDC · payments + lottery + deposits + withdrawals (mainnet)</div>
                   </div>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
@@ -1528,103 +1837,103 @@ export default function AdminDashboard() {
                       <div className="text-2xl font-bold text-white tabular-nums">
                         {analyticsData.volume_devnet.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
-                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC success</div>
-                      <div className="text-sm md:text-xs text-gray-600 mt-0.5">
+                      <div className="text-sm text-gray-500 mt-0.5">USDC success</div>
+                      <div className="text-sm text-gray-600 mt-0.5">
                         {analyticsData.volume_devnet_total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total
                       </div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-orange-400 uppercase tracking-wider mb-1 font-medium">Devnet Transactions</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.tx_devnet_success.toLocaleString()}</div>
-                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">success · {analyticsData.tx_devnet_total.toLocaleString()} total</div>
+                      <div className="text-sm text-gray-500 mt-0.5">success · {analyticsData.tx_devnet_total.toLocaleString()} total</div>
                     </div>
                     <div className="bg-gray-900 border border-green-900 rounded-lg p-4">
                       <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Mainnet Volume</div>
                       <div className="text-2xl font-bold text-white tabular-nums">
                         {analyticsData.volume_mainnet.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
-                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC success</div>
-                      <div className="text-sm md:text-xs text-gray-600 mt-0.5">
+                      <div className="text-sm text-gray-500 mt-0.5">USDC success</div>
+                      <div className="text-sm text-gray-600 mt-0.5">
                         {analyticsData.volume_mainnet_total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total
                       </div>
                     </div>
                     <div className="bg-gray-900 border border-green-900 rounded-lg p-4">
                       <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Mainnet Transactions</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.tx_mainnet_success.toLocaleString()}</div>
-                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">success · {analyticsData.tx_mainnet_total.toLocaleString()} total</div>
+                      <div className="text-sm text-gray-500 mt-0.5">success · {analyticsData.tx_mainnet_total.toLocaleString()} total</div>
                     </div>
                   </div>
                 </div>
 
                 {/* Lottery / deposits / withdrawals volume */}
                 <div>
-                  <h3 className="text-sm md:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Lottery, Deposits &amp; Withdrawals</h3>
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Lottery, Deposits &amp; Withdrawals</h3>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-purple-400 uppercase tracking-wider mb-1 font-medium">Lottery Volume</div>
                       <div className="text-2xl font-bold text-white tabular-nums">
                         {analyticsData.volume_lottery.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
-                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC · {analyticsData.tx_lottery_count.toLocaleString()} tickets</div>
+                      <div className="text-sm text-gray-500 mt-0.5">USDC · {analyticsData.tx_lottery_count.toLocaleString()} tickets</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-1 font-medium">Deposit Volume</div>
                       <div className="text-2xl font-bold text-white tabular-nums">
                         {analyticsData.volume_deposits.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
-                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC · {analyticsData.tx_deposits_count.toLocaleString()} completed</div>
+                      <div className="text-sm text-gray-500 mt-0.5">USDC · {analyticsData.tx_deposits_count.toLocaleString()} completed</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-orange-400 uppercase tracking-wider mb-1 font-medium">Withdraw Volume (Devnet)</div>
                       <div className="text-2xl font-bold text-white tabular-nums">
                         {analyticsData.volume_withdrawals_devnet.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
-                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC · {analyticsData.tx_withdrawals_devnet_count.toLocaleString()} rows</div>
+                      <div className="text-sm text-gray-500 mt-0.5">USDC · {analyticsData.tx_withdrawals_devnet_count.toLocaleString()} rows</div>
                     </div>
                     <div className="bg-gray-900 border border-green-900 rounded-lg p-4">
                       <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Withdraw Volume (Mainnet)</div>
                       <div className="text-2xl font-bold text-white tabular-nums">
                         {analyticsData.volume_withdrawals_mainnet.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
-                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">USDC · {analyticsData.tx_withdrawals_mainnet_count.toLocaleString()} rows</div>
+                      <div className="text-sm text-gray-500 mt-0.5">USDC · {analyticsData.tx_withdrawals_mainnet_count.toLocaleString()} rows</div>
                     </div>
                   </div>
                 </div>
 
                 {/* Users section */}
                 <div>
-                  <h3 className="text-sm md:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Users</h3>
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Users</h3>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-1 font-medium">Total Users</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.total_users.toLocaleString()}</div>
-                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">registered accounts</div>
+                      <div className="text-sm text-gray-500 mt-0.5">registered accounts</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-1 font-medium">Email Connected</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{emailPct}%</div>
-                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">{analyticsData.users_with_email.toLocaleString()} of {analyticsData.total_users.toLocaleString()} users</div>
+                      <div className="text-sm text-gray-500 mt-0.5">{analyticsData.users_with_email.toLocaleString()} of {analyticsData.total_users.toLocaleString()} users</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-sky-400 uppercase tracking-wider mb-1 font-medium">X Connected</div>
                       {twitterFromSparks != null ? (
                         <>
                           <div className="text-2xl font-bold text-white tabular-nums">{twitterFromSparks.toLocaleString()}</div>
-                          <div className="text-sm md:text-xs text-gray-500 mt-0.5">
+                          <div className="text-sm text-gray-500 mt-0.5">
                             {twitterPct}% of {sparksData.length} tracked users
                           </div>
                         </>
                       ) : (
                         <>
                           <div className="text-2xl font-bold text-gray-600">—</div>
-                          <div className="text-sm md:text-xs text-gray-600 mt-0.5">load Sparks tab first</div>
+                          <div className="text-sm text-gray-600 mt-0.5">load Sparks tab first</div>
                         </>
                       )}
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-purple-400 uppercase tracking-wider mb-1 font-medium">Waitlist Applicants</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.waitlist_total.toLocaleString()}</div>
-                      <div className="text-sm md:text-xs text-gray-500 mt-0.5">{analyticsData.waitlist_granted.toLocaleString()} granted · {analyticsData.waitlist_with_twitter.toLocaleString()} with X</div>
+                      <div className="text-sm text-gray-500 mt-0.5">{analyticsData.waitlist_granted.toLocaleString()} granted · {analyticsData.waitlist_with_twitter.toLocaleString()} with X</div>
                     </div>
                   </div>
                 </div>
@@ -1654,7 +1963,7 @@ export default function AdminDashboard() {
                     className="pl-9 bg-gray-900 border-gray-700 text-sm"
                   />
                 </div>
-                <span className="text-sm md:text-xs text-gray-500 whitespace-nowrap">
+                <span className="text-sm text-gray-500 whitespace-nowrap">
                   {sparksSearch
                     ? `${sparksData.filter((u: any) => {
                         const q = sparksSearch.toLowerCase();
@@ -1666,7 +1975,7 @@ export default function AdminDashboard() {
               <div className="overflow-x-auto rounded-xl border border-gray-800">
                 <table className="w-full text-base md:text-sm">
                   <thead>
-                    <tr className="border-b border-gray-800 text-gray-400 text-sm md:text-xs uppercase tracking-wide">
+                    <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
                       <th className="text-left px-4 py-2.5">#</th>
                       <th className="text-left px-4 py-2.5">User</th>
                       <th className="text-right px-4 py-2.5">⚡ Sparks</th>
@@ -1693,7 +2002,7 @@ export default function AdminDashboard() {
                             <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
                             <td className="px-4 py-2.5">
                               <div className="font-medium text-white">{u.username ? `@${u.username}` : "—"}</div>
-                              <div className="text-sm md:text-xs text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
+                              <div className="text-sm text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
                             </td>
                             <td className="px-4 py-2.5 text-right font-bold text-amber-400 tabular-nums">{u.totalSparks.toLocaleString()}</td>
                             {["connect_email","connect_twitter","first_payment","payment_to_unregistered","payment_link_paid","ten_payments"].map((key) => (
@@ -1701,11 +2010,11 @@ export default function AdminDashboard() {
                                 {byKey[key]?.completed
                                   ? <span className="text-green-400">✓</span>
                                   : key === "ten_payments" && byKey[key]?.progress > 0
-                                    ? <span className="text-amber-400 text-sm md:text-xs">{byKey[key].progress}/10</span>
+                                    ? <span className="text-amber-400 text-sm">{byKey[key].progress}/10</span>
                                     : <span className="text-gray-700">–</span>}
                               </td>
                             ))}
-                            <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-sm md:text-xs">
+                            <td className="px-4 py-2.5 text-right text-gray-300 tabular-nums text-sm">
                               {byKey["ten_payments"]?.progress ?? 0}
                             </td>
                           </tr>
@@ -1751,7 +2060,7 @@ export default function AdminDashboard() {
                     className="pl-9 bg-gray-900 border-gray-700 text-sm"
                   />
                 </div>
-                <span className="text-sm md:text-xs text-gray-500 whitespace-nowrap">
+                <span className="text-sm text-gray-500 whitespace-nowrap">
                   {(() => {
                     const qualified = blinkData.filter((u: any) => u.qualified).length;
                     const filtered = blinkSearch
@@ -1767,7 +2076,7 @@ export default function AdminDashboard() {
               <div className="overflow-x-auto rounded-xl border border-gray-800">
                 <table className="w-full text-base md:text-sm">
                   <thead>
-                    <tr className="border-b border-gray-800 text-gray-400 text-sm md:text-xs uppercase tracking-wide">
+                    <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
                       <th className="text-left px-4 py-2.5">#</th>
                       <th className="text-left px-4 py-2.5">User</th>
                       <th className="text-center px-3 py-2.5">Passkeys</th>
@@ -1794,7 +2103,7 @@ export default function AdminDashboard() {
                           <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
                           <td className="px-4 py-2.5">
                             <div className="font-medium text-white">{u.username ? `@${u.username}` : "—"}</div>
-                            <div className="text-sm md:text-xs text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
+                            <div className="text-sm text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
                           </td>
                           <td className="px-3 py-2.5 text-center">
                             {u.hasPasskeys ? <span className="text-green-400">✓</span> : <span className="text-gray-700">–</span>}
@@ -1844,7 +2153,7 @@ export default function AdminDashboard() {
       {activeTab === "payments" && <>
 
       {/* Stats bar */}
-      <div className="flex flex-wrap gap-2 mb-4 text-sm md:text-xs">
+      <div className="flex flex-wrap gap-2 mb-4 text-sm">
         <span className="text-gray-400">
           Loaded <span className="text-white font-semibold">{payments.length}</span>
           {" "}/ total <span className="text-white font-semibold">{total}</span>
@@ -1900,7 +2209,7 @@ export default function AdminDashboard() {
 
       {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-gray-800">
-        <table className="text-sm md:text-xs border-collapse" style={{ tableLayout: "fixed", minWidth: 900 }}>
+        <table className="text-sm border-collapse" style={{ tableLayout: "fixed", minWidth: 900 }}>
           <thead>
             <tr className="bg-gray-900 text-gray-500 text-[10px] uppercase tracking-wider border-b border-gray-800">
               <th style={{ width: 24 }} className="px-2 py-2" />
@@ -2096,7 +2405,7 @@ export default function AdminDashboard() {
             <div className="space-y-3">
               <p className="text-[10px] uppercase tracking-widest text-gray-600">Status &amp; timing</p>
               <div>
-                <Label className="text-gray-400 text-xs mb-1.5 block">Status</Label>
+                <Label className="text-gray-400 text-sm mb-1.5 block">Status</Label>
                 <Select value={editForm.status} onValueChange={(v) => setEditForm((f) => ({ ...f, status: v }))}>
                   <SelectTrigger className="bg-gray-800 border-gray-600 text-gray-100">
                     <SelectValue />
@@ -2108,13 +2417,13 @@ export default function AdminDashboard() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label className="text-gray-400 text-xs mb-1.5 block">Expires at</Label>
+                  <Label className="text-gray-400 text-sm mb-1.5 block">Expires at</Label>
                   <Input type="datetime-local" value={editForm.expires_at}
                     onChange={(e) => setEditForm((f) => ({ ...f, expires_at: e.target.value }))}
                     className="bg-gray-800 border-gray-600 text-gray-100" />
                 </div>
                 <div>
-                  <Label className="text-gray-400 text-xs mb-1.5 block">Paid at</Label>
+                  <Label className="text-gray-400 text-sm mb-1.5 block">Paid at</Label>
                   <Input type="datetime-local" value={editForm.paid_at}
                     onChange={(e) => setEditForm((f) => ({ ...f, paid_at: e.target.value }))}
                     className="bg-gray-800 border-gray-600 text-gray-100" />
@@ -2127,13 +2436,13 @@ export default function AdminDashboard() {
               <p className="text-[10px] uppercase tracking-widest text-gray-600">Amount &amp; chain</p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label className="text-gray-400 text-xs mb-1.5 block">Amount</Label>
+                  <Label className="text-gray-400 text-sm mb-1.5 block">Amount</Label>
                   <Input type="number" step="any" value={editForm.amount}
                     onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))}
                     className="bg-gray-800 border-gray-600 text-gray-100 font-mono" />
                 </div>
                 <div>
-                  <Label className="text-gray-400 text-xs mb-1.5 block">Direction</Label>
+                  <Label className="text-gray-400 text-sm mb-1.5 block">Direction</Label>
                   <Input value={editForm.direction}
                     onChange={(e) => setEditForm((f) => ({ ...f, direction: e.target.value }))}
                     className="bg-gray-800 border-gray-600 text-gray-100 font-mono" placeholder="e.g. OUT" />
@@ -2141,13 +2450,13 @@ export default function AdminDashboard() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label className="text-gray-400 text-xs mb-1.5 block">From chain</Label>
+                  <Label className="text-gray-400 text-sm mb-1.5 block">From chain</Label>
                   <Input value={editForm.from_chain}
                     onChange={(e) => setEditForm((f) => ({ ...f, from_chain: e.target.value }))}
                     className="bg-gray-800 border-gray-600 text-gray-100 font-mono" placeholder="e.g. sol" />
                 </div>
                 <div>
-                  <Label className="text-gray-400 text-xs mb-1.5 block">From token</Label>
+                  <Label className="text-gray-400 text-sm mb-1.5 block">From token</Label>
                   <Input value={editForm.from_token}
                     onChange={(e) => setEditForm((f) => ({ ...f, from_token: e.target.value }))}
                     className="bg-gray-800 border-gray-600 text-gray-100 font-mono" placeholder="e.g. USDC" />
@@ -2155,13 +2464,13 @@ export default function AdminDashboard() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label className="text-gray-400 text-xs mb-1.5 block">To chain</Label>
+                  <Label className="text-gray-400 text-sm mb-1.5 block">To chain</Label>
                   <Input value={editForm.to_chain}
                     onChange={(e) => setEditForm((f) => ({ ...f, to_chain: e.target.value }))}
                     className="bg-gray-800 border-gray-600 text-gray-100 font-mono" placeholder="e.g. sol" />
                 </div>
                 <div>
-                  <Label className="text-gray-400 text-xs mb-1.5 block">To token</Label>
+                  <Label className="text-gray-400 text-sm mb-1.5 block">To token</Label>
                   <Input value={editForm.to_token}
                     onChange={(e) => setEditForm((f) => ({ ...f, to_token: e.target.value }))}
                     className="bg-gray-800 border-gray-600 text-gray-100 font-mono" placeholder="e.g. USDC" />
@@ -2175,7 +2484,7 @@ export default function AdminDashboard() {
                   onChange={(e) => setEditForm((f) => ({ ...f, is_devnet: e.target.checked }))}
                   className="w-4 h-4 rounded border-gray-600 bg-gray-800 accent-blue-500"
                 />
-                <Label htmlFor="is_devnet" className="text-gray-400 text-xs cursor-pointer">Devnet</Label>
+                <Label htmlFor="is_devnet" className="text-gray-400 text-sm cursor-pointer">Devnet</Label>
               </div>
             </div>
 
@@ -2183,36 +2492,36 @@ export default function AdminDashboard() {
             <div className="space-y-3">
               <p className="text-[10px] uppercase tracking-widest text-gray-600">Parties</p>
               <div>
-                <Label className="text-gray-400 text-xs mb-1.5 block">Sender privy ID (created_by)</Label>
+                <Label className="text-gray-400 text-sm mb-1.5 block">Sender privy ID (created_by)</Label>
                 <Input value={editForm.created_by}
                   onChange={(e) => setEditForm((f) => ({ ...f, created_by: e.target.value }))}
-                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" placeholder="did:privy:…" />
+                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm" placeholder="did:privy:…" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label className="text-gray-400 text-xs mb-1.5 block">Recipient username</Label>
+                  <Label className="text-gray-400 text-sm mb-1.5 block">Recipient username</Label>
                   <Input value={editForm.recipient_username}
                     onChange={(e) => setEditForm((f) => ({ ...f, recipient_username: e.target.value }))}
-                    className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" placeholder="@handle" />
+                    className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm" placeholder="@handle" />
                 </div>
                 <div>
-                  <Label className="text-gray-400 text-xs mb-1.5 block">Recipient email</Label>
+                  <Label className="text-gray-400 text-sm mb-1.5 block">Recipient email</Label>
                   <Input type="email" value={editForm.recipient_email}
                     onChange={(e) => setEditForm((f) => ({ ...f, recipient_email: e.target.value }))}
-                    className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" placeholder="user@example.com" />
+                    className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm" placeholder="user@example.com" />
                 </div>
               </div>
               <div>
-                <Label className="text-gray-400 text-xs mb-1.5 block">Recipient privy ID</Label>
+                <Label className="text-gray-400 text-sm mb-1.5 block">Recipient privy ID</Label>
                 <Input value={editForm.recipient_user_id}
                   onChange={(e) => setEditForm((f) => ({ ...f, recipient_user_id: e.target.value }))}
-                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" placeholder="did:privy:…" />
+                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm" placeholder="did:privy:…" />
               </div>
               <div>
-                <Label className="text-gray-400 text-xs mb-1.5 block">Recipient address (Solana)</Label>
+                <Label className="text-gray-400 text-sm mb-1.5 block">Recipient address (Solana)</Label>
                 <Input value={editForm.recipient_address}
                   onChange={(e) => setEditForm((f) => ({ ...f, recipient_address: e.target.value }))}
-                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" placeholder="Solana wallet address" />
+                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm" placeholder="Solana wallet address" />
               </div>
             </div>
 
@@ -2220,32 +2529,32 @@ export default function AdminDashboard() {
             <div className="space-y-3">
               <p className="text-[10px] uppercase tracking-widest text-gray-600">Blockchain</p>
               <div>
-                <Label className="text-gray-400 text-xs mb-1.5 block">Burner address</Label>
+                <Label className="text-gray-400 text-sm mb-1.5 block">Burner address</Label>
                 <Input value={editForm.burner_address}
                   onChange={(e) => setEditForm((f) => ({ ...f, burner_address: e.target.value }))}
-                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" placeholder="Escrow wallet" />
+                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm" placeholder="Escrow wallet" />
               </div>
               <div>
-                <Label className="text-gray-400 text-xs mb-1.5 block">Sender TX hash</Label>
+                <Label className="text-gray-400 text-sm mb-1.5 block">Sender TX hash</Label>
                 <Input value={editForm.sender_tx_hash}
                   onChange={(e) => setEditForm((f) => ({ ...f, sender_tx_hash: e.target.value }))}
-                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" />
+                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm" />
               </div>
               <div>
-                <Label className="text-gray-400 text-xs mb-1.5 block">Sweep TX hash</Label>
+                <Label className="text-gray-400 text-sm mb-1.5 block">Sweep TX hash</Label>
                 <Input value={editForm.sweep_tx_hash}
                   onChange={(e) => setEditForm((f) => ({ ...f, sweep_tx_hash: e.target.value }))}
-                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs" />
+                  className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm" />
               </div>
             </div>
 
             {/* ── Notes ── */}
             <div>
               <p className="text-[10px] uppercase tracking-widest text-gray-600 mb-3">Notes</p>
-              <Label className="text-gray-400 text-xs mb-1.5 block">Description</Label>
+              <Label className="text-gray-400 text-sm mb-1.5 block">Description</Label>
               <Textarea value={editForm.description}
                 onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
-                className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-xs"
+                className="bg-gray-800 border-gray-600 text-gray-100 font-mono text-sm"
                 rows={2} placeholder="Optional message" />
             </div>
 

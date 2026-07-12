@@ -251,7 +251,7 @@ function NetworkBalanceRow({
   return (
     <div className="flex items-center justify-between rounded-2xl bg-white/[0.04] border border-white/[0.07] px-5 py-4">
       <div className="space-y-0.5">
-        <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">{label}</p>
+        <p className="text-sm text-slate-500 font-medium uppercase tracking-wider">{label}</p>
         {isLoading ? (
           <div className="h-7 w-24 rounded-md bg-white/10 animate-pulse" />
         ) : (

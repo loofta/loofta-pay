@@ -516,7 +516,7 @@ export function NearSwapWidget({
 												<div className="text-gray-600">App fee</div>
 												<div className="inline-flex items-center gap-2">
 													<span
-														className="px-2 py-0.5 rounded-md text-sm md:text-xs font-semibold text-white shadow-sm"
+														className="px-2 py-0.5 rounded-md text-sm font-semibold text-white shadow-sm"
 														style={{ background: 'linear-gradient(to right, #EAB308, #FF0F00)' }}
 													>
 														FREE

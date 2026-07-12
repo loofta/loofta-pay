@@ -21,7 +21,7 @@ export interface SharePreview {
  */
 export async function getSharePreview(shortIdOrUuid: string): Promise<SharePreview | null> {
   const supabase = getSupabaseAdmin();
-  const SELECT = "id, short_id, amount, status, is_devnet, is_private, created_by, recipient_address, recipient_username, recipient_user_id";
+  const SELECT = "id, short_id, amount, status, is_devnet, is_private, direction, created_by, sender_user_id, recipient_address, recipient_username, recipient_user_id";
 
   let { data: payment } = await supabase.from("payments").select(SELECT).eq("short_id", shortIdOrUuid).maybeSingle();
   if (!payment) {
@@ -32,21 +32,29 @@ export async function getSharePreview(shortIdOrUuid: string): Promise<SharePrevi
   const status = String(payment.status || "").toUpperCase();
   if (status === "DELETED" || status === "CANCELLED") return null;
 
-  const createdBy = String(payment.created_by ?? "");
+  // Payment request links (direction = "from_recipient", created via the "request money" flow)
+  // flip who `created_by` and `recipient_user_id` represent: the creator is the true recipient
+  // (the person asking to be paid), and `recipient_user_id`/`recipient_address` redundantly store
+  // that same creator identity rather than the payer's. The real sender is unknown until they pay
+  // and `sender_user_id` gets set. Same flip applied in `/api/claims/[id]/route.ts` (creator_username)
+  // and `/api/payments/history/route.ts`.
+  const isFromRecipient = String(payment.direction ?? "") === "from_recipient";
+  const senderId = String(isFromRecipient ? payment.sender_user_id ?? "" : payment.created_by ?? "");
+  const trueRecipientId = String(isFromRecipient ? payment.created_by ?? "" : payment.recipient_user_id ?? "");
+
   // recipient_username is only populated when the payment was created by resolving a
   // username/email — a payment sent by resolving a wallet address directly can still have a
   // known registered recipient_user_id with no recipient_username on the row. Same fallback as
   // `/api/claims/[id]/route.ts` so the share card doesn't silently drop a known recipient's name.
-  const recipientUserId = String(payment.recipient_user_id ?? "");
-  const [{ data: appUser }, { data: recipientAppUser }] = await Promise.all([
-    createdBy.includes("did:privy:")
-      ? supabase.from("app_users").select("username").eq("privy_user_id", createdBy).maybeSingle()
+  const [{ data: senderAppUser }, { data: recipientAppUser }] = await Promise.all([
+    senderId.includes("did:privy:")
+      ? supabase.from("app_users").select("username").eq("privy_user_id", senderId).maybeSingle()
       : Promise.resolve({ data: null }),
-    !payment.recipient_username && recipientUserId.includes("did:privy:")
-      ? supabase.from("app_users").select("username").eq("privy_user_id", recipientUserId).maybeSingle()
+    !payment.recipient_username && trueRecipientId.includes("did:privy:")
+      ? supabase.from("app_users").select("username").eq("privy_user_id", trueRecipientId).maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
-  const sender_username: string | null = (appUser as { username?: string } | null)?.username ?? null;
+  const sender_username: string | null = (senderAppUser as { username?: string } | null)?.username ?? null;
   const resolvedRecipientUsername: string | null = (recipientAppUser as { username?: string } | null)?.username ?? null;
 
   const recipientAddress = String(payment.recipient_address ?? "").trim();

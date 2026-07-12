@@ -29,7 +29,19 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/home", request.url));
   }
 
-  const marketingPaths = new Set(["/home", "/home-white", "/brand", "/terms", "/privacy", "/careers"]);
+  const marketingPaths = new Set([
+    "/home",
+    "/home-white",
+    "/brand",
+    "/terms",
+    "/privacy",
+    "/careers",
+    "/payment-links",
+    "/partners",
+    "/guides/send-crypto-privately",
+    "/vs/paypal",
+    "/astrid-lisa-study",
+  ]);
   const isLocalAppPath =
     isLocalhost &&
     !marketingPaths.has(pathname) &&
@@ -39,6 +51,12 @@ export function proxy(request: NextRequest) {
   if (isAppDomain && pathname.startsWith("/app/")) {
     const cleanPath = pathname.slice(4) || "/";
     return NextResponse.redirect(new URL(cleanPath, request.url));
+  }
+
+  // Marketing pages (e.g. /partners) linked from within the app must still
+  // resolve on pay.loofta.xyz instead of being rewritten to a nonexistent /app/* route.
+  if (isAppDomain && marketingPaths.has(pathname)) {
+    return NextResponse.next();
   }
 
   // pay.loofta.xyz or localhost non-marketing path → transparently rewrite to /app/*

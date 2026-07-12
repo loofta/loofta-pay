@@ -307,22 +307,31 @@ export class LifiService {
   }
 
   /**
-   * Get bridge fee estimate from a real Li.Fi quote.
-   * Used for display purposes — returns fee in USD and toAmountMin.
+   * Get bridge fee estimate from a REAL Li.Fi quote. Used for display purposes — returns fee in
+   * USD and toAmountMin. Deliberately has NO estimate/guessed fallback: a fabricated number that
+   * doesn't match what the bridge actually charges is worse than no number at all (this screen
+   * has already shown a wrong fee to a real user once — see the incident this was hardened for).
+   * Retries transient failures (rate limits, timeouts) before giving up; throws if it still can't
+   * get a real quote, so the caller must surface "fee unavailable" rather than invent one.
    */
   async getWithdrawalFeeEstimate(amountUsdc: number): Promise<{ feeUsd: number; receiveUsdc: number }> {
-    try {
-      const quote = await this.getBaseToSolQuote({
-        fromAddress: '0x000000000000000000000000000000000000dEaD',
-        toAddress: '11111111111111111111111111111111',
-        amountUsdc,
-      });
-      const feeUsd = this.feeFromQuote(quote);
-      const receiveUsdc = parseFloat(quote.estimate.toAmountMin) / 1_000_000;
-      return { feeUsd, receiveUsdc };
-    } catch {
-      const feeUsd = Math.max(0.03, amountUsdc * 0.005);
-      return { feeUsd, receiveUsdc: amountUsdc - feeUsd };
+    let lastErr: any;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 500 * attempt));
+        const quote = await this.getBaseToSolQuote({
+          fromAddress: '0x000000000000000000000000000000000000dEaD',
+          toAddress: '11111111111111111111111111111111',
+          amountUsdc,
+        });
+        const feeUsd = this.feeFromQuote(quote);
+        const receiveUsdc = parseFloat(quote.estimate.toAmountMin) / 1_000_000;
+        return { feeUsd, receiveUsdc };
+      } catch (e: any) {
+        lastErr = e;
+        this.logger.warn(`getWithdrawalFeeEstimate attempt ${attempt + 1}/3 failed: ${e?.message}`);
+      }
     }
+    throw new Error(`Could not get a real bridge fee quote after 3 attempts: ${lastErr?.message}`);
   }
 }

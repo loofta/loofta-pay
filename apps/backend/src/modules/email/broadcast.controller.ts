@@ -78,6 +78,76 @@ export class BroadcastController {
     return { ok: true, sent, failed, total: recipients.length };
   }
 
+  /**
+   * lottery_tickets.user_id stores the Privy DID, not app_users.id — join through
+   * app_users.privy_user_id instead. Paginate both the ticket scan and the app_users lookup;
+   * PostgREST caps unbounded selects/`.in()` filters, so a single query would silently
+   * under-cover a growing player base.
+   */
+  private async fetchMegapotPlayerEmails(): Promise<string[]> {
+    const db = this.supabaseService.getClient();
+    const PAGE = 1000;
+    const userIds = new Set<string>();
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await db
+        .from('lottery_tickets')
+        .select('user_id')
+        .range(from, from + PAGE - 1);
+      if (error) throw new Error(`Failed to fetch lottery_tickets: ${error.message}`);
+      for (const row of data ?? []) if (row.user_id) userIds.add(row.user_id);
+      if (!data || data.length < PAGE) break;
+    }
+
+    const ids = Array.from(userIds);
+    const emails = new Set<string>();
+    const CHUNK = 200;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const { data, error } = await this.supabaseService.appUsers
+        .select('email')
+        .in('privy_user_id', ids.slice(i, i + CHUNK))
+        .not('email', 'is', null);
+      if (error) throw new Error(`Failed to fetch app_users: ${error.message}`);
+      for (const row of data ?? []) {
+        const e = (row.email as string | null)?.trim().toLowerCase();
+        if (e) emails.add(e);
+      }
+    }
+    return Array.from(emails);
+  }
+
+  @Post('megapot-results-fix')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Broadcast the Megapot results-check bug fix to everyone who has played Megapot. Pass testEmail to dry-run to one address.' })
+  async broadcastMegapotResultsFix(@Body() body: { testEmail?: string }) {
+    const { testEmail } = body ?? {};
+
+    let recipients: string[];
+
+    if (testEmail) {
+      recipients = [testEmail.trim().toLowerCase()];
+      this.logger.log(`Megapot results-fix broadcast: TEST MODE — sending only to ${testEmail}`);
+    } else {
+      recipients = await this.fetchMegapotPlayerEmails();
+      this.logger.log(`Megapot results-fix broadcast: ${recipients.length} unique recipients (Megapot players only)`);
+    }
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const email of recipients) {
+      try {
+        await this.emailService.sendMegapotResultsFixEmail(email);
+        sent++;
+      } catch {
+        failed++;
+        this.logger.warn(`Failed to send Megapot results-fix email to ${email}`);
+      }
+    }
+
+    this.logger.log(`Megapot results-fix broadcast complete: ${sent} sent, ${failed} failed`);
+    return { ok: true, sent, failed, total: recipients.length };
+  }
+
   @Post('megapot-launch')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Broadcast Megapot $1,000 giveaway email. Pass testEmail to dry-run to one address.' })

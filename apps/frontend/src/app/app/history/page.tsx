@@ -48,6 +48,13 @@ function getSenderDisplay(claim: PaymentHistoryClaim, anonymous: string): string
 }
 
 function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string {
+  if (claim.direction === "from_recipient") {
+    // Payment request links: recipient_username/recipient_address describe the creator's own
+    // identity (see sharePreview.ts), not a payer's — the true payee is whoever created the
+    // request, resolved server-side into creator_username.
+    if (claim.creator_username) return `@${claim.creator_username}`;
+    return anonymous;
+  }
   if (claim.recipient_username) return `@${claim.recipient_username}`;
   const ra = (claim.recipient_address || "").trim();
   if (ra.startsWith(PENDING_USERNAME_PREFIX)) return `@${ra.slice(PENDING_USERNAME_PREFIX.length).trim()}`;
@@ -55,6 +62,8 @@ function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string 
   if (claim.recipient_email) return claim.recipient_email;
   return anonymous;
 }
+
+const REQUEST_LINK_PAID_STATUSES = new Set(["SUCCESS", "PRIVATE_TRANSFER_PENDING"]);
 
 const STATUS_KEYS = ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CANCELLED", "OPEN", "PENDING_DEPOSIT", "IN_FLIGHT", "REFUNDED", "EXPIRED"] as const;
 type StatusKey = typeof STATUS_KEYS[number];
@@ -408,6 +417,13 @@ export default function HistoryPage() {
                       const message = stripGifUrlsFromMessage(claim.description || "");
                       const gifUrl = type === "received" ? extractGifUrl(claim.description || "") : null;
                       const showMessageOrGif = (type === "received" && (message || gifUrl)) || (type === "sent" && message);
+                      // A request link (direction=from_recipient) shows up in "sent" from two very
+                      // different viewers: the creator's own still-open request (no payer yet — the
+                      // "Open" status badge already conveys that, nothing to name) or the actual
+                      // payer's completed payment (recipient is the request's creator, always known).
+                      const hasKnownCounterparty =
+                        !(type === "sent" && claim.direction === "from_recipient") ||
+                        REQUEST_LINK_PAID_STATUSES.has(String(claim.status || "").toUpperCase());
                       return (
                         <li key={`${type}-${claim.id}`}>
                           <Link
@@ -422,9 +438,11 @@ export default function HistoryPage() {
                                 {type === "sent" ? "-" : "+"}${amount.toFixed(2)} {claim.to_symbol}
                               </span>
                             </div>
-                            <div className="mt-1.5 text-base font-medium text-slate-300">
-                              {type === "sent" ? t('to') : t('from')} {senderOrPayee}
-                            </div>
+                            {hasKnownCounterparty && (
+                              <div className="mt-1.5 text-base font-medium text-slate-300">
+                                {type === "sent" ? t('to') : t('from')} {senderOrPayee}
+                              </div>
+                            )}
                             {showMessageOrGif && (
                               <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 space-y-2">
                                 {type === "received" && gifUrl && (
@@ -448,7 +466,7 @@ export default function HistoryPage() {
                                 })}
                               </span>
                               <span
-                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${getStatusBadgeClass(claim.status || "")}`}
+                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${getStatusBadgeClass(claim.status || "")}`}
                               >
                                 {getStatusLabel(claim.status || "")}
                               </span>

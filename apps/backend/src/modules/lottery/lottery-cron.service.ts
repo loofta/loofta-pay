@@ -37,8 +37,11 @@ export class LotteryCronService {
     );
   }
 
-  /** Every 10 seconds: check bridging tickets + buy on Megapot (overlap-guarded in service) */
-  @Cron('*/10 * * * * *')
+  /** Every 5 seconds: check bridging tickets + buy on Megapot (overlap-guarded in service). Was
+   *  10s — the SOL→Base bridge finishes in single-digit seconds, so a 10s poll left a ticket
+   *  sitting up to 10s after the bridge was already DONE before the buy fired. 5s halves that
+   *  tail; the in-service overlap guard + atomic status claims keep it safe to run more often. */
+  @Cron('*/5 * * * * *')
   async processBridging(): Promise<void> {
     if (!this.isProd) return;
     await this.lottery.processBridgingTickets().catch(e =>
@@ -56,11 +59,14 @@ export class LotteryCronService {
     );
   }
 
-  /** Daily at 00:30 UTC: check draw results (draw happens at midnight UTC) */
-  @Cron('30 0 * * *')
+  /** Every 15 minutes: resolve any 'active' ticket whose draw has passed (won/lost). Previously
+   *  ran once/day, which meant a ticket that failed to resolve (RPC hiccup, etc.) silently sat
+   *  unresolved for up to 24h before the next retry — this cadence closes that gap. Safe to run
+   *  often: the query only ever touches tickets still 'active', and the service method itself is
+   *  overlap-guarded. */
+  @Cron('0 */15 * * * *')
   async checkDailyResults(): Promise<void> {
     if (!this.isProd) return;
-    this.logger.log('Cron: checking daily Megapot draw results');
     await this.lottery.checkDailyResults().catch(e =>
       this.logger.error(`checkDailyResults: ${e.message}`),
     );
@@ -108,6 +114,28 @@ export class LotteryCronService {
     if (!this.isProd) return;
     await this.lottery.recoverStuckConsolidatedBatches().catch(e =>
       this.logger.error(`recoverStuckConsolidatedBatches: ${e.message}`),
+    );
+  }
+
+  /** Every 30 minutes: alert the operator by email if the fee wallet (funds bridge top-ups + gas)
+   *  is running low. De-duped in the service so this cadence never spams. */
+  @Cron('0 */30 * * * *')
+  async checkFeeWalletBalance(): Promise<void> {
+    if (!this.isProd) return;
+    await this.lottery.checkFeeWalletBalance().catch(e =>
+      this.logger.error(`checkFeeWalletBalance: ${e.message}`),
+    );
+  }
+
+  /** Every 5 minutes: clean up pending_send tickets abandoned before ever signing (10min+ old,
+   *  no sender_tx_hash) — e.g. the user cancelled the wallet prompt and the app never got a
+   *  chance to call cancelTicket itself (killed, crashed, lost network). No funds ever moved for
+   *  these, so it's always safe. */
+  @Cron('0 */5 * * * *')
+  async cancelAbandonedPendingSends(): Promise<void> {
+    if (!this.isProd) return;
+    await this.lottery.cancelAbandonedPendingSends().catch(e =>
+      this.logger.error(`cancelAbandonedPendingSends: ${e.message}`),
     );
   }
 }

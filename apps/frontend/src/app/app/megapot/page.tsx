@@ -7,33 +7,50 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser } from "lucide-react";
+import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, Store, Lock } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { getMyGifts, updateGiftRecipient, type MyGiftItem } from "@/services/api/lotteryGift";
+import { MessageInput } from "@/components/MessageInput";
+import { Label } from "@/components/ui/label";
+import { DescriptionWithGif } from "@/components/DescriptionWithGif";
 
-const MEGAPOT_REFERRAL = "https://megapot.io/r/Q3M637";
 const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
 const MAGICBLOCK_BPS = 10;
-const BRIDGE_FEE_USD_EST = 0.04; // Li.Fi (cheaper than NEAR Intents)
-// Loofta per-purchase fee: $0.10 flat + 30 BPS of ticket cost (mirrors backend looftaTicketFee —
-// the proportional part covers the bridge cut Loofta absorbs on bigger purchases)
-const LOOFTA_TICKET_FEE_FLAT_USD = 0.10;
-const LOOFTA_TICKET_FEE_BPS = 30;
-function looftaFee(ticketCostUsd: number) {
-  return LOOFTA_TICKET_FEE_FLAT_USD + (ticketCostUsd * LOOFTA_TICKET_FEE_BPS) / 10_000;
+// Loofta no longer charges a per-purchase service fee — the buyer pays only the ticket cost plus
+// MagicBlock's own transfer fee (mbFee below); the Sol→Base bridge cost is absorbed by Loofta.
+// The free-ticket threshold is owned and enforced by the backend (see WITHDRAW_MIN_USDC in
+// lottery.service.ts); it's reported per-request as dashboard.withdrawMinUsdc and per-ticket as
+// ticket.isFreeTicket. This is only a fallback for the brief window before the dashboard loads —
+// the UI should prefer the backend values.
+const DEFAULT_WITHDRAW_MIN_USDC = 1.3;
+// Above this, withdrawing becomes the featured CTA instead of Play again — a win this size
+// shouldn't default to nudging the user straight back into another draw.
+const WITHDRAW_FEATURED_THRESHOLD_USDC = 5;
+// Whether an aggregate/total win is below the withdrawal floor (→ "Free ticket", play-again only).
+// For a single ticket, prefer the authoritative ticket.isFreeTicket flag from the backend.
+function isFreeTicketAmount(winUsdc: number | null | undefined, thresholdUsdc: number): boolean {
+  const n = winUsdc ?? 0;
+  return n > 0 && n < thresholdUsdc;
 }
 const MAIN_MAX = 30;
 const MAIN_COUNT = 5;
 const BONUS_MAX = 12;
 
+// Snapshot of Megapot's published tiers (docs.megapot.io/learn/prize-structure, taken
+// 2026-07-12 against a ~$1.1M pool), net of the ~10% on-chain referral cut Loofta actually
+// takes on every cash win (mirrors DEFAULT_REFERRAL_WIN_SHARE_FACTOR in megapot.service.ts —
+// the real per-drawing cut is read live on payout via getWinClaimFactor, this is just the
+// display estimate). Megapot's pool grows daily, so these dollar figures drift out of date —
+// re-pull from the docs page periodically rather than assuming they still match.
 const PRIZE_TIERS = [
-  { normal: 5, bonusMatch: true, prize: "$226,165.11" },
-  { normal: 5, bonusMatch: false, prize: "$3,085.05" },
-  { normal: 4, bonusMatch: true, prize: "$272.39" },
-  { normal: 4, bonusMatch: false, prize: "$25.67" },
-  { normal: 3, bonusMatch: true, prize: "$12.30" },
-  { normal: 2, bonusMatch: true, prize: "$3.94" },
-  { normal: 3, bonusMatch: false, prize: "$3.05" },
-  { normal: 1, bonusMatch: true, prize: "$2.07" },
+  { normal: 5, bonusMatch: true, prize: "$183,918.03" },
+  { normal: 5, bonusMatch: false, prize: "$1,858.64" },
+  { normal: 4, bonusMatch: true, prize: "$179.24" },
+  { normal: 4, bonusMatch: false, prize: "$20.71" },
+  { normal: 3, bonusMatch: true, prize: "$8.33" },
+  { normal: 2, bonusMatch: true, prize: "$4.77" },
+  { normal: 3, bonusMatch: false, prize: "$4.19" },
+  { normal: 1, bonusMatch: true, prize: "$2.66" },
   { normal: 2, bonusMatch: false, prize: "Free ticket" },
   { normal: 0, bonusMatch: true, prize: "Free ticket" },
 ] as const;
@@ -54,6 +71,10 @@ interface TicketSummary {
   ticketNumbers: TicketNumbers[] | null;
   winningNumbers: TicketNumbers | null;
   deletedAt?: string | null;
+  /** True when this ticket came from claiming a gift, not a self-purchase — excluded from spend. */
+  isGift?: boolean;
+  /** Backend-authoritative: a won ticket below the withdrawal floor, shown as "Free ticket". */
+  isFreeTicket?: boolean;
 }
 interface WithdrawalSummary {
   id: string; ticketId: string; route: "base" | "solana_private";
@@ -63,6 +84,8 @@ interface Dashboard {
   activeTickets: TicketSummary[]; history: TicketSummary[]; withdrawals: WithdrawalSummary[];
   stats: { totalSpent: number; totalWon: number; netPnl: number; ticketCount: number };
   nextDraw: { roundId: string | null; drawTime: string | null; prizePool: string | null };
+  /** Withdrawal floor (USDC) from the backend — below it a win is a "free ticket". */
+  withdrawMinUsdc?: number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -85,7 +108,7 @@ function statusLabel(s: TicketStatus, bridgeStatus?: string | null, drawTime?: s
     if (drawPassed) return "Checking results…";
   }
   const m: Record<TicketStatus, string> = {
-    pending_send: "Awaiting deposit", sent: "Sent privately", bridging: "Bridging to Base",
+    pending_send: "Awaiting deposit", sent: "Sent privately", bridging: "Receiving",
     buying: "Buying tickets", active: "In draw", won: "Won!", lost: "No win", failed: "Failed",
     withdrawn: "Paid out",
   };
@@ -111,6 +134,30 @@ function fmt(n: number): string {
  * gasless relay fee. */
 function mbFee(base: number) {
   return (MAGICBLOCK_BPS / 10_000) * base + MAGICBLOCK_GASLESS_RELAY_FEE_USD;
+}
+
+// ─── SignInGate ───────────────────────────────────────────────────────────────
+// Redeem/History have nothing meaningful to show for a logged-out visitor (no tickets, no
+// winnings), so they're fully gated behind sign-in. Buy is the deliberate exception — its form
+// stays visible and only the buy button itself switches to "Sign in to continue" (matching
+// SendFlowInApp's convention), since browsing ticket counts/prices shouldn't require login.
+
+function SignInGate({ message, login }: { message: string; login: () => void }) {
+  return (
+    <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-8 flex flex-col items-center gap-4 text-center">
+      <div className="w-14 h-14 rounded-2xl bg-[#FF7A2A]/15 flex items-center justify-center">
+        <LogIn className="w-7 h-7 text-[#FF7A2A]" />
+      </div>
+      <p className="text-slate-300 text-base">{message}</p>
+      <button
+        onClick={() => login()}
+        className="h-12 px-8 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
+      >
+        <LogIn className="w-5 h-5" />
+        Sign in to continue
+      </button>
+    </div>
+  );
 }
 
 // ─── IconBubble ───────────────────────────────────────────────────────────────
@@ -179,7 +226,7 @@ function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPoo
 
         <div className="overflow-y-auto flex-1 px-5 pb-2">
           <h2 className="text-3xl font-black text-white text-center tracking-tight mb-2">PRIZES</h2>
-          <p className="text-sm text-slate-400 text-center mb-5 leading-relaxed">
+          <p className="text-base text-slate-400 text-center mb-5 leading-relaxed">
             All prize tiers are automatically paid out from the{" "}
             <span className="font-semibold text-white">{poolDisplay}</span>{" "}
             total prize pool everyday.
@@ -195,7 +242,7 @@ function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPoo
                 <div key={i} className="flex items-center justify-between px-4 py-3 bg-white/[0.015]">
                   <div>
                     <TierBalls normal={tier.normal} bonusMatch={tier.bonusMatch} />
-                    <p className="text-sm text-slate-500 mt-1">{desc}</p>
+                    <p className="text-base text-slate-500 mt-1">{desc}</p>
                   </div>
                   <span className={["text-base font-semibold tabular-nums shrink-0 ml-4",
                     tier.prize === "Free ticket" ? "text-[#FF7A2A]" : "text-white"].join(" ")}>
@@ -215,7 +262,7 @@ function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPoo
                 <span className="text-[#FF7A2A] font-bold text-lg">→</span>
                 <span className="w-9 h-9 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-white font-bold text-base">30</span>
               </div>
-              <p className="text-sm text-slate-400">30 normal balls</p>
+              <p className="text-base text-slate-400">30 normal balls</p>
             </div>
             {/* Bonus balls */}
             <div className="rounded-xl bg-white/[0.04] border border-white/10 px-4 py-4 flex flex-col items-center gap-3">
@@ -224,7 +271,7 @@ function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPoo
                 <span className="text-[#FF7A2A] font-bold text-lg">→</span>
                 <span className="w-9 h-9 rounded-full bg-[#1e1e26] border border-white/30 flex items-center justify-center text-white font-bold text-base">12</span>
               </div>
-              <p className="text-sm text-slate-400">12 bonus balls</p>
+              <p className="text-base text-slate-400">12 bonus balls</p>
             </div>
           </div>
         </div>
@@ -258,7 +305,7 @@ function MegapotTabs({ activeTab, wonCount }: { activeTab: Tab; wonCount: number
   const sliderPos = activeTab === "redeem" ? "translate-x-full" : "translate-x-0";
   const isHistory = activeTab === "history";
   return (
-    <div className="flex items-center justify-between mb-6">
+    <div className="hidden md:flex items-center justify-between mb-6">
       <div className="relative grid grid-cols-2 rounded-2xl p-1 bg-white/[0.05] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] border border-white/[0.06] overflow-hidden">
         <div aria-hidden="true" className={["absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-xl transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] bg-gradient-to-b from-white/[0.08] to-white/[0.03] shadow-[0_8px_24px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.08)] border border-white/[0.08]", isHistory ? "opacity-0" : sliderPos].join(" ")} />
         <div aria-hidden="true" className={["pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-xl transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] opacity-40 bg-[radial-gradient(80%_140%_at_50%_0%,rgba(255,122,42,0.35),transparent_60%)]", isHistory ? "opacity-0" : sliderPos].join(" ")} />
@@ -515,7 +562,7 @@ const STEALTH_PHRASES = [
   "shh, it's between us 🤐",
   "ninjas are moving your money to megapot 🥷",
   "printing tickets in the basement... 🎟️",
-  "taking the scenic route so no one follows 🕵️",
+  "cutting through back alleys so nobody can trace it 🕵️",
 ];
 
 const PURCHASE_STEP_LABEL: Partial<Record<BuyStep, string>> = {
@@ -524,6 +571,235 @@ const PURCHASE_STEP_LABEL: Partial<Record<BuyStep, string>> = {
   bridging: "Bridging to Base",
   buying: "Buying your tickets",
 };
+
+// ─── Hang-tight tap game ────────────────────────────────────────────────────────
+// A purely cosmetic diversion for the ~minute a purchase is in flight — taps have zero effect
+// on the purchase itself. Charge + unlocked auras persist in localStorage across every future
+// wait, so it slowly becomes a little collection game instead of just a spinner.
+
+interface TapAura { id: string; name: string; price: number; colors: [string, string, string]; glow: string; }
+
+const TAP_AURAS: TapAura[] = [
+  { id: "ember", name: "Classic Ember", price: 0, colors: ["#FF4A26", "#FF7A2A", "#E1A041"], glow: "rgba(255,122,42,0.55)" },
+  { id: "mint", name: "Neon Mint", price: 50, colors: ["#10b981", "#2dd4bf", "#5eead4"], glow: "rgba(45,212,191,0.55)" },
+  { id: "violet", name: "Cosmic Violet", price: 150, colors: ["#7c3aed", "#a78bfa", "#e9d5ff"], glow: "rgba(167,139,250,0.55)" },
+  { id: "gold", name: "Solar Gold", price: 400, colors: ["#f59e0b", "#fbbf24", "#fef08a"], glow: "rgba(251,191,36,0.55)" },
+  { id: "aurora", name: "Aurora", price: 1000, colors: ["#34d399", "#22d3ee", "#c084fc"], glow: "rgba(34,211,238,0.55)" },
+];
+
+const TAP_STORAGE_KEYS = { charge: "loofta_tap_charge", best: "loofta_tap_best", owned: "loofta_tap_owned", active: "loofta_tap_active" } as const;
+
+function loadTapState(): { charge: number; best: number; owned: string[]; active: string } {
+  if (typeof window === "undefined") return { charge: 0, best: 0, owned: ["ember"], active: "ember" };
+  try {
+    const charge = Number(localStorage.getItem(TAP_STORAGE_KEYS.charge)) || 0;
+    const best = Math.max(Number(localStorage.getItem(TAP_STORAGE_KEYS.best)) || 0, charge);
+    const parsedOwned: unknown = JSON.parse(localStorage.getItem(TAP_STORAGE_KEYS.owned) ?? '["ember"]');
+    const owned = Array.isArray(parsedOwned) ? parsedOwned as string[] : ["ember"];
+    const active = localStorage.getItem(TAP_STORAGE_KEYS.active) ?? "ember";
+    return { charge, best, owned: owned.includes("ember") ? owned : ["ember", ...owned], active };
+  } catch {
+    return { charge: 0, best: 0, owned: ["ember"], active: "ember" };
+  }
+}
+
+interface TapParticle { id: number; x: number; y: number; value: number; crit: boolean; }
+
+function TapGame() {
+  const [ready, setReady] = useState(false);
+  const [charge, setCharge] = useState(0);
+  const [best, setBest] = useState(0);
+  const [owned, setOwned] = useState<string[]>(["ember"]);
+  const [activeId, setActiveId] = useState("ember");
+  const [storeOpen, setStoreOpen] = useState(false);
+  const [particles, setParticles] = useState<TapParticle[]>([]);
+  const [combo, setCombo] = useState(0);
+  const lastTapRef = useRef(0);
+  const particleIdRef = useRef(0);
+  const comboTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reduceMotion = useReducedMotion();
+
+  useEffect(() => {
+    const s = loadTapState();
+    setCharge(s.charge); setBest(s.best); setOwned(s.owned); setActiveId(s.active);
+    setReady(true);
+  }, []);
+  useEffect(() => { if (ready) localStorage.setItem(TAP_STORAGE_KEYS.charge, String(Math.floor(charge))); }, [charge, ready]);
+  // Best only ever goes up — buying an aura spends down `charge`, but shouldn't erase the record.
+  useEffect(() => { if (ready && charge > best) setBest(charge); }, [charge, best, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(TAP_STORAGE_KEYS.best, String(Math.floor(best))); }, [best, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(TAP_STORAGE_KEYS.owned, JSON.stringify(owned)); }, [owned, ready]);
+  useEffect(() => { if (ready) localStorage.setItem(TAP_STORAGE_KEYS.active, activeId); }, [activeId, ready]);
+  useEffect(() => () => { if (comboTimeoutRef.current) clearTimeout(comboTimeoutRef.current); }, []);
+
+  const active = TAP_AURAS.find(a => a.id === activeId) ?? TAP_AURAS[0];
+  const comboMultiplier = 1 + Math.floor(combo / 8);
+
+  function handleTap() {
+    const now = Date.now();
+    const withinCombo = now - lastTapRef.current < 550;
+    lastTapRef.current = now;
+    const nextCombo = withinCombo ? Math.min(combo + 1, 50) : 1;
+    setCombo(nextCombo);
+    if (comboTimeoutRef.current) clearTimeout(comboTimeoutRef.current);
+    comboTimeoutRef.current = setTimeout(() => setCombo(0), 700);
+
+    const multiplier = 1 + Math.floor(nextCombo / 8);
+    const roll = Math.random();
+    const crit = roll < 0.06;
+    const gain = (crit ? 5 : roll < 0.22 ? 2 : 1) * multiplier;
+    setCharge(c => c + gain);
+
+    const id = particleIdRef.current++;
+    const x = 28 + Math.random() * 44;
+    const y = 8 + Math.random() * 24;
+    setParticles(ps => [...ps, { id, x, y, value: gain, crit }]);
+    setTimeout(() => setParticles(ps => ps.filter(p => p.id !== id)), 900);
+  }
+
+  function buyAura(a: TapAura) {
+    if (owned.includes(a.id) || charge < a.price) return;
+    setCharge(c => c - a.price);
+    setOwned(o => [...o, a.id]);
+    setActiveId(a.id);
+  }
+
+  if (!ready) return <div className="h-[13.5rem]" aria-hidden="true" />;
+
+  return (
+    <div className="w-full flex flex-col items-center gap-2 relative pt-3">
+      {/* Charge balance + store, top-right */}
+      <div className="absolute -top-1 right-0 flex items-center gap-2">
+        <span className="text-xs font-bold tabular-nums text-white/70 bg-white/[0.06] border border-white/10 rounded-full px-2.5 py-1">
+          ⚡ {charge.toLocaleString()}
+        </span>
+        <span className="flex items-center gap-1 text-xs font-bold tabular-nums text-white/50 border border-white/10 rounded-full px-2.5 py-1">
+          <span className="font-semibold tracking-wide text-white/35">BEST</span>
+          {Math.max(best, charge).toLocaleString()}
+        </span>
+        <button
+          onClick={() => setStoreOpen(true)}
+          aria-label="Open aura store"
+          className="w-8 h-8 rounded-full bg-white/[0.06] border border-white/10 flex items-center justify-center text-white/80 hover:bg-white/[0.12] hover:text-white transition-colors"
+        >
+          <Store className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Tap target */}
+      <div className="relative mt-3">
+        <motion.div
+          aria-hidden="true"
+          className="absolute -inset-3 rounded-full blur-xl"
+          style={{ background: `radial-gradient(circle, ${active.glow}, transparent 65%)` }}
+          animate={reduceMotion ? {} : { scale: [1, 1.12, 1], opacity: [0.6, 0.9, 0.6] }}
+          transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+        />
+        <motion.button
+          onClick={handleTap}
+          whileTap={reduceMotion ? undefined : { scale: 0.86, rotate: -6 }}
+          whileHover={reduceMotion ? undefined : { scale: 1.04 }}
+          aria-label="Tap to charge up"
+          className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-full flex items-center justify-center select-none"
+          style={{
+            background: `linear-gradient(135deg, ${active.colors[0]}, ${active.colors[1]} 55%, ${active.colors[2]})`,
+            boxShadow: `0 10px 30px ${active.glow}`,
+          }}
+        >
+          <img src="/images/logo/magicblock-mark.svg" alt="" draggable={false} className="w-10 h-10 sm:w-12 sm:h-12 pointer-events-none" />
+          <AnimatePresence>
+            {particles.map(p => (
+              <motion.span
+                key={p.id}
+                initial={{ opacity: 0, y: 0, scale: 0.6 }}
+                animate={{ opacity: [0, 1, 0], y: -46, scale: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.85, ease: "easeOut" }}
+                className={["absolute text-sm font-bold pointer-events-none whitespace-nowrap", p.crit ? "text-amber-300" : "text-white"].join(" ")}
+                style={{ left: `${p.x}%`, top: `${p.y}%` }}
+              >
+                {p.crit ? `CRIT +${p.value}!` : `+${p.value}`}
+              </motion.span>
+            ))}
+          </AnimatePresence>
+        </motion.button>
+
+        <AnimatePresence>
+          {comboMultiplier > 1 && (
+            <motion.p
+              key="combo"
+              initial={{ opacity: 0, y: 6, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-xs font-bold uppercase tracking-wider text-amber-300 whitespace-nowrap"
+            >
+              x{comboMultiplier} combo!
+            </motion.p>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <p className="text-xs text-slate-500 mt-3">tap to charge up ⚡</p>
+
+      {/* Aura store */}
+      <AnimatePresence>
+        {storeOpen && (
+          <motion.div
+            className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/70 p-0 sm:p-4"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setStoreOpen(false)}
+            role="dialog" aria-modal="true" aria-label="Aura store"
+          >
+            <motion.div
+              initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }}
+              className="w-full max-w-sm bg-[#0f0f16] rounded-t-3xl sm:rounded-2xl border border-white/10 shadow-2xl overflow-hidden max-h-[80svh] flex flex-col"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 pt-4 pb-2 shrink-0">
+                <div>
+                  <h3 className="text-white font-bold text-lg">Aura store</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Spend Charge on a new look — yours to keep</p>
+                </div>
+                <button onClick={() => setStoreOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="px-5 pb-5 pt-1 space-y-2 overflow-y-auto">
+                {TAP_AURAS.map(a => {
+                  const isOwned = owned.includes(a.id);
+                  const isActive = activeId === a.id;
+                  const canAfford = charge >= a.price;
+                  return (
+                    <button
+                      key={a.id}
+                      onClick={() => isOwned ? setActiveId(a.id) : buyAura(a)}
+                      disabled={!isOwned && !canAfford}
+                      className={[
+                        "w-full flex items-center gap-3 px-3.5 py-3 rounded-xl border transition-all text-left",
+                        isActive ? "border-white/30 bg-white/[0.08]" : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]",
+                        !isOwned && !canAfford ? "opacity-40 cursor-not-allowed" : "",
+                      ].join(" ")}
+                    >
+                      <span className="w-10 h-10 rounded-full shrink-0" style={{ background: `linear-gradient(135deg, ${a.colors[0]}, ${a.colors[1]}, ${a.colors[2]})` }} />
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-white text-sm font-semibold truncate">{a.name}</span>
+                        <span className="block text-xs text-slate-500 mt-0.5">
+                          {isActive ? "Equipped" : isOwned ? "Owned — tap to equip" : a.price === 0 ? "Free" : `⚡ ${a.price}`}
+                        </span>
+                      </span>
+                      {isActive && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
+                      {!isOwned && !canAfford && <Lock className="w-4 h-4 text-slate-600 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 /**
  * Full-screen, uncloseable overlay shown while a purchase is in flight. No backdrop
@@ -540,7 +816,7 @@ function PurchaseProgressModal({ step, error, devReset }: { step: BuyStep; error
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 backdrop-blur-md p-4" role="dialog" aria-modal="true" aria-label="Purchasing tickets">
-      <div className="w-full max-w-md bg-[#0f0f16] rounded-3xl border border-white/10 shadow-2xl px-5 sm:px-6 py-8 sm:py-10 flex flex-col items-center text-center gap-5 sm:gap-6">
+      <div className="w-full max-w-md bg-[#0f0f16] rounded-3xl border border-white/10 shadow-2xl px-5 sm:px-6 py-8 sm:py-10 flex flex-col items-center text-center gap-4 sm:gap-5 max-h-[92svh] overflow-y-auto">
         <motion.div
           className="text-6xl sm:text-7xl select-none"
           aria-hidden="true"
@@ -575,12 +851,14 @@ function PurchaseProgressModal({ step, error, devReset }: { step: BuyStep; error
           </AnimatePresence>
         </div>
 
+        <TapGame />
+
         {error && <p className="text-base font-semibold text-red-400">{error}</p>}
 
-        <p className="text-sm font-medium text-slate-400">🔒 Don&apos;t close this window — usually under 3 minutes.</p>
+        <p className="text-sm font-medium text-slate-400">🔒 Don&apos;t close this window — usually takes a minute.</p>
 
         {devReset && (
-          <button onClick={devReset} className="text-xs text-slate-500 hover:text-slate-300 border border-white/10 rounded-lg px-2 py-1 transition-colors">
+          <button onClick={devReset} className="text-sm text-slate-500 hover:text-slate-300 border border-white/10 rounded-lg px-2 py-1 transition-colors">
             New payment (dev)
           </button>
         )}
@@ -671,7 +949,7 @@ function DrawSuccessModal({ tickets, drawTime, prizePool, onBuyMore, onClose }: 
           {/* Countdown */}
           {drawTime && totalSecs > 0 && (
             <div className="space-y-2">
-              <p className="text-xs text-slate-400 uppercase tracking-wider text-center font-semibold">Draw in</p>
+              <p className="text-sm text-slate-400 uppercase tracking-wider text-center font-semibold">Draw in</p>
               <div className="flex justify-center items-start gap-2">
                 {[{ v: hours, label: "HRS" }, { v: minutes, label: "MIN" }, { v: seconds, label: "SEC" }].map(({ v, label }, i) => (
                   <div key={label} className="flex items-start gap-2">
@@ -692,7 +970,7 @@ function DrawSuccessModal({ tickets, drawTime, prizePool, onBuyMore, onClose }: 
           {/* Ticket picks */}
           {showPicks && (
             <div className="space-y-2">
-              <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-2">Your tickets</p>
+              <p className="text-sm text-slate-400 uppercase tracking-wider font-semibold mb-2">Your tickets</p>
               {(showAllTickets ? tickets : tickets.slice(0, 5)).map((t, i) => (
                 <motion.div
                   key={i}
@@ -727,14 +1005,74 @@ function DrawSuccessModal({ tickets, drawTime, prizePool, onBuyMore, onClose }: 
   );
 }
 
+function GiftSentCard({ claimUrl, numTickets, recipientType, onDone }: {
+  claimUrl: string;
+  numTickets: number;
+  recipientType: "email" | "handle";
+  onDone: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const ticketWord = numTickets === 1 ? "ticket" : "tickets";
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-0 sm:p-4" onClick={onDone}>
+      <div
+        className="w-full max-w-md bg-[#0f0f16] rounded-t-3xl sm:rounded-3xl border border-white/10 shadow-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Gift sent"
+      >
+        <div className="flex items-center justify-end px-5 pt-4 pb-0">
+          <button onClick={onDone} aria-label="Close" className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="px-6 pb-6 space-y-5">
+          <div className="flex flex-col items-center text-center gap-2 pt-1">
+            <div className="w-14 h-14 rounded-2xl bg-[#FF7A2A]/15 flex items-center justify-center">
+              <Gift className="w-7 h-7 text-[#FF7A2A]" />
+            </div>
+            <p className="text-2xl font-semibold text-white">Gifted!</p>
+            <p className="text-base text-slate-400">
+              {numTickets} Megapot {ticketWord} paid for — {recipientType === "email" ? "they'll get an email with" : "share"} the claim link{recipientType === "email" ? "." : " below."}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
+            <a href={claimUrl} target="_blank" rel="noopener noreferrer"
+              className="flex-1 min-w-0 truncate text-base text-slate-300 hover:text-white hover:underline underline-offset-2 transition-colors">
+              {claimUrl}
+            </a>
+            <button
+              onClick={() => { navigator.clipboard.writeText(claimUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+              className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+              aria-label="Copy claim link"
+            >
+              {copied ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+            </button>
+          </div>
+
+          <button onClick={onDone}
+            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all">
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Fee breakdown ────────────────────────────────────────────────────────────
 
-function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeReceiveUsdc }: {
+function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeReceiveUsdc, bridgeFeeUnavailable, onRetryFee }: {
   ticketCostUsd: number;
   mode: "buy" | "buy-public" | "base" | "solana_private";
   solPriceUsd: number;
   bridgeFeeUsd?: number | null;      // actual Li.Fi fee; null = loading
   bridgeReceiveUsdc?: number | null; // Li.Fi toAmountMin; null = loading
+  bridgeFeeUnavailable?: boolean;    // couldn't get a real quote after retries — no guessed number is shown
+  onRetryFee?: () => void;
 }) {
   if (mode === "base") return (
     <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
@@ -752,7 +1090,8 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
   if (mode === "solana_private") {
     // Backend /bridge-fee now returns the TRUE net (one consolidated bridge + MagicBlock relay +
     // volume fee), so use it directly — don't re-subtract MagicBlock here or it double-counts.
-    const totalFees = bridgeFeeUsd ?? BRIDGE_FEE_USD_EST;
+    // No estimated/guessed fallback: if a real quote can't be obtained, say so plainly rather
+    // than showing a number that might not match what the bridge actually charges.
     const youReceive = bridgeReceiveUsdc != null ? Math.max(0, bridgeReceiveUsdc) : null;
     return (
       <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
@@ -762,17 +1101,35 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
             <p className="text-sm text-slate-500 mt-0.5">Private transfer &amp; bridging — all included</p>
           </div>
           <span className="text-base text-slate-400 tabular-nums shrink-0">
-            {bridgeFeeUsd === null ? <span className="opacity-40">estimating…</span> : `~${fmt(totalFees)}`}
+            {bridgeFeeUnavailable
+              ? <span className="text-amber-400">unavailable</span>
+              : bridgeFeeUsd == null ? <span className="opacity-40">estimating…</span> : `~${fmt(bridgeFeeUsd)}`}
           </span>
         </div>
         <div className="flex justify-between px-4 py-3.5">
           <span className="text-base font-semibold text-white">You receive</span>
           <span className="text-base font-semibold text-white tabular-nums">
-            {youReceive === null
-              ? <span className="opacity-40 font-normal text-slate-400">estimating…</span>
-              : fmt(youReceive)}
+            {bridgeFeeUnavailable
+              ? <span className="text-sm font-normal text-amber-400">couldn&apos;t get a real quote</span>
+              : youReceive === null
+                ? <span className="opacity-40 font-normal text-slate-400">estimating…</span>
+                : `~${fmt(youReceive)}`}
           </span>
         </div>
+        {!bridgeFeeUnavailable && youReceive !== null && (
+          <div className="px-4 py-2.5">
+            <p className="text-sm text-slate-500">
+              Estimate based on your recorded win — the exact amount is confirmed once your winnings are claimed on-chain, and may come in slightly lower.
+            </p>
+          </div>
+        )}
+        {bridgeFeeUnavailable && onRetryFee && (
+          <div className="px-4 py-3">
+            <button type="button" onClick={onRetryFee} className="text-sm text-amber-400 underline underline-offset-2 hover:text-amber-300">
+              Try again
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -799,14 +1156,14 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
   }
 
   // MagicBlock exactOut sends exactly ticketCostUsd (no rounding — it's already a whole-dollar
-  // amount for any ticket count) and grosses its own fee up from that same amount. Li.Fi's
-  // bridging cost is funded from the pooled fee reserve, not charged to the user directly — see
-  // backend computePurchaseAmounts / tryStartBridge.
-  const buyFees = mbFee(ticketCostUsd) + looftaFee(ticketCostUsd);
+  // amount for any ticket count) and grosses its own fee up from that same amount. Loofta no
+  // longer adds a service fee, and the Li.Fi bridging cost is absorbed from Loofta's fee reserve
+  // (not charged to the user) — so the only fee shown is MagicBlock's own transfer fee.
+  const buyFees = mbFee(ticketCostUsd);
   const total = ticketCostUsd + buyFees;
-  // Fees are mostly flat, so per-ticket cost falls fast with count — nudge small buys up
+  // The MagicBlock fee is mostly flat ($0.20 relay), so per-ticket cost falls fast with count.
   const feesPerTicket = buyFees / ticketCostUsd;
-  const feesPerTicketAt5 = (mbFee(5) + looftaFee(5)) / 5;
+  const feesPerTicketAt5 = mbFee(5) / 5;
   return (
     <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
       <div className="flex justify-between px-4 py-3.5">
@@ -815,8 +1172,8 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
       </div>
       <div className="flex justify-between items-start px-4 py-3.5 gap-4">
         <div className="min-w-0">
-          <p className="text-base text-slate-400">Privacy &amp; processing</p>
-          <p className="text-sm text-slate-500 mt-0.5">Private transfer, bridging &amp; service — all included</p>
+          <p className="text-base text-slate-400">Private transfer</p>
+          <p className="text-sm text-slate-500 mt-0.5">MagicBlock transfer fee — bridging &amp; service on us</p>
         </div>
         <span className="text-base text-slate-400 tabular-nums shrink-0">~{fmt(buyFees)}</span>
       </div>
@@ -861,6 +1218,17 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   const [lastTickets, setLastTickets] = useState<TicketNumbers[]>([]);
   const [lastNumTickets, setLastNumTickets] = useState(0);
 
+  // Gift mode: buy tickets for someone else instead of yourself. Same signed private transfer,
+  // just addressed to a recipient's email, X handle, or Loofta username — see handleGiftBuy.
+  const [giftMode, setGiftMode] = useState(false);
+  const [giftIdentifier, setGiftIdentifier] = useState("");
+  const giftLooksLikeEmail = giftIdentifier.includes("@") && giftIdentifier.includes(".");
+  const [giftNote, setGiftNote] = useState("");
+  const [giftGifUrl, setGiftGifUrl] = useState<string | null>(null);
+  const [giftStep, setGiftStep] = useState<"idle" | "signing" | "done" | "error">("idle");
+  const [giftError, setGiftError] = useState("");
+  const [giftClaimUrl, setGiftClaimUrl] = useState<string | null>(null);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingStartedRef = useRef(false);
   const suppressedTicketIdRef = useRef<string | null>(null);
@@ -903,7 +1271,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   const { wallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
 
-  const { user, getAccessToken } = usePrivy();
+  const { user, getAccessToken, authenticated, login } = usePrivy();
 
   const embeddedSolAddress = ((user?.linkedAccounts ?? [])
     .find((a: any) => a.type === "wallet" && a.chainType === "solana" &&
@@ -997,23 +1365,10 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
         body: JSON.stringify({ numTickets, userSolanaAddress: embeddedWallet?.address }),
       });
       if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
-      const { ticketId, feeTxBase64, txBase64 } = await initRes.json();
+      const { ticketId, txBase64 } = await initRes.json();
 
-      // 1. Sign + send the upfront fee payment first — a plain transfer, separate from the
-      // MagicBlock private transfer (can't be combined into the same transaction).
-      const feeTxBytes = Buffer.from(feeTxBase64, "base64");
-      const { signature: feeSigBytes } = await signAndSendTransaction({
-        transaction: feeTxBytes as unknown as Uint8Array,
-        wallet: embeddedWallet as any,
-      });
-      const feeSignature = bs58.encode(feeSigBytes as Uint8Array);
-      await fetch("/api/lottery/buy-fee-confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ ticketId, feeTxHash: feeSignature }),
-      });
-
-      // 2. Sign + send the MagicBlock private transfer.
+      // Sign + send the MagicBlock private transfer — the only tx the buyer signs now. Loofta no
+      // longer collects a separate upfront fee.
       const txBytes = Buffer.from(txBase64, "base64");
       const { signature: sigBytes } = await signAndSendTransaction({
         transaction: txBytes as unknown as Uint8Array,
@@ -1033,6 +1388,70 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     } catch (err: any) {
       setStep("error");
       setStepError(err.message ?? "Unknown error");
+    }
+  }
+
+  async function handleGiftBuy() {
+    if (!embeddedWallet?.address) {
+      setGiftError("Wallet not ready — please wait a moment and try again.");
+      setGiftStep("error");
+      return;
+    }
+    const recipientIdentifier = giftIdentifier.trim().replace(/^@+/, "");
+    if (!recipientIdentifier) {
+      setGiftError("Enter a recipient email, X handle, or Loofta username.");
+      setGiftStep("error");
+      return;
+    }
+    const recipientType = giftLooksLikeEmail ? "email" : "handle";
+    setGiftStep("signing");
+    setGiftError("");
+    try {
+      const token = await getAccessToken();
+      const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const initRes = await fetch("/api/lottery/buy-gift", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({
+          numTickets,
+          userSolanaAddress: embeddedWallet?.address,
+          recipientType,
+          recipientIdentifier,
+          note: [giftNote.trim(), giftGifUrl].filter(Boolean).join(" ").trim() || undefined,
+        }),
+      });
+      if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
+      const { giftId, txBase64 } = await initRes.json();
+
+      // One signature: the MagicBlock private transfer that funds the holding burner (Loofta no
+      // longer collects a separate fee). Nothing is bought yet — the actual Megapot purchase
+      // happens when the recipient claims (see /app/gift/[token]), not here.
+      const txBytes = Buffer.from(txBase64, "base64");
+      const { signature: sigBytes } = await signAndSendTransaction({
+        transaction: txBytes as unknown as Uint8Array,
+        wallet: embeddedWallet as any,
+      });
+      const signature = bs58.encode(sigBytes as Uint8Array);
+      const confirmRes = await fetch("/api/lottery/buy-gift-confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ giftId, senderTxHash: signature }),
+      });
+      if (!confirmRes.ok) throw new Error((await confirmRes.json()).message ?? "Failed to confirm");
+      const { claimUrl } = await confirmRes.json();
+      setGiftClaimUrl(claimUrl);
+      setGiftStep("done");
+      // Pre-warm the OG image now, the moment the link becomes shareable — cold next/og
+      // rendering measured 1.7-3s in production, which risks X's crawler timeout specifically
+      // (same fix already applied to ShareLinkMenu's own pre-warm for payment links).
+      try {
+        const parsed = new URL(claimUrl);
+        const shareId = parsed.pathname.split("/").filter(Boolean).pop();
+        if (shareId) fetch(`${parsed.origin}/api/gift/${shareId}/og`).catch(() => { });
+      } catch { /* claimUrl wasn't a valid absolute URL — nothing to pre-warm */ }
+    } catch (err: any) {
+      setGiftStep("error");
+      setGiftError(err.message ?? "Unknown error");
     }
   }
 
@@ -1081,17 +1500,69 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           onClose={resetBuy}
         />
       )}
-      {!isRunning && step !== "done" && (
+      {giftStep === "done" && giftClaimUrl && (
+        <GiftSentCard
+          claimUrl={giftClaimUrl}
+          numTickets={numTickets}
+          recipientType={giftLooksLikeEmail ? "email" : "handle"}
+          onDone={() => {
+            setGiftStep("idle");
+            setGiftClaimUrl(null);
+            setGiftIdentifier("");
+            setGiftNote("");
+            setGiftGifUrl(null);
+          }}
+        />
+      )}
+      {!isRunning && step !== "done" && giftStep !== "done" && (
         <>
-          <div className="flex items-center justify-between">
-            <p className="text-slate-300 text-xl font-medium font-sans">Buy tickets privately</p>
-            <a href={MEGAPOT_REFERRAL} target="_blank" rel="noopener noreferrer"
-              className="text-sm text-slate-500 hover:text-slate-300 transition-colors underline underline-offset-2">
-              megapot.io ↗
-            </a>
-          </div>
+          <p className="text-slate-300 text-xl font-medium font-sans">Buy tickets privately</p>
 
           <p className="text-sm text-slate-400">🔒 Shielded via MagicBlock. Min {PRIVATE_MIN} tickets. Uses your Loofta balance.</p>
+
+          {/* Gift toggle */}
+          <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] overflow-hidden">
+            <button type="button" onClick={() => setGiftMode(g => !g)}
+              className="w-full flex items-center justify-between px-4 py-3.5 text-left hover:bg-white/[0.03] transition-colors">
+              <span className="flex items-center gap-2 text-base font-medium text-slate-200">
+                <Gift className="w-4 h-4 text-slate-400" /> Gift to someone
+              </span>
+              <div className={["w-10 h-6 rounded-full transition-colors relative shrink-0",
+                giftMode ? "bg-[#FF7A2A]" : "bg-white/10"].join(" ")}>
+                <div className={["absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform",
+                  giftMode ? "translate-x-4" : "translate-x-0.5"].join(" ")} />
+              </div>
+            </button>
+            {giftMode && (
+              <div className="px-4 pb-4 border-t border-white/[0.06] space-y-3 pt-4">
+                <div>
+                  <Label className="text-slate-400 text-base">Recipient</Label>
+                  <div className="relative mt-1.5">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                      {giftLooksLikeEmail ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
+                    </span>
+                    <input value={giftIdentifier} onChange={e => setGiftIdentifier(e.target.value.replace(/^@+/, ""))}
+                      placeholder="Email, X handle, or Loofta username"
+                      className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base" />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-slate-400 text-base">Message (optional)</Label>
+                  <MessageInput
+                    value={giftNote}
+                    onChange={setGiftNote}
+                    gifUrl={giftGifUrl}
+                    onGifChange={setGiftGifUrl}
+                    placeholder="Add a message…"
+                    maxLength={300}
+                    defaultGifQuery="lottery"
+                    className="mt-1.5 [&_input]:h-11 [&_input]:bg-white/[0.03] [&_input]:border-white/10 [&_input]:text-slate-100 [&_input]:placeholder:text-slate-600"
+                  />
+                </div>
+                <p className="text-sm text-slate-500">They'll get a claim link — the ticket enters the draw as soon as they claim it.</p>
+              </div>
+            )}
+          </div>
 
           {/* Ticket count selector */}
           <div>
@@ -1123,8 +1594,13 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
             </div>
           </div>
 
-          {/* Choose numbers — collapsible for ≤10 tickets, random notice for 11+ */}
-          {numTickets <= 10 ? (
+          {/* Choose numbers — collapsible for ≤10 tickets, random notice for 11+ (skipped when gifting, since the recipient's numbers are always assigned randomly at claim time) */}
+          {giftMode ? (
+            <div className="flex items-center gap-3 px-4 py-3.5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+              <Shuffle className="w-4 h-4 text-slate-400 shrink-0" />
+              <p className="text-base text-slate-300">Numbers are picked randomly when they claim their ticket</p>
+            </div>
+          ) : numTickets <= 10 ? (
             <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] overflow-hidden">
               <button type="button" onClick={() => setChooseOpen(o => !o)}
                 className="w-full flex items-center justify-between px-4 py-3.5 text-left hover:bg-white/[0.03] transition-colors">
@@ -1154,6 +1630,9 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           {step === "error" && stepError && (
             <p className="text-base text-red-400">{stepError}</p>
           )}
+          {giftMode && giftStep === "error" && giftError && (
+            <p className="text-base text-red-400">{giftError}</p>
+          )}
 
           {drawCutoff && (
             <p className="text-sm text-amber-400 text-center">
@@ -1161,11 +1640,34 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
             </p>
           )}
 
-          <button onClick={() => handlePrivateBuy()}
-            disabled={drawCutoff}
-            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100">
-            {drawCutoff ? "Sales paused" : `Buy privately · ${fmt(numTickets + mbFee(numTickets) + looftaFee(numTickets))}`}
-          </button>
+          {giftMode ? (
+            <button onClick={!authenticated ? () => login() : () => handleGiftBuy()}
+              disabled={authenticated && (drawCutoff || giftStep === "signing" || !giftIdentifier.trim())}
+              className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 flex items-center justify-center gap-2">
+              {!authenticated ? (
+                <>
+                  <LogIn className="w-5 h-5" />
+                  Sign in to continue
+                </>
+              ) : giftStep === "signing" ? "Signing…" : (
+                <>
+                  <Gift className="w-5 h-5" />
+                  {drawCutoff ? "Sales paused" : `Gift privately · ${fmt(numTickets + mbFee(numTickets))}`}
+                </>
+              )}
+            </button>
+          ) : (
+            <button onClick={!authenticated ? () => login() : () => handlePrivateBuy()}
+              disabled={authenticated && drawCutoff}
+              className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 flex items-center justify-center gap-2">
+              {!authenticated ? (
+                <>
+                  <LogIn className="w-5 h-5" />
+                  Sign in to continue
+                </>
+              ) : (drawCutoff ? "Sales paused" : `Buy privately · ${fmt(numTickets + mbFee(numTickets))}`)}
+            </button>
+          )}
         </>
       )}
     </div>
@@ -1174,13 +1676,51 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
 
 
 
+/**
+ * The featured "Play again" CTA — a moving lightning-glow border to sell it as the better deal vs.
+ * withdrawing. Reduced-motion falls back to a static glow.
+ */
+function GlowPlayAgainButton({ onClick, disabled, children }: {
+  onClick: () => void; disabled?: boolean; children: React.ReactNode;
+}) {
+  const reduceMotion = useReducedMotion();
+  return (
+    <div className="relative">
+      <style>{`
+        @keyframes looftaGlowShift { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+        @keyframes looftaGlowPulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+      `}</style>
+      <div
+        aria-hidden
+        className="absolute -inset-[2.5px] rounded-2xl blur-[7px]"
+        style={{
+          background: "linear-gradient(110deg,#34d399,#22d3ee,#fbbf24,#a78bfa,#34d399)",
+          backgroundSize: "220% 100%",
+          animation: reduceMotion ? undefined : "looftaGlowShift 2.4s linear infinite, looftaGlowPulse 2.4s ease-in-out infinite",
+          opacity: reduceMotion ? 0.7 : undefined,
+        }}
+      />
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className="relative w-full h-14 rounded-2xl font-bold text-lg bg-[#0d0d11] border border-white/10 text-white active:scale-[0.99] transition-transform disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300"
+      >
+        <span className="bg-gradient-to-r from-emerald-300 via-teal-200 to-amber-200 bg-clip-text text-transparent">
+          {children}
+        </span>
+      </button>
+    </div>
+  );
+}
+
 // ─── Withdraw tab ─────────────────────────────────────────────────────────────
 
-function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn, dashboardLoading, previewDone }: {
+function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn, dashboardLoading, previewDone, withdrawMinUsdc }: {
   wonTickets: TicketSummary[]; accessToken: string | null;
   userSolanaAddress: string; solPriceUsd: number; onWithdrawn: () => void;
   dashboardLoading?: boolean;
   previewDone?: boolean; // dev-only: render the post-redeem state directly
+  withdrawMinUsdc?: number; // backend-reported withdrawal floor (fallback until dashboard loads)
 }) {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(!!previewDone);
@@ -1188,10 +1728,36 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   const [error, setError] = useState("");
   const [bridgeFeeUsd, setBridgeFeeUsd] = useState<number | null>(null);
   const [bridgeReceiveUsdc, setBridgeReceiveUsdc] = useState<number | null>(null);
+  const [bridgeFeeUnavailable, setBridgeFeeUnavailable] = useState(false);
+  const [feeRetryToken, setFeeRetryToken] = useState(0);
   const [withdrawalIds, setWithdrawalIds] = useState<string[]>([]);
   const [arrived, setArrived] = useState(false);
   const [transferFailed, setTransferFailed] = useState(false);
+  const [playingAgain, setPlayingAgain] = useState(false);
+  const [playAgainDone, setPlayAgainDone] = useState<{ numTickets: number } | null>(null);
+  const [playAgainError, setPlayAgainError] = useState("");
+  const [confirmingRedeem, setConfirmingRedeem] = useState(false);
   const reduceMotion = useReducedMotion();
+
+  // Resume an in-flight redeem across a page refresh — without this, a refresh mid-redeem drops
+  // back to "ready to redeem" (the ticket's status stays 'won' until the very end of the
+  // pipeline), and clicking Redeem again used to spin up a duplicate withdrawal that raced the
+  // first one and got permanently stuck. The backend is now idempotent against that too, but
+  // resuming here avoids the confusing "stuck" UI in the first place.
+  const WITHDRAWAL_STORAGE_KEY = "megapot_withdrawal";
+  useEffect(() => {
+    if (previewDone) return;
+    try {
+      const saved = localStorage.getItem(WITHDRAWAL_STORAGE_KEY);
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as { withdrawalIds: string[]; doneAmount: number };
+      if (!parsed?.withdrawalIds?.length) return;
+      setWithdrawalIds(parsed.withdrawalIds);
+      setDoneAmount(parsed.doneAmount ?? 0);
+      setDone(true);
+    } catch { /* ignore malformed/missing storage */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Live progress: poll our withdrawal rows until they all complete (or one fails).
   useEffect(() => {
@@ -1204,13 +1770,16 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
         const data = await res.json();
         const mine = (data?.withdrawals ?? []).filter((w: WithdrawalSummary) => withdrawalIds.includes(w.id));
         if (!mine.length) return;
-        if (mine.some((w: WithdrawalSummary) => w.status === "failed")) setTransferFailed(true);
-        else if (mine.every((w: WithdrawalSummary) => w.status === "complete")) {
+        if (mine.some((w: WithdrawalSummary) => w.status === "failed")) {
+          setTransferFailed(true);
+          localStorage.removeItem(WITHDRAWAL_STORAGE_KEY);
+        } else if (mine.every((w: WithdrawalSummary) => w.status === "complete")) {
           // On completion the backend has stamped each row with the actually-delivered amount —
           // show that real figure, not the gross win we optimistically displayed at redeem.
           const delivered = mine.reduce((s: number, w: WithdrawalSummary) => s + (w.amountUsdc ?? 0), 0);
           if (delivered > 0) setDoneAmount(delivered);
           setArrived(true);
+          localStorage.removeItem(WITHDRAWAL_STORAGE_KEY);
         }
       } catch { /* keep polling */ }
     }, 5000);
@@ -1219,23 +1788,51 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
 
   const totalAmount = wonTickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
   const isBatch = wonTickets.length > 1;
+  // Threshold is backend-owned (dashboard.withdrawMinUsdc); fall back only until it loads. Sub-
+  // threshold wins are worth less than a ticket after fees — shown as a "Free ticket", the only
+  // action is Play Again. At/above it the user may also cash out.
+  const minWithdraw = withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC;
+  // Play-again ticket count, matching the backend playAgainBatch rule: multiple won tickets get
+  // consolidated into ONE companion first, so the round-up/floor applies ONCE to the combined
+  // total — not once per ticket (that used to double-count round-ups: a $23.02 win + a $2.95 win
+  // became 24 + 3 = 27 tickets instead of ceil(25.97) = 26).
+  const playAgainTicketCount = totalAmount >= minWithdraw ? Math.max(1, Math.ceil(totalAmount)) : Math.floor(totalAmount);
+  const canPlayAgain = wonTickets.some(t => (t.winAmountUsdc ?? 0) > 0);
+  const isFreeTicket = isFreeTicketAmount(totalAmount, minWithdraw) && canPlayAgain;
+  // A win large enough to matter shouldn't default to steering the user back into another draw —
+  // feature Withdraw instead and demote Play again to the secondary link.
+  const preferWithdraw = !isFreeTicket && canPlayAgain && totalAmount >= WITHDRAW_FEATURED_THRESHOLD_USDC;
 
   useEffect(() => {
     if (!totalAmount) return;
+    let cancelled = false;
     setBridgeFeeUsd(null);
     setBridgeReceiveUsdc(null);
+    setBridgeFeeUnavailable(false);
     const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
-    fetch(`/api/lottery/bridge-fee?amountUsdc=${totalAmount}`, { headers })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data?.feeUsd != null) setBridgeFeeUsd(data.feeUsd);
-        if (data?.receiveUsdc != null) setBridgeReceiveUsdc(data.receiveUsdc);
-      })
-      .catch(() => {
-        setBridgeFeeUsd(BRIDGE_FEE_USD_EST);
-        setBridgeReceiveUsdc(totalAmount - BRIDGE_FEE_USD_EST);
-      });
-  }, [totalAmount, accessToken]);
+
+    // No fabricated fallback here — a fee estimate that doesn't match the real bridge is worse
+    // than showing nothing (see the incident this was hardened for). Retry transient failures a
+    // few times; if it still can't get a real number, block redeeming and let the user retry.
+    (async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 700 * attempt));
+        try {
+          const res = await fetch(`/api/lottery/bridge-fee?amountUsdc=${totalAmount}`, { headers });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if (data?.feeUsd == null || data?.receiveUsdc == null) throw new Error("Malformed response");
+          if (cancelled) return;
+          setBridgeFeeUsd(data.feeUsd);
+          setBridgeReceiveUsdc(data.receiveUsdc);
+          return;
+        } catch { /* try again */ }
+      }
+      if (!cancelled) setBridgeFeeUnavailable(true);
+    })();
+
+    return () => { cancelled = true; };
+  }, [totalAmount, accessToken, feeRetryToken]);
 
   async function handleWithdraw() {
     if (!userSolanaAddress || !wonTickets.length) return;
@@ -1248,15 +1845,42 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
       });
       if (!res.ok) throw new Error((await res.json()).message ?? "Failed");
       const data = await res.json().catch(() => null);
-      setWithdrawalIds(data?.withdrawalIds ?? []);
+      const ids: string[] = data?.withdrawalIds ?? [];
+      setWithdrawalIds(ids);
       setArrived(false);
       setTransferFailed(false);
       // Show the NET the user will actually receive (after fees), not the gross win — the polling
       // above replaces this with the exact delivered amount once the transfer completes.
-      setDoneAmount(bridgeReceiveUsdc ?? totalAmount);
+      const optimisticAmount = bridgeReceiveUsdc ?? totalAmount;
+      setDoneAmount(optimisticAmount);
       setDone(true); onWithdrawn();
+      if (ids.length) {
+        localStorage.setItem(WITHDRAWAL_STORAGE_KEY, JSON.stringify({ withdrawalIds: ids, doneAmount: optimisticAmount }));
+      }
     } catch (err: any) { setError(err.message ?? "Unknown error"); }
     finally { setLoading(false); }
+  }
+
+  /** Claims + reinvests every currently-won ticket — one call, backend consolidates all of them
+   *  into a single companion first so multiple wins get exactly one round-up, not one each. */
+  async function handlePlayAgain() {
+    if (!wonTickets.length) return;
+    setPlayingAgain(true); setPlayAgainError("");
+    try {
+      const res = await fetch(`/api/lottery/tickets/play-again-batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+        body: JSON.stringify({ ticketIds: wonTickets.map(t => t.id) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message ?? "Failed");
+      setPlayAgainDone({ numTickets: data?.numTickets ?? 0 });
+      onWithdrawn();
+    } catch (err: any) {
+      setPlayAgainError(err.message ?? "Unknown error");
+    } finally {
+      setPlayingAgain(false);
+    }
   }
 
   if (dashboardLoading) return (
@@ -1265,6 +1889,23 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
       <div className="h-16 rounded-xl bg-white/5" />
       <div className="h-16 rounded-xl bg-white/5" />
       <div className="h-12 rounded-xl bg-white/10" />
+    </div>
+  );
+
+  if (playAgainDone) return (
+    <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-emerald-500/[0.08] to-white/[0.02] p-8 text-center space-y-4">
+      <div className="text-5xl select-none" aria-hidden="true">🎟️</div>
+      <div>
+        <p className="text-sm font-bold text-emerald-400 uppercase tracking-[0.2em] mb-2">Played again</p>
+        <h2 className="font-display text-4xl font-bold tracking-tight bg-gradient-to-b from-white via-slate-100 to-emerald-200 bg-clip-text text-transparent">
+          {playAgainDone.numTickets} new ticket{playAgainDone.numTickets === 1 ? "" : "s"}
+        </h2>
+        <p className="text-base text-slate-400 mt-2">Your winnings went straight back into the next draw — no fees.</p>
+      </div>
+      <button onClick={() => setPlayAgainDone(null)}
+        className="text-base text-slate-400 hover:text-white underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 rounded">
+        Back
+      </button>
     </div>
   );
 
@@ -1324,8 +1965,8 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
                 <div className={[
                   "w-8 h-8 rounded-full flex items-center justify-center border",
                   s.state === "done" ? "bg-emerald-500 border-emerald-400" :
-                  s.state === "active" ? "bg-emerald-500/15 border-emerald-400/60" :
-                  "bg-white/[0.04] border-white/15",
+                    s.state === "active" ? "bg-emerald-500/15 border-emerald-400/60" :
+                      "bg-white/[0.04] border-white/15",
                 ].join(" ")}>
                   {s.state === "done" ? (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
@@ -1380,9 +2021,11 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
           {isBatch ? `${wonTickets.length} winning draws` : "You won"}
         </p>
         <h2 className="font-display text-5xl sm:text-6xl font-bold tracking-tight bg-gradient-to-b from-white via-emerald-50 to-emerald-300 bg-clip-text text-transparent tabular-nums">
-          {fmt(totalAmount)}
+          {isFreeTicket ? "Free ticket" : fmt(totalAmount)}
         </h2>
-        <p className="text-base text-slate-400 mt-1">ready to redeem privately</p>
+        <p className="text-base text-slate-400 mt-1">
+          {isFreeTicket ? "play it again in the next draw" : "ready to redeem privately"}
+        </p>
       </motion.div>
 
       {/* Winning ticket(s) */}
@@ -1408,28 +2051,94 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
                 </p>
               </div>
             </div>
-            <span className="text-emerald-400 font-bold text-lg tabular-nums shrink-0 ml-3">+{fmt(t.winAmountUsdc ?? 0)}</span>
+            <span className="text-emerald-400 font-bold text-lg tabular-nums shrink-0 ml-3">
+              {t.isFreeTicket ? "Free ticket" : `+${fmt(t.winAmountUsdc ?? 0)}`}
+            </span>
           </motion.div>
         ))}
       </div>
 
-      <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 flex items-start gap-3">
-        <ShieldCheck className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-        <div>
-          <p className="text-base text-slate-300 font-medium">
-            {isBatch ? "All your wins arrive as one private transfer" : "Arrives privately in your Loofta balance"}
-          </p>
-          <p className="text-sm text-slate-500 mt-0.5">No on-chain link between your winnings and your wallet</p>
+      {!isFreeTicket && (
+        <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 flex items-start gap-3">
+          <ShieldCheck className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-base text-slate-300 font-medium">
+              {isBatch ? "All your wins arrive as one private transfer" : "Arrives privately in your Loofta balance"}
+            </p>
+            <p className="text-sm text-slate-500 mt-0.5">No on-chain link between your winnings and your wallet</p>
+          </div>
         </div>
-      </div>
+      )}
 
-      <FeeBreakdown ticketCostUsd={totalAmount} mode="solana_private" solPriceUsd={solPriceUsd} bridgeFeeUsd={bridgeFeeUsd} bridgeReceiveUsdc={bridgeReceiveUsdc} />
-      {error && <p className="text-base text-red-400">{error}</p>}
+      {playAgainError && <p className="text-base text-red-400">{playAgainError}</p>}
 
-      <button onClick={handleWithdraw} disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
-        className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
-        {loading ? "Processing..." : bridgeFeeUsd === null ? "Estimating fees…" : `Redeem ${fmt(totalAmount)} privately`}
-      </button>
+      {isFreeTicket ? (
+        /* Free ticket — worth less than a ticket's cash value after fees, so the only action is
+           to replay it into the next draw (free), rounded up to a whole ticket. No withdraw. */
+        <>
+          <GlowPlayAgainButton onClick={handlePlayAgain} disabled={playingAgain}>
+            {playingAgain ? "Playing again…" : `⚡ Play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? "" : "s"}, free`}
+          </GlowPlayAgainButton>
+          <p className="text-center text-sm text-slate-500">Your win goes straight into the next draw — no fees.</p>
+        </>
+      ) : preferWithdraw ? (
+        /* Win ≥ $5: withdrawing is the featured CTA — a win this size shouldn't default to
+           nudging the user straight back into another draw. Play again stays one tap away. */
+        <>
+          {error && <p className="text-base text-red-400">{error}</p>}
+          <button onClick={handleWithdraw} disabled={loading || bridgeFeeUsd === null}
+            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
+            {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Withdraw ~${fmt(bridgeReceiveUsdc ?? totalAmount)} privately`}
+          </button>
+          <button onClick={handlePlayAgain} disabled={playingAgain}
+            className="w-full text-center text-base font-medium text-slate-300 hover:text-white underline underline-offset-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            {playingAgain ? "Playing again…" : `or play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? "" : "s"} instead, free`}
+          </button>
+        </>
+      ) : canPlayAgain ? (
+        /* Cash win (≥ $1.30, < $5): play again is the featured, rounded-up, fee-free deal;
+           withdrawing is one tap away, de-emphasised, behind a confirmation showing the real net. */
+        <>
+          <GlowPlayAgainButton onClick={handlePlayAgain} disabled={playingAgain}>
+            {playingAgain ? "Playing again…" : `⚡ Play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? "" : "s"}`}
+          </GlowPlayAgainButton>
+          <p className="text-center text-sm text-emerald-300/80 font-medium -mt-1">
+            Best value — we round you up to {playAgainTicketCount} whole ticket{playAgainTicketCount === 1 ? "" : "s"}, no fees
+          </p>
+          {!confirmingRedeem ? (
+            <button onClick={() => setConfirmingRedeem(true)} disabled={playingAgain || bridgeFeeUsd === null}
+              className="w-full text-center text-base font-medium text-slate-300 hover:text-white underline underline-offset-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              {bridgeFeeUnavailable ? "Fee unavailable, retry" : bridgeFeeUsd === null ? "Getting fee quote…" : `or withdraw ~${fmt(bridgeReceiveUsdc ?? totalAmount)} instead`}
+            </button>
+          ) : (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+              <p className="text-sm text-slate-400">
+                You&apos;ll receive an estimated <span className="text-white font-semibold">{fmt(bridgeReceiveUsdc ?? totalAmount)}</span> after fees (confirmed once claimed on-chain, may come in slightly lower) — playing again gets you {playAgainTicketCount} full new ticket{playAgainTicketCount === 1 ? "" : "s"} instead, free.
+              </p>
+              {error && <p className="text-sm text-red-400">{error}</p>}
+              <div className="flex items-center gap-3">
+                <button onClick={() => setConfirmingRedeem(false)} disabled={loading}
+                  className="flex-1 h-10 rounded-lg border border-white/15 text-slate-300 font-medium text-sm hover:bg-white/[0.06] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                  Cancel
+                </button>
+                <button onClick={handleWithdraw} disabled={loading}
+                  className="flex-1 h-10 rounded-lg font-semibold text-sm bg-white/10 border border-white/20 text-white hover:bg-white/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                  {loading ? "Processing…" : "Confirm redeem"}
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        /* Edge: a win too small to buy even one replay ticket (< $1) — withdrawal is the only path. */
+        <>
+          {error && <p className="text-base text-red-400">{error}</p>}
+          <button onClick={handleWithdraw} disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
+            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
+            {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Redeem ~${fmt(bridgeReceiveUsdc ?? totalAmount)} privately`}
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -1637,7 +2346,7 @@ function TicketNumberCard({ tn, winningNumbers }: {
       {/* Bonus */}
       <div className="flex flex-col items-center gap-1 shrink-0 py-3">
         <span className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase">Bonus</span>
-        <span className={`w-7 h-7 rounded-full border text-xs font-bold flex items-center justify-center tabular-nums ${bonusHit
+        <span className={`w-7 h-7 rounded-full border text-sm font-bold flex items-center justify-center tabular-nums ${bonusHit
           ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-400"
           : "border-amber-500/50 bg-amber-500/10 text-amber-400"
           }`}>
@@ -1650,11 +2359,11 @@ function TicketNumberCard({ tn, winningNumbers }: {
           <div className="self-stretch border-l border-dashed border-white/[0.12] mx-1" />
           <div className="shrink-0 py-3">
             {isWin ? (
-              <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold whitespace-nowrap">
+              <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-sm font-bold whitespace-nowrap">
                 WIN
               </span>
             ) : (
-              <span className="text-slate-600 text-xs font-bold uppercase tracking-wide">No win</span>
+              <span className="text-slate-600 text-sm font-bold uppercase tracking-wide">No win</span>
             )}
           </div>
         </>
@@ -1663,16 +2372,88 @@ function TicketNumberCard({ tn, winningNumbers }: {
   );
 }
 
-function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRefresh, refetch, userSolanaAddress, loading, nextDrawRoundId }: {
+function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRefresh, refetch, userSolanaAddress, loading, nextDrawRoundId, withdrawMinUsdc }: {
   history: TicketSummary[]; withdrawals: WithdrawalSummary[]; activeTickets: TicketSummary[];
   getAccessToken: () => Promise<string | null>; onRefresh: () => void; refetch?: () => void;
   userSolanaAddress: string; loading?: boolean; nextDrawRoundId?: string | null;
+  withdrawMinUsdc?: number;
 }) {
   const isAppPath = usePathname()?.startsWith("/app");
   const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
+  // Backend-owned threshold; below it a win is a "free ticket" and shown as "Free" in history
+  // (works for won AND already-played-again/withdrawn rows, unlike the won-only isFreeTicket flag).
+  const minWithdraw = withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC;
   const [copied, setCopied] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [historyFilter, setHistoryFilter] = useState<"all" | "mine" | "gifted">("all");
   const syncedIds = useRef<Set<string>>(new Set());
+
+  // Gifts you sent — separate from your own tickets, since ownership of a claimed gift's ticket
+  // belongs to the recipient, not you (see LotteryService.purchaseGiftTickets).
+  const GIFTS_PAGE = 20;
+  const { user: giftsUser } = usePrivy();
+  const [myGifts, setMyGifts] = useState<MyGiftItem[]>([]);
+  const [myGiftsTotal, setMyGiftsTotal] = useState(0);
+  const [loadingMoreGifts, setLoadingMoreGifts] = useState(false);
+  const [copiedGiftId, setCopiedGiftId] = useState<string | null>(null);
+  const [editingGiftId, setEditingGiftId] = useState<string | null>(null);
+  const [editRecipientValue, setEditRecipientValue] = useState("");
+  const [savingRecipientId, setSavingRecipientId] = useState<string | null>(null);
+  const [editRecipientError, setEditRecipientError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!giftsUser?.id) return;
+    (async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const { gifts, total } = await getMyGifts(giftsUser.id, 0, GIFTS_PAGE, accessToken);
+        setMyGifts(gifts);
+        setMyGiftsTotal(total);
+      } catch { /* non-fatal */ }
+    })();
+  }, [giftsUser?.id, getAccessToken]);
+  async function fetchMoreGifts() {
+    if (!giftsUser?.id || myGifts.length >= myGiftsTotal || loadingMoreGifts) return;
+    setLoadingMoreGifts(true);
+    try {
+      const accessToken = await getAccessToken();
+      const { gifts, total } = await getMyGifts(giftsUser.id, myGifts.length, GIFTS_PAGE, accessToken);
+      setMyGifts(prev => [...prev, ...gifts]);
+      setMyGiftsTotal(total);
+    } catch { /* non-fatal */ }
+    finally { setLoadingMoreGifts(false); }
+  }
+  function copyGiftLink(giftId: string, url: string) {
+    navigator.clipboard.writeText(url);
+    setCopiedGiftId(giftId);
+    setTimeout(() => setCopiedGiftId(null), 1500);
+  }
+
+  function startEditRecipient(g: MyGiftItem) {
+    setEditingGiftId(g.giftId);
+    setEditRecipientValue(g.recipientIdentifier);
+    setEditRecipientError(null);
+  }
+
+  async function saveEditRecipient(giftId: string) {
+    if (!giftsUser?.id) return;
+    const trimmed = editRecipientValue.trim();
+    if (!trimmed) { setEditRecipientError("Required"); return; }
+    const recipientType = trimmed.includes("@") && trimmed.includes(".") ? "email" : "handle";
+    setSavingRecipientId(giftId);
+    setEditRecipientError(null);
+    try {
+      const accessToken = await getAccessToken();
+      await updateGiftRecipient(giftId, recipientType, trimmed.replace(/^@+/, ""), giftsUser.id, accessToken);
+      setMyGifts(prev => prev.map(g => g.giftId === giftId
+        ? { ...g, recipientType, recipientIdentifier: trimmed.replace(/^@+/, "") }
+        : g));
+      setEditingGiftId(null);
+    } catch (e: any) {
+      setEditRecipientError(e?.message || "Couldn't save — try again.");
+    } finally {
+      setSavingRecipientId(null);
+    }
+  }
 
   // Call sync-numbers API when expanding a card that has no numbers, then poll until they arrive
   const toggleExpand = useCallback(async (ticketId: string, ticketHasNumbers: boolean) => {
@@ -1734,14 +2515,24 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
   })();
-  const visibleCompleted = completed.slice(0, visibleCount);
-  const hasMore = completed.length > visibleCount || serverHasMore;
+  // Unified, chronologically-interleaved history — a gift you sent isn't a ticket you own (once
+  // claimed, ownership moves to the recipient), but it's still "your" history, so it belongs in
+  // the same follow-each-other list as your own tickets rather than a separately pinned section.
+  type HistoryRow =
+    | { kind: "ticket"; date: string; failed: boolean; ticket: TicketSummary }
+    | { kind: "gift"; date: string; failed: boolean; gift: MyGiftItem };
+  const mergedHistory: HistoryRow[] = [
+    ...completed.map(t => ({ kind: "ticket" as const, date: t.createdAt, failed: t.status === "failed", ticket: t })),
+    ...myGifts.map(g => ({ kind: "gift" as const, date: g.createdAt, failed: g.status === "failed", gift: g })),
+  ].sort((a, b) => {
+    if (a.failed && !b.failed) return -1;
+    if (b.failed && !a.failed) return 1;
+    return new Date(b.date).getTime() - new Date(a.date).getTime();
+  });
+  const visibleMerged = mergedHistory.slice(0, visibleCount);
+  const hasMore = mergedHistory.length > visibleCount || serverHasMore || myGifts.length < myGiftsTotal;
 
-  async function handleLoadMore() {
-    if (completed.length > visibleCount) {
-      setVisibleCount(c => c + HISTORY_PAGE);
-      return;
-    }
+  async function fetchMoreTicketHistory() {
     if (!serverHasMore || loadingMore) return;
     setLoadingMore(true);
     try {
@@ -1754,7 +2545,6 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
       const fetched: TicketSummary[] = data?.tickets ?? [];
       setExtraHistory(prev => [...prev, ...fetched]);
       setServerHasMore(offset + fetched.length < (data?.total ?? 0));
-      setVisibleCount(c => c + HISTORY_PAGE);
     } catch (e) {
       console.error("Load more history failed", e);
     } finally {
@@ -1762,9 +2552,25 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
     }
   }
 
+  async function handleLoadMore() {
+    if (mergedHistory.length > visibleCount) {
+      setVisibleCount(c => c + HISTORY_PAGE);
+      return;
+    }
+    await Promise.all([fetchMoreTicketHistory(), fetchMoreGifts()]);
+    setVisibleCount(c => c + HISTORY_PAGE);
+  }
+
   const allForStats = [...activeTickets, ...history];
-  const totalSpent = allForStats.filter(t => t.status !== "failed").reduce((s, t) => s + t.costUsdc, 0);
-  const totalWon = allForStats.filter(t => t.status === "won" || t.status === "withdrawn").reduce((s, t) => s + (t.winAmountUsdc ?? 0), 0);
+  // Gift-received tickets cost the claimant nothing — don't count them as spend (they still show
+  // up in the list below, just labeled "Gifted" instead of a debit).
+  const ticketSpent = allForStats.filter(t => t.status !== "failed" && !t.isGift).reduce((s, t) => s + t.costUsdc, 0);
+  const ticketWon = allForStats.filter(t => t.status === "won" || t.status === "withdrawn").reduce((s, t) => s + (t.winAmountUsdc ?? 0), 0);
+  const giftSpent = myGifts.filter(g => g.status !== "failed").reduce((s, g) => s + g.costUsdc, 0);
+  // "Spent"/"Won" fold gift spend into one number rather than a separate card — dynamically
+  // recomputed per the All/My tickets/Gifted filter below.
+  const totalSpent = historyFilter === "mine" ? ticketSpent : historyFilter === "gifted" ? giftSpent : ticketSpent + giftSpent;
+  const totalWon = historyFilter === "gifted" ? 0 : ticketWon;
 
   async function handleCancel(ticketId: string) {
     setCancelling(ticketId);
@@ -1831,7 +2637,9 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
       const data = await res.json();
       if (res.ok) {
         const msg = data.status === "won"
-          ? `Won $${data.winAmountUsdc?.toFixed(2)} (Tier ${data.winTier ?? "?"})! Go to Redeem tab.`
+          ? (isFreeTicketAmount(data.winAmountUsdc, withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC)
+            ? "You won a free ticket! Go to Redeem tab to play it again."
+            : `Won $${data.winAmountUsdc?.toFixed(2)} (Tier ${data.winTier ?? "?"})! Go to Redeem tab.`)
           : data.status === "lost"
             ? "No win this draw — better luck next time!"
             : `Status: ${data.status}`;
@@ -1907,9 +2715,304 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
     setTimeout(() => setCopied(null), 2000);
   }
 
+  function renderGiftRow(g: MyGiftItem) {
+    const giftStatusStyle: Record<string, string> = {
+      unclaimed: "border-amber-500/30 text-amber-400 bg-amber-500/10",
+      claimed: "border-emerald-500/30 text-emerald-400 bg-emerald-500/10",
+      cancelled: "border-white/15 text-slate-400 bg-white/5",
+      failed: "border-red-500/30 text-red-400 bg-red-500/10",
+    };
+    const giftStatusLabel: Record<string, string> = {
+      unclaimed: "Not yet claimed",
+      claimed: "Claimed",
+      cancelled: "Cancelled",
+      failed: "Failed",
+    };
+    const recipientLabel = g.recipientType === "handle" ? `@${g.recipientIdentifier}` : g.recipientIdentifier;
+    const key = `gift-${g.giftId}`;
+    const isExpanded = expandedIds.has(key);
+    const dateStr = new Date(g.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    return (
+      // Same card shell/height/icon/font weight as a ticket row — a sent gift belongs in the
+      // same visual family as your own tickets, just tagged via the "→ @recipient" title and badge.
+      <div key={key} className="rounded-xl border bg-white/5 overflow-hidden border-white/10">
+        <button
+          onClick={() => setExpandedIds(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; })}
+          className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.03] transition-colors"
+        >
+          <img src="/images/icons/ticket-icon.svg" alt="" className="w-9 h-9 shrink-0 opacity-90" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-base font-semibold text-white">
+                {g.numTickets} ticket{g.numTickets !== 1 ? "s" : ""} → {recipientLabel}
+              </span>
+              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${giftStatusStyle[g.status] ?? "border-white/15 text-slate-400 bg-white/5"}`}>
+                {giftStatusLabel[g.status] ?? g.status}
+              </span>
+            </div>
+            <p className="text-base text-slate-500 mt-0.5">
+              {dateStr}
+              {g.claimedAt && ` · claimed ${new Date(g.claimedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-base font-semibold font-sans text-slate-500">−{fmt(g.costUsdc)}</span>
+            <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+          </div>
+        </button>
+
+        {isExpanded && (
+          <div className="border-t border-white/[0.06] px-3 pb-3 pt-3 space-y-3">
+            <DescriptionWithGif text={g.note} />
+            {g.status === "unclaimed" && (
+              editingGiftId === g.giftId ? (
+                <div className="space-y-2">
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                      {editRecipientValue.includes("@") && editRecipientValue.includes(".") ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
+                    </span>
+                    <input
+                      value={editRecipientValue}
+                      onChange={e => setEditRecipientValue(e.target.value.replace(/^@+/, ""))}
+                      placeholder="Email, X handle, or Loofta username"
+                      className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base"
+                    />
+                  </div>
+                  {editRecipientError && <p className="text-sm text-red-400">{editRecipientError}</p>}
+                  <div className="flex gap-2">
+                    <button type="button"
+                      onClick={() => saveEditRecipient(g.giftId)}
+                      disabled={savingRecipientId === g.giftId}
+                      className="flex-1 h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40">
+                      {savingRecipientId === g.giftId ? "Saving…" : "Save"}
+                    </button>
+                    <button type="button"
+                      onClick={() => setEditingGiftId(null)}
+                      disabled={savingRecipientId === g.giftId}
+                      className="flex-1 h-9 rounded-xl text-base font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button"
+                  onClick={() => startEditRecipient(g)}
+                  className="w-full h-9 rounded-xl text-base font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all">
+                  Edit recipient
+                </button>
+              )
+            )}
+            {(g.status === "unclaimed" || g.status === "claimed") && (
+              <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
+                <a href={g.claimUrl} target="_blank" rel="noopener noreferrer"
+                  className="flex-1 min-w-0 truncate text-base text-slate-300 hover:text-white hover:underline underline-offset-2 transition-colors">
+                  {g.claimUrl}
+                </a>
+                <button
+                  onClick={() => copyGiftLink(g.giftId, g.claimUrl)}
+                  className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+                  aria-label={g.status === "unclaimed" ? "Copy claim link" : "Copy share link"}
+                >
+                  {copiedGiftId === g.giftId ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderTicketRow(t: TicketSummary) {
+    const dateStr = (t.drawTime ? new Date(t.drawTime) : new Date(t.createdAt))
+      .toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    const hasNumbers = t.ticketNumbers && t.ticketNumbers.length > 0 && t.ticketNumbers[0].main.length > 0;
+    const hasAllNumbers = hasNumbers && t.ticketNumbers!.length >= t.numTickets;
+    const isFailed = t.status === "failed";
+    return (
+      <div key={`ticket-${t.id}`} className={`rounded-xl border bg-white/5 overflow-hidden ${isFailed ? "border-red-500/20" : "border-white/10"}`}>
+        {/* Main row — clickable to expand */}
+        <button
+          onClick={() => toggleExpand(t.id, !!hasAllNumbers)}
+          className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.03] transition-colors"
+        >
+          <img src="/images/icons/ticket-icon.svg" alt="" className="w-9 h-9 shrink-0 opacity-90" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
+              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
+                {statusLabel(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}
+              </span>
+              {t.isGift && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border border-emerald-500/30 text-emerald-400 bg-emerald-500/10">
+                  Gifted
+                </span>
+              )}
+            </div>
+            <p className="text-base text-slate-500 mt-0.5">
+              {t.roundId ? `Round ${t.roundId} · ` : ""}{dateStr}
+              {t.winTier ? ` · Tier ${t.winTier}` : ""}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-base font-semibold font-sans">
+              {(t.status === "won" || t.status === "withdrawn")
+                ? <span className="text-emerald-400">{isFreeTicketAmount(t.winAmountUsdc, minWithdraw) ? "Free" : `+${fmt(t.winAmountUsdc ?? 0)}`}</span>
+                : t.isGift
+                  ? null
+                  : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
+            </span>
+            <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${expandedIds.has(t.id) ? "rotate-180" : ""}`} />
+          </div>
+        </button>
+
+        {/* Expanded details */}
+        {expandedIds.has(t.id) && (
+          <div className="border-t border-white/[0.06] px-3 pb-3 pt-3 space-y-3">
+            {/* Draw info */}
+            {t.drawTime && (
+              <div>
+                <p className="text-base text-slate-500">
+                  Draw: {new Date(t.drawTime).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                </p>
+              </div>
+            )}
+            {/* Check results button for active tickets past draw time */}
+            {t.status === "active" && (
+              (t.drawTime && new Date(t.drawTime) < new Date()) ||
+              (t.roundId && nextDrawRoundId && t.roundId !== nextDrawRoundId)
+            ) && (
+                <div className="space-y-2">
+                  {checkResultMsg[t.id] && (
+                    <p className={`text-base ${checkResultMsg[t.id].startsWith("Error") ? "text-red-400" : checkResultMsg[t.id].includes("Won") ? "text-emerald-400" : "text-slate-400"}`}>
+                      {checkResultMsg[t.id]}
+                    </p>
+                  )}
+                  <button
+                    onClick={() => handleCheckResults(t.id)}
+                    disabled={checkingResult === t.id}
+                    className="w-full h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                  >
+                    {checkingResult === t.id ? "Checking…" : "Check Results"}
+                  </button>
+                </div>
+              )}
+            {/* Number balls */}
+            {hasNumbers ? (
+              <div className="space-y-2">
+                {!hasAllNumbers && (
+                  <p className="text-base text-slate-500 italic">Loading {t.numTickets - t.ticketNumbers!.length} more ticket numbers…</p>
+                )}
+                {t.winningNumbers && (
+                  <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] px-3 py-2">
+                    <p className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase mb-1.5">Winning numbers</p>
+                    <div className="flex items-center gap-2">
+                      {t.winningNumbers.main.map(n => (
+                        <span key={n} className="w-7 h-7 rounded-full bg-white/10 border border-white/20 text-white text-sm font-bold flex items-center justify-center tabular-nums">{n}</span>
+                      ))}
+                      <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 text-slate-300 text-sm font-bold flex items-center justify-center tabular-nums">{t.winningNumbers.bonus}</span>
+                    </div>
+                  </div>
+                )}
+                <p className="text-base text-slate-600">Your tickets</p>
+                {(() => {
+                  const matchCount = (tn: TicketNumbers) => {
+                    if (!t.winningNumbers) return 0;
+                    const m = tn.main.filter(n => t.winningNumbers!.main.includes(n)).length;
+                    const b = tn.bonus === t.winningNumbers.bonus ? 1 : 0;
+                    return m * 2 + b;
+                  };
+                  const sorted = [...t.ticketNumbers!].sort((a, b) => matchCount(b) - matchCount(a));
+                  const showAll = ticketShowAll[t.id];
+                  const visible = showAll ? sorted : sorted.slice(0, 5);
+                  return (
+                    <>
+                      {visible.map((tn, i) => (
+                        <TicketNumberCard key={i} tn={tn} winningNumbers={t.winningNumbers} />
+                      ))}
+                      {!showAll && sorted.length > 5 && (
+                        <button
+                          type="button"
+                          onClick={() => setTicketShowAll(prev => ({ ...prev, [t.id]: true }))}
+                          className="w-full h-9 rounded-xl text-base font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all"
+                        >
+                          +{sorted.length - 5} more tickets
+                        </button>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            ) : (
+              <p className="text-base text-slate-600 italic">Loading ticket numbers…</p>
+            )}
+          </div>
+        )}
+
+        {/* Failed ticket actions — funds must be retried or rescued before the
+          ticket can be removed (RESCUED/CANCELLED = nothing left to recover) */}
+        {isFailed && (
+          <div className="px-3 pb-3 space-y-2 border-t border-white/[0.06] pt-3">
+            {(retryResult[t.id] || rescueResult[t.id]) && (
+              <p className="text-base text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
+            )}
+            {rescueBurnerResult[t.id] && (
+              <p className="text-base text-amber-400">{rescueBurnerResult[t.id]}</p>
+            )}
+            {t.bridgeStatus === "RESCUED" || t.bridgeStatus === "CANCELLED" ? (
+              <button
+                onClick={() => handleDelete(t.id)}
+                disabled={deleting === t.id}
+                className="w-full h-9 rounded-xl text-base font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+              >
+                {deleting === t.id ? "Removing…" : "Remove from history"}
+              </button>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleRetry(t.id)}
+                    disabled={retrying === t.id || rescuing === t.id}
+                    className="flex-1 h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                  >
+                    {retrying === t.id ? "Retrying…" : "Retry purchase"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRescue(t.id)}
+                    disabled={rescuing === t.id || retrying === t.id}
+                    className="flex-1 h-9 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
+                  >
+                    {rescuing === t.id ? "Rescuing…" : "Rescue funds (Base)"}
+                  </button>
+                </div>
+                {/* Funds from a private purchase can still be sitting on the Solana
+                    burner (never bridged, or mid-bridge) — the Base-only rescue above
+                    finds nothing in that case, so offer this as a fallback. Dev-only for
+                    now — not yet trusted enough to expose as self-service in production. */}
+                {IS_LOCALHOST && (
+                  <button
+                    type="button"
+                    onClick={() => handleRescueBurner(t.id)}
+                    disabled={rescuingBurner === t.id}
+                    className="w-full h-9 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
+                  >
+                    {rescuingBurner === t.id ? "Rescuing…" : "Rescue from Solana"}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4 pb-24">
-      {/* Stats cards */}
+      {/* Stats cards — Spent folds in gift spend (dynamically re-scoped by the All/My
+          tickets/Gifted filter below, not a separate card) */}
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-2xl border bg-amber-500/5 border-amber-500/20 p-4">
           <div className="flex items-center gap-2 mb-2">
@@ -2019,12 +3122,12 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                   </p>
                   <p className="text-base text-slate-400">
                     {t.status === "sent" && "Waiting for MagicBlock private transfer to arrive in burner wallet (up to 2 min)."}
-                    {t.status === "bridging" && "Bridging from Solana to Base. This takes 5–15 minutes."}
+                    {t.status === "bridging" && "Your ticket(s) will appear soon."}
                     {t.status === "buying" && "Funds arrived on Base — buying your tickets now."}
                   </p>
                   <Link
                     href={megapotBase}
-                    className="inline-flex items-center gap-1.5 text-base font-medium text-[#FF7A2A] hover:text-[#FF9A5A] transition-colors"
+                    className="w-full h-10 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all flex items-center justify-center gap-1.5"
                   >
                     View progress <ArrowUpRight className="w-3.5 h-3.5" />
                   </Link>
@@ -2037,12 +3140,14 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                           {rescueBurnerResult[t.id]}
                         </p>
                       )}
-                      <button type="button"
-                        onClick={() => handleRescueBurner(t.id)}
-                        disabled={rescuingBurner === t.id}
-                        className="w-full h-10 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40">
-                        {rescuingBurner === t.id ? "Rescuing..." : "Rescue from Solana"}
-                      </button>
+                      {IS_LOCALHOST && (
+                        <button type="button"
+                          onClick={() => handleRescueBurner(t.id)}
+                          disabled={rescuingBurner === t.id}
+                          className="w-full h-10 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40">
+                          {rescuingBurner === t.id ? "Rescuing..." : "Rescue from Solana"}
+                        </button>
+                      )}
                     </div>
                   )}
                   {/* Bridging is fully automatic and can't be safely cancelled — funds are in
@@ -2076,8 +3181,9 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
         </div>
       )}
 
-      {/* Completed draws */}
-      {loading && completed.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? (
+      {/* Tickets + gifts you sent — one chronological list, not separated (a sent gift isn't a
+          ticket you own, but it's still your history, so it follows the same feed). */}
+      {loading && mergedHistory.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? (
         <div className="space-y-2 animate-pulse">
           {[1, 2, 3].map(i => (
             <div key={i} className="rounded-xl border border-white/10 bg-white/5 p-3 flex items-center justify-between">
@@ -2089,195 +3195,38 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
             </div>
           ))}
         </div>
-      ) : completed.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? null
-        : completed.length > 0 && (
-          <div>
-            <p className="text-base font-medium text-slate-500 uppercase tracking-wider mb-2">Tickets</p>
-            <div className="space-y-2">
-              {visibleCompleted.map(t => {
-                const dateStr = (t.drawTime ? new Date(t.drawTime) : new Date(t.createdAt))
-                  .toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-                const hasNumbers = t.ticketNumbers && t.ticketNumbers.length > 0 && t.ticketNumbers[0].main.length > 0;
-                const hasAllNumbers = hasNumbers && t.ticketNumbers!.length >= t.numTickets;
-                const isFailed = t.status === "failed";
-                return (
-                  <div key={t.id} className={`rounded-xl border bg-white/5 overflow-hidden ${isFailed ? "border-red-500/20" : "border-white/10"}`}>
-                    {/* Main row — clickable to expand */}
-                    <button
-                      onClick={() => toggleExpand(t.id, !!hasAllNumbers)}
-                      className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.03] transition-colors"
-                    >
-                      <img src="/images/icons/ticket-icon.svg" alt="" className="w-9 h-9 shrink-0 opacity-90" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-base font-semibold text-white">{t.numTickets} ticket{t.numTickets !== 1 ? "s" : ""}</span>
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${ticketStatusBadgeClass(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}`}>
-                            {statusLabel(t.status, t.bridgeStatus, t.drawTime, t.roundId, nextDrawRoundId)}
-                          </span>
-                        </div>
-                        <p className="text-base text-slate-500 mt-0.5">
-                          {t.roundId ? `Round ${t.roundId} · ` : ""}{dateStr}
-                          {t.winTier ? ` · Tier ${t.winTier}` : ""}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-base font-semibold font-sans">
-                          {(t.status === "won" || t.status === "withdrawn")
-                            ? <span className="text-emerald-400">+{fmt(t.winAmountUsdc ?? 0)}</span>
-                            : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
-                        </span>
-                        <ChevronDown className={`w-4 h-4 text-slate-600 transition-transform ${expandedIds.has(t.id) ? "rotate-180" : ""}`} />
-                      </div>
+      ) : mergedHistory.length === 0 && awaitingDeposit.length === 0 && inFlight.length === 0 ? null
+        : mergedHistory.length > 0 && (
+          <div className="mt-3">
+            <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+              <p className="text-base font-medium text-slate-500 uppercase tracking-wider">Tickets</p>
+              {myGifts.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {([["all", "All"], ["mine", "My tickets"], ["gifted", "Gifted"]] as const).map(([key, label]) => (
+                    <button key={key} type="button" onClick={() => setHistoryFilter(key)}
+                      className={`px-2.5 py-1.5 rounded-full text-sm font-semibold border transition-colors ${historyFilter === key
+                        ? "bg-white/10 border-white/20 text-white"
+                        : "border-white/10 text-slate-500 hover:text-slate-300"
+                        }`}>
+                      {label}
                     </button>
-
-                    {/* Expanded details */}
-                    {expandedIds.has(t.id) && (
-                      <div className="border-t border-white/[0.06] px-3 pb-3 pt-3 space-y-3">
-                        {/* Draw info */}
-                        {t.drawTime && (
-                          <div>
-                            <p className="text-base text-slate-500">
-                              Draw: {new Date(t.drawTime).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-                            </p>
-                          </div>
-                        )}
-                        {/* Check results button for active tickets past draw time */}
-                        {t.status === "active" && (
-                          (t.drawTime && new Date(t.drawTime) < new Date()) ||
-                          (t.roundId && nextDrawRoundId && t.roundId !== nextDrawRoundId)
-                        ) && (
-                            <div className="space-y-2">
-                              {checkResultMsg[t.id] && (
-                                <p className={`text-base ${checkResultMsg[t.id].startsWith("Error") ? "text-red-400" : checkResultMsg[t.id].includes("Won") ? "text-emerald-400" : "text-slate-400"}`}>
-                                  {checkResultMsg[t.id]}
-                                </p>
-                              )}
-                              <button
-                                onClick={() => handleCheckResults(t.id)}
-                                disabled={checkingResult === t.id}
-                                className="w-full h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
-                              >
-                                {checkingResult === t.id ? "Checking…" : "Check Results"}
-                              </button>
-                            </div>
-                          )}
-                        {/* Number balls */}
-                        {hasNumbers ? (
-                          <div className="space-y-2">
-                            {!hasAllNumbers && (
-                              <p className="text-base text-slate-500 italic">Loading {t.numTickets - t.ticketNumbers!.length} more ticket numbers…</p>
-                            )}
-                            {t.winningNumbers && (
-                              <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] px-3 py-2">
-                                <p className="text-[10px] font-bold tracking-[0.16em] text-slate-600 uppercase mb-1.5">Winning numbers</p>
-                                <div className="flex items-center gap-2">
-                                  {t.winningNumbers.main.map(n => (
-                                    <span key={n} className="w-7 h-7 rounded-full bg-white/10 border border-white/20 text-white text-sm font-bold flex items-center justify-center tabular-nums">{n}</span>
-                                  ))}
-                                  <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 text-slate-300 text-sm font-bold flex items-center justify-center tabular-nums">{t.winningNumbers.bonus}</span>
-                                </div>
-                              </div>
-                            )}
-                            <p className="text-base text-slate-600">Your tickets</p>
-                            {(() => {
-                              const matchCount = (tn: TicketNumbers) => {
-                                if (!t.winningNumbers) return 0;
-                                const m = tn.main.filter(n => t.winningNumbers!.main.includes(n)).length;
-                                const b = tn.bonus === t.winningNumbers.bonus ? 1 : 0;
-                                return m * 2 + b;
-                              };
-                              const sorted = [...t.ticketNumbers!].sort((a, b) => matchCount(b) - matchCount(a));
-                              const showAll = ticketShowAll[t.id];
-                              const visible = showAll ? sorted : sorted.slice(0, 5);
-                              return (
-                                <>
-                                  {visible.map((tn, i) => (
-                                    <TicketNumberCard key={i} tn={tn} winningNumbers={t.winningNumbers} />
-                                  ))}
-                                  {!showAll && sorted.length > 5 && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setTicketShowAll(prev => ({ ...prev, [t.id]: true }))}
-                                      className="w-full h-9 rounded-xl text-base font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all"
-                                    >
-                                      +{sorted.length - 5} more tickets
-                                    </button>
-                                  )}
-                                </>
-                              );
-                            })()}
-                          </div>
-                        ) : (
-                          <p className="text-base text-slate-600 italic">Loading ticket numbers…</p>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Failed ticket actions — funds must be retried or rescued before the
-                      ticket can be removed (RESCUED/CANCELLED = nothing left to recover) */}
-                    {isFailed && (
-                      <div className="px-3 pb-3 space-y-2 border-t border-white/[0.06] pt-3">
-                        {(retryResult[t.id] || rescueResult[t.id]) && (
-                          <p className="text-base text-amber-400">{retryResult[t.id] || rescueResult[t.id]}</p>
-                        )}
-                        {rescueBurnerResult[t.id] && (
-                          <p className="text-base text-amber-400">{rescueBurnerResult[t.id]}</p>
-                        )}
-                        {t.bridgeStatus === "RESCUED" || t.bridgeStatus === "CANCELLED" ? (
-                          <button
-                            onClick={() => handleDelete(t.id)}
-                            disabled={deleting === t.id}
-                            className="w-full h-9 rounded-xl text-base font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
-                          >
-                            {deleting === t.id ? "Removing…" : "Remove from history"}
-                          </button>
-                        ) : (
-                          <>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleRetry(t.id)}
-                                disabled={retrying === t.id || rescuing === t.id}
-                                className="flex-1 h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
-                              >
-                                {retrying === t.id ? "Retrying…" : "Retry purchase"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleRescue(t.id)}
-                                disabled={rescuing === t.id || retrying === t.id}
-                                className="flex-1 h-9 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
-                              >
-                                {rescuing === t.id ? "Rescuing…" : "Rescue funds (Base)"}
-                              </button>
-                            </div>
-                            {/* Funds from a private purchase can still be sitting on the Solana
-                                burner (never bridged, or mid-bridge) — the Base-only rescue above
-                                finds nothing in that case, so offer this as a fallback. */}
-                            <button
-                              type="button"
-                              onClick={() => handleRescueBurner(t.id)}
-                              disabled={rescuingBurner === t.id}
-                              className="w-full h-9 rounded-xl text-base font-semibold border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-40"
-                            >
-                              {rescuingBurner === t.id ? "Rescuing…" : "Rescue from Solana"}
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="space-y-2">
+              {visibleMerged
+                .filter(item => historyFilter === "all" || (historyFilter === "mine" ? item.kind === "ticket" : item.kind === "gift"))
+                .map(item => item.kind === "gift" ? renderGiftRow(item.gift) : renderTicketRow(item.ticket))}
             </div>
             {hasMore && (
               <button
                 type="button"
                 onClick={handleLoadMore}
-                disabled={loadingMore}
+                disabled={loadingMore || loadingMoreGifts}
                 className="w-full h-10 mt-3 rounded-xl text-base font-semibold border border-white/10 text-slate-300 hover:text-white hover:bg-white/[0.06] transition-all disabled:opacity-40"
               >
-                {loadingMore ? "Loading…" : "Show more tickets"}
+                {(loadingMore || loadingMoreGifts) ? "Loading…" : "Show more"}
               </button>
             )}
           </div>
@@ -2379,17 +3328,19 @@ type DrawResult = {
 
 const WON_MODAL_KEY = "loofta_won_modal_v1";
 
-function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRedeem }: {
+function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRedeem, withdrawMinUsdc }: {
   results: DrawResult[];
   winningNumbers?: { main: number[]; bonus: number } | null;
   ticketNumbers?: { main: number[]; bonus: number }[] | null;
   onClose: () => void;
   onRedeem: () => void;
+  withdrawMinUsdc?: number;
 }) {
   const isAppPath = usePathname()?.startsWith("/app");
   const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
   const anyWon = results.some(r => r.status === "won");
   const totalWon = results.reduce((sum, r) => sum + (r.winAmountUsdc ?? 0), 0);
+  const wonFreeTicket = anyWon && isFreeTicketAmount(totalWon, withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC);
   const [showAllTickets, setShowAllTickets] = useState(false);
 
   const sortedTickets = ticketNumbers ? [...ticketNumbers].sort((a, b) => {
@@ -2417,12 +3368,19 @@ function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRe
             </div>
           )}
           <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-0.5">Draw Result</p>
+            <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-0.5">Draw Result</p>
             {anyWon ? (
-              <>
-                <h2 className="text-2xl font-bold text-white">You Won!</h2>
-                <p className="text-xl font-semibold text-emerald-400">+{fmt(totalWon)}</p>
-              </>
+              wonFreeTicket ? (
+                <>
+                  <h2 className="text-2xl font-bold text-white">You won a free ticket!</h2>
+                  <p className="text-base font-semibold text-emerald-400">Play it again in the next draw</p>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-2xl font-bold text-white">You Won!</h2>
+                  <p className="text-xl font-semibold text-emerald-400">+{fmt(totalWon)}</p>
+                </>
+              )
             ) : (
               <>
                 <h2 className="text-xl font-bold text-white">No win this time</h2>
@@ -2509,7 +3467,7 @@ function DevPreviewPanel() {
       <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-1.5 pt-0.5">Preview flow (dev)</p>
       {DEV_PREVIEW_LINKS.map(l => (
         <Link key={l.label} href={l.href}
-          className="text-xs font-medium text-slate-300 hover:text-white hover:bg-white/10 rounded-lg px-2 py-1.5 transition-colors">
+          className="text-sm font-medium text-slate-300 hover:text-white hover:bg-white/10 rounded-lg px-2 py-1.5 transition-colors">
           {l.label}
         </Link>
       ))}
@@ -2520,7 +3478,7 @@ function DevPreviewPanel() {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function MegapotPage() {
-  const { getAccessToken } = usePrivy();
+  const { getAccessToken, authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const searchParams = useSearchParams();
   const rawTab = searchParams.get("tab");
@@ -2689,20 +3647,29 @@ export default function MegapotPage() {
           </>
         )}
         {tab === "redeem" && (
-          <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} dashboardLoading={isRedeemPreview ? false : dashboardLoading} previewDone={redeemPreview === "redeem-done"} />
+          authenticated ? (
+            <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} dashboardLoading={isRedeemPreview ? false : dashboardLoading} previewDone={redeemPreview === "redeem-done"} withdrawMinUsdc={dashboard?.withdrawMinUsdc} />
+          ) : (
+            <SignInGate message="Sign in to see and redeem your winnings." login={login} />
+          )
         )}
         {tab === "history" && (
-          <HistoryTab
-            history={dashboard?.history ?? []}
-            withdrawals={dashboard?.withdrawals ?? []}
-            activeTickets={dashboard?.activeTickets ?? []}
-            getAccessToken={getAccessToken}
-            onRefresh={fetchDashboard}
-            refetch={fetchDashboard}
-            userSolanaAddress={userSolanaAddress}
-            loading={dashboardLoading}
-            nextDrawRoundId={dashboard?.nextDraw?.roundId ?? null}
-          />
+          authenticated ? (
+            <HistoryTab
+              history={dashboard?.history ?? []}
+              withdrawals={dashboard?.withdrawals ?? []}
+              activeTickets={dashboard?.activeTickets ?? []}
+              getAccessToken={getAccessToken}
+              onRefresh={fetchDashboard}
+              refetch={fetchDashboard}
+              userSolanaAddress={userSolanaAddress}
+              loading={dashboardLoading}
+              nextDrawRoundId={dashboard?.nextDraw?.roundId ?? null}
+              withdrawMinUsdc={dashboard?.withdrawMinUsdc}
+            />
+          ) : (
+            <SignInGate message="Sign in to see your ticket history." login={login} />
+          )
         )}
       </div>
 
@@ -2719,6 +3686,7 @@ export default function MegapotPage() {
             try { localStorage.removeItem(WON_MODAL_KEY); } catch { /* ignore */ }
             setShowResultModal(false);
           }}
+          withdrawMinUsdc={dashboard?.withdrawMinUsdc}
         />
       )}
 

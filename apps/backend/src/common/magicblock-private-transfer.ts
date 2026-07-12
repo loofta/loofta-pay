@@ -211,6 +211,13 @@ export async function requestMagicblockPrivateTransfer(params: {
    *  (confirmed against MagicBlock's own web app and the payments-demo `one/` reference repo):
    *  never gross up `amount` ourselves, just pass the clean intended amount with exactOut: true. */
   exactOut?: boolean;
+  /** Loofta's own cut, taken by MagicBlock as part of this same transfer (proportional, bps of
+   *  `amount`) — requires platformFeeAccount too. Lets a caller collect its fee without a
+   *  separate fee-collection transaction/signature. Both fields are optional and additive — omit
+   *  either to get today's behavior (no platform fee taken). */
+  platformFeeBps?: number;
+  /** Destination wallet for platformFeeBps — must be paired with platformFeeBps. */
+  platformFeeAccount?: string;
 }): Promise<MagicblockPrivateTransferTxResponse> {
   const defaults = magicblockPrivateDelayForCluster(params.cluster);
   const minDelayMs = params.minDelayMs !== undefined ? String(params.minDelayMs) : defaults.minDelayMs;
@@ -232,6 +239,9 @@ export async function requestMagicblockPrivateTransfer(params: {
     ...(params.cluster === 'mainnet' ? { split: computeSplitForAmount(params.amount) } : {}),
     ...(params.gasless ? { gasless: true } : {}),
     ...(params.exactOut !== undefined ? { exactOut: params.exactOut } : {}),
+    ...(params.platformFeeBps !== undefined && params.platformFeeAccount
+      ? { platformFeeBps: params.platformFeeBps, platformFeeAccount: params.platformFeeAccount }
+      : {}),
   };
   log.log(`POST https://payments.magicblock.app/v1/spl/transfer payload=${JSON.stringify(body)}`);
 
@@ -268,6 +278,15 @@ const TOKEN_PROGRAM_STR = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
  * instructions in the MagicBlock-built transaction. Returns units, or null on parse failure.
  *
  * actualFee = decodedDebit - netBaseUnits
+ *
+ * LIMITATION — only sees TOP-LEVEL instructions in the unsigned tx. MagicBlock's private transfer
+ * routes the real debit through its own vault program, which CPIs into the Token program at
+ * runtime (visible in simulation logs as "invoke [2]" inside a MagicBlock-owned program ID) — that
+ * nested transfer is never present in the raw transaction bytes, so this function cannot see it and
+ * will silently under-report the true debit. Confirmed in production: a caller used this to
+ * "verify sufficient balance before signing" and it passed while the real send still failed
+ * on-chain with insufficient funds. Do not treat this as a sufficient-balance check — the RPC's own
+ * preflight simulation (which does execute CPIs) is the only reliable ground truth for that.
  */
 export async function decodeActualSenderDebit(
   transactionBase64: string,

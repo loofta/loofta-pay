@@ -11,7 +11,7 @@ export function Footer() {
   return (
     <footer className="bg-[#18181F] pt-32 md:pt-40 pb-12">
       <div className="max-w-7xl mx-auto px-4 md:px-8">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-8 md:gap-12">
+        <div className="grid grid-cols-2 md:grid-cols-7 gap-8 md:gap-8">
           {/* Logo */}
           <div className="col-span-2 md:col-span-1">
             <Image
@@ -40,6 +40,16 @@ export function Footer() {
             <ul className="space-y-2">
               <li><a href={looftaXyz.checkout} className="text-slate-400 hover:text-white transition-colors">{t('checkout')}</a></li>
               <li><a href={looftaXyz.partners} className="text-slate-400 hover:text-white transition-colors">{t('partners')}</a></li>
+              <li><a href="/payment-links" className="text-slate-400 hover:text-white transition-colors">Payment links</a></li>
+            </ul>
+          </div>
+
+          {/* Learn */}
+          <div>
+            <h4 className="text-white font-semibold mb-4">Learn</h4>
+            <ul className="space-y-2">
+              <li><a href="/guides/send-crypto-privately" className="text-slate-400 hover:text-white transition-colors">Send crypto privately</a></li>
+              <li><a href="/vs/paypal" className="text-slate-400 hover:text-white transition-colors">Loofta vs PayPal</a></li>
             </ul>
           </div>
 
@@ -62,6 +72,16 @@ export function Footer() {
               <li><a href="https://twitter.com/looftapay" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Twitter</a></li>
               <li><a href="https://t.me/looftapay" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Telegram</a></li>
               <li><a href="https://loofta.gitbook.io/docs" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Docs</a></li>
+            </ul>
+          </div>
+
+          {/* Ecosystem */}
+          <div>
+            <h4 className="text-white font-semibold mb-4">Ecosystem</h4>
+            <ul className="space-y-2">
+              <li><a href="https://magicblock.xyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">MagicBlock</a></li>
+              <li><a href="https://megapot.io" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Megapot</a></li>
+              <li><a href="https://blink.cash" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Blink.cash</a></li>
             </ul>
           </div>
         </div>

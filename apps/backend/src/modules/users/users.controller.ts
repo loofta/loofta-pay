@@ -62,6 +62,18 @@ export class UsersController {
   }
 
   /**
+   * Creates the caller's app_users row if it doesn't exist yet (idempotent) — call once right
+   * after login, from any client. See UsersService.ensureAppUser for why this exists.
+   */
+  @Post('me/ensure-profile')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Create the caller's app_users row on first login if missing" })
+  async ensureProfile(@PrivyUser() user: { id: string }) {
+    return this.usersService.ensureAppUser(user.id);
+  }
+
+  /**
    * Check if a username exists and return only public fields.
    * email and privyUserId are intentionally omitted — this endpoint is unauthenticated.
    */
@@ -181,6 +193,31 @@ export class UsersController {
   async getMyBalance(@PrivyUser() user: { id: string }) {
     const { balanceUSD, walletAddress } = await this.usersService.getSolanaWalletBalanceAndAddress(user.id);
     return { balanceUSD, walletAddress };
+  }
+
+  /**
+   * Get current user's wallet SOL + USDC balances (mobile's Seeker-wallet profile display —
+   * separate from me/wallet/balance above, which only reports a USDC-as-USD figure for the web
+   * embedded-wallet flow).
+   */
+  @Get('me/wallet/balances')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current user wallet SOL and USDC balances' })
+  @ApiResponse({
+    status: 200,
+    description: 'Wallet balances',
+    schema: {
+      properties: {
+        walletAddress: { type: 'string' },
+        solBalance: { type: 'number' },
+        usdcBalance: { type: 'number' },
+        skrDomain: { type: 'string', nullable: true },
+      },
+    },
+  })
+  async getMyBalances(@PrivyUser() user: { id: string }) {
+    return this.usersService.getSolanaWalletBalances(user.id);
   }
 
   /**

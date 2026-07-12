@@ -1,10 +1,11 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { Injectable, Logger, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { randomUUID, randomBytes } from 'crypto';
 import { ConfigService } from '@nestjs/config';
-import { Keypair, PublicKey, Connection, Transaction, VersionedTransaction, TransactionMessage, SystemProgram } from '@solana/web3.js';
+import { Keypair, PublicKey, Connection, Transaction, TransactionInstruction, VersionedTransaction, TransactionMessage, SystemProgram } from '@solana/web3.js';
 import {
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
+  createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
   getAssociatedTokenAddress,
   getAccount,
@@ -15,13 +16,33 @@ import type { Address } from 'viem';
 import { SupabaseService } from '@/database/supabase.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
-import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI } from './megapot.service';
+import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI, PrizeTiersSnapshot } from './megapot.service';
 import { RhinestoneService } from './rhinestone.service';
 import { LifiService } from './lifi.service';
+import { RelayService } from './relay.service';
+import { UsersService } from '../users/users.service';
+import { EmailService } from '../email/email.service';
 import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const TICKET_PRICE_USDC = 1;
+// A win below this is worth less than a ticket's cash value once the fixed bridge + relay fees
+// are taken out, so cashing it out would deliver a fraction of the figure shown. Below the line a
+// win is treated as a "free ticket" — the only action is Play Again (reinvest into the next draw,
+// no fees); at or above it, withdrawal is allowed. This is the single source of truth for that
+// rule: the withdrawal endpoints enforce it, and the dashboard reports it (withdrawMinUsdc +
+// per-ticket isFreeTicket) so the UI never has to hardcode the number.
+export const WITHDRAW_MIN_USDC = 1.3;
+
+// Fee-wallet low-balance alert (see checkFeeWalletBalance). The fee wallet funds bridge top-ups
+// (USDC) and gas/relay (SOL) and — since purchases no longer collect a Loofta fee — is no longer
+// auto-replenished, so it must be watched. Defaults overridable via env; recipient defaults to the
+// operator's address.
+const FEE_WALLET_MIN_SOL = 0.15;
+const FEE_WALLET_MIN_USDC = 20;
+const FEE_WALLET_ALERT_DEFAULT_EMAIL = 'lisa.bechina@gmail.com';
+// Re-alert cadence while still low, so one email doesn't get buried and forgotten.
+const FEE_WALLET_REALERT_MS = 24 * 60 * 60_000;
 // A SOL→Base Li.Fi bridge normally quotes single-digit-seconds execution — 20 min with zero
 // destination-side activity means the bridge tool's solver network has abandoned the order,
 // not that it's "just slow". Past this, stop waiting and make the user whole ourselves.
@@ -30,11 +51,33 @@ const BRIDGE_STALL_TIMEOUT_MS = 20 * 60_000;
 // started right at the wire could still be mid-bridge when the round is drawn, buying a ticket
 // that can never win. Reopens automatically once Megapot's API reports the next round.
 const DRAW_PURCHASE_CUTOFF_MS = 5 * 60_000;
-// Per-purchase fee: flat component + proportional component. The proportional part exists
-// because Loofta absorbs Li.Fi's bridge cut (~25 bps of the bridged amount) — a purely flat
-// fee goes net-negative on purchases above ~35 tickets.
-const LOOFTA_TICKET_FEE_FLAT_USDC = 0.10;
-const LOOFTA_TICKET_FEE_BPS = 30;
+// Per-purchase fee: flat component + proportional component, calibrated to break even against
+// the REAL Sol→Base Li.Fi cost (live-quoted, not assumed) plus a thin buffer for quote
+// volatility — this fee only needs to cover bridging, not be a profit center (the referral
+// win-share cut on winners' payouts is the actual margin, see getWinClaimFactor). The old
+// $0.10+30bps figure was calibrated against an assumed ~25bps bridging cost; live quotes show
+// the real cost is ~0.4-0.5% via Across under ~$5, then plateaus ~1.28-1.32% via NEAR Intents
+// above that — the old formula went net-negative above ~10 tickets. $0.03+150bps tracks both
+// regimes with ~20-60% headroom instead of a flat guess.
+const LOOFTA_TICKET_FEE_FLAT_USDC = 0.03;
+const LOOFTA_TICKET_FEE_BPS = 150;
+
+// Same alphabet/algorithm as claims.service.ts's generateShortId — public 8-char share code for
+// gift links (mirrors payments.short_id), kept as its own copy per this repo's existing convention.
+const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SHORT_ID_MAX_VALID = Math.floor(256 / SHORT_ID_ALPHABET.length) * SHORT_ID_ALPHABET.length;
+function generateShortId(length = 8): string {
+  let result = '';
+  while (result.length < length) {
+    const bytes = randomBytes(length - result.length + 4);
+    for (const byte of bytes) {
+      if (byte < SHORT_ID_MAX_VALID && result.length < length) {
+        result += SHORT_ID_ALPHABET[byte % SHORT_ID_ALPHABET.length];
+      }
+    }
+  }
+  return result;
+}
 function looftaTicketFee(costUsdc: number): number {
   return parseFloat((LOOFTA_TICKET_FEE_FLAT_USDC + (costUsdc * LOOFTA_TICKET_FEE_BPS) / 10_000).toFixed(6));
 }
@@ -100,15 +143,15 @@ export type TicketStatus =
 
 export interface InitiatePurchaseResult {
   ticketId: string;
-  /** Sign + send this FIRST — plain USDC transfer collecting Loofta's fee upfront. */
-  feeTxBase64: string;
-  feeWalletAddress: string;
-  /** Sign + send this SECOND, after the fee tx confirms — the MagicBlock private transfer. */
+  /** Sign + send — the MagicBlock private transfer of exactly the ticket cost. This is now the
+   *  only tx the buyer signs; Loofta no longer collects a separate service fee (the bridge cost
+   *  is absorbed from Loofta's fee-wallet reserve). */
   txBase64: string;
   requiredSigners: string[];
   feeBreakdown: {
     ticketCostUsdc: number;
     magicblockFeeUsdc: number;
+    /** Always 0 now — kept for response-shape compatibility with older clients. */
     looftaFeeUsdc: number;
     totalUsdc: number;
   };
@@ -118,6 +161,9 @@ export interface InitiatePublicPurchaseResult {
   ticketId: string;
   depositAddress: string;
   amountUsdc: number;
+  /** Client-signable USDC transfer to `depositAddress` — Loofta's fee wallet sponsors gas + ATA
+   *  rent (see buildPublicPurchaseTransferTx), the user's signature is the only thing missing. */
+  txBase64: string;
 }
 
 export interface LotteryDashboard {
@@ -126,6 +172,9 @@ export interface LotteryDashboard {
   withdrawals: LotteryWithdrawalSummary[];
   stats: { totalSpent: number; totalWon: number; netPnl: number; ticketCount: number };
   nextDraw: { roundId: string | null; drawTime: string | null; prizePool: string | null };
+  /** Minimum win (USDC) that may be withdrawn; below this a win is a "free ticket" (play-again
+   *  only). Sent so the client renders the rule without hardcoding the threshold. */
+  withdrawMinUsdc: number;
 }
 
 export interface LotteryTicketSummary {
@@ -137,12 +186,18 @@ export interface LotteryTicketSummary {
   drawTime: string | null;
   winAmountUsdc: number | null;
   winTier: number | null;
+  /** A won ticket whose amount is below WITHDRAW_MIN_USDC — shown as a "free ticket" (play-again
+   *  only, no withdrawal). False for any non-won ticket. Authoritative; the UI renders off this. */
+  isFreeTicket: boolean;
   createdAt: string;
   depositAddress: string | null;
   bridgeStatus: string | null;
   bridgeExpiresAt: string | null;
   ticketNumbers: { main: number[]; bonus: number }[] | null;
   winningNumbers: { main: number[]; bonus: number } | null;
+  /** True when this ticket came from claiming a gift — the claimant never paid for it, see
+   *  purchaseGiftTickets. Dashboard "spent" excludes these; "won" still counts them. */
+  isGift: boolean;
 }
 
 export interface LotteryWithdrawalSummary {
@@ -167,7 +222,18 @@ export class LotteryService {
     private readonly megapot: MegapotService,
     private readonly rhinestone: RhinestoneService,
     private readonly lifi: LifiService,
+    private readonly relay: RelayService,
+    private readonly usersService: UsersService,
+    private readonly emailService: EmailService,
   ) {}
+
+  /** Which bridge to use for the Sol↔Base legs (both purchase and withdrawal). 'relay' (faster,
+   *  ~1–3s) or 'lifi' (default, unchanged). Set BRIDGE_PROVIDER=relay to switch. In-flight tickets
+   *  keep whichever tool they started with — the status checks branch on the stored tool, not this
+   *  flag — so toggling never orphans a bridge mid-flight. */
+  private get bridgeProvider(): 'relay' | 'lifi' {
+    return this.config.get<string>('BRIDGE_PROVIDER') === 'relay' ? 'relay' : 'lifi';
+  }
 
   // ─── Purchase initiation ───────────────────────────────────────────────────
 
@@ -234,20 +300,15 @@ export class LotteryService {
     // `costUnits` with exactOut:true and lets MagicBlock gross up the sender's debit internally.
     const grossAmount = estimateMagicblockGrossUp(costUnits);
     const magicblockFeeUsdc = parseFloat(((grossAmount - costUnits) / 1_000_000 + MAGICBLOCK_GAS_USDC).toFixed(6));
-    const looftaFeeUsdc = looftaTicketFee(costUsdc);
-    const totalUsdc = costUsdc + magicblockFeeUsdc + looftaFeeUsdc;
+    // Loofta no longer charges a separate service fee on purchases — the buyer pays only the
+    // ticket cost + MagicBlock's own transfer fee. The Li.Fi bridge cost is absorbed from Loofta's
+    // fee-wallet reserve (see tryStartBridge), not passed to the buyer.
+    const totalUsdc = costUsdc + magicblockFeeUsdc;
 
-    // 4. Fee collection: a plain USDC transfer, user → fee wallet, BEFORE the MagicBlock
-    // transfer — we can't append this as an instruction onto MagicBlock's own pre-built tx, so
-    // it has to be its own transaction. The frontend signs+sends this one first.
-    const { transactionBase64: feeTxBase64, feeWalletAddress } = await this.buildFeeCollectionTx(
-      userSolanaAddress, looftaFeeUsdc,
-    );
-
-    // 5. Build MagicBlock private transfer: user → burner. Amount is exactly costUsdc — already
+    // 4. Build MagicBlock private transfer: user → burner. Amount is exactly costUsdc — already
     // a whole-dollar figure for any ticket count, so no rounding is needed for the exactOut leg
     // to avoid fingerprinting. Li.Fi's bridging cost is funded later from the fee wallet, not
-    // baked into this amount (see tryStartBridge).
+    // baked into this amount (see tryStartBridge). This is now the ONLY tx the buyer signs.
     const cluster = this.getSolanaCluster();
     let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
     try {
@@ -293,12 +354,593 @@ export class LotteryService {
 
     return {
       ticketId: ticket.id,
-      feeTxBase64,
-      feeWalletAddress,
       txBase64: txResponse.transactionBase64,
       requiredSigners: txResponse.requiredSigners,
-      feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, looftaFeeUsdc, totalUsdc },
+      feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, looftaFeeUsdc: 0, totalUsdc },
     };
+  }
+
+  // ─── Gift a ticket ──────────────────────────────────────────────────────────
+
+  private normalizeGiftIdentifier(type: 'email' | 'handle', value: string): string {
+    const v = value.trim();
+    return type === 'email' ? v.toLowerCase() : v.replace(/^@/, '').toLowerCase();
+  }
+
+  /**
+   * Self-service gift: a user pays for N tickets with their own wallet — same signed private
+   * transfer as buying for themselves in initiatePurchase — but the actual Megapot purchase is
+   * deferred to CLAIM time, exactly like admin-issued gifts (see createGift/purchaseGiftTickets).
+   * No lottery_tickets row, no companion wallet, and no email is created here — only once
+   * confirmGiftSend lands does the gift become real and the recipient gets notified. This is
+   * deliberate: creating a lottery_tickets row now would let the existing purchase crons pick it
+   * up and buy a real ticket (numbers, draw entry) before anyone has claimed it, which is exactly
+   * what admin gifts were built to avoid.
+   *
+   * The sender's payment lands in a holding burner tracked on lottery_gifts (burner_sol_address/
+   * burner_sol_key_enc) — reused as-is by purchaseGiftTickets at claim time instead of being
+   * funded fresh from treasury like admin_treasury gifts.
+   */
+  async initiateGiftedPurchase(opts: {
+    userId: string;
+    userSolanaAddress: string;
+    numTickets: number;
+    recipientType: 'email' | 'handle';
+    recipientIdentifier: string;
+    note?: string;
+  }): Promise<{ giftId: string; txBase64: string; requiredSigners: string[] }> {
+    const { userId, userSolanaAddress, numTickets } = opts;
+    await this.assertNotInDrawCutoff();
+    if (!numTickets || numTickets < 1 || numTickets > 100) throw new BadRequestException('1–100 tickets per gift');
+    if (!['email', 'handle'].includes(opts.recipientType)) throw new BadRequestException('recipientType must be "email" or "handle"');
+    const recipientIdentifier = this.normalizeGiftIdentifier(opts.recipientType, opts.recipientIdentifier);
+    if (!recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
+
+    // Same load protection as initiatePurchase, but against unconfirmed gift payments instead.
+    const db0 = this.supabase.getClient();
+    const { count: pendingCount } = await db0
+      .from('lottery_gifts')
+      .select('id', { count: 'exact', head: true })
+      .eq('created_by_user_id', userId)
+      .eq('status', 'pending_payment')
+      .gte('created_at', new Date(Date.now() - 15 * 60_000).toISOString());
+    if ((pendingCount ?? 0) >= 3) {
+      throw new BadRequestException('You have unfinished gift purchases — complete or cancel them first, or retry in a few minutes.');
+    }
+
+    const burnerKeypair = Keypair.generate();
+    const burnerAddress = burnerKeypair.publicKey.toBase58();
+    const burnerKeyEnc = this.enc.encrypt(Buffer.from(burnerKeypair.secretKey), burnerAddress);
+
+    const costUsdc = numTickets * TICKET_PRICE_USDC;
+    const costUnits = Math.round(costUsdc * 1_000_000);
+    // No Loofta service fee on gifted purchases either — the sender signs only the MagicBlock
+    // transfer (see initiatePurchase). Bridge cost is absorbed from the fee-wallet reserve.
+
+    const cluster = this.getSolanaCluster();
+    let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
+    try {
+      txResponse = await requestMagicblockPrivateTransfer({
+        from: userSolanaAddress,
+        to: burnerAddress,
+        mint: USDC_MINT.toBase58(),
+        amount: costUnits,
+        cluster,
+        exactOut: true,
+        gasless: true,
+        minDelayMs: 10_000,
+        maxDelayMs: 30_000,
+      });
+    } catch (err: any) {
+      if (String(err?.message).includes('delegated to another validator')) {
+        throw new BadRequestException(
+          'A previous payment from this wallet is still in transit (usually clears within 2 minutes). Please wait and try again.',
+        );
+      }
+      throw err;
+    }
+
+    const db = this.supabase.getClient();
+    const claimToken = randomUUID();
+    const shortId = generateShortId();
+    const { data: gift, error: giftError } = await db
+      .from('lottery_gifts')
+      .insert({
+        created_by_user_id: userId,
+        funding_mode: 'sender_paid',
+        num_tickets: numTickets,
+        note: opts.note ?? null,
+        recipient_type: opts.recipientType,
+        recipient_identifier: recipientIdentifier,
+        claim_token: claimToken,
+        short_id: shortId,
+        status: 'pending_payment',
+        burner_sol_address: burnerAddress,
+        burner_sol_key_enc: burnerKeyEnc,
+      })
+      .select('id')
+      .single();
+    if (giftError || !gift) throw new Error(`Failed to create gift record: ${giftError?.message}`);
+
+    return {
+      giftId: gift.id,
+      txBase64: txResponse.transactionBase64,
+      requiredSigners: txResponse.requiredSigners,
+    };
+  }
+
+  /** Confirm the sender's upfront fee tx — must be called before confirmGiftSend. */
+  async confirmGiftFee(opts: { giftId: string; userId: string; feeTxHash: string }): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: gift } = await db
+      .from('lottery_gifts')
+      .select('num_tickets, fee_tx_hash')
+      .eq('id', opts.giftId)
+      .eq('created_by_user_id', opts.userId)
+      .eq('funding_mode', 'sender_paid')
+      .single();
+    if (!gift) throw new BadRequestException('Gift not found');
+    if (gift.fee_tx_hash === opts.feeTxHash) return; // idempotent retry
+    if (gift.fee_tx_hash) throw new BadRequestException('Fee already recorded for this gift');
+
+    const feeUsdc = looftaTicketFee(gift.num_tickets * TICKET_PRICE_USDC);
+    await this.verifyFeePaymentOnChain(opts.feeTxHash, feeUsdc);
+
+    const { error } = await db
+      .from('lottery_gifts')
+      .update({ fee_tx_hash: opts.feeTxHash })
+      .eq('id', opts.giftId)
+      .eq('created_by_user_id', opts.userId);
+    if (error) throw new Error(`confirmGiftFee failed: ${error.message}`);
+    this.logger.log(`Gift ${opts.giftId}: fee collected & verified on-chain, tx=${opts.feeTxHash}`);
+  }
+
+  /**
+   * Confirm the sender's MagicBlock transfer landed — this is the moment the gift becomes real:
+   * flips pending_payment → unclaimed and (for email gifts) sends the notification. Nothing
+   * before this point is visible or claimable by the recipient.
+   */
+  async confirmGiftSend(opts: { giftId: string; userId: string; senderTxHash: string }): Promise<{ claimUrl: string }> {
+    const db = this.supabase.getClient();
+    const { data: gift } = await db
+      .from('lottery_gifts')
+      .select('*')
+      .eq('id', opts.giftId)
+      .eq('created_by_user_id', opts.userId)
+      .eq('funding_mode', 'sender_paid')
+      .single();
+    if (!gift) throw new BadRequestException('Gift not found');
+    const claimUrl = `https://pay.loofta.xyz/gift/${gift.short_id || gift.claim_token}`;
+    if (gift.status !== 'pending_payment') return { claimUrl }; // idempotent retry
+
+    const { error } = await db
+      .from('lottery_gifts')
+      .update({ status: 'unclaimed', sender_tx_hash: opts.senderTxHash })
+      .eq('id', opts.giftId)
+      .eq('status', 'pending_payment');
+    if (error) throw new Error(`confirmGiftSend failed: ${error.message}`);
+
+    if (gift.recipient_type === 'email') {
+      await this.emailService.sendGiftTicketEmail({
+        recipientEmail: gift.recipient_identifier,
+        numTickets: gift.num_tickets,
+        claimUrl,
+        note: gift.note,
+      }).catch(e => this.logger.warn(`confirmGiftSend ${opts.giftId}: sendGiftTicketEmail failed: ${e.message}`));
+    }
+    this.prewarmGiftOg(claimUrl);
+    this.logger.log(`Gift ${opts.giftId}: payment confirmed, now claimable — tx=${opts.senderTxHash}`);
+    return { claimUrl };
+  }
+
+  /**
+   * Fire-and-forget OG image render the moment a gift link becomes real/shareable — cold
+   * next/og rendering measured 1.7-3s in production, which risks X's crawler timing out before
+   * the image is ready (WhatsApp's crawler is more lenient). Warming it here means by the time
+   * anyone actually shares the link, the image is already cached in Supabase Storage.
+   */
+  private prewarmGiftOg(claimUrl: string): void {
+    try {
+      const id = new URL(claimUrl).pathname.split('/').filter(Boolean).pop();
+      if (!id) return;
+      fetch(`https://pay.loofta.xyz/api/gift/${id}/og`).catch(() => {});
+    } catch { /* ignore */ }
+  }
+
+  /**
+   * Admin action: creates a lightweight, unfunded gift record. No wallets are generated and no
+   * money moves here — that's deliberate, see claimGift below. Mirrors the recipient-targeting
+   * UX of a regular Loofta payment (email or X handle) without touching the payments/claims
+   * tables at all.
+   */
+  async createGift(opts: {
+    adminUserId: string;
+    numTickets: number;
+    recipientType: 'email' | 'handle';
+    recipientIdentifier: string;
+    note?: string;
+  }): Promise<{ giftId: string; claimToken: string; claimUrl: string }> {
+    const { adminUserId, numTickets, recipientType, note } = opts;
+    if (!numTickets || numTickets < 1 || numTickets > 100) {
+      throw new BadRequestException('1–100 tickets per gift');
+    }
+    if (!['email', 'handle'].includes(recipientType)) {
+      throw new BadRequestException('recipientType must be "email" or "handle"');
+    }
+    const recipientIdentifier = this.normalizeGiftIdentifier(recipientType, opts.recipientIdentifier);
+    if (!recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
+
+    const claimToken = randomUUID();
+    const shortId = generateShortId();
+    const db = this.supabase.getClient();
+    const { data: gift, error } = await db
+      .from('lottery_gifts')
+      .insert({
+        created_by_user_id: adminUserId,
+        funding_mode: 'admin_treasury',
+        num_tickets: numTickets,
+        note: note ?? null,
+        recipient_type: recipientType,
+        recipient_identifier: recipientIdentifier,
+        claim_token: claimToken,
+        short_id: shortId,
+        status: 'unclaimed',
+      })
+      .select('id')
+      .single();
+    if (error || !gift) throw new Error(`Failed to create lottery gift: ${error?.message}`);
+
+    const claimUrl = `https://pay.loofta.xyz/gift/${shortId}`;
+    if (recipientType === 'email') {
+      await this.emailService.sendGiftTicketEmail({
+        recipientEmail: recipientIdentifier,
+        numTickets,
+        claimUrl,
+        note: note ?? null,
+      }).catch(e => this.logger.warn(`createGift ${gift.id}: sendGiftTicketEmail failed: ${e.message}`));
+    }
+    this.prewarmGiftOg(claimUrl);
+
+    this.logger.log(`Gift ${gift.id}: created ${numTickets} ticket(s) for ${recipientType}:${recipientIdentifier.slice(0, 3)}*** by admin ${adminUserId}`);
+    return { giftId: gift.id, claimToken, claimUrl };
+  }
+
+  /**
+   * Public, unauthenticated preview for the share + claim pages — accepts either the short share
+   * id or (for links sent before short ids existed) the long claim_token. Never exposes the raw
+   * recipient_identifier when it's an email; a handle recipient is already public the same way a
+   * payment's recipient username is (see sharePreview.ts on the frontend for the precedent).
+   */
+  async getGiftPublic(token: string, viewerUserId?: string): Promise<{
+    giftId: string | null;
+    numTickets: number; note: string | null; status: string; recipientType: 'email' | 'handle';
+    recipientIdentifier: string | null;
+    isSender: boolean; isClaimant: boolean; isRecipient: boolean;
+    senderUsername: string | null; recipientHandle: string | null;
+  }> {
+    const db = this.supabase.getClient();
+    const { data: gift } = await db
+      .from('lottery_gifts')
+      .select('id, num_tickets, note, status, recipient_type, recipient_identifier, created_by_user_id, claimed_by_user_id')
+      .or(`short_id.eq.${token},claim_token.eq.${token}`)
+      .maybeSingle();
+    if (!gift) throw new NotFoundException('Gift not found');
+
+    const isSender = Boolean(viewerUserId) && gift.created_by_user_id === viewerUserId;
+    const isClaimant = Boolean(viewerUserId) && gift.claimed_by_user_id === viewerUserId;
+    const isRecipient = !isSender && !isClaimant && gift.status === 'unclaimed'
+      && (await this.isGiftRecipient(gift, viewerUserId));
+
+    // A logged-in viewer who is none of sender/claimant/recipient never gets the gift's contents
+    // (ticket count, sender/note) — but unlike a genuinely bad token, this is a real gift the
+    // viewer just isn't authorized to see from this session, so the message stays actionable
+    // instead of collapsing into an indistinguishable 404 (that regressed a real recipient who
+    // re-opened the link from a different device/session after already claiming — see the "fix
+    // gift claim" follow-up). ForbiddenException (403), not NotFoundException, since the token
+    // did resolve to a real row.
+    if (viewerUserId && !isSender && !isClaimant && !isRecipient) {
+      const message = gift.status === 'claimed'
+        ? "This gift was already claimed. Log in with the account you claimed it with to view it."
+        : 'You are not the intended recipient of this gift. Log in with the email, X account, or Loofta username it was sent to.';
+      throw new ForbiddenException(message);
+    }
+
+    const { data: senderAppUser } = gift.created_by_user_id
+      ? await db.from('app_users').select('username').eq('privy_user_id', gift.created_by_user_id).maybeSingle()
+      : { data: null };
+
+    return {
+      // Only the sender needs the raw giftId/recipientIdentifier — to edit the recipient
+      // (see updateGiftRecipient) they already know what they typed, this isn't a new leak.
+      giftId: isSender ? gift.id : null,
+      recipientIdentifier: isSender ? gift.recipient_identifier : null,
+      numTickets: gift.num_tickets,
+      // The note is private correspondence between sender and recipient — unlike ticket
+      // count/status (shown on the public share card), it never goes out over the wire to
+      // anyone else, authenticated or not.
+      note: isSender || isClaimant ? gift.note : null,
+      status: gift.status,
+      recipientType: gift.recipient_type,
+      isSender,
+      isClaimant,
+      isRecipient,
+      senderUsername: (senderAppUser as { username?: string } | null)?.username ?? null,
+      recipientHandle: gift.recipient_type === 'handle' ? gift.recipient_identifier : null,
+    };
+  }
+
+  /**
+   * Self-service gifts a user has sent (sender_paid only — admin-issued gifts aren't "theirs" to
+   * track here). Once claimed, the underlying lottery_tickets row's ownership moves to the
+   * recipient (see purchaseGiftTickets) and disappears from the sender's own ticket
+   * dashboard/history — this is what lets a sender keep seeing "gifted to X, claimed" afterward.
+   */
+  async getMyGifts(userId: string, offset: number, limit: number): Promise<{
+    gifts: {
+      giftId: string;
+      createdAt: string;
+      numTickets: number;
+      costUsdc: number;
+      note: string | null;
+      recipientType: 'email' | 'handle';
+      recipientIdentifier: string;
+      status: string;
+      claimedAt: string | null;
+      claimToken: string;
+      claimUrl: string;
+    }[];
+    total: number;
+  }> {
+    const db = this.supabase.getClient();
+    const { data: gifts, count } = await db
+      .from('lottery_gifts')
+      .select('id, created_at, num_tickets, note, recipient_type, recipient_identifier, status, claimed_at, claim_token, short_id', { count: 'exact' })
+      .eq('created_by_user_id', userId)
+      .eq('funding_mode', 'sender_paid')
+      .neq('status', 'pending_payment') // abandoned mid-signature — not a real gift yet, nothing to show
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    return {
+      gifts: (gifts ?? []).map(g => ({
+        giftId: g.id,
+        createdAt: g.created_at,
+        numTickets: g.num_tickets,
+        costUsdc: g.num_tickets * TICKET_PRICE_USDC,
+        note: g.note,
+        recipientType: g.recipient_type,
+        recipientIdentifier: g.recipient_identifier,
+        status: g.status,
+        claimedAt: g.claimed_at,
+        claimToken: g.claim_token,
+        claimUrl: `https://pay.loofta.xyz/gift/${g.short_id || g.claim_token}`,
+      })),
+      total: count ?? 0,
+    };
+  }
+
+  /**
+   * Sender action: fix a typo'd recipient on a gift they sent — only while it's still unclaimed
+   * (once claimed, the identity that claimed it is locked in; editing after that would be
+   * meaningless since the ticket is already someone's). Re-sends the notification email when the
+   * new recipient is an email address, since the original recipient (if any) never got a valid
+   * claim link for them.
+   */
+  async updateGiftRecipient(opts: {
+    giftId: string;
+    userId: string;
+    recipientType: 'email' | 'handle';
+    recipientIdentifier: string;
+  }): Promise<{ claimUrl: string }> {
+    const db = this.supabase.getClient();
+    const { data: gift } = await db
+      .from('lottery_gifts')
+      .select('*')
+      .eq('id', opts.giftId)
+      .eq('created_by_user_id', opts.userId)
+      .eq('funding_mode', 'sender_paid')
+      .single();
+    if (!gift) throw new BadRequestException('Gift not found');
+    if (gift.status !== 'unclaimed') throw new BadRequestException('Only unclaimed gifts can be edited');
+
+    const recipientIdentifier = this.normalizeGiftIdentifier(opts.recipientType, opts.recipientIdentifier);
+    if (!recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
+
+    // Re-check at write time, not just the read above — the recipient could claim in the gap
+    // between this method's SELECT and UPDATE (e.g. sender is mid-edit right as the real
+    // recipient finally claims). The .eq('status', 'unclaimed') guard makes the update itself a
+    // no-op if that happens; .select() + a length check turns that no-op into a real error
+    // instead of silently reporting success while nothing actually changed.
+    const { data: updatedRows, error } = await db
+      .from('lottery_gifts')
+      .update({ recipient_type: opts.recipientType, recipient_identifier: recipientIdentifier })
+      .eq('id', opts.giftId)
+      .eq('status', 'unclaimed')
+      .select('id');
+    if (error) throw new Error(`updateGiftRecipient failed: ${error.message}`);
+    if (!updatedRows?.length) throw new BadRequestException('This gift was just claimed and can no longer be edited.');
+
+    const claimUrl = `https://pay.loofta.xyz/gift/${gift.short_id || gift.claim_token}`;
+    if (opts.recipientType === 'email') {
+      await this.emailService.sendGiftTicketEmail({
+        recipientEmail: recipientIdentifier,
+        numTickets: gift.num_tickets,
+        claimUrl,
+        note: gift.note,
+      }).catch(e => this.logger.warn(`updateGiftRecipient ${opts.giftId}: sendGiftTicketEmail failed: ${e.message}`));
+    }
+    // The share card's OG image bakes in the recipient handle and is cached immutably in
+    // Storage (see apps/frontend .../api/gift/[token]/og/route.tsx) — the route only ever
+    // re-renders when nothing exists yet at that path, so without deleting the stale file here,
+    // an edited recipient would never show up in the thumbnail. 'v1' must match that route's
+    // DESIGN_VERSION.
+    await db.storage.from('gift-og').remove([`v1/${gift.short_id || gift.claim_token}.png`]).catch(() => {});
+    this.prewarmGiftOg(claimUrl);
+    this.logger.log(`Gift ${opts.giftId}: recipient updated by sender ${opts.userId}`);
+    return { claimUrl };
+  }
+
+  /**
+   * Whether viewerUserId's linked identity matches this gift's recipient. Shared by claimGift
+   * (the real authorization gate) and getGiftPublic (a pre-claim check so the genuine recipient,
+   * and only them, sees the claim UI before they've actually claimed — everyone else gets treated
+   * as if the link doesn't exist, see getGiftPublic).
+   *
+   * A gift addressed to a "handle" doesn't declare upfront whether it's an X handle or a Loofta
+   * username — the sender picked one free-text field (matching how Send works), so try both
+   * identity checks and accept either match.
+   */
+  private async isGiftRecipient(gift: any, viewerUserId?: string | null): Promise<boolean> {
+    if (!viewerUserId) return false;
+    return gift.recipient_type === 'handle'
+      ? (await this.usersService.verifyRecipientIdentityForSendPayment(viewerUserId, 'twitter', gift.recipient_identifier))
+        || (await this.usersService.verifyRecipientIdentityForSendPayment(viewerUserId, 'username', gift.recipient_identifier))
+      : await this.usersService.verifyRecipientIdentityForSendPayment(viewerUserId, 'email', gift.recipient_identifier);
+  }
+
+  /**
+   * Recipient action: verifies identity, then does the real work — generates wallets, funds the
+   * burner from Loofta's own fee wallet (no fee charged, no MagicBlock leg, no signed user tx),
+   * and creates a normal lottery_tickets row already owned by the claimant. Buying at claim time
+   * (not gift-creation time) means the ticket always enters whichever draw is live right now.
+   */
+  async claimGift(token: string, claimantPrivyUserId: string): Promise<{ ticketId: string; numTickets: number }> {
+    const db = this.supabase.getClient();
+    const { data: gift } = await db
+      .from('lottery_gifts')
+      .select('*')
+      .or(`short_id.eq.${token},claim_token.eq.${token}`)
+      .maybeSingle();
+    if (!gift) throw new NotFoundException('Gift not found');
+
+    // Idempotent retry: a prior claim got as far as flipping status='claimed' but the purchase
+    // itself failed (e.g. fee-wallet funding failed, or getSolanaWalletAddress errored) — let the
+    // same claimant retry without re-verifying identity or re-racing the atomic claim below.
+    if (gift.status === 'claimed' && gift.claimed_by_user_id === claimantPrivyUserId) {
+      if (!gift.resulting_ticket_id) return this.purchaseGiftTickets(gift, claimantPrivyUserId);
+      return { ticketId: gift.resulting_ticket_id, numTickets: gift.num_tickets };
+    }
+    if (gift.status !== 'unclaimed') {
+      const message = gift.status === 'claimed' ? 'This gift has already been claimed'
+        : gift.status === 'pending_payment' ? 'This gift is still being set up — check back in a moment'
+        : `This gift is ${gift.status}`;
+      throw new BadRequestException(message);
+    }
+
+    if (!(await this.isGiftRecipient(gift, claimantPrivyUserId))) {
+      throw new ForbiddenException('You are not the intended recipient of this gift. Log in with the email, X account, or Loofta username it was sent to.');
+    }
+
+    // Atomic claim — same conditional-update race guard used for bridge_claimed_at (tryStartBridge).
+    const { data: claimedRows, error: claimError } = await db
+      .from('lottery_gifts')
+      .update({ status: 'claimed', claimed_at: new Date().toISOString(), claimed_by_user_id: claimantPrivyUserId })
+      .eq('id', gift.id)
+      .eq('status', 'unclaimed')
+      .select('id');
+    if (claimError) throw new Error(`claimGift failed: ${claimError.message}`);
+    if (!claimedRows?.length) throw new BadRequestException('This gift has already been claimed');
+
+    // Same cached-OG-image staleness as updateGiftRecipient — the thumbnail's status pill
+    // ("Gift on Loofta" vs "Claimed") would otherwise never update once cached.
+    const shareId = gift.short_id || gift.claim_token;
+    await db.storage.from('gift-og').remove([`v1/${shareId}.png`]).catch(() => {});
+    this.prewarmGiftOg(`https://pay.loofta.xyz/gift/${shareId}`);
+
+    const claimedGift = { ...gift, status: 'claimed', claimed_by_user_id: claimantPrivyUserId };
+    return this.purchaseGiftTickets(claimedGift, claimantPrivyUserId);
+  }
+
+  /**
+   * Shared by claimGift's fresh-claim and retry paths — the actual wallet-gen + fund + buy.
+   * Ordered so the one step that moves real money (topUpFromFeeWallet, admin_treasury only) runs
+   * last, right before the DB insert that records where it went — everything that can fail more
+   * routinely (draw cutoff, fetching the claimant's wallet from Privy) happens first, while
+   * failure is still free.
+   *
+   * admin_treasury: generates a fresh burner and funds it from Loofta's fee wallet right here.
+   * sender_paid: reuses the burner the sender already funded back at initiateGiftedPurchase (see
+   * that method) — no additional funding needed, just a companion wallet to buy into.
+   */
+  private async purchaseGiftTickets(gift: any, claimantPrivyUserId: string): Promise<{ ticketId: string; numTickets: number }> {
+    try {
+      await this.assertNotInDrawCutoff();
+      const userSolanaAddress = await this.usersService.getSolanaWalletAddress(claimantPrivyUserId);
+
+      const companionPrivKey = generatePrivateKey();
+      const companionAddress = await this.rhinestone.getCompanionAddress(companionPrivKey);
+      const companionKeyEnc = this.enc.encrypt(Buffer.from(companionPrivKey.slice(2), 'hex'), companionAddress);
+
+      const numTickets = gift.num_tickets as number;
+      const costUsdc = numTickets * TICKET_PRICE_USDC;
+      const costUnits = Math.round(costUsdc * 1_000_000);
+
+      let burnerAddress: string;
+      let burnerKeyEnc: string;
+      let senderTxHash: string;
+      if (gift.funding_mode === 'sender_paid') {
+        if (!gift.burner_sol_address || !gift.burner_sol_key_enc || !gift.sender_tx_hash) {
+          throw new Error(`Gift ${gift.id}: sender_paid gift missing funded burner info`);
+        }
+        burnerAddress = gift.burner_sol_address;
+        burnerKeyEnc = gift.burner_sol_key_enc;
+        senderTxHash = gift.sender_tx_hash;
+      } else {
+        const burnerKeypair = Keypair.generate();
+        burnerAddress = burnerKeypair.publicKey.toBase58();
+        burnerKeyEnc = this.enc.encrypt(Buffer.from(burnerKeypair.secretKey), burnerAddress);
+        senderTxHash = await this.topUpFromFeeWallet(burnerAddress, BigInt(costUnits));
+      }
+
+      const db = this.supabase.getClient();
+      const { data: ticket, error } = await db
+        .from('lottery_tickets')
+        .insert({
+          user_id: claimantPrivyUserId,
+          user_solana_address: userSolanaAddress,
+          companion_address: companionAddress,
+          companion_key_enc: companionKeyEnc,
+          burner_sol_address: burnerAddress,
+          burner_sol_key_enc: burnerKeyEnc,
+          num_tickets: numTickets,
+          cost_usdc: costUsdc,
+          status: 'sent',
+          sender_tx_hash: senderTxHash,
+          is_gift: true,
+        })
+        .select('id')
+        .single();
+      if (error || !ticket) throw new Error(`Failed to create gift lottery ticket: ${error?.message}`);
+
+      await db.from('lottery_gifts').update({ resulting_ticket_id: ticket.id }).eq('id', gift.id);
+      this.logger.log(`Gift ${gift.id}: claimed by ${claimantPrivyUserId}, ticket ${ticket.id} funded (${numTickets} tickets, sig=${senderTxHash})`);
+
+      // Don't wait for the next processSentTickets cron tick (up to 5s away) — the burner is
+      // already known-funded (just topped up, or funded by the sender earlier), so start the
+      // bridge right now. Fire-and-forget: tryStartBridge does its own atomic claim against the
+      // DB row, so this can't race the cron picking up the same ticket a moment later.
+      this.tryStartBridge({
+        id: ticket.id,
+        status: 'sent',
+        fee_tx_hash: null,
+        is_gift: true,
+        burner_sol_address: burnerAddress,
+        burner_sol_key_enc: burnerKeyEnc,
+        cost_usdc: costUsdc,
+        companion_address: companionAddress,
+      }).catch(e => this.logger.warn(`purchaseGiftTickets ${gift.id}: immediate tryStartBridge failed, cron will retry: ${e.message}`));
+
+      return { ticketId: ticket.id, numTickets };
+    } catch (e: any) {
+      this.logger.error(`purchaseGiftTickets ${gift.id}: ${e.message}`);
+      // Deliberately left as status='claimed' (not 'failed') with no resulting_ticket_id — this
+      // is exactly the state claimGift's idempotent-retry branch looks for, so the same claimant
+      // calling claim again will retry the purchase without re-verifying identity.
+      await this.supabase.getClient()
+        .from('lottery_gifts')
+        .update({ failure_reason: e.message })
+        .eq('id', gift.id);
+      throw new BadRequestException('Something went wrong claiming your gift — please try again in a moment.');
+    }
   }
 
   /**
@@ -509,7 +1151,9 @@ export class LotteryService {
   private async claimStalledTicket(ticket: any): Promise<void> {
     // Don't even attempt the claim if the bridge actually completed in this same window —
     // saves a wasted conditional write, though the update guard below is what actually matters.
-    const lifiStatus = await this.lifi.getStatus(ticket.lifi_buy_tx_hash, ticket.lifi_buy_tool, 'sol_to_base');
+    const lifiStatus = ticket.lifi_buy_tool === 'relay'
+      ? await this.relay.getStatus(ticket.lifi_buy_tx_hash)
+      : await this.lifi.getStatus(ticket.lifi_buy_tx_hash, ticket.lifi_buy_tool, 'sol_to_base');
     if (lifiStatus === 'DONE') return;
 
     // Atomic claim: races against processBridgingTickets, which can flip this same ticket to
@@ -560,16 +1204,15 @@ export class LotteryService {
   async initiatePublicPurchase(opts: {
     userId: string;
     numTickets: number;
+    userSolanaAddress: string;
   }): Promise<InitiatePublicPurchaseResult> {
-    const { userId, numTickets } = opts;
+    const { userId, numTickets, userSolanaAddress } = opts;
     if (numTickets < 1 || numTickets > 500) throw new BadRequestException('1–500 tickets per public purchase');
     await this.assertNotInDrawCutoff();
 
-    // Fresh companion wallet on Base
-    const companionPrivKey = generatePrivateKey();
-    const companionAccount = privateKeyToAccount(companionPrivKey);
-    const companionAddress = companionAccount.address;
-    const companionKeyEnc = this.enc.encrypt(Buffer.from(companionPrivKey.slice(2), 'hex'), companionAddress);
+    // Bridge SOL USDC → Base ETH directly to companion.
+    // ETH covers gas for Uniswap swap + ticket purchase. 15% buffer over ticket cost.
+    const BRIDGE_FEE_BUFFER = 0.15;
 
     const costUsdc = numTickets * TICKET_PRICE_USDC;
 
@@ -577,7 +1220,7 @@ export class LotteryService {
     const db = this.supabase.getClient();
     const { data: existing } = await db
       .from('lottery_tickets')
-      .select('id, bridge_deposit_address, cost_usdc')
+      .select('id, bridge_deposit_address, bridge_memo, cost_usdc')
       .eq('user_id', userId)
       .eq('status', 'pending_send')
       .eq('num_tickets', numTickets)
@@ -589,12 +1232,22 @@ export class LotteryService {
 
     if (existing?.bridge_deposit_address) {
       this.logger.log(`Public ticket: returning existing pending ticket ${existing.id} for user ${userId}`);
-      return { ticketId: existing.id, depositAddress: existing.bridge_deposit_address, amountUsdc: existing.cost_usdc };
+      const txBase64 = await this.buildPublicPurchaseTransferTx({
+        fromAddress: userSolanaAddress,
+        toAddress: existing.bridge_deposit_address,
+        userAmountUsdc: existing.cost_usdc,
+        looftaAmountUsdc: BRIDGE_FEE_BUFFER,
+        memo: existing.bridge_memo,
+      });
+      return { ticketId: existing.id, depositAddress: existing.bridge_deposit_address, amountUsdc: existing.cost_usdc, txBase64 };
     }
 
-    // Bridge SOL USDC → Base ETH directly to companion.
-    // ETH covers gas for Uniswap swap + ticket purchase. 15% buffer over ticket cost.
-    const BRIDGE_FEE_BUFFER = 0.15;
+    // Fresh companion wallet on Base
+    const companionPrivKey = generatePrivateKey();
+    const companionAccount = privateKeyToAccount(companionPrivKey);
+    const companionAddress = companionAccount.address;
+    const companionKeyEnc = this.enc.encrypt(Buffer.from(companionPrivKey.slice(2), 'hex'), companionAddress);
+
     const amountToSend = parseFloat((costUsdc + BRIDGE_FEE_BUFFER).toFixed(6));
 
     const quote = await this.nearIntents.getDepositQuote({
@@ -628,8 +1281,72 @@ export class LotteryService {
 
     if (error || !ticket) throw new Error(`Failed to create public ticket: ${error?.message}`);
 
-    this.logger.log(`Public ticket ${ticket.id}: send ${amountToSend} USDC to ${quote.depositAddress}`);
-    return { ticketId: ticket.id, depositAddress: quote.depositAddress, amountUsdc: amountToSend };
+    const txBase64 = await this.buildPublicPurchaseTransferTx({
+      fromAddress: userSolanaAddress,
+      toAddress: quote.depositAddress,
+      userAmountUsdc: costUsdc,
+      looftaAmountUsdc: BRIDGE_FEE_BUFFER,
+      memo: quote.memo,
+    });
+
+    this.logger.log(`Public ticket ${ticket.id}: user sends ${costUsdc} USDC, Loofta covers ${BRIDGE_FEE_BUFFER} USDC bridge fee, both to ${quote.depositAddress}`);
+    return { ticketId: ticket.id, depositAddress: quote.depositAddress, amountUsdc: costUsdc, txBase64 };
+  }
+
+  /**
+   * Builds a client-signable USDC transfer from the user's own wallet straight to a NEAR Intents
+   * deposit address — the "pay without MagicBlock privacy" path. The user only pays the ticket
+   * cost (`userAmountUsdc`); Loofta's fee wallet tops up the deposit with its own USDC
+   * (`looftaAmountUsdc`, the bridge-fee buffer) in the same transaction so the address still
+   * receives what the NEAR Intents quote expects, and also sponsors gas + destination ATA rent.
+   * Same co-signing pattern as the gasless MagicBlock transfer in requestMagicblockPrivateTransfer
+   * — the fee wallet partial-signs now, the user's signature (added by Seeker) is all that's left.
+   */
+  private async buildPublicPurchaseTransferTx(opts: {
+    fromAddress: string;
+    toAddress: string;
+    userAmountUsdc: number;
+    looftaAmountUsdc: number;
+    memo?: string | null;
+  }): Promise<string> {
+    const { fromAddress, toAddress, userAmountUsdc, looftaAmountUsdc, memo } = opts;
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
+    const bs58Mod = await import('bs58');
+    const feePayerKeypair = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey));
+
+    const conn = await this.getSolanaConnection();
+    const fromPubkey = new PublicKey(fromAddress);
+    const toPubkey = new PublicKey(toAddress);
+    const fromAta = await getAssociatedTokenAddress(USDC_MINT, fromPubkey);
+    const feeWalletAta = await getAssociatedTokenAddress(USDC_MINT, feePayerKeypair.publicKey);
+    const toAta = await getAssociatedTokenAddress(USDC_MINT, toPubkey);
+
+    const instructions: TransactionInstruction[] = [];
+    if (memo && memo.trim()) {
+      instructions.push(new TransactionInstruction({
+        programId: new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
+        keys: [],
+        data: Buffer.from(memo.trim(), 'utf8'),
+      }));
+    }
+    instructions.push(createAssociatedTokenAccountIdempotentInstruction(feePayerKeypair.publicKey, toAta, toPubkey, USDC_MINT));
+    instructions.push(createTransferInstruction(fromAta, toAta, fromPubkey, Math.round(userAmountUsdc * 1_000_000)));
+    if (looftaAmountUsdc > 0) {
+      instructions.push(createTransferInstruction(feeWalletAta, toAta, feePayerKeypair.publicKey, Math.round(looftaAmountUsdc * 1_000_000)));
+    }
+
+    const { blockhash } = await conn.getLatestBlockhash();
+    const message = new TransactionMessage({
+      payerKey: feePayerKeypair.publicKey,
+      recentBlockhash: blockhash,
+      instructions,
+    }).compileToV0Message();
+
+    const tx = new VersionedTransaction(message);
+    tx.sign([feePayerKeypair]); // fee wallet partial-signs to sponsor gas + ATA rent + its own bridge-fee transfer; user signs client-side
+
+    return Buffer.from(tx.serialize()).toString('base64');
   }
 
   // ─── Cron processing ───────────────────────────────────────────────────────
@@ -659,16 +1376,23 @@ export class LotteryService {
         );
       }
 
-      // Closed-tab resilience: a user can sign the MagicBlock tx but close the window before
-      // buy-confirm reaches us — the ticket then sits in pending_send and the refund cron would
-      // wrongly refund a purchase whose money is about to land. The burner balance is the
-      // ground truth: any USDC there means the transfer really was sent, so promote to 'sent'.
+      // Closed-tab resilience: a user can sign the MagicBlock tx but the client never reaches
+      // buy-confirm (closed the app, or the wallet's MWA session throws a CancellationException
+      // even though it already signed+broadcast — a known Android/MWA quirk) — the ticket then
+      // sits in pending_send and would otherwise look abandoned. The burner balance is the ground
+      // truth: any USDC there means the transfer really was sent, so promote to 'sent' regardless
+      // of how the client's own request resolved.
+      // NOTE: this used to also require `fee_tx_hash IS NOT NULL` (or is_gift) as a "proof of
+      // intent" gate, back when purchases signed a separate upfront fee tx. Loofta no longer
+      // charges that fee at all (see initiatePurchase — single MagicBlock signature now), so
+      // fee_tx_hash is never set on a normal purchase and that gate silently excluded every
+      // normal ticket from this safety net. Removed — a funded burner is sufficient proof on its
+      // own; nothing else could have put USDC there.
       const { data: pending } = await db
         .from('lottery_tickets')
         .select('*')
         .eq('status', 'pending_send')
         .not('burner_sol_address', 'is', null)
-        .not('fee_tx_hash', 'is', null) // fee is signed before the MagicBlock tx — no fee, nothing sent
         .gte('created_at', new Date(Date.now() - 30 * 60_000).toISOString())
         .limit(20);
 
@@ -689,17 +1413,15 @@ export class LotteryService {
   }
 
   private async tryStartBridge(ticket: any): Promise<void> {
-    // No verified fee, no service: without this gate a client that skips the fee tx (calling
-    // buy-confirm directly) would still get bridging + ticket purchase for free.
-    if (!ticket.fee_tx_hash) {
-      this.logger.warn(`Ticket ${ticket.id}: no fee recorded — not bridging (funds stay rescuable from the burner)`);
-      return;
-    }
     const burnerBalance = await this.getBurnerUsdcBalance(ticket.burner_sol_address);
     const costUnits = BigInt(Math.round(ticket.cost_usdc * 1_000_000));
 
-    // MagicBlock splits mainnet transfers into several parts that land separately across the
-    // delay window — wait for the full costUsdc to arrive before touching the burner.
+    // The buyer's payment IS the MagicBlock transfer of `costUsdc` into this burner — there's no
+    // longer a separate Loofta fee tx to verify (Loofta absorbs the bridge cost). So the only gate
+    // needed is that the full amount has actually landed: MagicBlock splits mainnet transfers into
+    // several parts across the delay window, so wait for the whole `costUsdc` before touching the
+    // burner. An underfunded burner can't be bridged, which is exactly the anti-freeloading check
+    // the old fee gate provided.
     if (burnerBalance < costUnits) {
       this.logger.log(`Ticket ${ticket.id}: burner not yet funded (${burnerBalance} < ${costUnits})`);
       return;
@@ -756,6 +1478,52 @@ export class LotteryService {
     // cover the gap, then bridge the corrected amount so the companion still nets exactly
     // costUsdc — this is an internal operational transfer, not the user's payment, so it doesn't
     // need MagicBlock privacy.
+    // ── Relay path (BRIDGE_PROVIDER=relay) — faster ~3s bridge. Quote EXACT_OUTPUT so the
+    // companion is guaranteed to net exactly costUnits; top the burner up to Relay's required
+    // input (cost + fee) from the fee wallet, then send the deposit. Status is later polled by
+    // requestId (stored in lifi_buy_tx_hash) with lifi_buy_tool='relay'. ──────────────────────
+    if (this.bridgeProvider === 'relay') {
+      const RELAY_PAD_UNITS = 2_000n; // $0.002 buffer so the quote's required input is covered
+      let rQuote = await this.relay.getSolToBaseQuote({
+        fromAddress: ticket.burner_sol_address,
+        toAddress: ticket.companion_address,
+        outputUnits: costUnits,
+      });
+      let rBurnerBalance = burnerBalance;
+      let rAttempts = 0;
+      while (rBurnerBalance < rQuote.requiredInputUnits) {
+        if (++rAttempts > 3) throw new Error(`Relay bridge: burner still short of required input after ${rAttempts - 1} top-ups (${rBurnerBalance} < ${rQuote.requiredInputUnits}) — will retry next cron`);
+        const shortfallUnits = rQuote.requiredInputUnits - rBurnerBalance + RELAY_PAD_UNITS;
+        await this.topUpFromFeeWallet(ticket.burner_sol_address, shortfallUnits);
+        rBurnerBalance += shortfallUnits;
+        rQuote = await this.relay.getSolToBaseQuote({
+          fromAddress: ticket.burner_sol_address,
+          toAddress: ticket.companion_address,
+          outputUnits: costUnits,
+        });
+        this.logger.log(`Ticket ${ticket.id}: topped up burner by ${(Number(shortfallUnits) / 1_000_000).toFixed(6)} USDC for Relay's required input (${rQuote.requiredInputUnits})`);
+      }
+
+      const relaySig = await this.relay.executeSolanaQuote({
+        burnerSecretKey: burnerKey,
+        quote: rQuote,
+        feePayerSecretKey: feePayerKey,
+      });
+
+      const dbR = this.supabase.getClient();
+      await dbR.from('lottery_tickets').update({
+        status: 'bridging',
+        bridge_deposit_address: relaySig,
+        bridge_status: 'pending',
+        lifi_buy_tx_hash: rQuote.requestId, // repurpose: Relay status is keyed by requestId
+        lifi_buy_tool: 'relay',
+        updated_at: new Date().toISOString(),
+      }).eq('id', ticket.id);
+      this.logger.log(`Ticket ${ticket.id}: Relay bridge started, requestId=${rQuote.requestId}, sig=${relaySig}`);
+      return;
+    }
+
+    // ── Li.Fi path (default) ──────────────────────────────────────────────────
     // Bridge the burner's full balance (costUnits normally; also reuses any top-up from an
     // aborted earlier attempt instead of stranding it).
     let bridgeAmountUnits = Number(burnerBalance);
@@ -835,9 +1603,12 @@ export class LotteryService {
     // If already in 'buying' (retry after Rhinestone failure) skip bridge status check
     if (ticket.status !== 'buying') {
       if (ticket.lifi_buy_tx_hash) {
-        // New flow: Li.Fi bridge (SOL → Base)
-        const lifiStatus = await this.lifi.getStatus(ticket.lifi_buy_tx_hash, ticket.lifi_buy_tool, 'sol_to_base');
-        this.logger.log(`Ticket ${ticket.id}: Li.Fi buy status=${lifiStatus} tx=${ticket.lifi_buy_tx_hash}`);
+        // Bridge status: Relay is keyed by requestId (stored in lifi_buy_tx_hash, tool='relay');
+        // Li.Fi is keyed by the on-chain tx hash. Same DONE/PENDING/FAILED contract either way.
+        const lifiStatus = ticket.lifi_buy_tool === 'relay'
+          ? await this.relay.getStatus(ticket.lifi_buy_tx_hash)
+          : await this.lifi.getStatus(ticket.lifi_buy_tx_hash, ticket.lifi_buy_tool, 'sol_to_base');
+        this.logger.log(`Ticket ${ticket.id}: ${ticket.lifi_buy_tool} buy status=${lifiStatus} ref=${ticket.lifi_buy_tx_hash}`);
 
         if (lifiStatus === 'FAILED') {
           await db.from('lottery_tickets').update({
@@ -1038,47 +1809,73 @@ export class LotteryService {
     }
   }
 
-  /** Backfill ball numbers for active tickets that don't have them yet (existing tickets). */
+  /**
+   * Tries the Megapot REST API first (no RPC needed), but only accepts it as the final answer
+   * once it has ALL `requiredCount` numbers — the API can lag the chain and return a partial set
+   * (e.g. 2 of 5 minted NFTs indexed so far). Anything short of that falls back to an on-chain
+   * NFT Transfer event scan, and the result is whichever of {stored, API, on-chain} is most
+   * complete, so a partial result from one source never regresses or gets stuck behind another.
+   */
+  private async resolveTicketNumbers(
+    companionAddress: Address,
+    roundId: string | null | undefined,
+    requiredCount: number,
+    storedNumbers: { main: number[]; bonus: number }[],
+  ): Promise<{ numbers: { main: number[]; bonus: number }[]; nftIds: string[] | null }> {
+    const { ticketNumbers: apiNumbers } = await this.megapot.getTicketNumbersFromApi(companionAddress, roundId ?? undefined);
+    if (apiNumbers.length >= requiredCount) {
+      return { numbers: apiNumbers, nftIds: null };
+    }
+
+    const { tokenIds, ticketNumbers: nftNumbers } = await this.megapot.getTicketNumbersFromNft(companionAddress, roundId ?? undefined);
+
+    return [
+      { numbers: storedNumbers, nftIds: null as string[] | null },
+      { numbers: apiNumbers, nftIds: null as string[] | null },
+      { numbers: nftNumbers, nftIds: tokenIds },
+    ].reduce((a, b) => (b.numbers.length > a.numbers.length ? b : a));
+  }
+
+  /**
+   * Backfill ball numbers for tickets that are missing some. Covers 'active' (pre-draw) as well
+   * as already-resolved 'won'/'lost' tickets — a ticket can resolve before its numbers ever
+   * finish backfilling, and history/dashboard read whatever partial set is stored, forever, if
+   * nothing keeps trying after resolution.
+   */
   async backfillTicketNumbers(): Promise<void> {
     const db = this.supabase.getClient();
     const { data: tickets } = await db
       .from('lottery_tickets')
-      .select('id, companion_address, round_id')
-      .eq('status', 'active')
-      .is('ticket_numbers', null)
+      .select('id, companion_address, round_id, ticket_numbers, num_tickets')
+      .in('status', ['active', 'won', 'lost'])
       .not('companion_address', 'is', null)
-      .limit(10);
+      .limit(50);
 
-    if (!tickets?.length) return;
+    // Filter in-memory rather than in the query: a ticket with a *partial* ticket_numbers array
+    // (not null, just short of num_tickets) still needs backfilling, and Postgres can't easily
+    // compare jsonb array length to another column in a Supabase filter chain.
+    const incomplete = (tickets ?? [])
+      .filter((t) => (Array.isArray(t.ticket_numbers) ? t.ticket_numbers.length : 0) < t.num_tickets)
+      .slice(0, 10);
 
-    for (const ticket of tickets) {
+    if (!incomplete.length) return;
+
+    for (const ticket of incomplete) {
+      const storedCount = Array.isArray(ticket.ticket_numbers) ? ticket.ticket_numbers.length : 0;
       try {
-        // Try API first (no RPC needed), fall back to on-chain scan
-        const { ticketNumbers: apiNumbers } = await this.megapot.getTicketNumbersFromApi(
+        const { numbers, nftIds } = await this.resolveTicketNumbers(
           ticket.companion_address as Address,
-          ticket.round_id ?? undefined,
+          ticket.round_id,
+          ticket.num_tickets,
+          ticket.ticket_numbers ?? [],
         );
-
-        if (apiNumbers.length > 0) {
+        if (numbers.length > storedCount) {
           await db.from('lottery_tickets').update({
-            ticket_numbers: apiNumbers,
+            ticket_numbers: numbers,
+            ...(nftIds ? { ticket_nft_ids: nftIds } : {}),
             updated_at: new Date().toISOString(),
           }).eq('id', ticket.id);
-          this.logger.log(`Backfill: stored ${apiNumbers.length} numbers via API for ticket ${ticket.id}`);
-          continue;
-        }
-
-        const { tokenIds, ticketNumbers } = await this.megapot.getTicketNumbersFromNft(
-          ticket.companion_address as Address,
-          ticket.round_id ?? undefined,
-        );
-        if (ticketNumbers.length > 0) {
-          await db.from('lottery_tickets').update({
-            ticket_numbers: ticketNumbers,
-            ticket_nft_ids: tokenIds,
-            updated_at: new Date().toISOString(),
-          }).eq('id', ticket.id);
-          this.logger.log(`Backfill: stored ${ticketNumbers.length} numbers on-chain for ticket ${ticket.id}`);
+          this.logger.log(`Backfill: stored ${numbers.length} numbers for ticket ${ticket.id} (was ${storedCount})`);
         }
       } catch (e: any) {
         this.logger.warn(`Backfill failed for ticket ${ticket.id}: ${e.message}`);
@@ -1103,42 +1900,23 @@ export class LotteryService {
       return { ok: true, count: storedCount };
     }
 
-    // Try Megapot API first (no RPC, fastest path)
-    const { ticketNumbers: apiNumbers } = await this.megapot.getTicketNumbersFromApi(
+    const { numbers, nftIds } = await this.resolveTicketNumbers(
       ticket.companion_address as Address,
-      ticket.round_id ?? undefined,
+      ticket.round_id,
+      ticket.num_tickets,
+      ticket.ticket_numbers ?? [],
     );
 
-    if (apiNumbers.length > 0) {
+    if (numbers.length > storedCount) {
       await db.from('lottery_tickets').update({
-        ticket_numbers: apiNumbers,
+        ticket_numbers: numbers,
+        ...(nftIds ? { ticket_nft_ids: nftIds } : {}),
         updated_at: new Date().toISOString(),
       }).eq('id', ticketId);
-      this.logger.log(`syncTicketNumbers ${ticketId}: stored ${apiNumbers.length} numbers via API`);
-      return { ok: true, count: apiNumbers.length };
+      this.logger.log(`syncTicketNumbers ${ticketId}: stored ${numbers.length} numbers (was ${storedCount})`);
     }
 
-    // Fall back to on-chain NFT Transfer event scan (also retrieves NFT IDs for claimWinnings)
-    const { tokenIds, ticketNumbers } = await this.megapot.getTicketNumbersFromNft(
-      ticket.companion_address as Address,
-      ticket.round_id ?? undefined,
-    );
-
-    this.logger.log(`syncTicketNumbers ${ticketId}: found ${ticketNumbers.length} NFT numbers on-chain, tokenIds=${tokenIds.slice(0, 3).join(',')}`);
-
-    if (ticketNumbers.length > 0) {
-      // Merge: if new scan has more tickets than stored, use the larger set
-      const merged = ticketNumbers.length >= storedCount ? ticketNumbers : (ticket.ticket_numbers ?? ticketNumbers);
-      const mergedIds = ticketNumbers.length >= storedCount ? tokenIds : (ticket.ticket_nft_ids ?? tokenIds);
-      await db.from('lottery_tickets').update({
-        ticket_numbers: merged,
-        ticket_nft_ids: mergedIds,
-        updated_at: new Date().toISOString(),
-      }).eq('id', ticketId);
-      this.logger.log(`syncTicketNumbers ${ticketId}: stored ${merged.length} numbers (was ${storedCount}, scan returned ${ticketNumbers.length})`);
-    }
-
-    return { ok: true, count: Math.max(ticketNumbers.length, storedCount) };
+    return { ok: true, count: Math.max(numbers.length, storedCount) };
   }
 
   async rescueCompanionFunds(ticketId: string, userId: string): Promise<{ ok: boolean; rescued: boolean; amountUsdc: number; message: string }> {
@@ -1447,27 +2225,103 @@ export class LotteryService {
     }
   }
 
+  /**
+   * Real incident: the public fallback RPC (mainnet.base.org) rate-limited this call mid-playAgain
+   * — AFTER the winnings were already claimed on-chain — and the uncaught error 500'd the request,
+   * leaving the user staring at a crash for money that had, in fact, already landed. Retrying (same
+   * 3-attempt/backoff pattern as getWinClaimFactor) absorbs that kind of transient blip instead of
+   * failing a request whose hard part already succeeded.
+   */
   private async getCompanionUsdcBalance(companionAddress: string): Promise<number> {
     const { createPublicClient, http, erc20Abi } = await import('viem');
     const { base } = await import('viem/chains');
     const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
     const rpc = this.config.get<string>('BASE_RPC_URL', 'https://mainnet.base.org');
     const client = createPublicClient({ chain: base, transport: http(rpc) });
-    const balance = await client.readContract({
-      address: USDC_BASE,
-      abi: erc20Abi,
-      functionName: 'balanceOf',
-      args: [companionAddress as `0x${string}`],
-    });
-    return Number(balance) / 1_000_000;
+    // 5 attempts with a longer backoff — playAgainBatch and reconcileUnclaimedResults now call
+    // this far more often than before, and without BASE_RPC_URL configured this still falls back
+    // to the free, heavily-rate-limited public RPC (see the fee-payer/round-up code paths for the
+    // same issue). This only rides out transient rate limits; it is not a substitute for a real
+    // paid RPC endpoint.
+    const attempts = 5;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        const balance = await client.readContract({
+          address: USDC_BASE,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [companionAddress as `0x${string}`],
+        });
+        return Number(balance) / 1_000_000;
+      } catch (e: any) {
+        if (attempt >= attempts - 1) throw e;
+        const backoffMs = 600 * (attempt + 1) + Math.floor(Math.random() * 300);
+        this.logger.warn(`getCompanionUsdcBalance ${companionAddress}: attempt ${attempt + 1}/${attempts} failed (${e.message}) — retrying in ${backoffMs}ms`);
+        await new Promise(r => setTimeout(r, backoffMs));
+      }
+    }
+    throw new Error('unreachable');
   }
 
-  /** After daily draw: check all active tickets for wins */
+  /**
+   * Checks every still-'active' ticket whose draw has already happened and resolves it to
+   * won/lost. Runs frequently (see lottery-cron.service.ts) rather than once/day — a per-ticket
+   * failure (RPC rate limit, Megapot API hiccup, etc.) leaves status='active' untouched, so at a
+   * daily cadence that ticket would silently wait up to 24h for the next retry. Idempotent: a
+   * ticket that already resolved is no longer 'active' and won't be re-selected.
+   */
+  private checkingResultsRunning = false;
+
   async checkDailyResults(): Promise<void> {
+    // Overlap guard: a run can take a while (NFT metadata fetches are throttled/retried per
+    // token) — without this, a slow run could still be going when the next tick fires.
+    if (this.checkingResultsRunning) return;
+    this.checkingResultsRunning = true;
+    try {
+      await this.checkDailyResultsInner();
+    } finally {
+      this.checkingResultsRunning = false;
+    }
+  }
+
+  /**
+   * Real incident: an audit of every 'lost' ticket in the system found 6 out of 26 (23%!) had
+   * actually won — one for $23.02, effectively that round's top prize — because the on-chain NFT
+   * `tokenURI` metadata read (checkTicketResultsFromNft) is simply unreliable as a source of truth,
+   * not just occasionally slow. Megapot's own Data API (`getWalletWinsForRound`) caught every one
+   * of those 6 correctly and instantly, and its `amount` is already net of any referral-share cut
+   * (confirmed: matches gross tier payout × ~0.9 exactly). So treat the NFT-metadata result as a
+   * first pass only, and let the Data API override it whenever it reports a HIGHER total — never
+   * lower, since the metadata path is still needed to know exactly which NFTs to hand claimWinnings
+   * for.
+   */
+  private async resolveTicketWin(
+    companionAddress: string,
+    roundId: string | null,
+    nftResults: { tokenId: string; tier: number | null; winAmountUsdc: number; drawingId: string | null }[],
+  ): Promise<{ totalWinUsdc: number; tier: number | null }> {
+    const nftGross = nftResults.reduce((sum, r) => sum + r.winAmountUsdc, 0);
+    const onChainDrawingId = nftResults.find(r => r.drawingId)?.drawingId;
+    const claimFactor = onChainDrawingId ? await this.megapot.getWinClaimFactor(onChainDrawingId) : 1;
+    const nftNet = parseFloat((nftGross * claimFactor).toFixed(6));
+    const nftTier = nftResults.find(r => r.winAmountUsdc > 0)?.tier ?? null;
+
+    const apiWin = roundId
+      ? await this.megapot.getWalletWinsForRound(companionAddress as Address, roundId).catch(() => null)
+      : null;
+
+    if (apiWin && apiWin.winAmountUsdc > nftNet) {
+      if (nftNet > 0) {
+        this.logger.warn(`resolveTicketWin: NFT metadata undercounted for ${companionAddress} round ${roundId} — $${nftNet} vs Data API $${apiWin.winAmountUsdc}`);
+      }
+      return { totalWinUsdc: apiWin.winAmountUsdc, tier: apiWin.tier ?? nftTier };
+    }
+    return { totalWinUsdc: nftNet, tier: nftTier };
+  }
+
+  private async checkDailyResultsInner(): Promise<void> {
     const db = this.supabase.getClient();
 
-    // Only process tickets that are past their draw time
-    // (cron runs at 00:30 UTC, draw is at ~17:10 UTC the previous day)
     const { data: tickets } = await db
       .from('lottery_tickets')
       .select('*')
@@ -1518,22 +2372,20 @@ export class LotteryService {
           ? await this.megapot.getWinningNumbersForRound(ticket.round_id)
           : null;
 
-        // Read on-chain NFT metadata to check Tier + Win Amount post-draw
+        // Read on-chain NFT metadata to check Tier + Win Amount post-draw, cross-checked against
+        // Megapot's Data API (see resolveTicketWin) since the metadata read alone has proven unreliable.
         const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
-        const grossWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
-        const claimFactor = await this.megapot.getWinClaimFactor(ticket.round_id);
-        const totalWinUsdc = parseFloat((grossWinUsdc * claimFactor).toFixed(6));
-        const topWin = results.find(r => r.winAmountUsdc > 0);
+        const { totalWinUsdc, tier: winTier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results);
 
         if (totalWinUsdc > 0) {
           await db.from('lottery_tickets').update({
             status: 'won',
             win_amount_usdc: totalWinUsdc,
-            win_tier: topWin?.tier ?? null,
+            win_tier: winTier,
             ...(winningNumbers ? { winning_numbers: winningNumbers } : {}),
             updated_at: new Date().toISOString(),
           }).eq('id', ticket.id);
-          this.logger.log(`Ticket ${ticket.id}: WON $${grossWinUsdc} gross → $${totalWinUsdc} net (tier ${topWin?.tier}, claimFactor=${claimFactor})`);
+          this.logger.log(`Ticket ${ticket.id}: WON $${totalWinUsdc} net (tier ${winTier})`);
         } else {
           await db.from('lottery_tickets').update({
             status: 'lost',
@@ -1544,6 +2396,55 @@ export class LotteryService {
         }
       } catch (err: any) {
         this.logger.warn(`checkDailyResults ticket ${ticket.id}: ${err.message}`);
+      }
+    }
+
+    await this.reconcileUnclaimedResults();
+  }
+
+  /**
+   * Real incident: an audit of every 'lost' ticket in the whole system found 6 of 26 (23%) had
+   * actually won — one was that round's effective top prize at $23.02 — because the settlement
+   * pass's on-chain NFT-metadata read is unreliable, not just occasionally slow. This is NOT a
+   * narrow just-after-settlement race (the mismarked tickets spanned from same-day back to two
+   * weeks old), so this deliberately covers EVERY unclaimed won/lost ticket, not just recent ones —
+   * the total set is small (a few dozen at most, since claimed tickets are dropped) so re-checking
+   * all of them each cron tick is cheap. Once a ticket is 'won'/'lost' nothing else ever re-checks
+   * it, so a bad read is otherwise permanent and the user only discovers a shortfall if they happen
+   * to withdraw/replay (those paths already trust the real claimed balance over the stored figure —
+   * see processConsolidatedBatch). Uses the same Data-API-cross-checked resolver as settlement
+   * (resolveTicketWin) and only ever corrects UPWARD — never silently lowers a figure a user has
+   * already seen, that needs a human, not a cron.
+   */
+  private async reconcileUnclaimedResults(): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: tickets } = await db
+      .from('lottery_tickets')
+      .select('*')
+      .in('status', ['won', 'lost'])
+      .is('claim_tx_hash', null);
+    if (!tickets?.length) return;
+
+    for (const ticket of tickets) {
+      try {
+        const tokenIds: string[] = Array.isArray(ticket.ticket_nft_ids) ? ticket.ticket_nft_ids : [];
+        if (!tokenIds.length) continue;
+
+        const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
+        const { totalWinUsdc, tier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results);
+        const storedWin = ticket.win_amount_usdc ?? 0;
+
+        if (totalWinUsdc > storedWin + 0.000001) {
+          await db.from('lottery_tickets').update({
+            status: 'won',
+            win_amount_usdc: totalWinUsdc,
+            win_tier: tier ?? ticket.win_tier,
+            updated_at: new Date().toISOString(),
+          }).eq('id', ticket.id);
+          this.logger.warn(`reconcileUnclaimedResults: ticket ${ticket.id} was under-recorded — $${storedWin} → $${totalWinUsdc}`);
+        }
+      } catch (err: any) {
+        this.logger.warn(`reconcileUnclaimedResults ticket ${ticket.id}: ${err.message}`);
       }
     }
   }
@@ -1615,7 +2516,13 @@ export class LotteryService {
         );
         if (apiWin) {
           const winningNumbers = await this.megapot.getWinningNumbersForRound(ticket.round_id);
-          const apiClaimFactor = await this.megapot.getWinClaimFactor(ticket.round_id);
+          // No NFT metadata available on this last-resort path, so there's no real on-chain
+          // "Drawing ID" to look up getDrawingState() with — ticket.round_id is the Data-API's
+          // off-chain id, which getWinClaimFactor cannot use (see checkDailyResults). Applying no
+          // factor here means this branch shows the gross amount pre-claim; the actual redeem
+          // still reconciles win_amount_usdc to the real claimed companion balance afterward, so
+          // this is a display-only gap in this rare fallback, not a fund-safety issue.
+          const apiClaimFactor = 1;
           const netApiWin = parseFloat((apiWin.winAmountUsdc * apiClaimFactor).toFixed(6));
           await db.from('lottery_tickets').update({
             status: 'won',
@@ -1637,22 +2544,21 @@ export class LotteryService {
       ? await this.megapot.getWinningNumbersForRound(ticket.round_id)
       : null;
 
+    // NFT metadata cross-checked against Megapot's Data API — see resolveTicketWin for why the
+    // metadata read alone isn't trustworthy (23% of 'lost' tickets audited had actually won).
     const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
-    const grossWinUsdc = results.reduce((sum, r) => sum + r.winAmountUsdc, 0);
-    const nftClaimFactor = await this.megapot.getWinClaimFactor(ticket.round_id ?? '0');
-    const totalWinUsdc = parseFloat((grossWinUsdc * nftClaimFactor).toFixed(6));
-    const topWin = results.find(r => r.winAmountUsdc > 0);
+    const { totalWinUsdc, tier: winTier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results);
 
     if (totalWinUsdc > 0) {
       await db.from('lottery_tickets').update({
         status: 'won',
         win_amount_usdc: totalWinUsdc,
-        win_tier: topWin?.tier ?? null,
+        win_tier: winTier,
         ...(winningNumbers ? { winning_numbers: winningNumbers } : {}),
         updated_at: new Date().toISOString(),
       }).eq('id', ticketId);
-      this.logger.log(`checkTicketResult ${ticketId}: WON $${grossWinUsdc} gross → $${totalWinUsdc} net (tier ${topWin?.tier}, claimFactor=${nftClaimFactor})`);
-      return { status: 'won', winAmountUsdc: totalWinUsdc, winTier: topWin?.tier ?? null, winningNumbers: winningNumbers ?? null, ticketNumbers: ticket.ticket_numbers ?? null };
+      this.logger.log(`checkTicketResult ${ticketId}: WON $${totalWinUsdc} net (tier ${winTier})`);
+      return { status: 'won', winAmountUsdc: totalWinUsdc, winTier, winningNumbers: winningNumbers ?? null, ticketNumbers: ticket.ticket_numbers ?? null };
     } else {
       await db.from('lottery_tickets').update({
         status: 'lost',
@@ -1694,6 +2600,28 @@ export class LotteryService {
 
     if (tErr || !ticket) throw new BadRequestException('Ticket not found or not won');
     if (!ticket.win_amount_usdc || ticket.win_amount_usdc <= 0) throw new BadRequestException('No winnings to withdraw');
+    // Same free-ticket floor as initiateWithdrawalBatch — see the note there.
+    if (parseFloat(ticket.win_amount_usdc) < WITHDRAW_MIN_USDC) {
+      throw new BadRequestException(
+        `This win is a free ticket — play it again into the next draw instead. (Withdrawals start at $${WITHDRAW_MIN_USDC.toFixed(2)}, since fees would eat most of a smaller amount.)`,
+      );
+    }
+
+    // Same idempotency guard as initiateWithdrawalBatch — ticket.status stays 'won' throughout
+    // the whole withdrawal pipeline, so a duplicate call (e.g. refresh + re-click) would otherwise
+    // create a second withdrawal row racing the first.
+    const { data: existingInFlight } = await db
+      .from('lottery_withdrawals')
+      .select('id')
+      .eq('ticket_id', opts.ticketId)
+      .in('status', ['pending', 'processing'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existingInFlight) {
+      this.logger.log(`initiateWithdrawal: ticket ${opts.ticketId} already has an in-flight withdrawal — returning it`);
+      return { withdrawalId: existingInFlight.id };
+    }
 
     const { data: withdrawal, error: wErr } = await db
       .from('lottery_withdrawals')
@@ -1754,6 +2682,46 @@ export class LotteryService {
       if (!t.win_amount_usdc || parseFloat(t.win_amount_usdc) <= 0) {
         throw new BadRequestException(`Ticket ${t.id} has no winnings to withdraw`);
       }
+    }
+
+    // Enforce the free-ticket rule server-side (the UI hides withdrawal below this, but the
+    // endpoint is the real gate — a direct API call must not be able to cash out a sub-threshold
+    // win at a loss). The bridge fee is per-batch, so the check is on the batch TOTAL, not each
+    // ticket: several small wins can together clear the bar even if none does alone.
+    const batchTotalUsdc = tickets.reduce((sum, t) => sum + parseFloat(t.win_amount_usdc), 0);
+    if (batchTotalUsdc < WITHDRAW_MIN_USDC) {
+      throw new BadRequestException(
+        `This win is a free ticket — play it again into the next draw instead. (Withdrawals start at $${WITHDRAW_MIN_USDC.toFixed(2)}, since fees would eat most of a smaller amount.)`,
+      );
+    }
+
+    // Idempotency guard: a ticket's status stays 'won' for the ENTIRE claim → bridge → deliver
+    // pipeline (only flips to 'withdrawn' at the very end), so without this check a duplicate
+    // call — e.g. a page refresh mid-redeem followed by the user clicking "Redeem" again — would
+    // find the same tickets still eligible and spin up a second batch racing the first to claim
+    // the same companion wallets. If any of these tickets already has a withdrawal in flight,
+    // return that existing batch instead of creating a new one.
+    const { data: inFlight } = await db
+      .from('lottery_withdrawals')
+      .select('id, ticket_id, batch_id')
+      .in('ticket_id', tickets.map(t => t.id))
+      .in('status', ['pending', 'processing'])
+      .order('created_at', { ascending: false });
+    if (inFlight?.length) {
+      const existingBatchId = inFlight[0].batch_id;
+      const covered = new Set(inFlight.filter(w => w.batch_id === existingBatchId).map(w => w.ticket_id));
+      const allCovered = tickets.every(t => covered.has(t.id));
+      if (!allCovered) {
+        // Partial overlap — some requested tickets are mid-flight in one batch, others aren't in
+        // any batch. Refuse rather than guess: creating a new batch for just the uncovered
+        // tickets would silently drop the caller's expectation that this call handles all of them.
+        throw new BadRequestException('Some of these tickets already have a withdrawal in progress — try again in a moment.');
+      }
+      this.logger.log(`initiateWithdrawalBatch: ${tickets.length} ticket(s) already have an in-flight withdrawal — returning existing batch ${existingBatchId}`);
+      return {
+        withdrawalIds: inFlight.filter(w => w.batch_id === existingBatchId).map(w => w.id),
+        batchId: existingBatchId,
+      };
     }
 
     // One shared burner Solana wallet for the entire batch
@@ -2022,19 +2990,22 @@ export class LotteryService {
   }
 
   async estimatePrivateWithdrawalNet(amountUsdc: number): Promise<{ feeUsd: number; receiveUsdc: number }> {
-    // 1. Bridge leg: what actually lands in the burner (Li.Fi's guaranteed min out).
-    const bridge = await this.lifi.getWithdrawalFeeEstimate(amountUsdc);
+    // 1. Bridge leg: what actually lands in the burner (guaranteed min out). Use whichever bridge
+    // the withdrawal will actually run through, so the estimate matches delivery.
+    const bridge = this.bridgeProvider === 'relay'
+      ? await this.relay.getWithdrawalFeeEstimate(amountUsdc)
+      : await this.lifi.getWithdrawalFeeEstimate(amountUsdc);
     const bridgeReceive = bridge.receiveUsdc;
 
-    // 2. MagicBlock leg — mirror doMagicBlockTransfer exactly:
-    //    gasless path (net ≥ $5): relay fee (0.002 SOL priced live) + 10 bps volume fee, exactOut.
-    //    below $5: falls back to a direct SPL transfer (Loofta's fee payer covers gas), so the full
-    //    bridged amount is delivered with no MagicBlock fee.
-    const relayFee = await this.magicblockRelayFeeUsdc();
-    const afterRelay = bridgeReceive - relayFee;
-    const gaslessNet = afterRelay > 0 ? afterRelay * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS) / 10_000 : 0;
+    // 2. MagicBlock leg — mirror doMagicBlockTransfer exactly. There's no gasless minimum, so this
+    // always applies: relay fee (0.002 SOL priced live, +15% safety margin) + a $0.01 grossup
+    // margin, both reserved off the top, then the remaining amount takes MagicBlock's 10 bps
+    // volume fee. Skipping these margins previously made this estimate promise more than
+    // doMagicBlockTransfer actually delivers.
+    const relayFee = (await this.magicblockRelayFeeUsdc()) * 1.15;
+    const afterRelay = bridgeReceive - relayFee - 0.01;
+    const net = afterRelay > 0 ? afterRelay * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS) / 10_000 : 0;
 
-    const net = gaslessNet >= 5 ? gaslessNet : bridgeReceive;
     const receiveUsdc = parseFloat(Math.max(0, net).toFixed(6));
     const feeUsd = parseFloat(Math.max(0, amountUsdc - receiveUsdc).toFixed(6));
     return { feeUsd, receiveUsdc };
@@ -2174,6 +3145,37 @@ export class LotteryService {
   }): Promise<string> {
     const db = this.supabase.getClient();
     const W = `[Withdrawal ${opts.withdrawalId.slice(0, 8)}]`;
+
+    // ── Relay path (BRIDGE_PROVIDER=relay): Base companion → Solana burner, ~1–3s. The deposit is
+    // a Rhinestone-sponsored userOp (approve Relay's router, then call it). Status is later polled
+    // by requestId (stored in lifi_tx_hash) with lifi_step_tool='relay'. ────────────────────────
+    if (this.bridgeProvider === 'relay') {
+      const rq = await this.relay.getBaseToSolQuote({
+        fromAddress: opts.companionAddress,
+        toAddress: opts.burnerAddress,
+        amountUnits: BigInt(Math.round(opts.amountUsdc * 1_000_000)),
+      });
+      this.logger.log(`${W} Relay: send ${opts.amountUsdc.toFixed(6)} USDC → receive min ${(Number(rq.toAmountMinUnits) / 1e6).toFixed(4)}, fee ~$${rq.feeUsd.toFixed(4)}`);
+      const relayTxHash = await this.rhinestone.executeLifiSwap({
+        companionPrivateKey: opts.companionPrivHex as `0x${string}`,
+        approvalAddress: rq.approvalAddress as Address,
+        fromAmountRaw: rq.fromAmountUnits,
+        swapTo: rq.depositTo as Address,
+        swapData: rq.depositData as `0x${string}`,
+        swapValue: rq.depositValue,
+        toChainAddress: opts.burnerAddress,
+      });
+      await db.from('lottery_withdrawals').update({
+        lifi_tx_hash: rq.requestId, // repurpose: Relay status is keyed by requestId
+        lifi_step_tool: 'relay',
+        bridge_status: 'pending',
+        updated_at: new Date().toISOString(),
+      }).eq('id', opts.withdrawalId);
+      this.logger.log(`${W} Relay bridge submitted — requestId=${rq.requestId}, onchainTx=${relayTxHash} → waiting for DONE`);
+      return relayTxHash;
+    }
+
+    // ── Li.Fi path (default) ──────────────────────────────────────────────────
     const quote = await this.lifi.getBaseToSolQuote({
       fromAddress: opts.companionAddress,
       toAddress: opts.burnerAddress,
@@ -2279,8 +3281,12 @@ export class LotteryService {
   private async checkLifiWithdrawal(withdrawal: any): Promise<void> {
     const db = this.supabase.getClient();
     const W = `[Withdrawal ${withdrawal.id.slice(0, 8)}]`;
-    const status = await this.lifi.getStatus(withdrawal.lifi_tx_hash, withdrawal.lifi_step_tool, 'base_to_sol');
-    this.logger.log(`${W} Li.Fi bridge status=${status} tool=${withdrawal.lifi_step_tool} tx=${withdrawal.lifi_tx_hash?.slice(0, 16)}…`);
+    // Relay is keyed by requestId (stored in lifi_tx_hash, tool='relay'); Li.Fi by the on-chain
+    // tx hash. Same DONE/PENDING/FAILED contract either way.
+    const status = withdrawal.lifi_step_tool === 'relay'
+      ? await this.relay.getStatus(withdrawal.lifi_tx_hash)
+      : await this.lifi.getStatus(withdrawal.lifi_tx_hash, withdrawal.lifi_step_tool, 'base_to_sol');
+    this.logger.log(`${W} ${withdrawal.lifi_step_tool} bridge status=${status} ref=${withdrawal.lifi_tx_hash?.slice(0, 16)}…`);
 
     if (status === 'FAILED') {
       await db.from('lottery_withdrawals').update({
@@ -2404,53 +3410,102 @@ export class LotteryService {
     // to reserve for the *separate* flat SOL-gas relay instruction, then invert
     // estimateMagicblockGrossUp to find the largest net amount whose internal gross-up still
     // fits what's left of the burner.
-    const availableForTransfer = Number(burnerBalance) - relayFeeUnits;
-    const transferAmount = availableForTransfer > 0
-      ? Math.floor((availableForTransfer - 1) * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS) / 10_000)
+    //
+    // estimateMagicblockGrossUp is explicitly documented as an approximation of MagicBlock's real
+    // internal gross-up math, not the real thing (see magicblock-private-transfer.ts) — and its
+    // actual debit routes through a vault program's internal CPIs that aren't visible from the
+    // client side at all (see the shrink-and-retry loop below). A 1-micro-USDC margin here used to
+    // be pure padding-theater: real incident, MagicBlock's actual gross-up rounded higher than our
+    // guess, and the built transaction simulation-failed with "insufficient funds" deterministically
+    // on every cron retry, since none of the inputs change. This margin just reduces how often the
+    // shrink loop below has to fire; it is not relied on for correctness.
+    const GROSSUP_SAFETY_MARGIN_UNITS = 10_000; // $0.01 — headroom for MagicBlock's real rounding vs. our estimate
+    const availableForTransfer = Number(burnerBalance) - relayFeeUnits - GROSSUP_SAFETY_MARGIN_UNITS;
+    let transferAmount = availableForTransfer > 0
+      ? Math.floor(availableForTransfer * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS) / 10_000)
       : 0;
 
     this.logger.log(`${W} step 3/3 MagicBlock: burner ${withdrawal.withdrawal_burner_sol_address.slice(0, 8)}… balance=${burnerBalance} → transferAmount(net, exactOut)=${transferAmount} → ${withdrawal.destination_address}`);
 
     let sig: string;
 
-    // MagicBlock gasless requires ≥5 USDC. For smaller amounts fall back to a direct SPL transfer.
-    const MAGICBLOCK_GASLESS_MIN_UNITS = 5_000_000;
-    const canUseGasless = transferAmount >= MAGICBLOCK_GASLESS_MIN_UNITS;
+    // MagicBlock's gasless relay has no minimum amount — it's always used so every private
+    // withdrawal actually gets the "no on-chain link" privacy guarantee. The direct SPL fallback
+    // below only fires when there's literally nothing left to transfer after the relay fee.
+    const canUseGasless = transferAmount > 0;
 
     if (canUseGasless) {
-      let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
-      try {
-        txResponse = await requestMagicblockPrivateTransfer({
-          from: withdrawal.withdrawal_burner_sol_address,
-          to: withdrawal.destination_address,
-          mint: USDC_MINT.toBase58(),
-          amount: transferAmount,
-          cluster,
-          gasless: true,
-          exactOut: true,
-        });
-      } catch (err: any) {
-        if (String(err?.message).includes('delegated to another validator')) {
-          this.logger.warn(`${W} MagicBlock: burner ATA delegated — will retry next cron`);
-          return;
+      const conn = await this.getSolanaConnection();
+      const buildTransfer = (amount: number) => requestMagicblockPrivateTransfer({
+        from: withdrawal.withdrawal_burner_sol_address,
+        to: withdrawal.destination_address,
+        mint: USDC_MINT.toBase58(),
+        amount,
+        cluster,
+        gasless: true,
+        exactOut: true,
+      });
+
+      // MagicBlock's private transfer routes through its own vault program, which then CPIs into
+      // the Token program to move the real balance (visible in simulation logs as "invoke [2]"
+      // inside a MagicBlock-owned program). That nested debit never appears in the unsigned tx's
+      // top-level instruction list, so there's no reliable way to predict "is this amount safe"
+      // by parsing the built transaction client-side — decodeActualSenderDebit (kept in
+      // magicblock-private-transfer.ts) only sees top-level SPL transfers and was proven blind to
+      // this exact failure in production (see git history). The RPC's own preflight simulation
+      // DOES execute those CPIs and is the only ground truth we actually have, so treat a
+      // "custom program error: 0x1 / insufficient funds" from sendRawTransaction as a normal,
+      // expected outcome of our estimate being off — not a fatal error — and shrink + rebuild
+      // against MagicBlock fresh each time. Real incident: without this, the cron retried the
+      // exact same amount every 30s and failed identically forever, since nothing about the
+      // inputs changed between attempts.
+      const SHRINK_STEP_UNITS = 30_000; // $0.03 per attempt
+      const MAX_SHRINK_ATTEMPTS = 6;
+      let attempt = 0;
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
+        try {
+          txResponse = await buildTransfer(transferAmount);
+        } catch (err: any) {
+          if (String(err?.message).includes('delegated to another validator')) {
+            this.logger.warn(`${W} MagicBlock: burner ATA delegated — will retry next cron`);
+            return;
+          }
+          throw err;
         }
-        throw err;
+
+        const txBytes = Buffer.from(txResponse.transactionBase64, 'base64');
+        // MagicBlock may return a v0 (versioned) or legacy transaction
+        let rawTx: Buffer;
+        try {
+          const vTx = VersionedTransaction.deserialize(txBytes);
+          vTx.sign([burnerKeypair]);
+          rawTx = Buffer.from(vTx.serialize());
+        } catch {
+          const tx = Transaction.from(txBytes);
+          tx.partialSign(burnerKeypair);
+          rawTx = tx.serialize() as Buffer;
+        }
+
+        try {
+          sig = await conn.sendRawTransaction(rawTx);
+          break;
+        } catch (err: any) {
+          const msg = String(err?.message ?? '');
+          const insufficientFunds = msg.includes('insufficient funds') || msg.includes('custom program error: 0x1');
+          if (!insufficientFunds || attempt >= MAX_SHRINK_ATTEMPTS) throw err;
+          attempt++;
+          transferAmount -= SHRINK_STEP_UNITS * attempt;
+          if (transferAmount <= 0) {
+            this.logger.warn(`${W} MagicBlock: shrunk to zero after ${attempt} attempts — will retry next cron`);
+            return;
+          }
+          this.logger.warn(`${W} MagicBlock: insufficient funds on attempt ${attempt} — shrinking to ${transferAmount} and rebuilding`);
+        }
       }
 
-      const txBytes = Buffer.from(txResponse.transactionBase64, 'base64');
-      const conn = await this.getSolanaConnection();
-      // MagicBlock may return a v0 (versioned) or legacy transaction
-      let rawTx: Buffer;
-      try {
-        const vTx = VersionedTransaction.deserialize(txBytes);
-        vTx.sign([burnerKeypair]);
-        rawTx = Buffer.from(vTx.serialize());
-      } catch {
-        const tx = Transaction.from(txBytes);
-        tx.partialSign(burnerKeypair);
-        rawTx = tx.serialize() as Buffer;
-      }
-      sig = await conn.sendRawTransaction(rawTx);
       this.logger.log(`${W} MagicBlock private tx: ${sig}`);
 
       // sendRawTransaction only means the RPC accepted it for broadcast — confirmTransaction
@@ -2463,8 +3518,8 @@ export class LotteryService {
         throw new Error(`MagicBlock transfer failed on-chain (${sig}): ${JSON.stringify(confirmation.value.err)}`);
       }
     } else {
-      // Amount below MagicBlock minimum ($5) — send directly via SPL transfer (fee payer covers gas)
-      this.logger.log(`${W} balance ${(Number(burnerBalance) / 1e6).toFixed(6)} USDC < MagicBlock gasless minimum, using direct SPL transfer`);
+      // Nothing left after the relay fee (dust) — no private route possible, send what's there directly.
+      this.logger.log(`${W} balance ${(Number(burnerBalance) / 1e6).toFixed(6)} USDC too small to cover MagicBlock's relay fee, using direct SPL transfer`);
       sig = await this.sendUsdcFromBurner(burnerKeypair, withdrawal.destination_address, burnerBalance);
     }
 
@@ -2538,13 +3593,40 @@ export class LotteryService {
       drawTime: t.draw_time,
       winAmountUsdc: t.win_amount_usdc ? parseFloat(t.win_amount_usdc) : null,
       winTier: t.win_tier,
+      isFreeTicket: t.status === 'won'
+        && t.win_amount_usdc != null
+        && parseFloat(t.win_amount_usdc) > 0
+        && parseFloat(t.win_amount_usdc) < WITHDRAW_MIN_USDC,
       createdAt: t.created_at,
       depositAddress: ['pending_send', 'sent', 'bridging'].includes(t.status) ? (t.bridge_deposit_address ?? null) : null,
       bridgeStatus: t.bridge_status ?? null,
       bridgeExpiresAt: t.bridge_expires_at ?? null,
       ticketNumbers: t.ticket_numbers ?? null,
       winningNumbers: t.winning_numbers ?? null,
+      isGift: Boolean(t.is_gift),
     };
+  }
+
+  /**
+   * checkDailyResults/checkTicketResult fetch a round's winning numbers exactly once, right at
+   * settlement — if Megapot's API hasn't published them yet at that instant (or the call just
+   * blips), `winning_numbers` is non-fatally left null forever, with nothing to ever retry it.
+   * Real symptom: History shows a won/lost ticket with no way to see which numbers actually hit.
+   * By history-view time the round is long over, so this opportunistically re-fetches and
+   * persists whatever's still missing for the page being viewed — self-healing without a cron.
+   */
+  private async backfillMissingWinningNumbers(rows: any[]): Promise<void> {
+    const missing = rows.filter(t => !t.winning_numbers && t.round_id && (t.status === 'won' || t.status === 'lost'));
+    if (!missing.length) return;
+    const roundIds = [...new Set(missing.map(t => t.round_id))];
+    const db = this.supabase.getClient();
+    await Promise.all(roundIds.map(async (roundId) => {
+      const wn = await this.megapot.getWinningNumbersForRound(roundId).catch(() => null);
+      if (!wn) return;
+      const idsForRound = missing.filter(t => t.round_id === roundId).map(t => t.id);
+      await db.from('lottery_tickets').update({ winning_numbers: wn }).in('id', idsForRound);
+      for (const t of missing) if (t.round_id === roundId) t.winning_numbers = wn;
+    }));
   }
 
   /** Paginated ticket history (finished tickets only), newest first. Always user-scoped. */
@@ -2558,7 +3640,15 @@ export class LotteryService {
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
+    await this.backfillMissingWinningNumbers(data ?? []);
     return { tickets: (data ?? []).map(t => this.mapTicketSummary(t)), total: count ?? 0 };
+  }
+
+  /** Real per-tier prize amounts from the most recently settled draw — see getLatestSettledPrizeTiers
+   *  for why this is the closest thing to ground truth Megapot's own API can offer. Public/no auth
+   *  required, same as bridge-fee. */
+  async getPrizeTiers(): Promise<PrizeTiersSnapshot | null> {
+    return this.megapot.getLatestSettledPrizeTiers();
   }
 
   async getDashboard(userId: string): Promise<LotteryDashboard> {
@@ -2567,6 +3657,7 @@ export class LotteryService {
       db.from('lottery_tickets').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(100),
       db.from('lottery_withdrawals').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(50),
     ]);
+    await this.backfillMissingWinningNumbers(ticketsRes.data ?? []);
 
     const tickets: LotteryTicketSummary[] = (ticketsRes.data ?? [])
       .filter((t: any) => !t.deleted_at)
@@ -2585,7 +3676,9 @@ export class LotteryService {
     const activeTickets = tickets.filter(t => ['pending_send', 'sent', 'bridging', 'buying', 'active'].includes(t.status));
     const history = tickets.filter(t => ['won', 'lost', 'failed', 'withdrawn'].includes(t.status));
 
-    const totalSpent = tickets.reduce((sum, t) => sum + t.costUsdc, 0);
+    // Gift-received tickets cost the claimant nothing (see purchaseGiftTickets) — exclude them
+    // from spend, but a gift that goes on to win is still real money the user actually gets.
+    const totalSpent = tickets.filter(t => !t.isGift).reduce((sum, t) => sum + t.costUsdc, 0);
     const totalWon = tickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
 
     let nextDraw = { roundId: null as string | null, drawTime: null as string | null, prizePool: null as string | null };
@@ -2600,6 +3693,7 @@ export class LotteryService {
       withdrawals,
       stats: { totalSpent, totalWon, netPnl: totalWon - totalSpent, ticketCount: tickets.length },
       nextDraw,
+      withdrawMinUsdc: WITHDRAW_MIN_USDC,
     };
   }
 
@@ -2607,22 +3701,7 @@ export class LotteryService {
     const db = this.supabase.getClient();
     const { data } = await db.from('lottery_tickets').select('*').eq('id', ticketId).eq('user_id', userId).single();
     if (!data) return null;
-    return {
-      id: data.id,
-      status: data.status,
-      numTickets: data.num_tickets,
-      costUsdc: parseFloat(data.cost_usdc),
-      roundId: data.round_id,
-      drawTime: data.draw_time,
-      winAmountUsdc: data.win_amount_usdc ? parseFloat(data.win_amount_usdc) : null,
-      winTier: data.win_tier,
-      createdAt: data.created_at,
-      depositAddress: ['pending_send', 'sent', 'bridging'].includes(data.status) ? (data.bridge_deposit_address ?? null) : null,
-      bridgeStatus: data.bridge_status ?? null,
-      bridgeExpiresAt: data.bridge_expires_at ?? null,
-      ticketNumbers: data.ticket_numbers ?? null,
-      winningNumbers: data.winning_numbers ?? null,
-    };
+    return this.mapTicketSummary(data);
   }
 
   /** Fast Solana RPC deposit check — called by frontend every 5s during deposit waiting */
@@ -2689,6 +3768,69 @@ export class LotteryService {
       .select('id')
       .single();
     if (error || !data) throw new BadRequestException('Ticket cannot be cancelled — funds are already in transit. Use rescue instead if it looks stuck.');
+  }
+
+  /**
+   * Cron safety net: a ticket abandoned before ever signing (user cancelled the wallet prompt,
+   * app crashed, etc.) sits in 'pending_send' with no `sender_tx_hash` forever — nothing else
+   * ever revisits it (cancelTicket only runs when the client explicitly calls it).
+   *
+   * IMPORTANT: `sender_tx_hash IS NULL` does NOT prove no funds moved — a signature can succeed
+   * on-chain while the client-side promise still rejects (e.g. a CancellationException from the
+   * Android/MWA session), in which case confirmBuy never gets called and sender_tx_hash never
+   * gets set even though the transfer landed. `processSentTickets`' closed-tab-resilience check
+   * (same file, runs every 5s) is the primary defense against that — by the time this runs
+   * (10min+ later), a genuinely-funded ticket should already have been promoted out of
+   * pending_send. This is still a real on-chain balance check before deleting anything, not just
+   * a time-based guess, in case that faster check ever misses one (RPC hiccup, etc.) — never
+   * delete a ticket whose burner/deposit address actually received funds.
+   */
+  async cancelAbandonedPendingSends(): Promise<void> {
+    const db = this.supabase.getClient();
+    const staleBefore = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { data: stale } = await db
+      .from('lottery_tickets')
+      .select('id, burner_sol_address, bridge_deposit_address')
+      .eq('status', 'pending_send')
+      .is('sender_tx_hash', null)
+      .is('deleted_at', null)
+      .lt('created_at', staleBefore)
+      .limit(50);
+
+    if (!stale?.length) return;
+
+    const ids: string[] = [];
+    for (const t of stale) {
+      try {
+        if (t.burner_sol_address) {
+          const balance = await this.getBurnerUsdcBalance(t.burner_sol_address);
+          if (balance > 0n) {
+            this.logger.warn(`cancelAbandonedPendingSends: ticket ${t.id} has a funded burner but is still pending_send — leaving it for processSentTickets to promote, NOT cancelling`);
+            continue;
+          }
+        } else if (t.bridge_deposit_address) {
+          const balance = await this.checkSolanaUsdcDeposit(t.bridge_deposit_address);
+          if (balance > 0) {
+            this.logger.warn(`cancelAbandonedPendingSends: ticket ${t.id} has a funded deposit address but is still pending_send — leaving it, NOT cancelling`);
+            continue;
+          }
+        }
+        ids.push(t.id);
+      } catch (e: any) {
+        this.logger.warn(`cancelAbandonedPendingSends: balance check failed for ${t.id}, skipping to be safe: ${e.message}`);
+      }
+    }
+
+    if (!ids.length) return;
+
+    await db.from('lottery_tickets').update({
+      status: 'failed',
+      bridge_status: 'CANCELLED',
+      deleted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).in('id', ids);
+
+    this.logger.log(`cancelAbandonedPendingSends: cleaned up ${ids.length} abandoned pending_send ticket(s)`);
   }
 
   async retryTicket(ticketId: string, userId: string): Promise<{ ok: boolean }> {
@@ -2819,6 +3961,68 @@ export class LotteryService {
     }
     this.logger.log(`topUpFromFeeWallet: sent ${(Number(amount) / 1_000_000).toFixed(6)} USDC → ${toAddress.slice(0, 8)}…, sig=${sig}`);
     return sig;
+  }
+
+  // In-memory de-dupe so the alert cron doesn't email on every tick — 0 means "not currently in a
+  // low state" (also the reset value once the wallet recovers), so a fresh drop alerts immediately.
+  private feeWalletAlertLastSentAt = 0;
+
+  /**
+   * Cron: watch the Solana fee wallet (SOLANA_FEE_PAYER_PRIVATE_KEY) that funds Megapot bridge
+   * top-ups (USDC) and gas/relay (SOL). Since purchases no longer collect a Loofta fee, nothing
+   * refills it automatically — if it runs dry, bridge top-ups fail and purchases stall. Emails an
+   * alert to FEE_WALLET_ALERT_EMAIL when SOL and/or USDC drops below threshold. Alerts once per
+   * drop-below event, then at most once per FEE_WALLET_REALERT_MS while still low; resets (so the
+   * next drop alerts immediately) once the balance recovers above both thresholds.
+   */
+  async checkFeeWalletBalance(): Promise<void> {
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) return;
+
+    const minSol = Number(this.config.get<string>('FEE_WALLET_MIN_SOL')) || FEE_WALLET_MIN_SOL;
+    const minUsdc = Number(this.config.get<string>('FEE_WALLET_MIN_USDC')) || FEE_WALLET_MIN_USDC;
+    const alertEmail = this.config.get<string>('FEE_WALLET_ALERT_EMAIL') || FEE_WALLET_ALERT_DEFAULT_EMAIL;
+
+    let solBalance: number;
+    let usdcBalance: number;
+    let walletAddress: string;
+    try {
+      const bs58Mod = await import('bs58');
+      const feePayer = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey));
+      walletAddress = feePayer.publicKey.toBase58();
+      const conn = await this.getSolanaConnection();
+      const lamports = await conn.getBalance(feePayer.publicKey);
+      solBalance = lamports / 1e9;
+      usdcBalance = Number(await this.getBurnerUsdcBalance(walletAddress)) / 1e6;
+    } catch (e: any) {
+      this.logger.warn(`checkFeeWalletBalance: could not read fee wallet balance: ${e.message}`);
+      return;
+    }
+
+    const low: Array<'SOL' | 'USDC'> = [];
+    if (solBalance < minSol) low.push('SOL');
+    if (usdcBalance < minUsdc) low.push('USDC');
+
+    if (!low.length) {
+      // Recovered (or never low) — reset so the next drop-below alerts right away.
+      this.feeWalletAlertLastSentAt = 0;
+      return;
+    }
+
+    if (this.feeWalletAlertLastSentAt && Date.now() - this.feeWalletAlertLastSentAt < FEE_WALLET_REALERT_MS) {
+      return; // already alerted recently; wait out the re-alert window
+    }
+    this.feeWalletAlertLastSentAt = Date.now();
+    this.logger.warn(`Fee wallet low (${low.join('+')}): SOL=${solBalance.toFixed(4)} (min ${minSol}), USDC=$${usdcBalance.toFixed(2)} (min $${minUsdc}) — alerting ${alertEmail}`);
+    await this.emailService.sendFeeWalletLowBalanceEmail({
+      to: alertEmail,
+      walletAddress,
+      solBalance,
+      solThreshold: minSol,
+      usdcBalance,
+      usdcThreshold: minUsdc,
+      low,
+    }).catch(e => this.logger.error(`checkFeeWalletBalance: alert email failed: ${e.message}`));
   }
 
   /**
@@ -3021,9 +4225,53 @@ export class LotteryService {
   }
 
   /**
-   * "Play again" — claim winnings from a won ticket and immediately reinvest
-   * them into new Megapot tickets on Base. No bridge needed, no fees.
-   * Returns the new ticket ID and number of tickets purchased.
+   * Round-up funding for play-again: bridge `gapUsdc` (< $1) of USDC from Loofta's Solana fee
+   * wallet to `companionAddress` on Base via Relay, so a play-again can buy a whole extra ticket
+   * instead of leaving change. Waits (polls the companion balance) until the funds land. Returns
+   * true on success, false if it can't be confirmed in time (caller falls back to floor). Requires
+   * RELAY_API_KEY; the fee wallet must hold a little USDC + SOL (watched by checkFeeWalletBalance).
+   */
+  private async fundCompanionRoundUp(companionAddress: string, gapUsdc: number, preBalanceUsdc: number): Promise<boolean> {
+    if (!this.config.get<string>('RELAY_API_KEY')) {
+      this.logger.warn('fundCompanionRoundUp: RELAY_API_KEY not set — cannot round up');
+      return false;
+    }
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) return false;
+    const bs58Mod = await import('bs58');
+    const feePayer = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey));
+    // + $0.002 pad so the companion clears numTickets exactly after Relay's cut/rounding.
+    const gapUnits = BigInt(Math.ceil(gapUsdc * 1_000_000) + 2_000);
+
+    const quote = await this.relay.getSolToBaseQuote({
+      fromAddress: feePayer.publicKey.toBase58(),
+      toAddress: companionAddress,
+      outputUnits: gapUnits,
+    });
+    await this.relay.executeSolanaQuote({
+      burnerSecretKey: Buffer.from(feePayer.secretKey),
+      quote,
+      feePayerSecretKey: feePayerKey,
+    });
+
+    // Wait for the bridged gap to land on the companion (Relay ~1–3s; poll up to ~30s).
+    const target = preBalanceUsdc + gapUsdc - 0.005;
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const bal = await this.getCompanionUsdcBalance(companionAddress).catch(() => 0);
+      if (bal >= target) {
+        this.logger.log(`fundCompanionRoundUp: companion at $${bal.toFixed(4)} (target $${target.toFixed(4)}) — round-up funded`);
+        return true;
+      }
+    }
+    this.logger.warn(`fundCompanionRoundUp: gap didn't land within timeout — caller falls back to floor`);
+    return false;
+  }
+
+  /**
+   * "Play again" — claim winnings from a won ticket and immediately reinvest them into new Megapot
+   * tickets on Base. Rounds UP to the next whole ticket (funding the <$1 gap from the fee wallet),
+   * so the user keeps playing instead of leaving change. Returns the new ticket ID and count.
    */
   async playAgain(opts: {
     ticketId: string;
@@ -3061,13 +4309,41 @@ export class LotteryService {
       this.logger.log(`playAgain ${opts.ticketId}: claimed — tx=${claimTx}`);
     }
 
-    // Step 2: check actual USDC balance in companion smart account
-    const usdcBalance = await this.getCompanionUsdcBalance(ticket.companion_address);
-    const numTickets = Math.floor(usdcBalance / TICKET_PRICE_USDC);
-    if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy tickets ($${usdcBalance.toFixed(6)} USDC)`);
+    // Step 2: decide the ticket count.
+    //  • FREE-TICKET win (< WITHDRAW_MIN_USDC): there's no withdraw alternative to beat, so just
+    //    replay the whole ticket(s) it buys (floor) and sweep the sub-$1 change to Loofta. No
+    //    round-up for the smallest wins.
+    //  • CASH win (≥ WITHDRAW_MIN_USDC): round UP and fund the <$1 gap from Loofta's fee wallet
+    //    (bridged Solana→Base via Relay) so "N tickets" beats withdrawing — a retention play the
+    //    ~10% Megapot referral roughly pays for. If funding can't be arranged, fall back to floor
+    //    and leave the change in the companion (carries to their next play-again, never swept).
+    const claimedBalance = await this.getCompanionUsdcBalance(ticket.companion_address);
+    if (claimedBalance < 0.001) throw new BadRequestException(`Companion balance too low to reinvest ($${claimedBalance.toFixed(6)} USDC)`);
 
-    // Step 3: buy new tickets using existing companion smart account — no bridge
-    this.logger.log(`playAgain ${opts.ticketId}: buying ${numTickets} new ticket(s) with $${usdcBalance.toFixed(6)} USDC`);
+    const isFreeTicketWin = claimedBalance < WITHDRAW_MIN_USDC;
+    let numTickets: number;
+    let sweepLeftover = false;
+
+    if (isFreeTicketWin) {
+      numTickets = Math.floor(claimedBalance / TICKET_PRICE_USDC);
+      if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy a ticket ($${claimedBalance.toFixed(6)} USDC)`);
+      sweepLeftover = true;
+    } else {
+      numTickets = Math.max(1, Math.ceil(claimedBalance));
+      const gapUsdc = parseFloat((numTickets * TICKET_PRICE_USDC - claimedBalance).toFixed(6));
+      if (gapUsdc > 0.0005) {
+        const funded = await this.fundCompanionRoundUp(ticket.companion_address, gapUsdc, claimedBalance)
+          .catch(e => { this.logger.warn(`playAgain ${opts.ticketId}: round-up funding failed (${e.message})`); return false; });
+        if (!funded) {
+          numTickets = Math.floor(claimedBalance / TICKET_PRICE_USDC);
+          if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy a whole ticket ($${claimedBalance.toFixed(6)} USDC)`);
+          this.logger.warn(`playAgain ${opts.ticketId}: round-up unavailable — buying ${numTickets} (floor), leftover carries forward`);
+        }
+      }
+    }
+
+    // Step 3: buy the tickets from the existing companion smart account — no user-facing fee.
+    this.logger.log(`playAgain ${opts.ticketId}: buying ${numTickets} ticket(s) (won $${claimedBalance.toFixed(4)}, ${isFreeTicketWin ? 'free-ticket → floor + sweep' : 'cash → rounded up'})`);
     await this.rhinestone.buyMegapotTickets({
       companionPrivateKey: companionPrivHex,
       numTickets,
@@ -3076,6 +4352,20 @@ export class LotteryService {
       referrers: this.megapot.getReferrers(),
       splits: this.megapot.getSplits(),
     });
+
+    // Step 3b: free-ticket wins only — sweep the sub-$1 change to Loofta (best-effort, Rhinestone-
+    // sponsored; funds stay safe in the companion we control if it fails, so it never blocks play).
+    if (sweepLeftover) {
+      try {
+        const leftover = await this.getCompanionUsdcBalance(ticket.companion_address);
+        if (leftover > 0.01) {
+          await this.rhinestone.rescueUsdc({ companionPrivateKey: companionPrivHex, rescueWallet: LOOFTA_WALLET, amountUsdc: leftover });
+          this.logger.log(`playAgain ${opts.ticketId}: swept $${leftover.toFixed(6)} free-ticket change → Loofta wallet`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`playAgain ${opts.ticketId}: leftover sweep failed (funds safe in companion): ${e.message}`);
+      }
+    }
 
     // Step 4: mark old ticket as withdrawn, create new active ticket record
     await db.from('lottery_tickets').update({ status: 'withdrawn', updated_at: new Date().toISOString() }).eq('id', ticket.id);
@@ -3113,6 +4403,193 @@ export class LotteryService {
       .catch(e => this.logger.warn(`playAgain: NFT number fetch for new ticket: ${e.message}`));
 
     this.logger.log(`playAgain ${opts.ticketId}: done — new ticket ${newTicket.id}, ${numTickets} tickets for round ${roundId}`);
+    return { newTicketId: newTicket.id, numTickets, roundId };
+  }
+
+  /**
+   * Multi-ticket play-again. Real incident: a $23.02 win and a $2.95 win, played again together,
+   * each got rounded up through its OWN companion independently (24 + 3 = 27 tickets) instead of
+   * once against the $25.97 combined total (26 tickets) — an extra round-up-and-buy cycle the user
+   * never asked for, funded twice from Loofta's fee wallet. Mirrors processConsolidatedBatch's
+   * claim-then-sweep-to-one-lead-companion approach (already used for withdraw) so play-again gets
+   * exactly one round-up and one buy for the whole batch, same as withdrawing would.
+   */
+  async playAgainBatch(opts: { ticketIds: string[]; userId: string }): Promise<{ newTicketId: string; numTickets: number; roundId: string | null }> {
+    const db = this.supabase.getClient();
+    const { data: tickets } = await db
+      .from('lottery_tickets')
+      .select('*')
+      .in('id', opts.ticketIds)
+      .eq('user_id', opts.userId)
+      .eq('status', 'won');
+
+    if (!tickets?.length) throw new BadRequestException('No eligible won tickets found');
+    if (tickets.some(t => !t.win_amount_usdc || t.win_amount_usdc <= 0)) {
+      throw new BadRequestException('No winnings to reinvest');
+    }
+
+    // Single ticket: no consolidation possible or needed, reuse the well-trodden single path.
+    if (tickets.length === 1) {
+      return this.playAgain({ ticketId: tickets[0].id, userId: opts.userId });
+    }
+
+    const tag = (id: string) => `[PlayAgainBatch ${id.slice(0, 8)}]`;
+
+    // Step 1: claim every ticket's winnings into its own companion (same as processConsolidatedBatch)
+    const claimed: { ticket: any; balance: number }[] = [];
+    for (const ticket of tickets) {
+      try {
+        const companionKey = this.decryptKey(ticket.companion_key_enc, ticket.companion_address);
+        const companionPrivHex = `0x${companionKey.toString('hex')}` as `0x${string}`;
+
+        if (!ticket.claim_tx_hash) {
+          const allNftIds: string[] = ticket.ticket_nft_ids ?? [];
+          if (!allNftIds.length) throw new Error('No NFT IDs stored — sync ticket numbers first');
+          const nftResults = await this.megapot.checkTicketResultsFromNft(allNftIds);
+          const winningNftIds = nftResults.filter(r => r.winAmountUsdc > 0).map(r => BigInt(r.tokenId));
+          if (!winningNftIds.length) throw new Error('No winning NFTs found — draw may not have settled yet');
+          const claimTx = await this.rhinestone.claimWinnings({ companionPrivateKey: companionPrivHex, ticketNftIds: winningNftIds });
+          await db.from('lottery_tickets').update({ claim_tx_hash: claimTx, updated_at: new Date().toISOString() }).eq('id', ticket.id);
+          this.logger.log(`${tag(ticket.id)} claimed → ${claimTx}`);
+        }
+
+        let balance = 0;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          balance = await this.getCompanionUsdcBalance(ticket.companion_address).catch(() => 0);
+          if (balance > 0) break;
+          await new Promise(r => setTimeout(r, 1500));
+        }
+        if (balance > 0) {
+          claimed.push({ ticket, balance });
+        } else {
+          this.logger.warn(`${tag(ticket.id)} balance still $0 after claim + retries — leaving 'won' for a later retry, not blocking the rest of this batch`);
+        }
+      } catch (err: any) {
+        this.logger.error(`${tag(ticket.id)} claim failed: ${err.message} — leaving 'won' for a later retry`);
+      }
+    }
+
+    if (!claimed.length) throw new Error('No tickets in this batch could be claimed — funds remain safe in their own companions, try again shortly');
+
+    // Step 2: pick the largest-balance companion as lead, sweep the rest into it. A sweep that
+    // fails leaves that ticket's win in its own (already-claimed) companion rather than losing
+    // track of it — it just falls out of this batch and stays a normal 'won' ticket, still fully
+    // playable/withdrawable on its own next time.
+    claimed.sort((a, b) => b.balance - a.balance);
+    const lead = claimed[0];
+    const leadKey = this.decryptKey(lead.ticket.companion_key_enc, lead.ticket.companion_address);
+    const leadPrivHex = `0x${leadKey.toString('hex')}` as `0x${string}`;
+    const leadAddress = lead.ticket.companion_address as Address;
+
+    const consolidated: { ticket: any; balance: number }[] = [lead];
+    for (const c of claimed.slice(1)) {
+      try {
+        const cKey = this.decryptKey(c.ticket.companion_key_enc, c.ticket.companion_address);
+        await this.rhinestone.rescueUsdc({
+          companionPrivateKey: `0x${cKey.toString('hex')}` as `0x${string}`,
+          rescueWallet: leadAddress,
+          amountUsdc: c.balance,
+        });
+        this.logger.log(`${tag(c.ticket.id)} swept $${c.balance.toFixed(6)} → lead companion ${leadAddress.slice(0, 10)}…`);
+        consolidated.push(c);
+      } catch (err: any) {
+        this.logger.error(`${tag(c.ticket.id)} sweep to lead failed: ${err.message} — leaving this ticket's win in its own companion`);
+        await db.from('lottery_tickets').update({ win_amount_usdc: c.balance, updated_at: new Date().toISOString() }).eq('id', c.ticket.id);
+      }
+    }
+
+    // Real on-chain balance after sweeps — never trust the pre-sweep sum blindly.
+    let leadBalance = lead.balance;
+    if (consolidated.length > 1) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const bal = await this.getCompanionUsdcBalance(leadAddress).catch(() => 0);
+        if (bal >= lead.balance) { leadBalance = bal; break; }
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+
+    // Step 3: decide the ticket count ONCE against the consolidated total (same rule as playAgain).
+    const isFreeTicketWin = leadBalance < WITHDRAW_MIN_USDC;
+    let numTickets: number;
+    let sweepLeftover = false;
+
+    if (isFreeTicketWin) {
+      numTickets = Math.floor(leadBalance / TICKET_PRICE_USDC);
+      if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy a ticket ($${leadBalance.toFixed(6)} USDC)`);
+      sweepLeftover = true;
+    } else {
+      numTickets = Math.max(1, Math.ceil(leadBalance));
+      const gapUsdc = parseFloat((numTickets * TICKET_PRICE_USDC - leadBalance).toFixed(6));
+      if (gapUsdc > 0.0005) {
+        const funded = await this.fundCompanionRoundUp(leadAddress, gapUsdc, leadBalance)
+          .catch(e => { this.logger.warn(`playAgainBatch: round-up funding failed (${e.message})`); return false; });
+        if (!funded) {
+          numTickets = Math.floor(leadBalance / TICKET_PRICE_USDC);
+          if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy a whole ticket ($${leadBalance.toFixed(6)} USDC)`);
+          this.logger.warn(`playAgainBatch: round-up unavailable — buying ${numTickets} (floor), leftover carries forward`);
+        }
+      }
+    }
+
+    // Step 4: buy the tickets from the lead companion — no user-facing fee.
+    this.logger.log(`playAgainBatch: buying ${numTickets} ticket(s) from ${consolidated.length} consolidated ticket(s) (combined $${leadBalance.toFixed(4)}, ${isFreeTicketWin ? 'free-ticket → floor + sweep' : 'cash → rounded up'})`);
+    await this.rhinestone.buyMegapotTickets({
+      companionPrivateKey: leadPrivHex,
+      numTickets,
+      recipient: leadAddress,
+      sourceId: this.megapot.getSourceId(),
+      referrers: this.megapot.getReferrers(),
+      splits: this.megapot.getSplits(),
+    });
+
+    if (sweepLeftover) {
+      try {
+        const leftover = await this.getCompanionUsdcBalance(leadAddress);
+        if (leftover > 0.01) {
+          await this.rhinestone.rescueUsdc({ companionPrivateKey: leadPrivHex, rescueWallet: LOOFTA_WALLET, amountUsdc: leftover });
+          this.logger.log(`playAgainBatch: swept $${leftover.toFixed(6)} free-ticket change → Loofta wallet`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`playAgainBatch: leftover sweep failed (funds safe in companion): ${e.message}`);
+      }
+    }
+
+    // Step 5: mark every consolidated ticket withdrawn, create ONE new active ticket on the lead companion
+    const consolidatedIds = consolidated.map(c => c.ticket.id);
+    await db.from('lottery_tickets').update({ status: 'withdrawn', updated_at: new Date().toISOString() }).in('id', consolidatedIds);
+
+    let roundId: string | null = null, drawTime: string | null = null;
+    try { const round = await this.megapot.getActiveRound(); roundId = round?.id ?? null; drawTime = round?.drawTime ?? null; } catch {}
+
+    const { data: newTicket, error } = await db
+      .from('lottery_tickets')
+      .insert({
+        user_id: opts.userId,
+        companion_address: lead.ticket.companion_address,
+        companion_key_enc: lead.ticket.companion_key_enc,
+        num_tickets: numTickets,
+        cost_usdc: numTickets * TICKET_PRICE_USDC,
+        status: 'active',
+        round_id: roundId,
+        draw_time: drawTime,
+      })
+      .select('id')
+      .single();
+
+    if (error || !newTicket) throw new Error(`Failed to create new ticket record: ${error?.message}`);
+
+    this.megapot.getTicketNumbersFromNft(leadAddress, roundId ?? undefined)
+      .then(async ({ tokenIds, ticketNumbers }) => {
+        if (!tokenIds.length) return;
+        await db.from('lottery_tickets').update({
+          ticket_numbers: ticketNumbers,
+          ticket_nft_ids: tokenIds,
+          updated_at: new Date().toISOString(),
+        }).eq('id', newTicket.id);
+      })
+      .catch(e => this.logger.warn(`playAgainBatch: NFT number fetch for new ticket: ${e.message}`));
+
+    this.logger.log(`playAgainBatch: done — new ticket ${newTicket.id}, ${numTickets} tickets for round ${roundId} (consolidated ${consolidatedIds.length}/${tickets.length} tickets)`);
     return { newTicketId: newTicket.id, numTickets, roundId };
   }
 }

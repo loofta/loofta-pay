@@ -44,6 +44,7 @@
     "@nestjs/schedule": "^4.1.0",
     "@nestjs/swagger": "^7.4.0",
     "@nestjs/throttler": "^6.2.0",
+    "@onsol/tldparser": "^1.2.1",
     "@privy-io/server-auth": "^1.32.5",
     "@rhinestone/sdk": "1.9.2",
     "@solana/spl-token": "^0.4.14",
