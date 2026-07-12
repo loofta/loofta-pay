@@ -254,11 +254,11 @@ const HTML = String.raw`<!DOCTYPE html>
   <section class="step hidden" id="q3">
     <div class="progress"><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
     <div class="qnum">Question 03 / 06</div>
-    <div class="question">Hypothèse purement théorique: on se revoit. Ce serait plutôt:</div>
+    <div class="question">L'institut a adoré les moments passés avec toi. Réaction:</div>
     <div class="answers">
-      <button class="btn" onclick="go(4)">un açaï</button>
-      <button class="btn" onclick="go(4)">une balade</button>
-      <button class="btn" onclick="go(4)">les deux, dans le désordre</button>
+      <button class="btn" onclick="go(4)">pareil</button>
+      <button class="btn" onclick="go(4)">c'est réciproque</button>
+      <button class="btn" onclick="go(4)">objection retenue nulle part</button>
     </div>
   </section>
 
@@ -274,15 +274,15 @@ const HTML = String.raw`<!DOCTYPE html>
     </div>
   </section>
 
-  <!-- Q5 : Nacho -->
+  <!-- Q5 -->
   <section class="step hidden" id="q5">
     <div class="progress"><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot"></span></div>
     <div class="qnum">Question 05 / 06</div>
-    <div class="question">L'institut a adoré les moments passés avec toi. Réaction:</div>
+    <div class="question">Hypothèse purement théorique: on se revoit. Ce serait plutôt:</div>
     <div class="answers">
-      <button class="btn" onclick="go(6)">pareil</button>
-      <button class="btn" onclick="go(6)">c'est réciproque</button>
-      <button class="btn" onclick="go(6)">objection retenue nulle part</button>
+      <button class="btn" onclick="go(6)">un açaï</button>
+      <button class="btn" onclick="go(6)">une balade</button>
+      <button class="btn" onclick="go(6)">les deux, dans le désordre</button>
     </div>
   </section>
 
