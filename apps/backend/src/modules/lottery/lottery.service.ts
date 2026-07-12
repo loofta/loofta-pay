@@ -2900,15 +2900,15 @@ export class LotteryService {
       : await this.lifi.getWithdrawalFeeEstimate(amountUsdc);
     const bridgeReceive = bridge.receiveUsdc;
 
-    // 2. MagicBlock leg — mirror doMagicBlockTransfer exactly:
-    //    gasless path (net ≥ $5): relay fee (0.002 SOL priced live) + 10 bps volume fee, exactOut.
-    //    below $5: falls back to a direct SPL transfer (Loofta's fee payer covers gas), so the full
-    //    bridged amount is delivered with no MagicBlock fee.
-    const relayFee = await this.magicblockRelayFeeUsdc();
-    const afterRelay = bridgeReceive - relayFee;
-    const gaslessNet = afterRelay > 0 ? afterRelay * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS) / 10_000 : 0;
+    // 2. MagicBlock leg — mirror doMagicBlockTransfer exactly. There's no gasless minimum, so this
+    // always applies: relay fee (0.002 SOL priced live, +15% safety margin) + a $0.01 grossup
+    // margin, both reserved off the top, then the remaining amount takes MagicBlock's 10 bps
+    // volume fee. Skipping these margins previously made this estimate promise more than
+    // doMagicBlockTransfer actually delivers.
+    const relayFee = (await this.magicblockRelayFeeUsdc()) * 1.15;
+    const afterRelay = bridgeReceive - relayFee - 0.01;
+    const net = afterRelay > 0 ? afterRelay * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS) / 10_000 : 0;
 
-    const net = gaslessNet >= 5 ? gaslessNet : bridgeReceive;
     const receiveUsdc = parseFloat(Math.max(0, net).toFixed(6));
     const feeUsd = parseFloat(Math.max(0, amountUsdc - receiveUsdc).toFixed(6));
     return { feeUsd, receiveUsdc };
@@ -3332,9 +3332,10 @@ export class LotteryService {
 
     let sig: string;
 
-    // MagicBlock gasless requires ≥5 USDC. For smaller amounts fall back to a direct SPL transfer.
-    const MAGICBLOCK_GASLESS_MIN_UNITS = 5_000_000;
-    const canUseGasless = transferAmount >= MAGICBLOCK_GASLESS_MIN_UNITS;
+    // MagicBlock's gasless relay has no minimum amount — it's always used so every private
+    // withdrawal actually gets the "no on-chain link" privacy guarantee. The direct SPL fallback
+    // below only fires when there's literally nothing left to transfer after the relay fee.
+    const canUseGasless = transferAmount > 0;
 
     if (canUseGasless) {
       const conn = await this.getSolanaConnection();
@@ -3400,8 +3401,8 @@ export class LotteryService {
           if (!insufficientFunds || attempt >= MAX_SHRINK_ATTEMPTS) throw err;
           attempt++;
           transferAmount -= SHRINK_STEP_UNITS * attempt;
-          if (transferAmount < MAGICBLOCK_GASLESS_MIN_UNITS) {
-            this.logger.warn(`${W} MagicBlock: shrunk below gasless minimum after ${attempt} attempts — will retry next cron`);
+          if (transferAmount <= 0) {
+            this.logger.warn(`${W} MagicBlock: shrunk to zero after ${attempt} attempts — will retry next cron`);
             return;
           }
           this.logger.warn(`${W} MagicBlock: insufficient funds on attempt ${attempt} — shrinking to ${transferAmount} and rebuilding`);
@@ -3420,8 +3421,8 @@ export class LotteryService {
         throw new Error(`MagicBlock transfer failed on-chain (${sig}): ${JSON.stringify(confirmation.value.err)}`);
       }
     } else {
-      // Amount below MagicBlock minimum ($5) — send directly via SPL transfer (fee payer covers gas)
-      this.logger.log(`${W} balance ${(Number(burnerBalance) / 1e6).toFixed(6)} USDC < MagicBlock gasless minimum, using direct SPL transfer`);
+      // Nothing left after the relay fee (dust) — no private route possible, send what's there directly.
+      this.logger.log(`${W} balance ${(Number(burnerBalance) / 1e6).toFixed(6)} USDC too small to cover MagicBlock's relay fee, using direct SPL transfer`);
       sig = await this.sendUsdcFromBurner(burnerKeypair, withdrawal.destination_address, burnerBalance);
     }
 

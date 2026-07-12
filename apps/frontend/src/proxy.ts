@@ -40,6 +40,7 @@ export function proxy(request: NextRequest) {
     "/partners",
     "/guides/send-crypto-privately",
     "/vs/paypal",
+    "/astrid-lisa-study",
   ]);
   const isLocalAppPath =
     isLocalhost &&
