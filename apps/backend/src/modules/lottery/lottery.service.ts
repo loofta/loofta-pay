@@ -3510,6 +3510,28 @@ export class LotteryService {
     };
   }
 
+  /**
+   * checkDailyResults/checkTicketResult fetch a round's winning numbers exactly once, right at
+   * settlement — if Megapot's API hasn't published them yet at that instant (or the call just
+   * blips), `winning_numbers` is non-fatally left null forever, with nothing to ever retry it.
+   * Real symptom: History shows a won/lost ticket with no way to see which numbers actually hit.
+   * By history-view time the round is long over, so this opportunistically re-fetches and
+   * persists whatever's still missing for the page being viewed — self-healing without a cron.
+   */
+  private async backfillMissingWinningNumbers(rows: any[]): Promise<void> {
+    const missing = rows.filter(t => !t.winning_numbers && t.round_id && (t.status === 'won' || t.status === 'lost'));
+    if (!missing.length) return;
+    const roundIds = [...new Set(missing.map(t => t.round_id))];
+    const db = this.supabase.getClient();
+    await Promise.all(roundIds.map(async (roundId) => {
+      const wn = await this.megapot.getWinningNumbersForRound(roundId).catch(() => null);
+      if (!wn) return;
+      const idsForRound = missing.filter(t => t.round_id === roundId).map(t => t.id);
+      await db.from('lottery_tickets').update({ winning_numbers: wn }).in('id', idsForRound);
+      for (const t of missing) if (t.round_id === roundId) t.winning_numbers = wn;
+    }));
+  }
+
   /** Paginated ticket history (finished tickets only), newest first. Always user-scoped. */
   async getTicketHistory(userId: string, offset: number, limit: number): Promise<{ tickets: LotteryTicketSummary[]; total: number }> {
     const db = this.supabase.getClient();
@@ -3521,6 +3543,7 @@ export class LotteryService {
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
+    await this.backfillMissingWinningNumbers(data ?? []);
     return { tickets: (data ?? []).map(t => this.mapTicketSummary(t)), total: count ?? 0 };
   }
 
@@ -3537,6 +3560,7 @@ export class LotteryService {
       db.from('lottery_tickets').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(100),
       db.from('lottery_withdrawals').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(50),
     ]);
+    await this.backfillMissingWinningNumbers(ticketsRes.data ?? []);
 
     const tickets: LotteryTicketSummary[] = (ticketsRes.data ?? [])
       .filter((t: any) => !t.deleted_at)
