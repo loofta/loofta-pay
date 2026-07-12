@@ -171,7 +171,7 @@ function Countdown({ target }: { target: Date }) {
       {[{ v: d, l: "days" }, { v: h, l: "hrs" }, { v: m, l: "min" }, { v: s, l: "sec" }].map(({ v, l }) => (
         <div key={l} className="text-center">
           <p className="text-3xl font-bold text-white tabular-nums leading-none">{String(v).padStart(2, "0")}</p>
-          <p className="text-xs text-slate-500 mt-1 uppercase tracking-wider">{l}</p>
+          <p className="text-sm text-slate-500 mt-1 uppercase tracking-wider">{l}</p>
         </div>
       ))}
     </div>
@@ -215,11 +215,11 @@ function CampaignHeader({ daysLeft }: { daysLeft: number | null }) {
       </div>
       <div className="relative z-10 p-5">
         <div className="flex items-center gap-2 mb-3">
-          <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-[#F7C948]/15 text-[#F7C948] border border-[#F7C948]/25">
+          <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-[#F7C948]/15 text-[#F7C948] border border-[#F7C948]/25">
             Mainnet
           </span>
           {daysLeft !== null && (
-            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-black/30 text-slate-300 border border-white/15">
+            <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-black/30 text-slate-300 border border-white/15">
               Ends in {daysLeft}d
             </span>
           )}
@@ -235,7 +235,7 @@ function CampaignHeader({ daysLeft }: { daysLeft: number | null }) {
           Prizes are paid out directly through Loofta.
         </p>
         <div>
-          <p className="text-xs font-semibold text-[#F7C948]/60 uppercase tracking-wider mb-1">
+          <p className="text-sm font-semibold text-[#F7C948]/60 uppercase tracking-wider mb-1">
             Total reward pool
           </p>
           <p className="text-3xl font-bold text-[#F7C948] leading-none">$2,000</p>
@@ -308,13 +308,13 @@ export default function BlinkCampaignPage() {
           <CampaignHeader daysLeft={null} />
 
           <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center mb-6">
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Campaign starts in</p>
+            <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-3">Campaign starts in</p>
             <Countdown target={BLINK_START_DATE} />
             <p className="text-base text-slate-400 mt-4">Jul 1 · 3pm CET — Aug 15, 2026</p>
           </div>
 
           {/* Quest preview — locked */}
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Quests</p>
+          <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-3">Quests</p>
           <div className="space-y-3">
             {(
               [
@@ -371,7 +371,7 @@ export default function BlinkCampaignPage() {
         ) : data ? (
           <>
             <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Quests</p>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Quests</p>
               <div className="flex items-center gap-2">
                 <p className="text-base text-slate-500">{completedCount}/{totalCount} completed</p>
                 <button

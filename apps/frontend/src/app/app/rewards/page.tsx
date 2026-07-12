@@ -213,7 +213,7 @@ export default function RewardsPage() {
         </div>
 
         {/* ── ACTIVE CAMPAIGNS ── */}
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
+        <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">
           {t("activeCampaigns")}
         </p>
 
@@ -235,13 +235,13 @@ export default function RewardsPage() {
               <div className="relative z-10 p-6">
                 <div className="flex items-center gap-2 mb-6">
                   <span
-                    className="text-xs font-bold px-2.5 py-1 rounded-full border"
+                    className="text-sm font-bold px-2.5 py-1 rounded-full border"
                     style={{ backgroundColor: `${GETPAID_ACCENT}26`, color: GETPAID_ACCENT, borderColor: `${GETPAID_ACCENT}40` }}
                   >
                     Mainnet
                   </span>
                   {getpaidDaysLeft !== null && (
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
+                    <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
                       Ends in {getpaidDaysLeft}d
                     </span>
                   )}
@@ -268,7 +268,7 @@ export default function RewardsPage() {
 
                 <div className="flex items-end justify-between">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: `${GETPAID_ACCENT}99` }}>
+                    <p className="text-sm font-semibold uppercase tracking-wider mb-1" style={{ color: `${GETPAID_ACCENT}99` }}>
                       Prize
                     </p>
                     <p className="text-3xl font-bold leading-none" style={{ color: GETPAID_ACCENT }}>
@@ -318,11 +318,11 @@ export default function RewardsPage() {
             <div className="relative z-10 p-6">
               {/* Badges */}
               <div className="flex items-center gap-2 mb-6">
-                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-[#F7C948]/15 text-[#F7C948] border border-[#F7C948]/25">
+                <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-[#F7C948]/15 text-[#F7C948] border border-[#F7C948]/25">
                   Mainnet
                 </span>
                 {blinkDaysLeft !== null && (
-                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
+                  <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
                     Ends Aug 15
                   </span>
                 )}
@@ -362,7 +362,7 @@ export default function RewardsPage() {
               {/* Reward + CTA */}
               <div className="flex items-end justify-between">
                 <div>
-                  <p className="text-xs font-semibold text-[#F7C948]/60 uppercase tracking-wider mb-1">
+                  <p className="text-sm font-semibold text-[#F7C948]/60 uppercase tracking-wider mb-1">
                     Total reward pool
                   </p>
                   <p className="text-3xl font-bold text-[#F7C948] leading-none">
@@ -406,13 +406,13 @@ export default function RewardsPage() {
               <div className="relative z-10 p-6">
                 <div className="flex items-center gap-2 mb-6">
                   <span
-                    className="text-xs font-bold px-2.5 py-1 rounded-full border"
+                    className="text-sm font-bold px-2.5 py-1 rounded-full border"
                     style={{ backgroundColor: `${MEGAPOT_ACCENT}26`, color: MEGAPOT_ACCENT, borderColor: `${MEGAPOT_ACCENT}40` }}
                   >
                     Mainnet
                   </span>
                   {megapotDaysLeft !== null && (
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
+                    <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
                       Ends Aug 30
                     </span>
                   )}
@@ -450,7 +450,7 @@ export default function RewardsPage() {
 
                 <div className="flex items-end justify-between">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: `${MEGAPOT_ACCENT}99` }}>
+                    <p className="text-sm font-semibold uppercase tracking-wider mb-1" style={{ color: `${MEGAPOT_ACCENT}99` }}>
                       Total reward pool
                     </p>
                     <p className="text-3xl font-bold leading-none" style={{ color: MEGAPOT_ACCENT }}>
@@ -477,7 +477,7 @@ export default function RewardsPage() {
 
         {/* ── ENDED ── */}
         <div className="mt-10">
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">
+          <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4">
             Ended
           </p>
 
@@ -490,10 +490,10 @@ export default function RewardsPage() {
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-black/30" />
               <div className="relative z-10 p-6">
                 <div className="flex items-center gap-2 mb-7">
-                  <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+                  <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
                     Devnet
                   </span>
-                  <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/10 text-slate-400 border border-white/15">
+                  <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-white/10 text-slate-400 border border-white/15">
                     Ended
                   </span>
                 </div>
@@ -508,7 +508,7 @@ export default function RewardsPage() {
                 </p>
                 <div className="flex items-end justify-between">
                   <div>
-                    <p className="text-xs font-semibold text-amber-500/50 uppercase tracking-wider mb-1">
+                    <p className="text-sm font-semibold text-amber-500/50 uppercase tracking-wider mb-1">
                       Total reward pool
                     </p>
                     <p className="text-3xl font-bold text-amber-400/60 leading-none">

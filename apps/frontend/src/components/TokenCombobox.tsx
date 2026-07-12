@@ -223,7 +223,7 @@ export function TokenCombobox({
 							"overflow-x-auto sm:overflow-x-hidden sm:overflow-y-auto",
 							"sm:w-44 p-2 bg-white/[0.02]"
 						)}>
-							<div className="hidden sm:block px-3 py-2 text-xs font-semibold uppercase tracking-widest text-white/30">
+							<div className="hidden sm:block px-3 py-2 text-sm font-semibold uppercase tracking-widest text-white/30">
 								Network
 							</div>
 							<div className="flex flex-row sm:flex-col gap-1">
@@ -282,7 +282,7 @@ export function TokenCombobox({
 								"h-full flex flex-col bg-transparent text-white",
 								"[&_[cmdk-input-wrapper]]:border-white/[0.07]",
 								"[&_[cmdk-input]]:text-white [&_[cmdk-input]]:text-base [&_[cmdk-input]]:placeholder:text-white/30",
-								"[&_[cmdk-group-heading]]:text-white/30 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-widest",
+								"[&_[cmdk-group-heading]]:text-white/30 [&_[cmdk-group-heading]]:text-sm [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-widest",
 								"[&_[cmdk-item]]:text-white [&_[cmdk-item]]:rounded-xl [&_[cmdk-item]]:px-3 [&_[cmdk-item]]:py-2.5",
 								"[&_[cmdk-item][data-selected='true']]:bg-white/10",
 							)}>

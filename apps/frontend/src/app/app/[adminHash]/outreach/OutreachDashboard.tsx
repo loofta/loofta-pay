@@ -90,7 +90,7 @@ function fmtFollowers(n: number | null): string {
 // ─── Small pieces ─────────────────────────────────────────────────────────────
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <span className="block mb-1.5 text-xs font-mono font-medium uppercase tracking-widest text-gray-400">{children}</span>;
+  return <span className="block mb-1.5 text-sm font-mono font-medium uppercase tracking-widest text-gray-400">{children}</span>;
 }
 
 function SectionHeading({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
@@ -106,7 +106,7 @@ function StatBox({ value, label, highlight }: { value: number; label: string; hi
   return (
     <div className="flex flex-col items-center justify-center w-20 h-16 rounded-lg bg-white/[0.04] border border-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
       <span className={cn("text-2xl font-medium leading-none tabular-nums", highlight && value > 0 ? "text-orange-400" : "text-gray-100")}>{value}</span>
-      <span className="mt-1 text-xs font-mono uppercase tracking-wider text-gray-500">{label}</span>
+      <span className="mt-1 text-sm font-mono uppercase tracking-wider text-gray-500">{label}</span>
     </div>
   );
 }
@@ -114,7 +114,7 @@ function StatBox({ value, label, highlight }: { value: number; label: string; hi
 function TypeBadge({ type }: { type: ProspectType }) {
   const meta = TYPE_META[type] ?? TYPE_META.freelancer;
   return (
-    <span className={cn("inline-flex items-center gap-1 text-xs font-mono font-medium uppercase tracking-wide px-2 py-0.5 rounded border", meta.badge)}>
+    <span className={cn("inline-flex items-center gap-1 text-sm font-mono font-medium uppercase tracking-wide px-2 py-0.5 rounded border", meta.badge)}>
       {meta.icon}{meta.label}
     </span>
   );
@@ -133,7 +133,7 @@ const STATUS_PILL: Record<string, string> = {
 
 function StatusPill({ label }: { label: string }) {
   return (
-    <span className={cn("text-xs font-mono font-medium uppercase tracking-wide px-2 py-0.5 rounded border", STATUS_PILL[label] ?? "bg-white/[0.04] text-gray-400 border-white/[0.08]")}>
+    <span className={cn("text-sm font-mono font-medium uppercase tracking-wide px-2 py-0.5 rounded border", STATUS_PILL[label] ?? "bg-white/[0.04] text-gray-400 border-white/[0.08]")}>
       {label.replace(/_/g, " ")}
     </span>
   );
@@ -342,7 +342,7 @@ function ProspectCard({
           <div className="flex items-center justify-between mb-2">
             <FieldLabel>{isSent ? "sent message" : isApproved ? "approved message" : "draft message"}</FieldLabel>
             {qualified && !isEditing && (
-              <button onClick={() => setIsEditing(true)} className="text-xs font-mono font-medium uppercase tracking-wide text-slate-500 hover:text-white transition-colors">
+              <button onClick={() => setIsEditing(true)} className="text-sm font-mono font-medium uppercase tracking-wide text-slate-500 hover:text-white transition-colors">
                 edit
               </button>
             )}
@@ -493,7 +493,7 @@ function TypePitchConfig({
             { key: "giveaway_project_pitch",  label: "Giveaway angle",      color: "text-fuchsia-400"},
           ] as const).map(({ key, label, color }) => (
             <div key={key} className="pt-3">
-              <span className={cn("block mb-1.5 text-xs font-mono font-medium uppercase tracking-wider", color)}>{label}</span>
+              <span className={cn("block mb-1.5 text-sm font-mono font-medium uppercase tracking-wider", color)}>{label}</span>
               <Textarea
                 value={config[key] ?? ""}
                 onChange={(e) => onChange({ [key]: e.target.value })}
@@ -906,7 +906,7 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
                 {(["creator","freelancer","web3_project","giveaway_project"] as ProspectType[]).map((t) => (
                   <button key={t} onClick={() => setNewType(t)}
                     className={cn(
-                      "h-8 rounded-lg text-xs font-mono font-medium uppercase tracking-wide border transition-colors",
+                      "h-8 rounded-lg text-sm font-mono font-medium uppercase tracking-wide border transition-colors",
                       newType === t ? glassBtnActive : glassBtn,
                     )}>
                     {TYPE_META[t].label}
@@ -940,7 +940,7 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
             <Zap className="h-4 w-4" />
             run agent on queue
             {newCount > 0 && (
-              <span className="ml-1.5 rounded bg-white/20 px-2 py-0.5 text-xs font-mono font-medium">{newCount}</span>
+              <span className="ml-1.5 rounded bg-white/20 px-2 py-0.5 text-sm font-mono font-medium">{newCount}</span>
             )}
           </GradientActionButton>
 
@@ -1043,7 +1043,7 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
                     return next;
                   })}
                   className={cn(
-                    "inline-flex items-center gap-1 text-xs font-mono font-medium uppercase px-2.5 py-1 rounded-lg border transition-all",
+                    "inline-flex items-center gap-1 text-sm font-mono font-medium uppercase px-2.5 py-1 rounded-lg border transition-all",
                     m.badge,
                     typeFilter.has(t)
                       ? "opacity-100 ring-1 ring-white/20 scale-105"

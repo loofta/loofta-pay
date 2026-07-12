@@ -93,7 +93,7 @@ export default function LandingPageWhite() {
               Continue →
             </div>
           </div>
-          <div className="absolute -top-3 -right-3 rounded-full border border-black/[0.07] bg-white px-3 py-1.5 text-sm md:text-xs text-slate-500 font-medium shadow-md">
+          <div className="absolute -top-3 -right-3 rounded-full border border-black/[0.07] bg-white px-3 py-1.5 text-sm text-slate-500 font-medium shadow-md">
             🔒 Private payment
           </div>
         </motion.div>
@@ -249,7 +249,7 @@ export default function LandingPageWhite() {
                 <div className="w-full max-w-xs rounded-2xl border border-black/[0.07] bg-[#fafaf8] p-6 space-y-4 shadow-sm">
                   <div className="flex items-center justify-between">
                     <span className="text-slate-600 text-base font-medium">Payment link</span>
-                    <span className="text-sm md:text-xs font-semibold px-3 py-1 rounded-full text-white" style={{ background: GRAD }}>Private</span>
+                    <span className="text-sm font-semibold px-3 py-1 rounded-full text-white" style={{ background: GRAD }}>Private</span>
                   </div>
                   <div className="h-px bg-black/[0.05]" />
                   {[
