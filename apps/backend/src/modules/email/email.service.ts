@@ -144,6 +144,22 @@ export class EmailService {
     }
   }
 
+  async sendMegapotResultsFixEmail(recipientEmail: string): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: recipientEmail,
+        subject: 'go check your Megapot tickets again 👀',
+        html: this.buildMegapotResultsFixHtml(),
+      });
+      this.logger.log(`Megapot results-fix email sent to ${recipientEmail}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send Megapot results-fix email to ${recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
   async sendGiftTicketEmail(data: { recipientEmail: string; numTickets: number; claimUrl: string; note?: string | null }): Promise<void> {
     if (!this.resend) return;
     const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
@@ -323,6 +339,54 @@ export class EmailService {
                 Giveaway details: <a href="https://pay.loofta.xyz/rewards/megapot" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz/rewards/megapot</a>
               </p>
               <p style="margin:0 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildMegapotResultsFixHtml(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Megapot results fix</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
+              <p style="margin:0 0 16px;">hey, this is Lisa from Loofta.</p>
+              <p style="margin:0 0 16px;">We found a bug in how Megapot results were tracked, some tickets showed no win when they'd actually won, real money just sitting unclaimed. Nothing was ever at risk, it was a display issue, not a funds issue, and we've already fixed every case we found.</p>
+              <p style="margin:0 0 28px;">Take two minutes and check your ticket history. If anything looks off, just reply and I'll look into it myself.</p>
+              <div style="text-align:center;margin-bottom:24px;">
+                <a href="https://pay.loofta.xyz/app/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Check my tickets
+                </a>
+              </div>
+              <p style="margin:0;">Sorry for the trouble, and thanks for playing.</p>
+              <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
             </td>
           </tr>
           <!-- Footer -->
