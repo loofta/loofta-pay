@@ -2,6 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { redisRPush, redisLRange } from "@/lib/redis-cache";
 
 const LOG_KEY = "astrid-lisa-study:log";
+const VISITS_KEY = "astrid-lisa-study:visits";
+
+function parseEntries(raw: string[]) {
+  return raw
+    .map((r) => {
+      try {
+        return JSON.parse(r);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,15 +48,14 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const raw = await redisLRange(LOG_KEY, 0, -1);
-    const entries = raw.map((r) => {
-      try {
-        return JSON.parse(r);
-      } catch {
-        return null;
-      }
-    }).filter(Boolean);
-    return NextResponse.json({ entries });
+    const [rawEntries, rawVisits] = await Promise.all([
+      redisLRange(LOG_KEY, 0, -1),
+      redisLRange(VISITS_KEY, 0, -1),
+    ]);
+    return NextResponse.json({
+      entries: parseEntries(rawEntries),
+      visits: parseEntries(rawVisits),
+    });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to read log" }, { status: 500 });
   }

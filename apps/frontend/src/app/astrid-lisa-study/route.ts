@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { redisRPush } from "@/lib/redis-cache";
 
 const HTML = String.raw`<!DOCTYPE html>
 <html lang="fr">
@@ -468,7 +469,22 @@ const HTML = String.raw`<!DOCTYPE html>
 </html>
 `;
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  try {
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      request.headers.get("x-real-ip") ||
+      "unknown";
+    const referer = request.headers.get("referer") || "unknown";
+    const userAgent = request.headers.get("user-agent") || "unknown";
+    await redisRPush(
+      "astrid-lisa-study:visits",
+      JSON.stringify({ timestamp: new Date().toISOString(), ip, referer, userAgent })
+    );
+  } catch {
+    /* never block the page on a logging failure */
+  }
+
   return new NextResponse(HTML, {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
