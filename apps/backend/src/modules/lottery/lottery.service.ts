@@ -2225,19 +2225,36 @@ export class LotteryService {
     }
   }
 
+  /**
+   * Real incident: the public fallback RPC (mainnet.base.org) rate-limited this call mid-playAgain
+   * — AFTER the winnings were already claimed on-chain — and the uncaught error 500'd the request,
+   * leaving the user staring at a crash for money that had, in fact, already landed. Retrying (same
+   * 3-attempt/backoff pattern as getWinClaimFactor) absorbs that kind of transient blip instead of
+   * failing a request whose hard part already succeeded.
+   */
   private async getCompanionUsdcBalance(companionAddress: string): Promise<number> {
     const { createPublicClient, http, erc20Abi } = await import('viem');
     const { base } = await import('viem/chains');
     const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
     const rpc = this.config.get<string>('BASE_RPC_URL', 'https://mainnet.base.org');
     const client = createPublicClient({ chain: base, transport: http(rpc) });
-    const balance = await client.readContract({
-      address: USDC_BASE,
-      abi: erc20Abi,
-      functionName: 'balanceOf',
-      args: [companionAddress as `0x${string}`],
-    });
-    return Number(balance) / 1_000_000;
+    const attempts = 3;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        const balance = await client.readContract({
+          address: USDC_BASE,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [companionAddress as `0x${string}`],
+        });
+        return Number(balance) / 1_000_000;
+      } catch (e: any) {
+        if (attempt >= attempts - 1) throw e;
+        this.logger.warn(`getCompanionUsdcBalance ${companionAddress}: attempt ${attempt + 1}/${attempts} failed (${e.message}) — retrying`);
+        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+      }
+    }
+    throw new Error('unreachable');
   }
 
   /**
