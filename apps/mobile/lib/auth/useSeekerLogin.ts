@@ -2,7 +2,7 @@ import { useLoginWithSiws, usePrivy } from '@privy-io/expo';
 import { useState } from 'react';
 import { connectAndSignMessage, disconnectSeekerWallet } from '../wallet/mwa';
 import { ensureProfile } from '../api/users';
-import { clearCachedSeekerIdentity } from '../storage/seekerIdentity';
+import { clearCachedSeekerIdentity, updateCachedSkrDomain } from '../storage/seekerIdentity';
 import { clearCachedWalletBalances } from '../storage/walletBalances';
 
 const DOMAIN = 'pay.loofta.xyz';
@@ -26,13 +26,17 @@ export function useSeekerLogin() {
     setError(null);
     setStatus('connecting');
     try {
-      const { message, signatureBase64 } = await connectAndSignMessage(async (base58Address) => {
+      const { message, signatureBase64, label } = await connectAndSignMessage(async (base58Address) => {
         const { message } = await generateMessage({
           wallet: { address: base58Address },
           from: { domain: DOMAIN, uri: URI },
         });
         return message;
       });
+
+      // The wallet already reports its own label (the Seeker ID, when claimed) right here in the
+      // connect handshake — cache it immediately instead of waiting on a separate backend lookup.
+      void updateCachedSkrDomain(label);
 
       // Temporary diagnostics for the "invalid siws message and/or nonce" investigation — remove
       // once login is confirmed working. Message content is safe to log (no secrets); it's the

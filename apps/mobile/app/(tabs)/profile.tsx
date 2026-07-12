@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSeekerLogin, logoutSeeker } from '../../lib/auth/useSeekerLogin';
 import { ensureProfile } from '../../lib/api/users';
-import { getCachedSeekerIdentity, setCachedSeekerIdentity } from '../../lib/storage/seekerIdentity';
+import { getCachedSeekerIdentity, updateCachedSkrDomain, updateCachedUsername } from '../../lib/storage/seekerIdentity';
 import { useBalances } from '../../lib/wallet/BalanceProvider';
 import { SolIcon } from '../../components/TokenIcons';
 import { Wordmark } from '../../components/Wordmark';
@@ -113,7 +113,8 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
     let cancelled = false;
     (async () => {
       // Paint the cached Seeker ID immediately (no spinner/"Not connected" flash on every
-      // profile visit), then refresh it from the network in the background below.
+      // profile visit) — this is normally wallet-sourced (see connectSeekerWallet's `label`,
+      // captured at login/buy/redeem time), then refresh username from the network below.
       const cached = await getCachedSeekerIdentity();
       if (cached && !cancelled) setCachedIdentity(cached);
       try {
@@ -122,6 +123,7 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
         // already did it); its username is the Seeker ID fallback when there's no .skr domain.
         const profile = await ensureProfile(accessToken);
         if (!cancelled) setUsername(profile.username);
+        if (profile.username) void updateCachedUsername(profile.username);
       } catch (e: any) {
         if (!cancelled) setError(e?.message ?? 'Could not load profile');
       }
@@ -131,14 +133,18 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
     };
   }, [getAccessToken]);
 
-  // Once the shared balance fetch has settled, its skrDomain is authoritative — persist the
-  // combined identity so the next launch paints instantly from cache again.
+  // The backend's own .skr lookup (an on-chain RPC call) is a secondary source — useful for
+  // users who haven't reconnected since the wallet-label cache was added, but it can fail
+  // independently of whether a domain is actually claimed (RPC hiccup, dependency bug, etc.), so
+  // it's only ever additive: cachedIdentity (wallet-sourced) wins whenever it's already present,
+  // and a null/failed result here never overwrites a known-good cached value.
   useEffect(() => {
-    if (!balancesLoaded) return;
-    void setCachedSeekerIdentity({ skrDomain: liveSkrDomain, username });
-  }, [balancesLoaded, liveSkrDomain, username]);
+    if (!balancesLoaded || !liveSkrDomain) return;
+    void updateCachedSkrDomain(liveSkrDomain);
+    setCachedIdentity((prev) => ({ skrDomain: liveSkrDomain, username: prev?.username ?? null }));
+  }, [balancesLoaded, liveSkrDomain]);
 
-  const skrDomain = balancesLoaded ? liveSkrDomain : (cachedIdentity?.skrDomain ?? null);
+  const skrDomain = cachedIdentity?.skrDomain ?? (balancesLoaded ? liveSkrDomain : null);
   const effectiveUsername = username ?? cachedIdentity?.username ?? null;
   const identity = skrDomain ?? effectiveUsername ?? (walletAddress ? truncateAddress(walletAddress) : 'Not connected');
   const copyValue = skrDomain ?? effectiveUsername ?? walletAddress;
@@ -192,18 +198,12 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
           </TouchableOpacity>
         </Card>
 
-        <CollapsibleSection title="Prize tiers">
-          {PRIZE_TIERS.map((t) => {
-            const free = t.prize === 'Free ticket';
-            return (
-              <View key={t.match} style={styles.tierRow}>
-                <Text style={styles.tierMatch}>{t.match}</Text>
-                <Text style={[styles.tierPrize, free && styles.tierPrizeFree]}>{t.prize}</Text>
-              </View>
-            );
-          })}
-          <Text style={styles.tierNote}>All prize tiers are automatically paid out from the total prize pool every day.</Text>
-        </CollapsibleSection>
+        <Card style={styles.section}>
+          <TouchableOpacity style={styles.sectionHeader} onPress={() => setPrizeTiersOpen(true)} activeOpacity={0.7}>
+            <Text style={styles.sectionTitle}>Prize tiers</Text>
+            <ChevronRight size={18} color={color.fg3} />
+          </TouchableOpacity>
+        </Card>
 
         <TouchableOpacity style={styles.supportCard} onPress={() => Linking.openURL(SUPPORT_URL)} activeOpacity={0.7}>
           <View style={styles.supportIconTile}>
@@ -217,6 +217,7 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
       <PoweredByFooter />
 
       <HowToPlayModal visible={howToPlayOpen} onClose={() => setHowToPlayOpen(false)} />
+      <PrizeTiersModal visible={prizeTiersOpen} onClose={() => setPrizeTiersOpen(false)} />
     </View>
   );
 }
@@ -270,16 +271,10 @@ const styles = StyleSheet.create({
   walletAddress: { color: color.fg2, fontFamily: FONT_BODY_MEDIUM, fontSize: 13, flex: 1 },
   walletBalance: { color: color.fg, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 13 },
 
-  // How to play (opens modal) / Prize tiers (inline collapsible)
+  // How to play / Prize tiers — both open a modal (HowToPlayModal / PrizeTiersModal)
   section: { padding: 0, overflow: 'hidden' },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: space[4] },
   sectionTitle: { color: color.fg, fontSize: 16, fontFamily: FONT_BODY_SEMIBOLD },
-  sectionBody: { paddingHorizontal: space[4], paddingBottom: space[4], gap: space[3], borderTopWidth: 1, borderTopColor: color.borderSofter, paddingTop: space[3] },
-  tierRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  tierMatch: { color: color.fg2, fontFamily: FONT_BODY, fontSize: 14 },
-  tierPrize: { color: color.fg, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 14 },
-  tierPrizeFree: { color: color.brandOrange },
-  tierNote: { color: color.fg3, fontFamily: FONT_BODY, fontSize: 12, lineHeight: 17, marginTop: space[1] },
 
   // Contact support
   supportCard: {
