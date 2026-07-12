@@ -106,6 +106,12 @@ class RescueBurnerDto {
   destinationSolAddress: string;
 }
 
+class PlayAgainBatchDto {
+  @IsArray()
+  @IsString({ each: true })
+  ticketIds: string[];
+}
+
 class WithdrawBatchDto {
   @IsArray()
   @IsString({ each: true })
@@ -315,6 +321,17 @@ export class LotteryController {
     @Request() req: any,
   ): Promise<{ newTicketId: string; numTickets: number; roundId: string | null }> {
     return this.lottery.playAgain({ ticketId, userId: req.user.id });
+  }
+
+  @Post('tickets/play-again-batch')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Claim + consolidate multiple won tickets into one companion, then reinvest as one round-up — no bridge, no fees' })
+  async playAgainBatch(
+    @Body() dto: PlayAgainBatchDto,
+    @Request() req: any,
+  ): Promise<{ newTicketId: string; numTickets: number; roundId: string | null }> {
+    if (!dto.ticketIds?.length) throw new BadRequestException('ticketIds required');
+    return this.lottery.playAgainBatch({ ticketIds: dto.ticketIds, userId: req.user.id });
   }
 
   @Post('withdraw-batch')

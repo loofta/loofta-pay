@@ -4399,4 +4399,191 @@ export class LotteryService {
     this.logger.log(`playAgain ${opts.ticketId}: done — new ticket ${newTicket.id}, ${numTickets} tickets for round ${roundId}`);
     return { newTicketId: newTicket.id, numTickets, roundId };
   }
+
+  /**
+   * Multi-ticket play-again. Real incident: a $23.02 win and a $2.95 win, played again together,
+   * each got rounded up through its OWN companion independently (24 + 3 = 27 tickets) instead of
+   * once against the $25.97 combined total (26 tickets) — an extra round-up-and-buy cycle the user
+   * never asked for, funded twice from Loofta's fee wallet. Mirrors processConsolidatedBatch's
+   * claim-then-sweep-to-one-lead-companion approach (already used for withdraw) so play-again gets
+   * exactly one round-up and one buy for the whole batch, same as withdrawing would.
+   */
+  async playAgainBatch(opts: { ticketIds: string[]; userId: string }): Promise<{ newTicketId: string; numTickets: number; roundId: string | null }> {
+    const db = this.supabase.getClient();
+    const { data: tickets } = await db
+      .from('lottery_tickets')
+      .select('*')
+      .in('id', opts.ticketIds)
+      .eq('user_id', opts.userId)
+      .eq('status', 'won');
+
+    if (!tickets?.length) throw new BadRequestException('No eligible won tickets found');
+    if (tickets.some(t => !t.win_amount_usdc || t.win_amount_usdc <= 0)) {
+      throw new BadRequestException('No winnings to reinvest');
+    }
+
+    // Single ticket: no consolidation possible or needed, reuse the well-trodden single path.
+    if (tickets.length === 1) {
+      return this.playAgain({ ticketId: tickets[0].id, userId: opts.userId });
+    }
+
+    const tag = (id: string) => `[PlayAgainBatch ${id.slice(0, 8)}]`;
+
+    // Step 1: claim every ticket's winnings into its own companion (same as processConsolidatedBatch)
+    const claimed: { ticket: any; balance: number }[] = [];
+    for (const ticket of tickets) {
+      try {
+        const companionKey = this.decryptKey(ticket.companion_key_enc, ticket.companion_address);
+        const companionPrivHex = `0x${companionKey.toString('hex')}` as `0x${string}`;
+
+        if (!ticket.claim_tx_hash) {
+          const allNftIds: string[] = ticket.ticket_nft_ids ?? [];
+          if (!allNftIds.length) throw new Error('No NFT IDs stored — sync ticket numbers first');
+          const nftResults = await this.megapot.checkTicketResultsFromNft(allNftIds);
+          const winningNftIds = nftResults.filter(r => r.winAmountUsdc > 0).map(r => BigInt(r.tokenId));
+          if (!winningNftIds.length) throw new Error('No winning NFTs found — draw may not have settled yet');
+          const claimTx = await this.rhinestone.claimWinnings({ companionPrivateKey: companionPrivHex, ticketNftIds: winningNftIds });
+          await db.from('lottery_tickets').update({ claim_tx_hash: claimTx, updated_at: new Date().toISOString() }).eq('id', ticket.id);
+          this.logger.log(`${tag(ticket.id)} claimed → ${claimTx}`);
+        }
+
+        let balance = 0;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          balance = await this.getCompanionUsdcBalance(ticket.companion_address).catch(() => 0);
+          if (balance > 0) break;
+          await new Promise(r => setTimeout(r, 1500));
+        }
+        if (balance > 0) {
+          claimed.push({ ticket, balance });
+        } else {
+          this.logger.warn(`${tag(ticket.id)} balance still $0 after claim + retries — leaving 'won' for a later retry, not blocking the rest of this batch`);
+        }
+      } catch (err: any) {
+        this.logger.error(`${tag(ticket.id)} claim failed: ${err.message} — leaving 'won' for a later retry`);
+      }
+    }
+
+    if (!claimed.length) throw new Error('No tickets in this batch could be claimed — funds remain safe in their own companions, try again shortly');
+
+    // Step 2: pick the largest-balance companion as lead, sweep the rest into it. A sweep that
+    // fails leaves that ticket's win in its own (already-claimed) companion rather than losing
+    // track of it — it just falls out of this batch and stays a normal 'won' ticket, still fully
+    // playable/withdrawable on its own next time.
+    claimed.sort((a, b) => b.balance - a.balance);
+    const lead = claimed[0];
+    const leadKey = this.decryptKey(lead.ticket.companion_key_enc, lead.ticket.companion_address);
+    const leadPrivHex = `0x${leadKey.toString('hex')}` as `0x${string}`;
+    const leadAddress = lead.ticket.companion_address as Address;
+
+    const consolidated: { ticket: any; balance: number }[] = [lead];
+    for (const c of claimed.slice(1)) {
+      try {
+        const cKey = this.decryptKey(c.ticket.companion_key_enc, c.ticket.companion_address);
+        await this.rhinestone.rescueUsdc({
+          companionPrivateKey: `0x${cKey.toString('hex')}` as `0x${string}`,
+          rescueWallet: leadAddress,
+          amountUsdc: c.balance,
+        });
+        this.logger.log(`${tag(c.ticket.id)} swept $${c.balance.toFixed(6)} → lead companion ${leadAddress.slice(0, 10)}…`);
+        consolidated.push(c);
+      } catch (err: any) {
+        this.logger.error(`${tag(c.ticket.id)} sweep to lead failed: ${err.message} — leaving this ticket's win in its own companion`);
+        await db.from('lottery_tickets').update({ win_amount_usdc: c.balance, updated_at: new Date().toISOString() }).eq('id', c.ticket.id);
+      }
+    }
+
+    // Real on-chain balance after sweeps — never trust the pre-sweep sum blindly.
+    let leadBalance = lead.balance;
+    if (consolidated.length > 1) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const bal = await this.getCompanionUsdcBalance(leadAddress).catch(() => 0);
+        if (bal >= lead.balance) { leadBalance = bal; break; }
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+
+    // Step 3: decide the ticket count ONCE against the consolidated total (same rule as playAgain).
+    const isFreeTicketWin = leadBalance < WITHDRAW_MIN_USDC;
+    let numTickets: number;
+    let sweepLeftover = false;
+
+    if (isFreeTicketWin) {
+      numTickets = Math.floor(leadBalance / TICKET_PRICE_USDC);
+      if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy a ticket ($${leadBalance.toFixed(6)} USDC)`);
+      sweepLeftover = true;
+    } else {
+      numTickets = Math.max(1, Math.ceil(leadBalance));
+      const gapUsdc = parseFloat((numTickets * TICKET_PRICE_USDC - leadBalance).toFixed(6));
+      if (gapUsdc > 0.0005) {
+        const funded = await this.fundCompanionRoundUp(leadAddress, gapUsdc, leadBalance)
+          .catch(e => { this.logger.warn(`playAgainBatch: round-up funding failed (${e.message})`); return false; });
+        if (!funded) {
+          numTickets = Math.floor(leadBalance / TICKET_PRICE_USDC);
+          if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy a whole ticket ($${leadBalance.toFixed(6)} USDC)`);
+          this.logger.warn(`playAgainBatch: round-up unavailable — buying ${numTickets} (floor), leftover carries forward`);
+        }
+      }
+    }
+
+    // Step 4: buy the tickets from the lead companion — no user-facing fee.
+    this.logger.log(`playAgainBatch: buying ${numTickets} ticket(s) from ${consolidated.length} consolidated ticket(s) (combined $${leadBalance.toFixed(4)}, ${isFreeTicketWin ? 'free-ticket → floor + sweep' : 'cash → rounded up'})`);
+    await this.rhinestone.buyMegapotTickets({
+      companionPrivateKey: leadPrivHex,
+      numTickets,
+      recipient: leadAddress,
+      sourceId: this.megapot.getSourceId(),
+      referrers: this.megapot.getReferrers(),
+      splits: this.megapot.getSplits(),
+    });
+
+    if (sweepLeftover) {
+      try {
+        const leftover = await this.getCompanionUsdcBalance(leadAddress);
+        if (leftover > 0.01) {
+          await this.rhinestone.rescueUsdc({ companionPrivateKey: leadPrivHex, rescueWallet: LOOFTA_WALLET, amountUsdc: leftover });
+          this.logger.log(`playAgainBatch: swept $${leftover.toFixed(6)} free-ticket change → Loofta wallet`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`playAgainBatch: leftover sweep failed (funds safe in companion): ${e.message}`);
+      }
+    }
+
+    // Step 5: mark every consolidated ticket withdrawn, create ONE new active ticket on the lead companion
+    const consolidatedIds = consolidated.map(c => c.ticket.id);
+    await db.from('lottery_tickets').update({ status: 'withdrawn', updated_at: new Date().toISOString() }).in('id', consolidatedIds);
+
+    let roundId: string | null = null, drawTime: string | null = null;
+    try { const round = await this.megapot.getActiveRound(); roundId = round?.id ?? null; drawTime = round?.drawTime ?? null; } catch {}
+
+    const { data: newTicket, error } = await db
+      .from('lottery_tickets')
+      .insert({
+        user_id: opts.userId,
+        companion_address: lead.ticket.companion_address,
+        companion_key_enc: lead.ticket.companion_key_enc,
+        num_tickets: numTickets,
+        cost_usdc: numTickets * TICKET_PRICE_USDC,
+        status: 'active',
+        round_id: roundId,
+        draw_time: drawTime,
+      })
+      .select('id')
+      .single();
+
+    if (error || !newTicket) throw new Error(`Failed to create new ticket record: ${error?.message}`);
+
+    this.megapot.getTicketNumbersFromNft(leadAddress, roundId ?? undefined)
+      .then(async ({ tokenIds, ticketNumbers }) => {
+        if (!tokenIds.length) return;
+        await db.from('lottery_tickets').update({
+          ticket_numbers: ticketNumbers,
+          ticket_nft_ids: tokenIds,
+          updated_at: new Date().toISOString(),
+        }).eq('id', newTicket.id);
+      })
+      .catch(e => this.logger.warn(`playAgainBatch: NFT number fetch for new ticket: ${e.message}`));
+
+    this.logger.log(`playAgainBatch: done — new ticket ${newTicket.id}, ${numTickets} tickets for round ${roundId} (consolidated ${consolidatedIds.length}/${tickets.length} tickets)`);
+    return { newTicketId: newTicket.id, numTickets, roundId };
+  }
 }

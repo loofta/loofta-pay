@@ -1792,13 +1792,11 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   // threshold wins are worth less than a ticket after fees — shown as a "Free ticket", the only
   // action is Play Again. At/above it the user may also cash out.
   const minWithdraw = withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC;
-  // Play-again ticket count, matching the backend playAgain rule: a cash win (≥ threshold) is
-  // ROUNDED UP (backend funds the <$1 gap from the fee wallet), a free-ticket win (< threshold) is
-  // floored (backend sweeps the small change to us — no round-up when there's no withdraw to beat).
-  const playAgainTicketCount = wonTickets.reduce((sum, t) => {
-    const n = t.winAmountUsdc ?? 0;
-    return sum + (n >= minWithdraw ? Math.max(1, Math.ceil(n)) : Math.floor(n));
-  }, 0);
+  // Play-again ticket count, matching the backend playAgainBatch rule: multiple won tickets get
+  // consolidated into ONE companion first, so the round-up/floor applies ONCE to the combined
+  // total — not once per ticket (that used to double-count round-ups: a $23.02 win + a $2.95 win
+  // became 24 + 3 = 27 tickets instead of ceil(25.97) = 26).
+  const playAgainTicketCount = totalAmount >= minWithdraw ? Math.max(1, Math.ceil(totalAmount)) : Math.floor(totalAmount);
   const canPlayAgain = wonTickets.some(t => (t.winAmountUsdc ?? 0) > 0);
   const isFreeTicket = isFreeTicketAmount(totalAmount, minWithdraw) && canPlayAgain;
   // A win large enough to matter shouldn't default to steering the user back into another draw —
@@ -1863,23 +1861,20 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
     finally { setLoading(false); }
   }
 
-  /** Claims + reinvests every currently-won ticket via its own companion wallet — no bridge, no
-   *  fee. One call per ticket (play-again is inherently per-companion-wallet). */
+  /** Claims + reinvests every currently-won ticket — one call, backend consolidates all of them
+   *  into a single companion first so multiple wins get exactly one round-up, not one each. */
   async function handlePlayAgain() {
     if (!wonTickets.length) return;
     setPlayingAgain(true); setPlayAgainError("");
     try {
-      let numTickets = 0;
-      for (const t of wonTickets) {
-        const res = await fetch(`/api/lottery/tickets/${t.id}/play-again`, {
-          method: "POST",
-          headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.message ?? "Failed");
-        numTickets += data?.numTickets ?? 0;
-      }
-      setPlayAgainDone({ numTickets });
+      const res = await fetch(`/api/lottery/tickets/play-again-batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+        body: JSON.stringify({ ticketIds: wonTickets.map(t => t.id) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message ?? "Failed");
+      setPlayAgainDone({ numTickets: data?.numTickets ?? 0 });
       onWithdrawn();
     } catch (err: any) {
       setPlayAgainError(err.message ?? "Unknown error");
