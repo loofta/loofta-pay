@@ -20,7 +20,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       <View style={styles.center}>
         <Text style={styles.title}>Log in to continue</Text>
         <TouchableOpacity style={styles.button} onPress={() => router.push('/profile')}>
-          <Text style={styles.buttonText}>Go to Profile</Text>
+          <Text style={styles.buttonText}>Go to login</Text>
         </TouchableOpacity>
       </View>
     );

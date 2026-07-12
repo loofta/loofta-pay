@@ -1,10 +1,11 @@
 import { usePrivy } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
-import { ChevronDown, ChevronUp, Shuffle } from 'lucide-react-native';
+import { ChevronDown, ChevronUp, Shuffle, X } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AuthGate } from '../../components/AuthGate';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
+import { GhostButton } from '../../components/ui/GhostButton';
 import { Card } from '../../components/ui/Card';
 import { CountdownTile } from '../../components/ui/CountdownTile';
 import { GradientText } from '../../components/ui/GradientText';
@@ -97,6 +98,75 @@ function randomTicket(): TicketNumbers {
   return { main: [...s].sort((a, b) => a - b), bonus: Math.ceil(Math.random() * BONUS_MAX) };
 }
 
+// ── Post-purchase success screen pieces — ported from apps/frontend's DrawSuccessModal ─────
+
+/** Same "DRAW IN" countdown as DrawSuccessModal — separate from PrizePoolHero's countdown since
+ *  this one hides itself once the draw time passes instead of freezing at 00:00:00. */
+function DrawInCountdown({ drawTime }: { drawTime: string | null }) {
+  const [msLeft, setMsLeft] = useState(() => (drawTime ? new Date(drawTime).getTime() - Date.now() : 0));
+
+  useEffect(() => {
+    if (!drawTime) return;
+    const tick = () => setMsLeft(new Date(drawTime).getTime() - Date.now());
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [drawTime]);
+
+  if (!drawTime || msLeft <= 0) return null;
+
+  const totalSecs = Math.floor(msLeft / 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const segs = [
+    { v: pad(Math.floor(totalSecs / 3600)), l: 'HRS' },
+    { v: pad(Math.floor((totalSecs % 3600) / 60)), l: 'MIN' },
+    { v: pad(totalSecs % 60), l: 'SEC' },
+  ];
+  const drawLocal = new Date(drawTime).toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  return (
+    <View style={{ gap: space[2] }}>
+      <Text style={styles.drawInLabel}>Draw in</Text>
+      <View style={styles.countdownRow}>
+        {segs.map((seg, i) => (
+          <CountdownTile key={seg.l} value={seg.v} label={seg.l} showColon={i > 0} />
+        ))}
+      </View>
+      <Text style={styles.drawLocalText}>Draw {drawLocal}</Text>
+    </View>
+  );
+}
+
+/** Same "no win data yet" rendering as web's TicketNumberCard when used without a winningNumbers
+ *  prop — plain numbers (not bubbles), only the bonus gets the amber circle treatment. */
+function TicketNumberCard({ tn }: { tn: TicketNumbers }) {
+  return (
+    <View style={styles.numberCard}>
+      <View style={styles.numberCardMain}>
+        <Text style={styles.numberCardLabel}>Numbers</Text>
+        <View style={styles.numberCardMainRow}>
+          {tn.main.map((n) => (
+            <Text key={n} style={styles.numberCardDigit}>{n}</Text>
+          ))}
+        </View>
+      </View>
+      <View style={styles.numberCardDivider} />
+      <View style={styles.numberCardBonusCol}>
+        <Text style={styles.numberCardLabel}>Bonus</Text>
+        <View style={styles.numberCardBonusCircle}>
+          <Text style={styles.numberCardBonusText}>{tn.bonus}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 type BuyStep = 'idle' | 'signing' | 'sent' | 'bridging' | 'buying' | 'done' | 'error';
 
 const STEP_LABEL: Partial<Record<BuyStep, string>> = {
@@ -133,6 +203,7 @@ function BuyScreenInner() {
   const [tickets, setTickets] = useState<TicketNumbers[]>(() => Array.from({ length: 5 }, randomTicket));
   const [chooseOpen, setChooseOpen] = useState(false);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [showAllTickets, setShowAllTickets] = useState(false);
 
   const setTicketCount = (n: number) => {
     const c = Math.max(MIN_TICKETS, Math.min(MAX_TICKETS, n));
@@ -296,7 +367,7 @@ function BuyScreenInner() {
         // signature could possibly exist, safe to cancel outright.
         cancelTicket(createdTicketId, accessToken)
           .then(() => cancelTicket(createdTicketId!, accessToken))
-          .catch(() => {});
+          .catch(() => { });
       } else if (createdTicketId && signAttempted) {
         // Unknown outcome — poll instead of guessing. If the transfer actually landed, the
         // backend's burner-balance check promotes it to 'sent' on its own within a few seconds
@@ -322,19 +393,57 @@ function BuyScreenInner() {
             </TouchableOpacity>
           )}
         </View>
-        <Text style={styles.progressSubHint}>🔒 Don&apos;t close the app — usually under 3 minutes.</Text>
+        <Text style={styles.progressSubHint}>🔒 Don&apos;t close the app — usually takes a minute.</Text>
       </View>
     );
   }
 
-  // ── Purchase done ──────────────────────────────────────────────────────────
+  // ── Purchase done — mirrors apps/frontend's DrawSuccessModal ────────────────
   if (step === 'done') {
+    const showPicks = tickets.length > 0 && tickets[0].main.length > 0;
+    const shownTickets = showAllTickets ? tickets : tickets.slice(0, 5);
+    const prizePoolAmount = nextDraw.prizePool ? Math.round(parseFloat(nextDraw.prizePool)).toLocaleString('en-US') : null;
+
     return (
-      <View style={styles.center}>
-        <Text style={styles.progressEmoji}>🎉</Text>
-        <Text style={styles.progressTitle}>You&apos;re in the draw!</Text>
-        <PrimaryButton label="Buy more" onPress={resetBuy} />
-      </View>
+      <ScrollView style={styles.container} contentContainerStyle={styles.doneScreen}>
+        <TouchableOpacity style={styles.doneCloseButton} onPress={resetBuy}>
+          <X size={20} color={color.fg3} />
+        </TouchableOpacity>
+
+        <View style={styles.doneHeader}>
+          <Text style={styles.doneEmoji}>🎟️✨</Text>
+          <Text style={styles.doneEyebrow}>Tickets confirmed</Text>
+          <GradientText
+            style={styles.doneHeadline}
+            colors={['#FFFFFF', '#F1F5F9', '#FDE68A']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+          >
+            Good luck! 🍀
+          </GradientText>
+          {prizePoolAmount && <Text style={styles.donePrizePool}>${prizePoolAmount} prize pool</Text>}
+        </View>
+
+        <DrawInCountdown drawTime={nextDraw.drawTime} />
+
+        {showPicks && (
+          <View style={{ gap: space[2] }}>
+            <Text style={styles.drawInLabel}>Your tickets</Text>
+            {shownTickets.map((t, i) => (
+              <TicketNumberCard key={i} tn={t} />
+            ))}
+            {!showAllTickets && tickets.length > 5 && (
+              <TouchableOpacity style={styles.moreTicketsButton} onPress={() => setShowAllTickets(true)}>
+                <Text style={styles.moreTicketsText}>+{tickets.length - 5} more tickets</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        <Text style={styles.doneCheckBack}>Check back soon to see if you&apos;ve won 🤞</Text>
+
+        <GhostButton label="Buy more tickets" onPress={resetBuy} />
+      </ScrollView>
     );
   }
 
@@ -667,7 +776,7 @@ const styles = StyleSheet.create({
   progressEmoji: { fontSize: 56 },
   progressLabel: { color: color.warn, fontSize: 14, fontFamily: FONT_BODY_BOLD, letterSpacing: 2, textTransform: 'uppercase' },
   progressTitle: { color: color.fg, fontSize: 28, fontFamily: FONT_TITLE },
-  progressHint: { color: color.fg2, fontSize: 16, fontFamily: FONT_BODY, textAlign: 'center' },
+  progressHint: { color: color.fg2, fontSize: 19, fontFamily: FONT_BODY_MEDIUM, textAlign: 'center' },
   progressSubHint: { color: color.fg3, fontSize: 14, fontFamily: FONT_BODY, textAlign: 'center' },
   stuckHint: { color: color.brandOrange, fontSize: 15, fontFamily: FONT_BODY_MEDIUM, textAlign: 'center', textDecorationLine: 'underline', marginTop: space[2] },
 
@@ -689,4 +798,38 @@ const styles = StyleSheet.create({
   pickerFooter: { padding: space[5], gap: 8, borderTopWidth: 1, borderTopColor: color.borderSofter },
   pickerCancel: { alignItems: 'center', paddingVertical: 10 },
   pickerCancelText: { color: color.fg3, fontSize: 15, fontFamily: FONT_BODY },
+
+  // Purchase done — mirrors DrawSuccessModal
+  doneScreen: { padding: space[5], paddingTop: space[2], gap: space[5], flexGrow: 1 },
+  doneCloseButton: { alignSelf: 'flex-end', padding: space[2] },
+  doneHeader: { alignItems: 'center', gap: space[2] },
+  doneEmoji: { fontSize: 52 },
+  doneEyebrow: { color: color.success, fontFamily: FONT_BODY_BOLD, fontSize: 13, letterSpacing: 3, textTransform: 'uppercase', marginTop: 4 },
+  doneHeadline: { fontFamily: FONT_TITLE, fontSize: 40, textAlign: 'center' },
+  donePrizePool: { color: '#fcd34d', fontFamily: FONT_BODY_SEMIBOLD, fontSize: 17 },
+  drawInLabel: { color: color.fg2, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 13, letterSpacing: 1.5, textTransform: 'uppercase', textAlign: 'center' },
+  drawLocalText: { color: color.fg2, fontFamily: FONT_BODY, fontSize: 13, textAlign: 'center', marginTop: 2 },
+
+  numberCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: color.borderSoft,
+    borderRadius: radius.md + 2,
+    backgroundColor: color.surface1,
+    paddingHorizontal: space[3],
+    minHeight: 58,
+  },
+  numberCardMain: { flex: 1, gap: 6, paddingVertical: space[3] },
+  numberCardLabel: { color: color.fg4, fontFamily: FONT_BODY_BOLD, fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase' },
+  numberCardMainRow: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
+  numberCardDigit: { color: color.fg2, fontFamily: FONT_BODY_BOLD, fontSize: 14, fontVariant: ['tabular-nums'] },
+  numberCardDivider: { alignSelf: 'stretch', width: 1, borderLeftWidth: 1, borderLeftColor: color.borderSoft, borderStyle: 'dashed', marginHorizontal: space[2] },
+  numberCardBonusCol: { alignItems: 'center', gap: 6, paddingVertical: space[3] },
+  numberCardBonusCircle: { width: 28, height: 28, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(245,158,11,0.5)', backgroundColor: 'rgba(245,158,11,0.1)', alignItems: 'center', justifyContent: 'center' },
+  numberCardBonusText: { color: '#fbbf24', fontFamily: FONT_BODY_BOLD, fontSize: 13, fontVariant: ['tabular-nums'] },
+
+  moreTicketsButton: { alignItems: 'center', paddingVertical: space[2] + 2, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.md + 2 },
+  moreTicketsText: { color: color.fg2, fontFamily: FONT_BODY_MEDIUM, fontSize: 14 },
+  doneCheckBack: { color: '#cbd5e1', fontFamily: FONT_BODY_MEDIUM, fontSize: 16, textAlign: 'center' },
 });

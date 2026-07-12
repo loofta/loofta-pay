@@ -11,6 +11,10 @@ export const TICKET_PRICE_USDC = 1;
  *  values. Below it a win is a "free ticket" (play-again only, no withdrawal). */
 export const DEFAULT_WITHDRAW_MIN_USDC = 1.3;
 
+/** Above this, withdrawing becomes the featured CTA instead of Play again — a win this size
+ *  shouldn't default to nudging the user straight back into another draw. */
+export const WITHDRAW_FEATURED_THRESHOLD_USDC = 5;
+
 /** Whether an aggregate/total win is below the withdrawal floor (→ "Free ticket", play-again
  *  only). For a single ticket, prefer the authoritative ticket.isFreeTicket flag from the backend. */
 export function isFreeTicketAmount(winUsdc: number | null | undefined, thresholdUsdc: number): boolean {

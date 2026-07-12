@@ -23,6 +23,9 @@ const MAGICBLOCK_BPS = 10;
 // ticket.isFreeTicket. This is only a fallback for the brief window before the dashboard loads —
 // the UI should prefer the backend values.
 const DEFAULT_WITHDRAW_MIN_USDC = 1.3;
+// Above this, withdrawing becomes the featured CTA instead of Play again — a win this size
+// shouldn't default to nudging the user straight back into another draw.
+const WITHDRAW_FEATURED_THRESHOLD_USDC = 5;
 // Whether an aggregate/total win is below the withdrawal floor (→ "Free ticket", play-again only).
 // For a single ticket, prefer the authoritative ticket.isFreeTicket flag from the backend.
 function isFreeTicketAmount(winUsdc: number | null | undefined, thresholdUsdc: number): boolean {
@@ -621,7 +624,7 @@ function PurchaseProgressModal({ step, error, devReset }: { step: BuyStep; error
 
         {error && <p className="text-base font-semibold text-red-400">{error}</p>}
 
-        <p className="text-sm font-medium text-slate-400">🔒 Don&apos;t close this window — usually under 3 minutes.</p>
+        <p className="text-sm font-medium text-slate-400">🔒 Don&apos;t close this window — usually takes a minute.</p>
 
         {devReset && (
           <button onClick={devReset} className="text-sm text-slate-500 hover:text-slate-300 border border-white/10 rounded-lg px-2 py-1 transition-colors">
@@ -1213,7 +1216,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
       try {
         const parsed = new URL(claimUrl);
         const shareId = parsed.pathname.split("/").filter(Boolean).pop();
-        if (shareId) fetch(`${parsed.origin}/api/gift/${shareId}/og`).catch(() => {});
+        if (shareId) fetch(`${parsed.origin}/api/gift/${shareId}/og`).catch(() => { });
       } catch { /* claimUrl wasn't a valid absolute URL — nothing to pre-warm */ }
     } catch (err: any) {
       setGiftStep("error");
@@ -1567,6 +1570,9 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   }, 0);
   const canPlayAgain = wonTickets.some(t => (t.winAmountUsdc ?? 0) > 0);
   const isFreeTicket = isFreeTicketAmount(totalAmount, minWithdraw) && canPlayAgain;
+  // A win large enough to matter shouldn't default to steering the user back into another draw —
+  // feature Withdraw instead and demote Play again to the secondary link.
+  const preferWithdraw = !isFreeTicket && canPlayAgain && totalAmount >= WITHDRAW_FEATURED_THRESHOLD_USDC;
 
   useEffect(() => {
     if (!totalAmount) return;
@@ -1733,8 +1739,8 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
                 <div className={[
                   "w-8 h-8 rounded-full flex items-center justify-center border",
                   s.state === "done" ? "bg-emerald-500 border-emerald-400" :
-                  s.state === "active" ? "bg-emerald-500/15 border-emerald-400/60" :
-                  "bg-white/[0.04] border-white/15",
+                    s.state === "active" ? "bg-emerald-500/15 border-emerald-400/60" :
+                      "bg-white/[0.04] border-white/15",
                 ].join(" ")}>
                   {s.state === "done" ? (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
@@ -1849,9 +1855,23 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
           </GlowPlayAgainButton>
           <p className="text-center text-sm text-slate-500">Your win goes straight into the next draw — no fees.</p>
         </>
+      ) : preferWithdraw ? (
+        /* Win ≥ $5: withdrawing is the featured CTA — a win this size shouldn't default to
+           nudging the user straight back into another draw. Play again stays one tap away. */
+        <>
+          {error && <p className="text-base text-red-400">{error}</p>}
+          <button onClick={handleWithdraw} disabled={loading || bridgeFeeUsd === null}
+            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
+            {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Withdraw ~${fmt(bridgeReceiveUsdc ?? totalAmount)} privately`}
+          </button>
+          <button onClick={handlePlayAgain} disabled={playingAgain}
+            className="w-full text-center text-base font-medium text-slate-300 hover:text-white underline underline-offset-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            {playingAgain ? "Playing again…" : `or play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? "" : "s"} instead, free`}
+          </button>
+        </>
       ) : canPlayAgain ? (
-        /* Cash win (≥ $1.30): play again is the featured, rounded-up, fee-free deal; withdrawing is
-           one tap away, de-emphasised, behind a confirmation showing the real net. */
+        /* Cash win (≥ $1.30, < $5): play again is the featured, rounded-up, fee-free deal;
+           withdrawing is one tap away, de-emphasised, behind a confirmation showing the real net. */
         <>
           <GlowPlayAgainButton onClick={handlePlayAgain} disabled={playingAgain}>
             {playingAgain ? "Playing again…" : `⚡ Play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? "" : "s"}`}
@@ -1861,7 +1881,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
           </p>
           {!confirmingRedeem ? (
             <button onClick={() => setConfirmingRedeem(true)} disabled={playingAgain || bridgeFeeUsd === null}
-              className="w-full text-center text-sm text-slate-500 hover:text-slate-300 underline underline-offset-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              className="w-full text-center text-base font-medium text-slate-300 hover:text-white underline underline-offset-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
               {bridgeFeeUnavailable ? "Fee unavailable, retry" : bridgeFeeUsd === null ? "Getting fee quote…" : `or withdraw ~${fmt(bridgeReceiveUsdc ?? totalAmount)} instead`}
             </button>
           ) : (
@@ -2392,8 +2412,8 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
       if (res.ok) {
         const msg = data.status === "won"
           ? (isFreeTicketAmount(data.winAmountUsdc, withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC)
-              ? "You won a free ticket! Go to Redeem tab to play it again."
-              : `Won $${data.winAmountUsdc?.toFixed(2)} (Tier ${data.winTier ?? "?"})! Go to Redeem tab.`)
+            ? "You won a free ticket! Go to Redeem tab to play it again."
+            : `Won $${data.winAmountUsdc?.toFixed(2)} (Tier ${data.winTier ?? "?"})! Go to Redeem tab.`)
           : data.status === "lost"
             ? "No win this draw — better luck next time!"
             : `Status: ${data.status}`;
