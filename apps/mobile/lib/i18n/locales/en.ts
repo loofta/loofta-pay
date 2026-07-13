@@ -209,7 +209,6 @@ const en = {
   lockingInNumbers: 'Locking in your numbers…',
   takingLonger: 'Taking longer than usual — check History for status',
   hangTight: 'Hang tight',
-  cantWaitClickHere: "Can't wait, click here",
   dontCloseApp: "🔒 Don't close the app — usually takes a minute.",
   ticketsConfirmed: 'Tickets confirmed',
   goodLuck: 'Good luck! 🍀',
@@ -229,8 +228,6 @@ const en = {
   total: 'Total',
   payButton: (amount: string) => `Pay ${amount}`,
   shieldedNote: '🔒 Shielded via MagicBlock. Paid from your Seeker wallet.',
-  tapGameBest: 'BEST',
-  tapGameHint: 'tap to charge up ⚡',
   pickerProgress: (mainCount: number, mainTotal: number, bonusCount: number) =>
     `${mainCount}/${mainTotal} main · ${bonusCount}/1 bonus`,
   mainNumbersPick: (n: number) => `Main numbers (pick ${n})`,

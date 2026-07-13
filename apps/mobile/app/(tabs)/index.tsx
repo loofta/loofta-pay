@@ -1,10 +1,8 @@
 import { usePrivy } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronDown, ChevronUp, Shuffle, X } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, AppState, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SvgXml } from 'react-native-svg';
 import { AuthGate } from '../../components/AuthGate';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { GhostButton } from '../../components/ui/GhostButton';
@@ -16,7 +14,6 @@ import { fmt, mbFee, totalCost, TICKET_PRICE_USDC } from '../../lib/lottery/fees
 import { connectSeekerWallet, signAndSendTransactionWithSeeker } from '../../lib/wallet/mwa';
 import { useBalances } from '../../lib/wallet/BalanceProvider';
 import { updateCachedSkrDomain } from '../../lib/storage/seekerIdentity';
-import { getTapHighScore, setTapHighScore } from '../../lib/storage/tapHighScore';
 import { useTranslation } from '../../lib/i18n/LanguageProvider';
 import { color, radius, space } from '../../lib/theme';
 import { FONT_TITLE, FONT_TITLE_SEMIBOLD, FONT_BODY, FONT_BODY_MEDIUM, FONT_BODY_SEMIBOLD, FONT_BODY_BOLD } from '../../lib/fonts';
@@ -187,219 +184,6 @@ const STATUS_TO_STEP: Partial<Record<TicketStatus, BuyStep>> = {
   failed: 'error',
 };
 
-// ─── Hang-tight tap game ────────────────────────────────────────────────────
-// A purely cosmetic diversion for the ~minute a purchase is in flight — taps have zero effect
-// on the purchase itself. Charge + unlocked auras persist on-device (expo-secure-store) across
-// every future wait, so it slowly becomes a little collection game instead of just a spinner.
-// Mirrors apps/frontend's TapGame in apps/frontend/src/app/app/megapot/page.tsx.
-
-const MAGICBLOCK_MARK_XML = `
-<svg width="96" height="88" viewBox="0 0 96 88" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M12.2048 58.8714C13.176 59.0257 14.1988 59.1499 15.2688 59.2528C14.1988 59.1542 13.176 59.0257 12.2048 58.8714Z" fill="white"/>
-<path d="M21.0014 21.4288C21.7191 23.293 23.0856 24.583 24.7616 25.2944C25.939 25.7915 27.2712 25.7701 28.4615 25.3029C33.0124 23.5245 37.8597 21.9217 42.8962 20.5546C48.8694 18.9304 54.7868 17.7176 60.4335 16.9376L23.0383 0.331256C20.4127 -0.804405 17.4819 1.11979 17.4905 3.97394L17.5593 30.1113C20.4213 28.2771 21.9167 24.8144 21.0057 21.4288H21.0014Z" fill="white"/>
-<path d="M95.8176 26.1943C94.7561 22.3074 88.77 19.7018 79.3932 19.0375C75.2506 18.7461 70.6482 18.8447 65.7622 19.3032C58.822 19.9589 51.3103 21.3431 43.6783 23.4173C39.1446 24.6515 34.7743 26.0743 30.6446 27.6428C30.0343 27.8743 29.4327 28.1057 28.8354 28.3457C27.8556 28.7314 27.0133 29.417 26.4762 30.317C25.4835 31.9883 25.1569 33.9982 25.7714 36.0596C25.4491 35.1553 25.0065 34.4268 24.4693 33.8568C22.9868 32.2798 20.5803 31.9755 18.6594 32.9783C15.7501 34.4954 13.0686 36.081 10.6836 37.7224C7.06953 40.2037 3.22774 43.195 1.09627 47.1205C0.417298 48.3761 -0.0897845 49.7989 0.0133509 51.2432C0.155162 53.2188 1.43146 54.5773 2.98709 55.6787C3.82077 56.2701 4.7232 56.7672 5.66861 57.1572C8.65094 58.3914 12.0501 58.9571 15.2731 59.2528V50.9989C15.2731 50.1932 15.879 49.4732 16.6826 49.4347C17.5421 49.3918 18.2511 50.0689 18.2511 50.9175C18.2511 50.9175 18.2511 60.607 18.2511 60.6027V71.2651C18.2511 73.1078 19.2438 74.8306 20.8424 75.7563L40.7475 87.2972C41.5468 87.76 42.4579 88 43.3732 88C44.0436 88 44.714 87.8714 45.3457 87.6143L74.5072 75.6963C76.4711 74.8949 77.7431 73.005 77.7431 70.888V45.192L78.0697 45.0377C90.4115 38.468 97.2099 31.2641 95.8218 26.1943H95.8176ZM56.9097 55.7601C56.9097 58.7899 55.9428 60.5513 54.2282 60.5513C52.5136 60.5513 51.3791 58.9228 51.3791 55.2115V49.3104C51.3791 46.2805 52.346 44.5192 54.0606 44.5192C55.7752 44.5192 56.9097 46.1477 56.9097 49.8589V55.7601ZM68.8562 52.7945C68.8562 55.8244 67.8893 57.5857 66.1747 57.5857C64.4601 57.5857 63.3256 55.9572 63.3256 52.246V46.3448C63.3256 43.315 64.2925 41.5536 66.0071 41.5536C67.7217 41.5536 68.8562 43.1821 68.8562 46.8934V52.7945Z" fill="white"/>
-</svg>
-`;
-
-interface TapColorway { colors: [string, string]; glow: string; }
-
-// Cycles by score, not persisted — a fresh burst of color every couple of points so the button
-// visibly keeps changing throughout a single wait instead of leveling up once and sitting still.
-const TAP_COLORWAYS: TapColorway[] = [
-  { colors: ['#FF4A26', '#E1A041'], glow: 'rgba(255,122,42,0.5)' },
-  { colors: ['#10b981', '#5eead4'], glow: 'rgba(45,212,191,0.5)' },
-  { colors: ['#7c3aed', '#e9d5ff'], glow: 'rgba(167,139,250,0.5)' },
-  { colors: ['#f59e0b', '#fef08a'], glow: 'rgba(251,191,36,0.5)' },
-  { colors: ['#34d399', '#22d3ee'], glow: 'rgba(34,211,238,0.5)' },
-  { colors: ['#ec4899', '#fbcfe8'], glow: 'rgba(236,72,153,0.5)' },
-  { colors: ['#3b82f6', '#93c5fd'], glow: 'rgba(59,130,246,0.5)' },
-  { colors: ['#ef4444', '#fca5a5'], glow: 'rgba(239,68,68,0.5)' },
-  { colors: ['#eab308', '#fde68a'], glow: 'rgba(234,179,8,0.5)' },
-  { colors: ['#8b5cf6', '#c4b5fd'], glow: 'rgba(139,92,246,0.5)' },
-];
-
-const TAP_COLOR_STEP = 3;
-const TAP_COLOR_FADE_MS = 700;
-
-interface TapParticle { id: number; value: number; crit: boolean; x: number; anim: Animated.Value; }
-
-// Current charge is purely per-wait — no persistence — so a new purchase (or re-selecting the
-// dev preview) always starts fresh. The parent forces that reset by remounting via a `key` prop.
-// The high score is the exception: it's read from/written to SecureStore so it survives across
-// every future wait, giving players something to beat next time.
-function TapGame() {
-  const { t } = useTranslation();
-  const [charge, setCharge] = useState(0);
-  const [highScore, setHighScore] = useState(0);
-  const [particles, setParticles] = useState<TapParticle[]>([]);
-  const [combo, setCombo] = useState(0);
-
-  const lastTapRef = useRef(0);
-  const particleIdRef = useRef(0);
-  const comboTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const bounce = useRef(new Animated.Value(1)).current;
-  const glowPulse = useRef(new Animated.Value(0)).current;
-  const colorFade = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    let cancelled = false;
-    getTapHighScore().then((v) => { if (!cancelled) setHighScore(v); });
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    if (charge <= highScore) return;
-    setHighScore(charge);
-    void setTapHighScore(charge);
-  }, [charge, highScore]);
-
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(glowPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(glowPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [glowPulse]);
-
-  useEffect(() => () => { if (comboTimeoutRef.current) clearTimeout(comboTimeoutRef.current); }, []);
-
-  const activeIndex = Math.floor(charge / TAP_COLOR_STEP) % TAP_COLORWAYS.length;
-  const active = TAP_COLORWAYS[activeIndex];
-  // Crossfades to the new colorway instead of snapping, so the button gradient drifts smoothly
-  // from one hue to the next even though the underlying tier still changes fairly often.
-  const prevActiveRef = useRef(active);
-  const [fadeFrom, setFadeFrom] = useState(active);
-  useEffect(() => {
-    if (active === prevActiveRef.current) return;
-    setFadeFrom(prevActiveRef.current);
-    prevActiveRef.current = active;
-    colorFade.setValue(0);
-    Animated.timing(colorFade, { toValue: 1, duration: TAP_COLOR_FADE_MS, useNativeDriver: true }).start();
-  }, [active, colorFade]);
-
-  const comboMultiplier = 1 + Math.floor(combo / 8);
-  const glowScale = glowPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.14] });
-  const glowOpacity = glowPulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0.85] });
-
-  function spawnParticle(value: number, crit: boolean) {
-    const id = particleIdRef.current++;
-    const anim = new Animated.Value(0);
-    const x = 22 + Math.random() * 46;
-    setParticles((ps) => [...ps, { id, value, crit, x, anim }]);
-    Animated.timing(anim, { toValue: 1, duration: 800, useNativeDriver: true }).start(() => {
-      setParticles((ps) => ps.filter((p) => p.id !== id));
-    });
-  }
-
-  function handleTap() {
-    const now = Date.now();
-    const withinCombo = now - lastTapRef.current < 550;
-    lastTapRef.current = now;
-    const nextCombo = withinCombo ? Math.min(combo + 1, 50) : 1;
-    setCombo(nextCombo);
-    if (comboTimeoutRef.current) clearTimeout(comboTimeoutRef.current);
-    comboTimeoutRef.current = setTimeout(() => setCombo(0), 700);
-
-    const multiplier = 1 + Math.floor(nextCombo / 8);
-    const roll = Math.random();
-    const crit = roll < 0.06;
-    const gain = (crit ? 5 : roll < 0.22 ? 2 : 1) * multiplier;
-    setCharge((c) => c + gain);
-    spawnParticle(gain, crit);
-
-    bounce.setValue(0.86);
-    Animated.spring(bounce, { toValue: 1, friction: 3, tension: 140, useNativeDriver: true }).start();
-  }
-
-  return (
-    <View style={styles.tapWrap}>
-      <View style={styles.tapTopBar}>
-        <View style={styles.chargePill}>
-          <Text style={styles.chargePillText}>⚡ {charge.toLocaleString()}</Text>
-        </View>
-        <View style={styles.bestPill}>
-          <Text style={styles.bestPillLabel}>{t.tapGameBest}</Text>
-          <Text style={styles.bestPillText}>{Math.max(highScore, charge).toLocaleString()}</Text>
-        </View>
-      </View>
-
-      <View style={styles.tapCenterZone}>
-        <View style={styles.tapButtonZone}>
-          <Animated.View
-            style={[styles.tapGlow, { backgroundColor: active.glow, transform: [{ scale: glowScale }], opacity: glowOpacity }]}
-          />
-          <Animated.View style={{ transform: [{ scale: bounce }] }}>
-            <TouchableOpacity activeOpacity={0.9} onPress={handleTap}>
-              <View style={styles.tapButton}>
-                <LinearGradient colors={fadeFrom.colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-                <Animated.View style={[StyleSheet.absoluteFill, { opacity: colorFade }]}>
-                  <LinearGradient colors={active.colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-                </Animated.View>
-                <SvgXml xml={MAGICBLOCK_MARK_XML} width={40} height={37} />
-                {particles.map((p) => {
-                  const translateY = p.anim.interpolate({ inputRange: [0, 1], outputRange: [0, -46] });
-                  const opacity = p.anim.interpolate({ inputRange: [0, 0.15, 0.85, 1], outputRange: [0, 1, 1, 0] });
-                  return (
-                    <Animated.Text
-                      key={p.id}
-                      style={[
-                        styles.tapParticle,
-                        p.crit && styles.tapParticleCrit,
-                        { left: `${p.x}%`, transform: [{ translateY }], opacity },
-                      ]}
-                    >
-                      {p.crit ? `CRIT +${p.value}!` : `+${p.value}`}
-                    </Animated.Text>
-                  );
-                })}
-              </View>
-            </TouchableOpacity>
-          </Animated.View>
-          <View style={styles.comboSlot}>
-            {comboMultiplier > 1 && <Text style={styles.comboText}>x{comboMultiplier} combo!</Text>}
-          </View>
-        </View>
-
-        <Text style={styles.tapHint}>{t.tapGameHint}</Text>
-      </View>
-    </View>
-  );
-}
-
-// Dev-only: jump straight into the "Hang tight" purchase screen (so the tap game can be previewed)
-// without going through a real buy. Mirrors redeem.tsx's DevPreviewPanel — same chip styling,
-// same __DEV__ gate, never rendered in production/TestFlight builds.
-type BuyPreviewMode = 'buying' | null;
-
-const BUY_DEV_PREVIEW_OPTIONS: { key: BuyPreviewMode; label: string }[] = [
-  { key: 'buying', label: 'Hang tight (tap game)' },
-  { key: null, label: 'Reset (live)' },
-];
-
-function BuyDevPreviewPanel({ mode, onSelect }: { mode: BuyPreviewMode; onSelect: (m: BuyPreviewMode) => void }) {
-  if (true) return null; // disabled for demo recording — re-enable by reverting this line
-  if (!__DEV__) return null;
-  return (
-    <View style={styles.devPanel}>
-      <Text style={styles.devPanelTitle}>DEV PREVIEW</Text>
-      <View style={styles.devPanelRow}>
-        {BUY_DEV_PREVIEW_OPTIONS.map((opt) => (
-          <TouchableOpacity
-            key={String(opt.key)}
-            style={[styles.devPanelChip, mode === opt.key && styles.devPanelChipActive]}
-            onPress={() => onSelect(opt.key)}
-          >
-            <Text style={[styles.devPanelChipText, mode === opt.key && styles.devPanelChipTextActive]}>{opt.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
-  );
-}
-
 const CONFETTI_COLORS = ['#FF7A2A', '#FDBA74', '#34d399', '#22d3ee', '#7c3aed', '#ec4899', '#eab308', '#3b82f6'];
 
 interface ConfettiPiece { id: number; x: number; color: string; delay: number; spin: number; anim: Animated.Value; }
@@ -503,21 +287,6 @@ function BuyScreenInner() {
     return () => clearTimeout(t);
   }, [step]);
 
-  const [previewMode, setPreviewMode] = useState<BuyPreviewMode>(null);
-  useEffect(() => {
-    if (previewMode === 'buying') setStep('buying');
-    else if (previewMode === null) setStep('idle');
-  }, [previewMode]);
-
-  // Bumped on every real purchase and every dev-preview (re-)selection — used as <TapGame>'s
-  // `key` so the score always starts fresh instead of carrying over from the last wait.
-  const [gameSessionId, setGameSessionId] = useState(0);
-  const handlePreviewSelect = (m: BuyPreviewMode) => {
-    setPreviewMode(m);
-    if (m === 'buying') setGameSessionId((id) => id + 1);
-  };
-  const devPanel = <BuyDevPreviewPanel mode={previewMode} onSelect={handlePreviewSelect} />;
-
   // Which ticket a poll/AppState-triggered check should look at — a ref (not state) since it's
   // read from a setInterval callback and an AppState listener, neither of which should re-subscribe
   // every time the in-flight ticket changes.
@@ -606,18 +375,13 @@ function BuyScreenInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getAccessToken]);
 
-  // The tap game only takes over full-screen once the buyer opts in via "Can't wait, click here"
-  // — otherwise we're just showing a rotating phrase while the purchase runs in the background.
-  // Gate resets for every new purchase (see resetBuy/handleBuy).
-  const [gameStarted, setGameStarted] = useState(false);
-
-  // Cosmetic phrase rotation, only while a purchase is in flight and the gate is still showing.
+  // Cosmetic phrase rotation, only while a purchase is in flight.
   const [phraseIdx, setPhraseIdx] = useState(0);
   useEffect(() => {
-    if (!isRunning || gameStarted) return;
+    if (!isRunning) return;
     const id = setInterval(() => setPhraseIdx((i) => (i + 1) % t.stealthPhrases.length), 3_500);
     return () => clearInterval(id);
-  }, [isRunning, gameStarted, t]);
+  }, [isRunning, t]);
 
   // If a purchase sits in the same step for 90s+, it's very likely still fine server-side (cron
   // ticks every 5s in the happy path) — but the buyer deserves an escape hatch rather than an
@@ -638,14 +402,11 @@ function BuyScreenInner() {
   const resetBuy = () => {
     setStep('idle');
     setStepError('');
-    setGameStarted(false);
   };
 
   async function handleBuy() {
     setStep('signing');
     setStepError('');
-    setGameStarted(false);
-    setGameSessionId((id) => id + 1);
     // Tracked outside the try so the catch block can decide what's actually safe to do: cancel a
     // ticket ONLY if we're certain no signature was ever requested for it. Once
     // signAndSendTransactionWithSeeker has been called, a thrown error (including a
@@ -695,25 +456,6 @@ function BuyScreenInner() {
 
   // ── Purchase in progress ──────────────────────────────────────────────────
   if (isRunning) {
-    // Once the buyer opts in via "Can't wait, click here" the game takes over the whole screen —
-    // just a minimal status line up top, no title/copy competing with it.
-    if (gameStarted) {
-      return (
-        <View style={styles.progressScreen}>
-          <View style={styles.progressStatusBar}>
-            <Text style={styles.progressStatusText}>{stepLabel[step] ?? t.stepProcessing}</Text>
-            {stuckHint && (
-              <TouchableOpacity onPress={() => router.push('/history')}>
-                <Text style={styles.stuckHint}>{t.takingLonger}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          <TapGame key={gameSessionId} />
-          {devPanel}
-        </View>
-      );
-    }
-
     return (
       <View style={styles.progressScreen}>
         <View style={styles.progressMain}>
@@ -724,9 +466,6 @@ function BuyScreenInner() {
             <Text style={styles.progressHint} numberOfLines={2}>
               {t.stealthPhrases[phraseIdx % t.stealthPhrases.length]}
             </Text>
-            <TouchableOpacity style={styles.tapToWaitButton} onPress={() => setGameStarted(true)} activeOpacity={0.85}>
-              <Text style={styles.tapToWaitText}>{t.cantWaitClickHere}</Text>
-            </TouchableOpacity>
           </View>
           {stuckHint && (
             <TouchableOpacity onPress={() => router.push('/history')}>
@@ -735,7 +474,6 @@ function BuyScreenInner() {
           )}
         </View>
         <Text style={styles.progressSubHint}>{t.dontCloseApp}</Text>
-        {devPanel}
       </View>
     );
   }
@@ -913,7 +651,6 @@ function BuyScreenInner() {
           onClose={() => setEditingIdx(null)}
         />
       )}
-      {devPanel}
     </View>
   );
 }
@@ -1059,16 +796,6 @@ const styles = StyleSheet.create({
     fontFamily: FONT_BODY_MEDIUM,
     textAlign: 'center',
   },
-  tapToWaitButton: {
-    alignSelf: 'center',
-    backgroundColor: color.bgInkSoft,
-    borderWidth: 1,
-    borderColor: color.borderSoft,
-    borderRadius: radius.pill,
-    paddingHorizontal: space[6],
-    paddingVertical: space[4],
-  },
-  tapToWaitText: { color: color.fg, fontSize: 15, fontFamily: FONT_BODY_SEMIBOLD, textAlign: 'center' },
   progressSubHint: { color: color.fg3, fontSize: 14, fontFamily: FONT_BODY, textAlign: 'center' },
 
   // Prize pool
@@ -1150,41 +877,6 @@ const styles = StyleSheet.create({
   error: { color: color.danger, fontSize: 14, fontFamily: FONT_BODY, textAlign: 'center' },
 
   stuckHint: { color: color.brandOrange, fontSize: 16, fontFamily: FONT_BODY_MEDIUM, textAlign: 'center', textDecorationLine: 'underline', marginTop: space[2] },
-
-  // Hang-tight tap game
-  tapWrap: { flex: 1, width: '100%', alignItems: 'center', gap: space[2] },
-  tapTopBar: { width: '100%', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: space[2], marginTop: space[8] },
-  chargePill: { paddingHorizontal: space[5], paddingVertical: space[2] + 2, borderRadius: radius.pill, backgroundColor: color.surface3, borderWidth: 1, borderColor: color.borderSoft },
-  chargePillText: { color: '#e2e8f0', fontSize: 22, fontFamily: FONT_BODY_BOLD, fontVariant: ['tabular-nums'] },
-  bestPill: { flexDirection: 'row', alignItems: 'baseline', gap: space[1], paddingHorizontal: space[4], paddingVertical: space[2] + 2, borderRadius: radius.pill, backgroundColor: 'transparent', borderWidth: 1, borderColor: color.borderSofter },
-  bestPillLabel: { color: color.fg3, fontSize: 12, fontFamily: FONT_BODY_SEMIBOLD, letterSpacing: 0.5 },
-  bestPillText: { color: color.fg2, fontSize: 16, fontFamily: FONT_BODY_BOLD, fontVariant: ['tabular-nums'] },
-  tapCenterZone: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', gap: space[3] },
-  tapButtonZone: { alignItems: 'center', justifyContent: 'center' },
-  tapGlow: { position: 'absolute', width: 168, height: 168, borderRadius: 84 },
-  tapButton: { width: 136, height: 136, borderRadius: 68, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  tapParticle: { position: 'absolute', top: 8, color: '#fff', fontSize: 14, fontFamily: FONT_BODY_BOLD },
-  tapParticleCrit: { color: '#fbbf24' },
-  comboSlot: { height: 20, marginTop: space[1], alignItems: 'center', justifyContent: 'center' },
-  comboText: { color: '#fbbf24', fontSize: 12, fontFamily: FONT_BODY_BOLD, letterSpacing: 0.5, textTransform: 'uppercase' },
-  tapHint: { color: color.fg3, fontSize: 16, fontFamily: FONT_BODY_MEDIUM },
-
-  // Dev preview panel (Buy tab) — mirrors redeem.tsx's devPanel exactly
-  devPanel: {
-    borderTopWidth: 1,
-    borderTopColor: color.borderSofter,
-    backgroundColor: color.bgInkSoft,
-    paddingHorizontal: space[4],
-    paddingTop: space[2],
-    paddingBottom: space[3],
-    gap: space[2],
-  },
-  devPanelTitle: { color: color.fg4, fontFamily: FONT_BODY_BOLD, fontSize: 10, letterSpacing: 1.5 },
-  devPanelRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space[2] },
-  devPanelChip: { paddingHorizontal: space[2] + 2, paddingVertical: 6, borderRadius: radius.sm + 2, borderWidth: 1, borderColor: color.borderSoft, backgroundColor: color.surface1 },
-  devPanelChipActive: { borderColor: color.brandOrange, backgroundColor: 'rgba(255,74,38,0.16)' },
-  devPanelChipText: { color: color.fg2, fontFamily: FONT_BODY_MEDIUM, fontSize: 11 },
-  devPanelChipTextActive: { color: color.brandOrange },
 
   // number picker (full screen)
   pickerScreen: { flex: 1, backgroundColor: color.bgInk, paddingTop: 60 },

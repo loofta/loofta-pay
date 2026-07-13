@@ -1,6 +1,6 @@
 /**
  * On-device language choice — null means "never picked", which is what gates the first-use
- * language picker in app/_layout.tsx. Same expo-secure-store pattern as tapHighScore.ts.
+ * language picker in app/_layout.tsx.
  */
 import * as SecureStore from 'expo-secure-store';
 import { isLanguageCode, type LanguageCode } from '../i18n/locales';
