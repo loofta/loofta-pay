@@ -153,15 +153,24 @@ export async function GET(request: Request) {
     const networkParam = searchParams.get("network");
     const devnetOnly = networkParam ? networkParam !== "mainnet" : isNonMainnetCluster();
 
-    // Look up current user's username/email so we can find payments sent to them as pending recipients
+    // Look up current user's username/email/twitter so we can find payments sent to them as
+    // pending recipients. Mirrors the fallback in ClaimsService.checkIsRecipient: a
+    // PENDING_USERNAME:<value> row may have been addressed to either the recipient's Loofta
+    // username or their X handle (the sender doesn't know which one they'll end up with), so
+    // both must be checked here too — otherwise a payment the recipient can already claim via
+    // the direct link (checkIsRecipient) silently never appears in their history list.
     const { data: currentUser } = await supabase
       .from("app_users")
-      .select("username, email")
+      .select("username, email, twitter_username")
       .eq("privy_user_id", userId)
       .maybeSingle();
     const pendingAddresses: string[] = [];
-    if (currentUser?.username) pendingAddresses.push(`PENDING_USERNAME:${currentUser.username}`);
-    if (currentUser?.email) pendingAddresses.push(`PENDING_EMAIL:${currentUser.email}`);
+    if (currentUser?.username) pendingAddresses.push(`PENDING_USERNAME:${currentUser.username.toLowerCase()}`);
+    if (currentUser?.twitter_username) {
+      const handle = `PENDING_USERNAME:${currentUser.twitter_username.replace(/^@/, "").toLowerCase()}`;
+      if (!pendingAddresses.includes(handle)) pendingAddresses.push(handle);
+    }
+    if (currentUser?.email) pendingAddresses.push(`PENDING_EMAIL:${currentUser.email.toLowerCase()}`);
 
     // ── payments table (new records) ──────────────────────────────────────
     // Sent: payments where this user is the sender (new schema)
