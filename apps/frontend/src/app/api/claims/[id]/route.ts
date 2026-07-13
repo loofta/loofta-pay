@@ -222,12 +222,24 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   // Surface whether a recipient-edit is currently blocked by an in-flight claim — creator-only
   // (see recipient_claim_lock_at / claimAsRecipient in the backend), so the sender's "Edit
   // recipient" UI can disable itself instead of the edit call failing with no warning.
-  const isCreatorForResponse = !!createdBy && createdBy === requestingUserId;
+  // Fetched as its own best-effort query (never part of the main select above) — the
+  // recipient_claim_lock_at column may not exist yet in every environment (migration
+  // 20260713000000_payments_recipient_claim_lock.sql), and this flag is a nice-to-have, not
+  // something the main payment lookup should ever fail over.
+  const isCreatorForResponse = !isLegacy && !!createdBy && createdBy === requestingUserId;
   if (isCreatorForResponse) {
-    const lockAt = (rawPayment as Record<string, unknown>)?.recipient_claim_lock_at as string | null | undefined;
-    claim.recipient_claim_in_progress = !!lockAt && Date.now() - new Date(lockAt).getTime() < RECIPIENT_CLAIM_LOCK_TTL_MS;
+    try {
+      const { data: lockRow } = await supabase
+        .from("payments")
+        .select("recipient_claim_lock_at")
+        .eq("id", params.id)
+        .maybeSingle();
+      const lockAt = (lockRow as { recipient_claim_lock_at?: string | null } | null)?.recipient_claim_lock_at;
+      claim.recipient_claim_in_progress = !!lockAt && Date.now() - new Date(lockAt).getTime() < RECIPIENT_CLAIM_LOCK_TTL_MS;
+    } catch {
+      // Column not migrated yet in this environment — feature just stays off.
+    }
   }
-  delete claim.recipient_claim_lock_at;
 
   const intent = intentData as Record<string, unknown> | null;
 
