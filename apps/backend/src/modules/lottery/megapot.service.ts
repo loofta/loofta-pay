@@ -691,6 +691,34 @@ export class MegapotService {
     return results;
   }
 
+  /**
+   * Ground-truth claimability check for a single NFT: simulates claimWinnings directly against
+   * the contract instead of trusting the NFT's own tokenURI metadata. Real incident: a ticket
+   * whose Data-API-confirmed win was $1, with a single stored NFT whose metadata read
+   * `tier=2, Win Amount=0` on every retry over 30+ seconds — never changing. Simulating
+   * claimWinnings for that exact token against the real chain succeeded immediately (the contract
+   * itself considered it a winner), proving the metadata trait was simply wrong, not stale. A
+   * dry-run that doesn't revert is authoritative; one that does means it truly isn't claimable
+   * right now (e.g. the round hasn't settled) — either way this is a stronger signal than the
+   * metadata read alone.
+   */
+  async isTokenClaimable(companionAddress: Address, tokenId: bigint): Promise<boolean> {
+    const client = this.getPublicClient();
+    try {
+      await client.simulateContract({
+        address: MEGAPOT_JACKPOT,
+        abi: JACKPOT_ABI,
+        functionName: 'claimWinnings',
+        args: [[tokenId]],
+        account: companionAddress,
+      });
+      return true;
+    } catch (e: any) {
+      this.logger.log(`isTokenClaimable: token ${tokenId} not claimable — ${e?.shortMessage ?? e?.message}`);
+      return false;
+    }
+  }
+
   // ─── Contract reads ────────────────────────────────────────────────────────
 
   private getPublicClient() {
