@@ -293,6 +293,15 @@ export class ClaimsService {
     return Date.now() - new Date(lockAt).getTime() < ClaimsService.RECIPIENT_CLAIM_LOCK_TTL_MS;
   }
 
+  /**
+   * True for Postgres "column does not exist" (42703) — lets callers degrade gracefully if the
+   * recipient_claim_lock_at migration (20260713000000_payments_recipient_claim_lock.sql) hasn't
+   * been deployed to this environment yet, instead of hard-failing every claim attempt.
+   */
+  private isMissingColumnError(error: unknown): boolean {
+    return (error as { code?: string } | null | undefined)?.code === '42703';
+  }
+
   /** Normalize a payment_intents row so it looks like a claim_intents row (claim_id alias). */
   private normalizeIntent(row: Record<string, unknown>): Record<string, unknown> {
     return { ...row, claim_id: row.payment_id ?? row.claim_id ?? null };
@@ -1029,14 +1038,16 @@ export class ClaimsService {
         .eq('recipient_address', ra)
         .or(`recipient_claim_lock_at.is.null,recipient_claim_lock_at.lt.${lockCutoff}`)
         .select('id');
-      if (lockError) {
+      if (lockError && this.isMissingColumnError(lockError)) {
+        this.logger.warn(`Claim ${claimId}: recipient_claim_lock_at column missing (migration not deployed yet) — proceeding without the recipient-claim lock`);
+      } else if (lockError) {
         this.logger.error(`Claim ${claimId}: failed to acquire recipient-claim lock:`, lockError);
         throw new BadRequestException('Failed to start claim, please try again.');
-      }
-      if (!lockedRows?.length) {
+      } else if (!lockedRows?.length) {
         throw new BadRequestException('This payment is currently being claimed or its recipient was just edited. Please refresh and try again.');
+      } else {
+        recipientLockHeld = true;
       }
-      recipientLockHeld = true;
     }
 
     try {
@@ -1158,12 +1169,22 @@ export class ClaimsService {
     // that happens; .select() + a length check turns that no-op into a real error instead of
     // silently reporting success while nothing actually changed.
     const lockCutoff = this.recipientClaimLockStaleCutoffIso();
-    const { data: updatedRows, error } = await this.supabaseService.payments
+    let { data: updatedRows, error } = await this.supabaseService.payments
       .update({ recipient_address: recipientAddress, ...extraFields })
       .eq('id', opts.claimId)
       .eq('recipient_address', ra)
       .or(`recipient_claim_lock_at.is.null,recipient_claim_lock_at.lt.${lockCutoff}`)
       .select('id');
+    if (error && this.isMissingColumnError(error)) {
+      // recipient_claim_lock_at migration not deployed yet — retry without the lock guard
+      // clause rather than blocking every recipient edit on it.
+      this.logger.warn(`Claim ${opts.claimId}: recipient_claim_lock_at column missing (migration not deployed yet) — updating recipient without the lock guard`);
+      ({ data: updatedRows, error } = await this.supabaseService.payments
+        .update({ recipient_address: recipientAddress, ...extraFields })
+        .eq('id', opts.claimId)
+        .eq('recipient_address', ra)
+        .select('id'));
+    }
     if (error) {
       this.logger.error(`Claim ${opts.claimId}: failed to update recipient:`, error);
       throw new BadRequestException('Failed to update recipient.');
