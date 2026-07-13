@@ -1,17 +1,20 @@
 import { usePrivy } from '@privy-io/expo';
 import * as Clipboard from 'expo-clipboard';
-import { Check, ChevronRight, Copy, LifeBuoy, Wallet } from 'lucide-react-native';
+import { Check, ChevronRight, Copy, Globe, LifeBuoy, Wallet } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSeekerLogin, logoutSeeker } from '../../lib/auth/useSeekerLogin';
 import { ensureProfile } from '../../lib/api/users';
 import { getCachedSeekerIdentity, updateCachedSkrDomain, updateCachedUsername } from '../../lib/storage/seekerIdentity';
 import { useBalances } from '../../lib/wallet/BalanceProvider';
+import { useTranslation } from '../../lib/i18n/LanguageProvider';
+import { LANGUAGES } from '../../lib/i18n/locales';
 import { SolIcon } from '../../components/TokenIcons';
 import { Wordmark } from '../../components/Wordmark';
 import { WalletConnectSheet } from '../../components/WalletConnectSheet';
 import { HowToPlayModal } from '../../components/HowToPlayModal';
 import { PrizeTiersModal } from '../../components/PrizeTiersModal';
+import { LanguageModal } from '../../components/LanguageModal';
 import { PoweredByFooter } from '../../components/PoweredByFooter';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { GradientText } from '../../components/ui/GradientText';
@@ -41,6 +44,7 @@ export default function ProfileScreen() {
   const { user, isReady, logout } = usePrivy();
   const { loginWithSeeker, status, error } = useSeekerLogin();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const { t } = useTranslation();
 
   if (!isReady) {
     return (
@@ -55,20 +59,17 @@ export default function ProfileScreen() {
   }
 
   const busy = status === 'connecting' || status === 'verifying';
-  const statusLabel = status === 'connecting' ? 'Connecting to Seed Vault…' : status === 'verifying' ? 'Verifying…' : 'Connect';
+  const statusLabel = status === 'connecting' ? t.profileConnectingSeedVault : status === 'verifying' ? t.profileVerifying : t.connect;
 
   return (
     <View style={styles.connectScreen}>
       <View style={styles.connectContent}>
         <Wordmark width={140} />
         <View style={styles.connectHeadlineGroup}>
-          <Text style={styles.headline}>Play private.</Text>
-          <GradientText style={styles.headline}>Win private.</GradientText>
+          <Text style={styles.headline}>{t.profileHeadline1}</Text>
+          <GradientText style={styles.headline}>{t.profileHeadline2}</GradientText>
         </View>
-        <Text style={styles.subtitle}>
-          Buy tickets directly from your Seeker wallet — every entry and every payout is shielded on-chain via
-          MagicBlock.
-        </Text>
+        <Text style={styles.subtitle}>{t.profileSubtitle}</Text>
         {error && <Text style={styles.error}>{error}</Text>}
       </View>
 
@@ -76,7 +77,7 @@ export default function ProfileScreen() {
       <View style={styles.connectFooter}>
         <PrimaryButton onPress={() => setSheetOpen(true)} disabled={busy}>
           <Wallet size={18} color={color.fg} />
-          <Text style={styles.connectButtonText}>{busy ? statusLabel : 'Connect wallet'}</Text>
+          <Text style={styles.connectButtonText}>{busy ? statusLabel : t.profileConnectWallet}</Text>
         </PrimaryButton>
       </View>
 
@@ -96,6 +97,7 @@ export default function ProfileScreen() {
 
 function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }) {
   const { getAccessToken } = usePrivy();
+  const { t, language } = useTranslation();
   const accounts = user.linked_accounts ?? [];
   const walletAddress = findWalletAddress(accounts);
   // solBalance/skrDomain come from the shared BalanceProvider (same fetch the header chip uses)
@@ -108,6 +110,8 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
   const [copied, setCopied] = useState(false);
   const [howToPlayOpen, setHowToPlayOpen] = useState(false);
   const [prizeTiersOpen, setPrizeTiersOpen] = useState(false);
+  const [languageOpen, setLanguageOpen] = useState(false);
+  const currentLanguageLabel = LANGUAGES.find((l) => l.code === language)?.nativeLabel ?? '';
 
   useEffect(() => {
     let cancelled = false;
@@ -125,7 +129,7 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
         if (!cancelled) setUsername(profile.username);
         if (profile.username) void updateCachedUsername(profile.username);
       } catch (e: any) {
-        if (!cancelled) setError(e?.message ?? 'Could not load profile');
+        if (!cancelled) setError(e?.message ?? t.profileCouldNotLoad);
       }
     })();
     return () => {
@@ -146,7 +150,7 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
 
   const skrDomain = cachedIdentity?.skrDomain ?? (balancesLoaded ? liveSkrDomain : null);
   const effectiveUsername = username ?? cachedIdentity?.username ?? null;
-  const identity = skrDomain ?? effectiveUsername ?? (walletAddress ? truncateAddress(walletAddress) : 'Not connected');
+  const identity = skrDomain ?? effectiveUsername ?? (walletAddress ? truncateAddress(walletAddress) : t.profileNotConnected);
   const copyValue = skrDomain ?? effectiveUsername ?? walletAddress;
 
   const handleCopy = async () => {
@@ -159,10 +163,10 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
   return (
     <View style={styles.screen}>
       <ScrollView style={styles.container} contentContainerStyle={styles.containerContent}>
-        <Text style={styles.title}>Settings</Text>
+        <Text style={styles.title}>{t.settingsTitle}</Text>
 
         <Card style={styles.identityCard}>
-          <Text style={styles.label}>Seeker ID</Text>
+          <Text style={styles.label}>{t.seekerIdLabel}</Text>
           <View style={styles.identityRow}>
             <Text style={styles.value}>{identity}</Text>
             {copyValue && (
@@ -171,16 +175,16 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
               </TouchableOpacity>
             )}
           </View>
-          {copied && <Text style={styles.copiedHint}>Copied</Text>}
+          {copied && <Text style={styles.copiedHint}>{t.copiedHint}</Text>}
 
           <View style={styles.cardDivider} />
 
           <View style={styles.walletHeaderRow}>
             <View style={styles.walletHeaderLeft}>
               <View style={styles.statusDot} />
-              <Text style={styles.walletHeaderText}>Seeker wallet</Text>
+              <Text style={styles.walletHeaderText}>{t.seekerWalletLabel}</Text>
             </View>
-            <GhostButton label="Disconnect" tone="danger" onPress={onLogout} />
+            <GhostButton label={t.disconnect} tone="danger" onPress={onLogout} />
           </View>
           <View style={styles.walletBalanceRow}>
             <SolIcon size={16} />
@@ -193,15 +197,28 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
 
         <Card style={styles.section}>
           <TouchableOpacity style={styles.sectionHeader} onPress={() => setHowToPlayOpen(true)} activeOpacity={0.7}>
-            <Text style={styles.sectionTitle}>How to play</Text>
+            <Text style={styles.sectionTitle}>{t.howToPlayTitle}</Text>
             <ChevronRight size={18} color={color.fg3} />
           </TouchableOpacity>
         </Card>
 
         <Card style={styles.section}>
           <TouchableOpacity style={styles.sectionHeader} onPress={() => setPrizeTiersOpen(true)} activeOpacity={0.7}>
-            <Text style={styles.sectionTitle}>Prize tiers</Text>
+            <Text style={styles.sectionTitle}>{t.prizeTiersTitle}</Text>
             <ChevronRight size={18} color={color.fg3} />
+          </TouchableOpacity>
+        </Card>
+
+        <Card style={styles.section}>
+          <TouchableOpacity style={styles.sectionHeader} onPress={() => setLanguageOpen(true)} activeOpacity={0.7}>
+            <View style={styles.languageHeaderLeft}>
+              <Globe size={18} color={color.fg3} />
+              <Text style={styles.sectionTitle}>{t.languageModalTitle}</Text>
+            </View>
+            <View style={styles.languageHeaderRight}>
+              <Text style={styles.languageValue} numberOfLines={1}>{currentLanguageLabel}</Text>
+              <ChevronRight size={18} color={color.fg3} />
+            </View>
           </TouchableOpacity>
         </Card>
 
@@ -209,7 +226,7 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
           <View style={styles.supportIconTile}>
             <LifeBuoy size={20} color={color.fg} />
           </View>
-          <Text style={styles.supportText}>Contact support</Text>
+          <Text style={styles.supportText}>{t.contactSupport}</Text>
           <ChevronRight size={20} color={color.fg3} />
         </TouchableOpacity>
       </ScrollView>
@@ -218,6 +235,7 @@ function LoggedInProfile({ user, onLogout }: { user: any; onLogout: () => void }
 
       <HowToPlayModal visible={howToPlayOpen} onClose={() => setHowToPlayOpen(false)} />
       <PrizeTiersModal visible={prizeTiersOpen} onClose={() => setPrizeTiersOpen(false)} />
+      <LanguageModal visible={languageOpen} onClose={() => setLanguageOpen(false)} />
     </View>
   );
 }
@@ -275,6 +293,9 @@ const styles = StyleSheet.create({
   section: { padding: 0, overflow: 'hidden' },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: space[4] },
   sectionTitle: { color: color.fg, fontSize: 16, fontFamily: FONT_BODY_SEMIBOLD },
+  languageHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: space[2] },
+  languageHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: space[2], flexShrink: 1 },
+  languageValue: { color: color.fg3, fontSize: 14, fontFamily: FONT_BODY_MEDIUM, flexShrink: 1 },
 
   // Contact support
   supportCard: {

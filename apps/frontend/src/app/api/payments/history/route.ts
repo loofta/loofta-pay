@@ -51,6 +51,14 @@ function isExpiredOpenPayment(p: PaymentHistoryClaim): boolean {
 
 /** Normalise a payments row to the shared PaymentHistoryClaim shape. */
 function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & { _recipient_user_id?: string | null } {
+  const rawStatus = String(row.status ?? "");
+  // Rows matched via the recipient's own pending username/email (see pendingAddresses below) are
+  // funded (SUCCESS) but the money is still sitting in the burner — the recipient hasn't swept it
+  // to their wallet yet by going through /c/[id]. Report them as PRIVATE_TRANSFER_PENDING, which
+  // every locale already renders as "Unclaimed" with an amber badge, instead of a misleading "Paid".
+  const displayStatus = row._pendingUnclaimed && rawStatus.toUpperCase() === "SUCCESS"
+    ? "PRIVATE_TRANSFER_PENDING"
+    : rawStatus;
   return {
     id: String(row.id ?? ""),
     short_id: (row.short_id as string | null) ?? null,
@@ -64,7 +72,7 @@ function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & {
     // compat aliases
     paid_with_chain: (row.from_chain as string | null) ?? null,
     paid_with_token: (row.from_token as string | null) ?? null,
-    status: String(row.status ?? ""),
+    status: displayStatus,
     created_at: String(row.created_at ?? ""),
     paid_at: (row.paid_at as string | null) ?? null,
     recipient_username: (row.recipient_username as string | null) ?? null,
@@ -237,7 +245,7 @@ export async function GET(request: Request) {
       const { data: recByPending } = await recByPendingQuery;
       const seen = new Set(receivedPaymentRows.map((r) => r.id as string));
       for (const r of (recByPending || []) as Record<string, unknown>[]) {
-        if (!seen.has(r.id as string)) receivedPaymentRows.push(r);
+        if (!seen.has(r.id as string)) receivedPaymentRows.push({ ...r, _pendingUnclaimed: true });
       }
     }
 

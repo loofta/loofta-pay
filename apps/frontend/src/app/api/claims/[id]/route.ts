@@ -6,6 +6,8 @@ import { extractChainsFromAssets } from "@/lib/assetUtils";
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
+/** Must match ClaimsService.RECIPIENT_CLAIM_LOCK_TTL_MS (backend claims.service.ts). */
+const RECIPIENT_CLAIM_LOCK_TTL_MS = 5 * 60_000;
 
 async function getVerifiedUserId(request: Request): Promise<string | null> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -76,7 +78,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
   const { data: paymentRow } = await supabase
     .from("payments")
-    .select("id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private")
+    .select("id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private, recipient_claim_lock_at")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -216,6 +218,16 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   } else {
     delete claim.recipient_address;
   }
+
+  // Surface whether a recipient-edit is currently blocked by an in-flight claim — creator-only
+  // (see recipient_claim_lock_at / claimAsRecipient in the backend), so the sender's "Edit
+  // recipient" UI can disable itself instead of the edit call failing with no warning.
+  const isCreatorForResponse = !!createdBy && createdBy === requestingUserId;
+  if (isCreatorForResponse) {
+    const lockAt = (rawPayment as Record<string, unknown>)?.recipient_claim_lock_at as string | null | undefined;
+    claim.recipient_claim_in_progress = !!lockAt && Date.now() - new Date(lockAt).getTime() < RECIPIENT_CLAIM_LOCK_TTL_MS;
+  }
+  delete claim.recipient_claim_lock_at;
 
   const intent = intentData as Record<string, unknown> | null;
 

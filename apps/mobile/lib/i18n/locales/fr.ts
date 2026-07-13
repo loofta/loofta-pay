@@ -1,0 +1,255 @@
+import type { Translations } from './en';
+
+/** French (fr-FR). */
+const fr: Translations = {
+  // ── Common ─────────────────────────────────────────────────────────────
+  cancel: 'Annuler',
+  gotIt: 'Compris',
+  connect: 'Connecter',
+  back: 'Retour',
+  free: 'Gratuit',
+  freeTicket: 'Ticket gratuit',
+  unknownError: 'Erreur inconnue',
+  ticketCount: (n) => `${n} ticket${n === 1 ? '' : 's'}`,
+
+  // ── Tab bar ────────────────────────────────────────────────────────────
+  tabBuy: 'Acheter',
+  tabRedeem: 'Encaisser',
+  tabHistory: 'Historique',
+  tabSettings: 'Réglages',
+
+  // ── Auth gate ──────────────────────────────────────────────────────────
+  authGateTitle: 'Connectez-vous pour continuer',
+  authGateButton: 'Aller à la connexion',
+
+  // ── Splash screen ──────────────────────────────────────────────────────
+  splashTagline: 'Votre loterie privée quotidienne',
+  splashPrizePoolCaption: 'de cagnotte, chaque jour',
+  splashBadge: '🔒 Protégé et privé',
+
+  // ── Wallet connect sheet ───────────────────────────────────────────────
+  walletConnectTitle: 'loofta^pot souhaite se connecter',
+  walletConnectYourWallet: 'Votre portefeuille Seeker',
+
+  // ── How to play modal ──────────────────────────────────────────────────
+  howToPlayTitle: 'Comment jouer',
+  howToPlaySteps: [
+    {
+      title: '1. Choisissez vos numéros',
+      body: 'Choisissez 5 numéros (1–30) plus un numéro bonus (1–12), ou laissez-nous les tirer au hasard pour vous.',
+    },
+    {
+      title: '2. Payez en toute confidentialité',
+      body: 'Chaque ticket coûte 1 $, payé depuis votre portefeuille Seeker et protégé via MagicBlock. Achetez-en autant que vous voulez.',
+    },
+    {
+      title: '3. Tirage quotidien',
+      body: 'Un tirage a lieu chaque jour. Plus vous avez de numéros gagnants, plus le gain est important.',
+    },
+    {
+      title: '4. Récupérez vos gains',
+      body: 'Les petits gains reviennent sous forme de ticket gratuit pour rejouer (sans frais). Les gros gains peuvent être retirés de façon privée vers votre portefeuille.',
+    },
+  ],
+
+  // ── Prize tiers modal ──────────────────────────────────────────────────
+  prizeTiersTitle: 'Paliers de gains',
+  prizeTiersIntro: 'Tous les paliers de gains sont automatiquement versés depuis la cagnotte totale chaque jour.',
+  prizeTiersSectionTiers: 'Paliers',
+  prizeTiersSectionBallRange: 'Plage des numéros',
+  prizeTiers30Normal: '30 numéros classiques',
+  prizeTiers12Bonus: '12 numéros bonus',
+  prizeTierMatch: {
+    '5_bonus': '5 + bonus',
+    '5': '5 numéros',
+    '4_bonus': '4 + bonus',
+    '4': '4 numéros',
+    '3_bonus': '3 + bonus',
+    '2_bonus': '2 + bonus',
+    '3': '3 numéros',
+    '1_bonus': '1 + bonus',
+    '2': '2 numéros',
+    bonus_only: 'Bonus seul',
+  },
+
+  // ── Powered-by footer ──────────────────────────────────────────────────
+  poweredBy: 'Propulsé par',
+
+  // ── Language picker (first-use) / language modal (settings) ───────────
+  languagePickerTitle: 'Choisissez votre langue',
+  languagePickerSubtitle: 'Vous pourrez la modifier à tout moment dans les réglages.',
+  languageModalTitle: 'Langue',
+
+  // ── Profile / Settings screen ──────────────────────────────────────────
+  profileConnectingSeedVault: 'Connexion au Seed Vault…',
+  profileVerifying: 'Vérification…',
+  profileConnectWallet: 'Connecter le portefeuille',
+  profileHeadline1: 'Jouez en privé.',
+  profileHeadline2: 'Gagnez en privé.',
+  profileSubtitle:
+    'Achetez des tickets directement depuis votre portefeuille Seeker — chaque entrée et chaque gain est protégé on-chain via MagicBlock.',
+  profileCouldNotLoad: 'Impossible de charger le profil',
+  profileNotConnected: 'Non connecté',
+  settingsTitle: 'Réglages',
+  seekerIdLabel: 'ID Seeker',
+  copiedHint: 'Copié',
+  seekerWalletLabel: 'Portefeuille Seeker',
+  disconnect: 'Déconnecter',
+  contactSupport: 'Contacter le support',
+
+  // ── Claim gift screen ──────────────────────────────────────────────────
+  claimGiftEnterLinkError: 'Entrez un lien ou un code cadeau.',
+  claimGiftNotFound: 'Cadeau introuvable',
+  claimGiftCouldNotClaim: 'Impossible de récupérer le cadeau',
+  claimGiftClaimedTitle: 'Récupéré !',
+  claimGiftClaimedHint: (n) =>
+    `${n} ticket${n === 1 ? '' : 's'} Megapot en route — vérifiez l'onglet Historique dans quelques minutes.`,
+  claimGiftTitle: 'Récupérer un cadeau',
+  claimGiftHint: "Collez le lien ou le code cadeau que quelqu'un vous a envoyé.",
+  claimGiftPlaceholder: 'pay.loofta.xyz/gift/… ou le code',
+  claimGiftLookUp: 'Rechercher',
+  claimGiftCardTitle: (n) => `${n} ticket${n === 1 ? '' : 's'} Megapot`,
+  claimGiftFrom: (senderUsername) => `De la part de ${senderUsername ? `@${senderUsername}` : "quelqu'un"}`,
+  claimGiftAlreadyClaimedByYou: 'Vous avez déjà récupéré ce cadeau.',
+  claimGiftAlreadyClaimed: 'Déjà récupéré.',
+  claimGiftYouSent: 'Vous avez envoyé ce cadeau — rien à récupérer.',
+  claimGiftClaimButton: (n) => `Récupérer ${n} ticket${n === 1 ? '' : 's'}`,
+
+  // ── History screen ─────────────────────────────────────────────────────
+  historyTitle: 'Historique',
+  historyCouldNotLoad: "Impossible de charger l'historique",
+  historySpent: 'Dépensé',
+  historyWon: 'Gagné',
+  historyEmptyNone: 'Aucun ticket pour le moment.',
+  historyEmptyFiltered: (filter) => (filter === 'won' ? 'Aucun ticket gagnant.' : 'Aucun ticket perdant.'),
+  historyDrawTitle: (baseTitle, roundId) => `${baseTitle} · Tirage n°${roundId}`,
+  historyGiftedSuffix: (dateLabel) => `${dateLabel} · Offert`,
+  ticketStatusLabel: {
+    pending_send: 'En attente',
+    sent: 'Envoyé',
+    bridging: 'Réception',
+    buying: 'Achat en cours',
+    active: 'En cours',
+    won: 'Gagné',
+    lost: 'Perdu',
+    failed: 'Échoué',
+    withdrawn: 'Retiré',
+  },
+  historyFilter: {
+    all: 'Tout',
+    won: 'Gagné',
+    lost: 'Perdu',
+  },
+
+  // ── Redeem screen ──────────────────────────────────────────────────────
+  redeemCouldNotLoad: 'Impossible de charger les gains',
+  withdrawalComplete: 'Retrait terminé',
+  withdrawalOnWay: 'Retrait en cours',
+  isInYourWallet: 'est dans votre portefeuille',
+  isHeadingToWallet: 'arrive dans votre portefeuille',
+  deliveredPrivately: "Livré en privé dans votre portefeuille — aucun lien on-chain ne remonte jusqu'à vous.",
+  arrivesFewMinutes: "Arrive dans quelques minutes. Aucun lien on-chain ne remonte jusqu'à vous.",
+  transferFailedMsg:
+    "Un problème est survenu pendant le transfert — vos fonds sont en sécurité. Consultez l'Historique ou contactez le support.",
+  leavePageHint: 'Vous pouvez quitter cette page en toute sécurité — le traitement continue en arrière-plan.',
+  backToRedeem: 'Retour à Encaisser',
+  playedAgain: 'Rejoué',
+  playAgainDoneTickets: (n) => `${n} nouveau ticket${n === 1 ? '' : 's'}`,
+  playAgainNoFees: 'Vos gains sont retournés directement dans le prochain tirage — sans frais.',
+  redeemSectionTitle: 'Encaisser',
+  noWinningsTitle: 'Pas encore de gains',
+  noWinningsSubtitle: 'Gagnez au tirage quotidien et votre prix apparaîtra ici, prêt à être encaissé en privé.',
+  winningDraws: (n) => `${n} tirages gagnants`,
+  youWon: 'Vous avez gagné',
+  playAgainNextDraw: 'le rejouer au prochain tirage',
+  readyToRedeem: 'prêt à être encaissé en privé',
+  yourWins: 'Vos gains',
+  winningTicket: (tier) => (tier ? `Ticket gagnant · Palier ${tier}` : 'Ticket gagnant'),
+  winRowSubtitle: (dateLabel, numTickets) => `${dateLabel}${numTickets > 1 ? ` · d'un lot de ${numTickets}` : ''}`,
+  arrivesAsOneTransfer: 'Tous vos gains arrivent en un seul transfert privé',
+  arrivesPrivatelyBalance: 'Arrive en privé sur votre solde Loofta',
+  noOnChainLink: 'Aucun lien on-chain entre vos gains et votre portefeuille',
+  playAgainFreeButton: (n) => `⚡ Rejouer — ${n} ticket${n === 1 ? '' : 's'}, gratuit`,
+  playAgainButton: (n) => `⚡ Rejouer — ${n} ticket${n === 1 ? '' : 's'}`,
+  winGoesIntoNextDraw: 'Votre gain part directement dans le prochain tirage — sans frais.',
+  feeUnavailableTryAgain: 'Frais indisponibles — réessayez ci-dessus',
+  gettingRealFeeQuote: 'Récupération des frais réels…',
+  withdrawPrivately: (amount) => `Retirer ~${amount} en privé`,
+  playingAgainEllipsis: 'Nouvelle partie en cours…',
+  orPlayAgainInstead: (n) => `ou rejouer — ${n} ticket${n === 1 ? '' : 's'} à la place, gratuit`,
+  bestValueRoundUp: (n) =>
+    `Meilleure offre — nous arrondissons à ${n} ticket${n === 1 ? '' : 's'} complet${n === 1 ? '' : 's'}, sans frais`,
+  feeUnavailableRetry: 'Frais indisponibles, réessayez',
+  gettingFeeQuote: 'Récupération des frais…',
+  orWithdrawInstead: (amount) => `ou retirer ~${amount} à la place`,
+  confirmRedeemHint: (amount, n) =>
+    `Vous recevrez environ ${amount} après frais (confirmé une fois validé on-chain, peut être légèrement inférieur) — rejouer vous donne ${n} nouveau${n === 1 ? '' : 'x'} ticket${n === 1 ? '' : 's'} complet${n === 1 ? '' : 's'} à la place, gratuitement.`,
+  confirmRedeem: 'Confirmer le retrait',
+  redeemPrivately: (amount) => `Encaisser ~${amount} en privé`,
+  retryFeeEstimate: "Réessayer l'estimation des frais",
+  payoutsShielded: 'Les paiements sont protégés — vous seul pouvez voir le montant et la destination.',
+  earlier: 'Précédemment',
+  earlierRow: (roundId, dateFormatted) => `Tirage n°${roundId} · Encaissé le ${dateFormatted}`,
+  trackerRedeemed: 'Encaissé',
+  trackerTravelingPrivately: 'En transit privé',
+  trackerInYourWallet: 'Dans votre portefeuille',
+
+  // ── Buy screen (index.tsx) ─────────────────────────────────────────────
+  prizePool: 'Cagnotte',
+  hrs: 'H',
+  min: 'MIN',
+  sec: 'SEC',
+  drawIn: 'Tirage dans',
+  drawDateLabel: (dateStr) => `Tirage ${dateStr}`,
+  ticketCardNumbersLabel: 'Numéros',
+  ticketCardBonusLabel: 'Bonus',
+  stepConfirmWallet: 'Confirmez dans votre portefeuille',
+  stepPaymentSent: 'Paiement envoyé',
+  stepBridging: 'Transfert vers Base',
+  stepBuying: 'Achat de vos tickets',
+  stepProcessing: 'Traitement en cours',
+  stealthPhrases: [
+    "personne ne saura pour votre addiction aux jeux d'argent 🤫",
+    'chut, ça reste entre nous 🤐',
+    'des ninjas transfèrent votre argent vers megapot 🥷',
+    'impression des tickets au sous-sol... 🎟️',
+    'on passe par les ruelles pour brouiller les pistes 🕵️',
+  ],
+  ticketsSecured: 'Tickets confirmés !',
+  lockingInNumbers: 'Verrouillage de vos numéros…',
+  takingLonger: "Plus long que d'habitude — vérifiez le statut dans l'Historique",
+  hangTight: 'Un instant',
+  cantWaitClickHere: 'Vous ne pouvez pas attendre ? Cliquez ici',
+  dontCloseApp: "🔒 Ne fermez pas l'application — cela prend généralement une minute.",
+  ticketsConfirmed: 'Tickets confirmés',
+  goodLuck: 'Bonne chance ! 🍀',
+  prizePoolSuffix: (amount) => `${amount} de cagnotte`,
+  yourTickets: 'Vos tickets',
+  moreTickets: (n) => `+${n} tickets supplémentaires`,
+  checkBackSoon: 'Revenez bientôt pour voir si vous avez gagné 🤞',
+  buyMoreTickets: "Acheter d'autres tickets",
+  buyTicketsPrivately: 'Acheter des tickets en privé',
+  ticketsFieldLabel: 'Tickets',
+  chooseNumbers: 'Choisir les numéros',
+  shuffleAll: 'Tout mélanger',
+  addTicket: '+  Ajouter un ticket',
+  tapRowToEdit: 'Touchez une ligne pour modifier les numéros',
+  numbersPickedRandomly: (n) => `Numéros tirés au hasard à partir de ${n}+ tickets`,
+  privateTransferFee: 'Frais de transfert privé',
+  total: 'Total',
+  payButton: (amount) => `Payer ${amount}`,
+  shieldedNote: '🔒 Protégé via MagicBlock. Payé depuis votre portefeuille Seeker.',
+  tapGameBest: 'MEILLEUR',
+  tapGameHint: 'touchez pour charger ⚡',
+  pickerProgress: (mainCount, mainTotal, bonusCount) => `${mainCount}/${mainTotal} principaux · ${bonusCount}/1 bonus`,
+  mainNumbersPick: (n) => `Numéros principaux (choisissez-en ${n})`,
+  bonusNumberPick: 'Numéro bonus (choisissez-en 1)',
+  saveNumbers: 'Enregistrer les numéros',
+  pickerRemainingLabel: (mainRemaining, bonusMissing) =>
+    `Encore ${[mainRemaining > 0 && `${mainRemaining} numéro${mainRemaining === 1 ? '' : 's'}`, bonusMissing && 'le bonus']
+      .filter(Boolean)
+      .join(' et ')}`,
+  ticketNumberLabel: (n) => `Ticket ${n}`,
+};
+
+export default fr;

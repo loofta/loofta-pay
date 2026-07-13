@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { SvgXml } from 'react-native-svg';
+import { useTranslation } from '../lib/i18n/LanguageProvider';
 import { color, space } from '../lib/theme';
 import { FONT_BODY } from '../lib/fonts';
 
@@ -42,9 +43,10 @@ const MAGICBLOCK_LOGO_XML = `
 `;
 
 export function PoweredByFooter() {
+  const { t } = useTranslation();
   return (
     <View style={styles.row}>
-      <Text style={styles.label}>Powered by</Text>
+      <Text style={styles.label}>{t.poweredBy}</Text>
       <View style={styles.logos}>
         <SvgXml xml={MEGAPOT_LOGO_XML} width={95} height={18} />
         <View style={styles.dot} />

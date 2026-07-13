@@ -275,6 +275,24 @@ export class ClaimsService {
     return v.startsWith(ClaimsService.PENDING_EMAIL_PREFIX) || v.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
   }
 
+  /**
+   * How long a recipient-claim lock (recipient_claim_lock_at) is honored before being treated
+   * as stale. claimAsRecipient holds this lock only while sweeping burner funds (bounded by
+   * BURNER_INBOUND_INLINE_MAX_MS ≈ 90s) — the TTL is set well above that so it never expires a
+   * genuine in-flight claim, while still self-healing if a claim attempt crashes mid-sweep
+   * without reaching its `finally` release.
+   */
+  private static readonly RECIPIENT_CLAIM_LOCK_TTL_MS = 5 * 60_000;
+
+  private recipientClaimLockStaleCutoffIso(): string {
+    return new Date(Date.now() - ClaimsService.RECIPIENT_CLAIM_LOCK_TTL_MS).toISOString();
+  }
+
+  private isRecipientClaimLockActive(lockAt?: string | null): boolean {
+    if (!lockAt) return false;
+    return Date.now() - new Date(lockAt).getTime() < ClaimsService.RECIPIENT_CLAIM_LOCK_TTL_MS;
+  }
+
   /** Normalize a payment_intents row so it looks like a claim_intents row (claim_id alias). */
   private normalizeIntent(row: Record<string, unknown>): Record<string, unknown> {
     return { ...row, claim_id: row.payment_id ?? row.claim_id ?? null };
@@ -712,6 +730,17 @@ export class ClaimsService {
       // No burner: recipient_address IS the payment destination for direct-wallet links — keep it
     }
 
+    // Surface whether a recipient-edit is currently blocked by an in-flight claim (see
+    // recipient_claim_lock_at / claimAsRecipient) — creator-only, and only meaningful while the
+    // recipient is still pending, so the sender's "Edit recipient" UI can disable itself instead
+    // of the edit call failing with no warning.
+    const isCreatorViewer = !!(requestingUserId && claim.created_by && requestingUserId === claim.created_by);
+    if (isCreatorViewer) {
+      (claim as Claim & { recipient_claim_in_progress?: boolean }).recipient_claim_in_progress =
+        this.isRecipientClaimLockActive((claim as unknown as { recipient_claim_lock_at?: string | null }).recipient_claim_lock_at);
+    }
+    delete (claim as unknown as Record<string, unknown>)['recipient_claim_lock_at'];
+
     // Never expose the encrypted burner private key to the frontend
     delete (claim as unknown as Record<string, unknown>)['claim_burner_encrypted_secret'];
 
@@ -985,49 +1014,175 @@ export class ClaimsService {
       throw new BadRequestException('No Solana wallet linked to your account. Please add a wallet in settings.');
     }
 
-    // Attempt sweep before writing recipient_address — if sweep throws (e.g. fee payer has no SOL)
-    // we must not have overwritten the PENDING_EMAIL/PENDING_USERNAME address, otherwise the user
-    // cannot retry because the pending-claim detection no longer matches.
-    const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
-
-    // Sweep didn't throw — safe to commit the resolved wallet to DB.
-    if (isPendingEmail || isPendingUsername) {
-      const { error } = await this.updateRow(
-        claimId,
-        { recipient_address: wallet.trim(), recipient_user_id: privyUserId },
-        { recipient_address: wallet.trim() },
-      );
-      if (error) {
-        this.logger.error('Failed to claim payment:', error);
-        throw new BadRequestException('Failed to claim payment.');
+    // Lock the recipient identity for the duration of this claim attempt — otherwise the
+    // sender's "edit recipient" action (updateClaimRecipient) could overwrite recipient_address
+    // in the window between reading `ra` above and committing the resolved wallet below (the
+    // sweep call this guards can run for up to BURNER_INBOUND_INLINE_MAX_MS). Only pending
+    // (unregistered) recipients are lockable/editable — registered recipients skip this.
+    const usesRecipientLock = isPendingEmail || isPendingUsername;
+    let recipientLockHeld = false;
+    if (usesRecipientLock) {
+      const lockCutoff = this.recipientClaimLockStaleCutoffIso();
+      const { data: lockedRows, error: lockError } = await this.supabaseService.payments
+        .update({ recipient_claim_lock_at: new Date().toISOString() })
+        .eq('id', claimId)
+        .eq('recipient_address', ra)
+        .or(`recipient_claim_lock_at.is.null,recipient_claim_lock_at.lt.${lockCutoff}`)
+        .select('id');
+      if (lockError) {
+        this.logger.error(`Claim ${claimId}: failed to acquire recipient-claim lock:`, lockError);
+        throw new BadRequestException('Failed to start claim, please try again.');
       }
+      if (!lockedRows?.length) {
+        throw new BadRequestException('This payment is currently being claimed or its recipient was just edited. Please refresh and try again.');
+      }
+      recipientLockHeld = true;
     }
 
-    if (sweepTxHash) {
-      await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
-      this.notifyRecipientAfterPayment(claimId);
-      this.logger.log(`Claim ${claimId}: sweep completed immediately, marked SUCCESS`);
-    } else if (claimStatus === 'SUCCESS') {
-      // Status was already SUCCESS (prematurely set by sender) and burner is now empty —
-      // the sweep either just ran successfully elsewhere, or funds haven't arrived yet.
-      // Don't downgrade; schedule a background retry to catch late-arriving funds.
-      this.logger.log(`Claim ${claimId}: burner empty but status already SUCCESS — scheduling background retry`);
-      if (claimBurnerAddress) {
-        this.scheduleBackgroundSweepRetry(claimId, wallet, privyUserId);
+    try {
+      // Attempt sweep before writing recipient_address — if sweep throws (e.g. fee payer has no SOL)
+      // we must not have overwritten the PENDING_EMAIL/PENDING_USERNAME address, otherwise the user
+      // cannot retry because the pending-claim detection no longer matches.
+      const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
+
+      // Sweep didn't throw — safe to commit the resolved wallet to DB.
+      if (isPendingEmail || isPendingUsername) {
+        const { error } = await this.updateRow(
+          claimId,
+          { recipient_address: wallet.trim(), recipient_user_id: privyUserId },
+          { recipient_address: wallet.trim() },
+        );
+        if (error) {
+          this.logger.error('Failed to claim payment:', error);
+          throw new BadRequestException('Failed to claim payment.');
+        }
       }
+
+      if (sweepTxHash) {
+        await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
+        this.notifyRecipientAfterPayment(claimId);
+        this.logger.log(`Claim ${claimId}: sweep completed immediately, marked SUCCESS`);
+      } else if (claimStatus === 'SUCCESS') {
+        // Status was already SUCCESS (prematurely set by sender) and burner is now empty —
+        // the sweep either just ran successfully elsewhere, or funds haven't arrived yet.
+        // Don't downgrade; schedule a background retry to catch late-arriving funds.
+        this.logger.log(`Claim ${claimId}: burner empty but status already SUCCESS — scheduling background retry`);
+        if (claimBurnerAddress) {
+          this.scheduleBackgroundSweepRetry(claimId, wallet, privyUserId);
+        }
+      } else {
+        // Funds still in-flight on MagicBlock private leg (devnet: random delay up to ~15 min). Mark
+        // PRIVATE_TRANSFER_PENDING and retry sweep until getBurnerInboundBackgroundMaxMs().
+        await this.updateStatus(claimId, 'PRIVATE_TRANSFER_PENDING', undefined, privyUserId);
+        this.logger.log(`Claim ${claimId}: burner empty at claim time — marked PRIVATE_TRANSFER_PENDING, scheduling background sweep retry`);
+        const rawForRetry = claim as { claim_burner_address?: string | null };
+        if (rawForRetry.claim_burner_address) {
+          this.scheduleBackgroundSweepRetry(claimId, wallet, privyUserId);
+        }
+      }
+
+      this.logger.log(`Claim ${claimId} claimed by recipient (privy ${privyUserId})`);
+      return { claimed: true, sweepTxHash, sweptAmount };
+    } finally {
+      if (recipientLockHeld) {
+        await this.supabaseService.payments
+          .update({ recipient_claim_lock_at: null })
+          .eq('id', claimId)
+          .then(
+            () => {},
+            (e: unknown) => this.logger.warn(`Claim ${claimId}: failed to release recipient-claim lock: ${e}`),
+          );
+      }
+    }
+  }
+
+  /**
+   * Sender action: fix a typo'd recipient on a payment they sent to an unregistered
+   * (PENDING_EMAIL / PENDING_USERNAME) recipient — only while it's still unclaimed. Mirrors
+   * lottery.service.ts updateGiftRecipient. Once the recipient has actually claimed (or is in
+   * the middle of claiming — see the recipient_claim_lock_at guard in claimAsRecipient), editing
+   * is blocked: the identity that claimed it (or is about to) is locked in.
+   */
+  async updateClaimRecipient(opts: {
+    claimId: string;
+    userId: string;
+    recipientType: 'email' | 'username';
+    recipientIdentifier: string;
+  }): Promise<{ ok: boolean }> {
+    const result = await this.fetchRawRow(opts.claimId);
+    if (!result) throw new NotFoundException('Payment not found.');
+    if (result.table !== 'payments') {
+      throw new BadRequestException('This payment cannot be edited.');
+    }
+    const claim = result.row as {
+      created_by?: string | null;
+      status?: string;
+      recipient_address?: string | null;
+      recipient_claim_lock_at?: string | null;
+    };
+    if (!claim.created_by || claim.created_by !== opts.userId) {
+      throw new ForbiddenException('Only the sender can edit the recipient.');
+    }
+    if ((claim.status || '').toUpperCase() === 'CANCELLED') {
+      throw new BadRequestException('This payment was cancelled and can no longer be edited.');
+    }
+    const ra = (claim.recipient_address || '').trim();
+    const isPendingEmail = ra.startsWith(ClaimsService.PENDING_EMAIL_PREFIX);
+    const isPendingUsername = ra.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
+    if (!isPendingEmail && !isPendingUsername) {
+      throw new BadRequestException('Only payments to an unregistered recipient who has not yet claimed can have their recipient edited.');
+    }
+    if (this.isRecipientClaimLockActive(claim.recipient_claim_lock_at)) {
+      throw new BadRequestException('The recipient is currently claiming this payment — try again in a minute.');
+    }
+
+    let recipientAddress: string;
+    const extraFields: Record<string, unknown> = {};
+    if (opts.recipientType === 'email') {
+      const cleanEmail = opts.recipientIdentifier.trim().toLowerCase();
+      if (!cleanEmail || !cleanEmail.includes('@')) throw new BadRequestException('A valid email is required.');
+      recipientAddress = `${ClaimsService.PENDING_EMAIL_PREFIX}${cleanEmail}`;
+      extraFields.recipient_email = cleanEmail;
+      extraFields.recipient_username = null;
     } else {
-      // Funds still in-flight on MagicBlock private leg (devnet: random delay up to ~15 min). Mark
-      // PRIVATE_TRANSFER_PENDING and retry sweep until getBurnerInboundBackgroundMaxMs().
-      await this.updateStatus(claimId, 'PRIVATE_TRANSFER_PENDING', undefined, privyUserId);
-      this.logger.log(`Claim ${claimId}: burner empty at claim time — marked PRIVATE_TRANSFER_PENDING, scheduling background sweep retry`);
-      const rawForRetry = claim as { claim_burner_address?: string | null };
-      if (rawForRetry.claim_burner_address) {
-        this.scheduleBackgroundSweepRetry(claimId, wallet, privyUserId);
-      }
+      const cleanUsername = opts.recipientIdentifier.trim().replace(/^@/, '').toLowerCase();
+      if (!cleanUsername) throw new BadRequestException('A valid username is required.');
+      recipientAddress = `${ClaimsService.PENDING_USERNAME_PREFIX}${cleanUsername}`;
+      extraFields.recipient_username = cleanUsername;
+      extraFields.recipient_email = null;
     }
 
-    this.logger.log(`Claim ${claimId} claimed by recipient (privy ${privyUserId})`);
-    return { claimed: true, sweepTxHash, sweptAmount };
+    // Re-check at write time, not just the read above — the recipient could start (or finish)
+    // claiming in the gap between this method's read and this update. Both conditions —
+    // recipient_address unchanged, lock not (newly) held — make the update itself a no-op if
+    // that happens; .select() + a length check turns that no-op into a real error instead of
+    // silently reporting success while nothing actually changed.
+    const lockCutoff = this.recipientClaimLockStaleCutoffIso();
+    const { data: updatedRows, error } = await this.supabaseService.payments
+      .update({ recipient_address: recipientAddress, ...extraFields })
+      .eq('id', opts.claimId)
+      .eq('recipient_address', ra)
+      .or(`recipient_claim_lock_at.is.null,recipient_claim_lock_at.lt.${lockCutoff}`)
+      .select('id');
+    if (error) {
+      this.logger.error(`Claim ${opts.claimId}: failed to update recipient:`, error);
+      throw new BadRequestException('Failed to update recipient.');
+    }
+    if (!updatedRows?.length) {
+      throw new BadRequestException('This payment is currently being claimed and can no longer be edited. Please refresh and try again.');
+    }
+
+    // The corrected recipient never got a valid notification for the original (typo'd) value —
+    // clear the per-claim de-dupe so notifyRecipientAfterPayment actually sends this time, but
+    // only once the sender has actually paid (matches the controller's own notify gating).
+    const statusUpper = (claim.status || '').toUpperCase();
+    if (['SUCCESS', 'PRIVATE_TRANSFER_PENDING'].includes(statusUpper)) {
+      this.emailSentAt.delete(opts.claimId);
+      this.notifyRecipientAfterPayment(opts.claimId);
+    }
+
+    this.logger.log(`Claim ${opts.claimId}: recipient updated by sender ${opts.userId}`);
+    return { ok: true };
   }
 
   /**

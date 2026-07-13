@@ -151,6 +151,10 @@ function ClaimPageSenderShareView({
   status,
   userId,
   onReclaimed,
+  recipientType,
+  recipientValue,
+  claimLocked,
+  onRecipientUpdated,
 }: {
   claimId: string;
   /** Short URL code (8 chars) — used in the share link when available. Falls back to UUID. */
@@ -161,6 +165,13 @@ function ClaimPageSenderShareView({
   /** Logged-in creator's Privy user id; Reclaim is only shown when this is set. */
   userId?: string | null;
   onReclaimed?: () => void;
+  /** "email" or "username" — which pending-recipient field is editable. Omit to hide Edit. */
+  recipientType?: "email" | "username";
+  /** Current unmasked recipient identifier (creator only) — prefills the edit dialog. */
+  recipientValue?: string;
+  /** True while the recipient is actively claiming — Edit is disabled to avoid racing them. */
+  claimLocked?: boolean;
+  onRecipientUpdated?: () => void;
 }) {
   const { toast } = useToast();
   const { getAccessToken: getSenderAccessToken } = usePrivy();
@@ -169,8 +180,49 @@ function ClaimPageSenderShareView({
   const [reclaimed, setReclaimed] = useState(false);
   const [canReclaim, setCanReclaim] = useState<boolean | null>(null);
   const [isLocalhost, setIsLocalhost] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editValue, setEditValue] = useState(recipientValue || "");
+  const [editSubmitting, setEditSubmitting] = useState(false);
   const statusUpper = (status || "").toUpperCase();
   const isCancelled = statusUpper === "CANCELLED" || reclaimed;
+
+  useEffect(() => {
+    if (editOpen) setEditValue(recipientValue || "");
+  }, [editOpen, recipientValue]);
+
+  const handleSaveRecipient = async () => {
+    if (!userId || !recipientType) return;
+    const trimmed = editValue.trim();
+    if (!trimmed) {
+      toast({ variant: "destructive", title: recipientType === "email" ? "Enter an email" : "Enter a username" });
+      return;
+    }
+    setEditSubmitting(true);
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const token = await getSenderAccessToken();
+      const r = await fetch(`${backendUrl}/claims/${claimId}/recipient`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ recipientType, recipientIdentifier: trimmed }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err?.message || `Update failed: ${r.status}`);
+      }
+      toast({ title: "Recipient updated" });
+      setEditOpen(false);
+      onRecipientUpdated?.();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Update failed";
+      toast({ variant: "destructive", title: "Couldn't update recipient", description: msg });
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -281,6 +333,24 @@ function ClaimPageSenderShareView({
           triggerClassName="px-6 py-3"
         />
       </div>
+      {/* Edit recipient: only while unclaimed (recipientType present) and not mid-claim */}
+      {!isCancelled && recipientType && userId && (
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() => setEditOpen(true)}
+            disabled={!!claimLocked}
+            className="text-base md:text-sm font-medium text-[#FF4A26] hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:no-underline"
+          >
+            Edit recipient
+          </button>
+          {claimLocked && (
+            <p className="mt-1 text-sm text-gray-500">
+              The recipient is currently claiming this payment — try again in a minute.
+            </p>
+          )}
+        </div>
+      )}
       {/* Reclaim only on localhost, when not cancelled, creator is logged in, and burner has balance */}
       {isLocalhost && !isCancelled && userId && canReclaim === true && (
         <div className="mt-6">
@@ -303,6 +373,35 @@ function ClaimPageSenderShareView({
       {isCancelled && (
         <p className="mt-4 text-base md:text-sm text-gray-500">Payment cancelled. Any funds have been returned to your Loofta wallet.</p>
       )}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit recipient</DialogTitle>
+            <DialogDescription>
+              Fix a typo in the {recipientType === "email" ? "email" : "username"} before they claim this payment.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="edit-recipient-input">{recipientType === "email" ? "Email" : "Username"}</Label>
+            <Input
+              id="edit-recipient-input"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              placeholder={recipientType === "email" ? "name@example.com" : "username"}
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button type="button" variant="outline" onClick={() => setEditOpen(false)} disabled={editSubmitting}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleSaveRecipient} disabled={editSubmitting || !editValue.trim()}>
+              {editSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -401,7 +500,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
     isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
-    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null },
+    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; recipient_claim_in_progress?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null },
     latestIntent: data.latestIntent || null,
   };
 }
@@ -3360,6 +3459,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 recipientLabel={claim?.recipient_pending_email_value || "email recipient"}
                 status={String(status || claim?.status || "").toUpperCase()}
                 userId={user?.id}
+                recipientType="email"
+                recipientValue={claim?.recipient_pending_email_value}
+                claimLocked={!!claim?.recipient_claim_in_progress}
+                onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
               />
             ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
@@ -3369,6 +3472,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 recipientLabel={`@${claim.recipient_pending_username_value || "username"}`}
                 status={String(status || claim?.status || "").toUpperCase()}
                 userId={user?.id}
+                recipientType="username"
+                recipientValue={claim?.recipient_pending_username_value}
+                claimLocked={!!claim?.recipient_claim_in_progress}
+                onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
               />
             ) : claim?.recipient_pending_username && !(user?.id && claim?.created_by === user.id) ? (
               (() => {

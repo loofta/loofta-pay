@@ -217,6 +217,42 @@ export class ClaimsController {
     return this.claimsService.claimAsRecipient(id, privyUserId);
   }
 
+  /**
+   * Sender action: fix a typo'd recipient (email or username) on a payment they sent to an
+   * unregistered recipient, as long as it's still unclaimed. Blocked while the recipient is
+   * mid-claim (recipient_claim_lock_at) or once they've actually claimed.
+   */
+  @Post(':id/recipient')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'claims:edit-recipient')
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Edit the recipient of an unclaimed payment you sent (fixes a typo without cancelling)' })
+  @ApiParam({ name: 'id', description: 'Claim UUID' })
+  @ApiResponse({ status: 200, description: 'Recipient updated', schema: { properties: { ok: { type: 'boolean' } } } })
+  @ApiResponse({ status: 400, description: 'Not editable (already claimed, in progress, or cancelled)' })
+  @ApiResponse({ status: 403, description: 'Not the creator' })
+  async updateRecipient(
+    @Param('id') id: string,
+    @Body() body: { recipientType: 'email' | 'username'; recipientIdentifier: string },
+    @Req() req: { user?: { id: string } },
+  ): Promise<{ ok: boolean }> {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) throw new UnauthorizedException('Login required.');
+    if (body.recipientType !== 'email' && body.recipientType !== 'username') {
+      throw new BadRequestException('recipientType must be "email" or "username"');
+    }
+    if (!body.recipientIdentifier?.trim()) {
+      throw new BadRequestException('recipientIdentifier required');
+    }
+    return this.claimsService.updateClaimRecipient({
+      claimId: id,
+      userId: privyUserId,
+      recipientType: body.recipientType,
+      recipientIdentifier: body.recipientIdentifier,
+    });
+  }
+
   @Post(':id/claim-retry-sweep')
   @HttpCode(HttpStatus.OK)
   @UseGuards(AuthGuard)

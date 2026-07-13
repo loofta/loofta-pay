@@ -3,15 +3,9 @@ import { Award, Clock, Settings, Ticket, type LucideIcon } from 'lucide-react-na
 import { forwardRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTranslation } from '../lib/i18n/LanguageProvider';
 import { color, space } from '../lib/theme';
 import { FONT_TITLE_SEMIBOLD } from '../lib/fonts';
-
-export const TAB_ITEMS: { name: string; label: string; icon: LucideIcon }[] = [
-  { name: 'buy', label: 'Buy', icon: Ticket },
-  { name: 'redeem', label: 'Redeem', icon: Award },
-  { name: 'history', label: 'History', icon: Clock },
-  { name: 'profile', label: 'Settings', icon: Settings },
-];
 
 /** TabTrigger's `asChild` clones this element, injecting `isFocused` as a prop (not a render-prop
  *  — expo-router/ui's Pressable slot type overrides children to plain ReactNode). */
@@ -22,7 +16,9 @@ const TabButton = forwardRef<View, TabTriggerSlotProps & { icon: LucideIcon; lab
         <View style={[styles.iconWrap, isFocused && styles.iconWrapActive]}>
           <Icon size={20} color={isFocused ? color.fg : color.fg3} />
         </View>
-        <Text style={[styles.label, isFocused && styles.labelActive]}>{label}</Text>
+        <Text style={[styles.label, isFocused && styles.labelActive]} numberOfLines={1}>
+          {label}
+        </Text>
       </View>
     </Pressable>
   ),
@@ -33,9 +29,16 @@ const TabButton = forwardRef<View, TabTriggerSlotProps & { icon: LucideIcon; lab
  *  `tabBar` render prop with this TabTrigger/isFocused pattern — see app/(tabs)/_layout.tsx). */
 export function TabBar() {
   const insets = useSafeAreaInsets();
+  const { t } = useTranslation();
+  const tabItems: { name: string; label: string; icon: LucideIcon }[] = [
+    { name: 'buy', label: t.tabBuy, icon: Ticket },
+    { name: 'redeem', label: t.tabRedeem, icon: Award },
+    { name: 'history', label: t.tabHistory, icon: Clock },
+    { name: 'profile', label: t.tabSettings, icon: Settings },
+  ];
   return (
     <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, space[2]) }]}>
-      {TAB_ITEMS.map(({ name, label, icon }) => (
+      {tabItems.map(({ name, label, icon }) => (
         <TabTrigger key={name} name={name} asChild>
           <TabButton icon={icon} label={label} />
         </TabTrigger>

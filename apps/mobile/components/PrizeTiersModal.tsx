@@ -1,25 +1,30 @@
 import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { X } from 'lucide-react-native';
+import { useTranslation } from '../lib/i18n/LanguageProvider';
+import type { Translations } from '../lib/i18n/locales';
 import { color, radius, space } from '../lib/theme';
 import { FONT_BODY, FONT_BODY_SEMIBOLD, FONT_TITLE_SEMIBOLD } from '../lib/fonts';
 import { PrimaryButton } from './ui/PrimaryButton';
+
+type PrizeTierMatchKey = keyof Translations['prizeTierMatch'];
 
 // Snapshot of Megapot's published tiers (docs.megapot.io/learn/prize-structure, taken
 // 2026-07-12 against a ~$1.1M pool), net of the ~10% on-chain referral cut Loofta actually
 // takes on every cash win (mirrors the web prize table at apps/frontend/.../megapot/page.tsx
 // and DEFAULT_REFERRAL_WIN_SHARE_FACTOR in megapot.service.ts). Megapot's pool grows daily,
-// so these drift out of date — re-pull from the docs page periodically.
-const PRIZE_TIERS: { match: string; prize: string; normal: number; bonusMatch: boolean }[] = [
-  { match: '5 + bonus', prize: '$183,918.03', normal: 5, bonusMatch: true },
-  { match: '5 numbers', prize: '$1,858.64', normal: 5, bonusMatch: false },
-  { match: '4 + bonus', prize: '$179.24', normal: 4, bonusMatch: true },
-  { match: '4 numbers', prize: '$20.71', normal: 4, bonusMatch: false },
-  { match: '3 + bonus', prize: '$8.33', normal: 3, bonusMatch: true },
-  { match: '2 + bonus', prize: '$4.77', normal: 2, bonusMatch: true },
-  { match: '3 numbers', prize: '$4.19', normal: 3, bonusMatch: false },
-  { match: '1 + bonus', prize: '$2.66', normal: 1, bonusMatch: true },
-  { match: '2 numbers', prize: 'Free ticket', normal: 2, bonusMatch: false },
-  { match: 'Bonus only', prize: 'Free ticket', normal: 0, bonusMatch: true },
+// so these drift out of date — re-pull from the docs page periodically. `matchKey` looks up the
+// localized "5 + bonus" style label in t.prizeTierMatch — the dollar amounts stay numeric/untranslated.
+const PRIZE_TIERS: { matchKey: PrizeTierMatchKey; prize: string; normal: number; bonusMatch: boolean }[] = [
+  { matchKey: '5_bonus', prize: '$183,918.03', normal: 5, bonusMatch: true },
+  { matchKey: '5', prize: '$1,858.64', normal: 5, bonusMatch: false },
+  { matchKey: '4_bonus', prize: '$179.24', normal: 4, bonusMatch: true },
+  { matchKey: '4', prize: '$20.71', normal: 4, bonusMatch: false },
+  { matchKey: '3_bonus', prize: '$8.33', normal: 3, bonusMatch: true },
+  { matchKey: '2_bonus', prize: '$4.77', normal: 2, bonusMatch: true },
+  { matchKey: '3', prize: '$4.19', normal: 3, bonusMatch: false },
+  { matchKey: '1_bonus', prize: '$2.66', normal: 1, bonusMatch: true },
+  { matchKey: '2', prize: 'FREE_TICKET', normal: 2, bonusMatch: false },
+  { matchKey: 'bonus_only', prize: 'FREE_TICKET', normal: 0, bonusMatch: true },
 ];
 
 function TierBalls({ normal, bonusMatch }: { normal: number; bonusMatch: boolean }) {
@@ -35,38 +40,40 @@ function TierBalls({ normal, bonusMatch }: { normal: number; bonusMatch: boolean
 }
 
 export function PrizeTiersModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <View style={styles.sheet}>
           <View style={styles.grabber} />
           <View style={styles.header}>
-            <Text style={styles.title}>Prize tiers</Text>
+            <Text style={styles.title}>{t.prizeTiersTitle}</Text>
             <TouchableOpacity style={styles.closeButton} onPress={onClose} activeOpacity={0.7}>
               <X size={18} color={color.fg3} />
             </TouchableOpacity>
           </View>
 
           <ScrollView contentContainerStyle={styles.bodyContent}>
-            <Text style={styles.intro}>All prize tiers are automatically paid out from the total prize pool every day.</Text>
+            <Text style={styles.intro}>{t.prizeTiersIntro}</Text>
 
-            <Text style={styles.sectionLabel}>Tiers</Text>
+            <Text style={styles.sectionLabel}>{t.prizeTiersSectionTiers}</Text>
             <View style={styles.tierList}>
-              {PRIZE_TIERS.map((t, i) => {
-                const free = t.prize === 'Free ticket';
+              {PRIZE_TIERS.map((tier, i) => {
+                const free = tier.prize === 'FREE_TICKET';
+                const prizeLabel = free ? t.freeTicket : tier.prize;
                 return (
-                  <View key={t.match} style={[styles.tierRow, i < PRIZE_TIERS.length - 1 && styles.tierRowDivider]}>
+                  <View key={tier.matchKey} style={[styles.tierRow, i < PRIZE_TIERS.length - 1 && styles.tierRowDivider]}>
                     <View style={styles.tierLeft}>
-                      <TierBalls normal={t.normal} bonusMatch={t.bonusMatch} />
-                      <Text style={styles.tierMatch}>{t.match}</Text>
+                      <TierBalls normal={tier.normal} bonusMatch={tier.bonusMatch} />
+                      <Text style={styles.tierMatch}>{t.prizeTierMatch[tier.matchKey]}</Text>
                     </View>
-                    <Text style={[styles.tierPrize, free && styles.tierPrizeFree]}>{t.prize}</Text>
+                    <Text style={[styles.tierPrize, free && styles.tierPrizeFree]}>{prizeLabel}</Text>
                   </View>
                 );
               })}
             </View>
 
-            <Text style={styles.sectionLabel}>Ball range</Text>
+            <Text style={styles.sectionLabel}>{t.prizeTiersSectionBallRange}</Text>
             <View style={styles.rangeRow}>
               <View style={styles.rangeBox}>
                 <View style={styles.rangeNumbers}>
@@ -74,7 +81,7 @@ export function PrizeTiersModal({ visible, onClose }: { visible: boolean; onClos
                   <Text style={styles.rangeArrow}>→</Text>
                   <View style={styles.rangeBadge}><Text style={styles.rangeBadgeText}>30</Text></View>
                 </View>
-                <Text style={styles.rangeCaption}>30 normal balls</Text>
+                <Text style={styles.rangeCaption}>{t.prizeTiers30Normal}</Text>
               </View>
               <View style={styles.rangeBox}>
                 <View style={styles.rangeNumbers}>
@@ -82,12 +89,12 @@ export function PrizeTiersModal({ visible, onClose }: { visible: boolean; onClos
                   <Text style={styles.rangeArrow}>→</Text>
                   <View style={[styles.rangeBadge, styles.rangeBadgeBonus]}><Text style={styles.rangeBadgeText}>12</Text></View>
                 </View>
-                <Text style={styles.rangeCaption}>12 bonus balls</Text>
+                <Text style={styles.rangeCaption}>{t.prizeTiers12Bonus}</Text>
               </View>
             </View>
           </ScrollView>
 
-          <PrimaryButton label="Got it" onPress={onClose} />
+          <PrimaryButton label={t.gotIt} onPress={onClose} />
         </View>
       </View>
     </Modal>

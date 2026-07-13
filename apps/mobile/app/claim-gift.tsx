@@ -3,10 +3,12 @@ import { useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { AuthGate } from '../components/AuthGate';
 import { claimLotteryGift, getLotteryGiftPublic, parseGiftToken, type LotteryGiftPublic } from '../lib/api/lotteryGift';
+import { useTranslation } from '../lib/i18n/LanguageProvider';
 import { FONT_TITLE } from '../lib/fonts';
 
 function ClaimGiftInner() {
   const { getAccessToken } = usePrivy();
+  const { t } = useTranslation();
 
   const [input, setInput] = useState('');
   const [token, setToken] = useState<string | null>(null);
@@ -19,7 +21,7 @@ function ClaimGiftInner() {
   const handleLookup = async () => {
     const parsed = parseGiftToken(input);
     if (!parsed) {
-      setError('Enter a gift link or code.');
+      setError(t.claimGiftEnterLinkError);
       return;
     }
     setError(null);
@@ -33,7 +35,7 @@ function ClaimGiftInner() {
     } catch (e: any) {
       // Backend already distinguishes "bad token" from "wrong account" in the message — show it
       // as-is rather than a generic "not found" (see lottery.service.ts getGiftPublic).
-      setError(e?.message ?? 'Gift not found');
+      setError(e?.message ?? t.claimGiftNotFound);
     } finally {
       setLooking(false);
     }
@@ -48,7 +50,7 @@ function ClaimGiftInner() {
       const result = await claimLotteryGift(token, accessToken);
       setClaimedTickets(result.numTickets);
     } catch (e: any) {
-      setError(e?.message ?? "Couldn't claim");
+      setError(e?.message ?? t.claimGiftCouldNotClaim);
     } finally {
       setClaiming(false);
     }
@@ -58,24 +60,22 @@ function ClaimGiftInner() {
     return (
       <View style={styles.center}>
         <Text style={styles.emoji}>🎉</Text>
-        <Text style={styles.title}>Claimed!</Text>
-        <Text style={styles.hint}>
-          {claimedTickets} Megapot ticket{claimedTickets === 1 ? '' : 's'} on the way — check the History tab in a couple minutes.
-        </Text>
+        <Text style={styles.title}>{t.claimGiftClaimedTitle}</Text>
+        <Text style={styles.hint}>{t.claimGiftClaimedHint(claimedTickets)}</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Claim a gift</Text>
-      <Text style={styles.hint}>Paste the gift link or code someone sent you.</Text>
+      <Text style={styles.title}>{t.claimGiftTitle}</Text>
+      <Text style={styles.hint}>{t.claimGiftHint}</Text>
 
       <TextInput
         style={styles.input}
         value={input}
         onChangeText={setInput}
-        placeholder="pay.loofta.xyz/gift/… or the code"
+        placeholder={t.claimGiftPlaceholder}
         placeholderTextColor="#6b7280"
         autoCapitalize="none"
       />
@@ -84,22 +84,20 @@ function ClaimGiftInner() {
 
       {!gift ? (
         <TouchableOpacity style={styles.button} disabled={looking || !input.trim()} onPress={handleLookup}>
-          {looking ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Look up</Text>}
+          {looking ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{t.claimGiftLookUp}</Text>}
         </TouchableOpacity>
       ) : (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>
-            {gift.numTickets} Megapot ticket{gift.numTickets === 1 ? '' : 's'}
-          </Text>
-          <Text style={styles.hint}>From {gift.senderUsername ? `@${gift.senderUsername}` : 'someone'}</Text>
+          <Text style={styles.cardTitle}>{t.claimGiftCardTitle(gift.numTickets)}</Text>
+          <Text style={styles.hint}>{t.claimGiftFrom(gift.senderUsername)}</Text>
 
           {gift.status === 'claimed' ? (
-            <Text style={styles.hint}>{gift.isClaimant ? 'You already claimed this.' : 'Already claimed.'}</Text>
+            <Text style={styles.hint}>{gift.isClaimant ? t.claimGiftAlreadyClaimedByYou : t.claimGiftAlreadyClaimed}</Text>
           ) : gift.isSender ? (
-            <Text style={styles.hint}>You sent this gift — nothing to claim.</Text>
+            <Text style={styles.hint}>{t.claimGiftYouSent}</Text>
           ) : (
             <TouchableOpacity style={styles.button} disabled={claiming} onPress={handleClaim}>
-              {claiming ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Claim {gift.numTickets} ticket{gift.numTickets === 1 ? '' : 's'}</Text>}
+              {claiming ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{t.claimGiftClaimButton(gift.numTickets)}</Text>}
             </TouchableOpacity>
           )}
         </View>

@@ -40,6 +40,6 @@ export function publicTotalCost(numTickets: number): number {
   return numTickets * TICKET_PRICE_USDC;
 }
 
-export function fmt(n: number): string {
-  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export function fmt(n: number, localeTag = 'en-US'): string {
+  return `$${n.toLocaleString(localeTag, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }

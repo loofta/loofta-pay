@@ -1,5 +1,6 @@
 import { FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { X } from 'lucide-react-native';
+import { useTranslation } from '../lib/i18n/LanguageProvider';
 import { color, radius, space } from '../lib/theme';
 import { FONT_BODY_MEDIUM, FONT_TITLE_SEMIBOLD } from '../lib/fonts';
 import { TicketNumberRow } from './ui/TicketNumberRow';
@@ -15,6 +16,7 @@ export function TicketNumbersModal({
   title: string;
   numbers: { main: number[]; bonus: number }[];
 }) {
+  const { t } = useTranslation();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.backdrop}>
@@ -32,7 +34,7 @@ export function TicketNumbersModal({
             keyExtractor={(_, i) => String(i)}
             renderItem={({ item, index }) => (
               <View style={styles.ticketBlock}>
-                {numbers.length > 1 && <Text style={styles.ticketLabel}>Ticket {index + 1}</Text>}
+                {numbers.length > 1 && <Text style={styles.ticketLabel}>{t.ticketNumberLabel(index + 1)}</Text>}
                 <TicketNumberRow main={item.main} bonus={item.bonus} />
               </View>
             )}

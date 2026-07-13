@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { Circle, Defs, RadialGradient, Stop, Svg as SvgRoot, SvgXml } from 'react-native-svg';
+import { useTranslation } from '../lib/i18n/LanguageProvider';
 import { FONT_TITLE } from '../lib/fonts';
 
 // Same wordmark as apps/frontend/public/images/logo/loofta_logo_orange.svg.
@@ -19,6 +20,7 @@ const MIN_DISPLAY_MS = 2200;
 const FADE_OUT_MS = 380;
 
 export function AnimatedSplash({ onFinish }: { onFinish: () => void }) {
+  const { t } = useTranslation();
   const containerOpacity = useRef(new Animated.Value(1)).current;
   const glowPulse = useRef(new Animated.Value(0)).current;
   const logoScale = useRef(new Animated.Value(0.82)).current;
@@ -98,18 +100,18 @@ export function AnimatedSplash({ onFinish }: { onFinish: () => void }) {
         <Animated.Text
           style={[styles.tagline, { opacity: potOpacity, transform: [{ translateY: potTranslate }] }]}
         >
-          Your private daily lottery
+          {t.splashTagline}
         </Animated.Text>
 
         <Animated.View style={{ opacity: prizeOpacity, transform: [{ translateY: prizeTranslate }] }}>
           <Text style={styles.prizeAmount}>$1,100,000</Text>
-          <Text style={styles.prizeLabel}>prize pool, every day</Text>
+          <Text style={styles.prizeLabel}>{t.splashPrizePoolCaption}</Text>
         </Animated.View>
 
         <Animated.View
           style={[styles.badge, { opacity: badgeOpacity, transform: [{ translateY: badgeTranslate }] }]}
         >
-          <Text style={styles.badgeText}>🔒 Shielded &amp; private</Text>
+          <Text style={styles.badgeText}>{t.splashBadge}</Text>
         </Animated.View>
       </View>
     </Animated.View>

@@ -17,6 +17,7 @@ import { connectSeekerWallet, signAndSendTransactionWithSeeker } from '../../lib
 import { useBalances } from '../../lib/wallet/BalanceProvider';
 import { updateCachedSkrDomain } from '../../lib/storage/seekerIdentity';
 import { getTapHighScore, setTapHighScore } from '../../lib/storage/tapHighScore';
+import { useTranslation } from '../../lib/i18n/LanguageProvider';
 import { color, radius, space } from '../../lib/theme';
 import { FONT_TITLE, FONT_TITLE_SEMIBOLD, FONT_BODY, FONT_BODY_MEDIUM, FONT_BODY_SEMIBOLD, FONT_BODY_BOLD } from '../../lib/fonts';
 
@@ -30,6 +31,7 @@ const MAX_TICKETS = 100;
 // CountdownTile, and the same top-to-bottom white → amber gradient on the amount (web's
 // `bg-gradient-to-b from-white via-slate-100 to-amber-200 bg-clip-text`).
 function PrizePoolHero({ prizePool, drawTime }: { prizePool: string | null; drawTime: string | null }) {
+  const { t, localeTag } = useTranslation();
   const [cd, setCd] = useState({ h: 0, m: 0, s: 0, done: true });
 
   useEffect(() => {
@@ -59,21 +61,21 @@ function PrizePoolHero({ prizePool, drawTime }: { prizePool: string | null; draw
   const amount = prizePool ? Math.round(parseFloat(prizePool) / 100_000) * 100_000 : 1_100_000;
   const pad = (n: number) => String(n).padStart(2, '0');
   const segs = [
-    { v: pad(cd.h), l: 'HRS' },
-    { v: pad(cd.m), l: 'MIN' },
-    { v: pad(cd.s), l: 'SEC' },
+    { v: pad(cd.h), l: t.hrs },
+    { v: pad(cd.m), l: t.min },
+    { v: pad(cd.s), l: t.sec },
   ];
 
   return (
     <View style={styles.prizePool}>
-      <Text style={styles.prizePoolLabel}>Prize Pool</Text>
+      <Text style={styles.prizePoolLabel}>{t.prizePool}</Text>
       <GradientText
         style={styles.prizePoolAmount}
         colors={['#FFFFFF', '#F1F5F9', '#FDE68A']}
         start={{ x: 0, y: 0 }}
         end={{ x: 0, y: 1 }}
       >
-        {`$${amount.toLocaleString('en-US')}`}
+        {`$${amount.toLocaleString(localeTag)}`}
       </GradientText>
       <View style={styles.countdownRow}>
         {segs.map((seg, i) => (
@@ -108,6 +110,7 @@ function randomTicket(): TicketNumbers {
 /** Same "DRAW IN" countdown as DrawSuccessModal — separate from PrizePoolHero's countdown since
  *  this one hides itself once the draw time passes instead of freezing at 00:00:00. */
 function DrawInCountdown({ drawTime }: { drawTime: string | null }) {
+  const { t, localeTag } = useTranslation();
   const [msLeft, setMsLeft] = useState(() => (drawTime ? new Date(drawTime).getTime() - Date.now() : 0));
 
   useEffect(() => {
@@ -123,11 +126,11 @@ function DrawInCountdown({ drawTime }: { drawTime: string | null }) {
   const totalSecs = Math.floor(msLeft / 1000);
   const pad = (n: number) => String(n).padStart(2, '0');
   const segs = [
-    { v: pad(Math.floor(totalSecs / 3600)), l: 'HRS' },
-    { v: pad(Math.floor((totalSecs % 3600) / 60)), l: 'MIN' },
-    { v: pad(totalSecs % 60), l: 'SEC' },
+    { v: pad(Math.floor(totalSecs / 3600)), l: t.hrs },
+    { v: pad(Math.floor((totalSecs % 3600) / 60)), l: t.min },
+    { v: pad(totalSecs % 60), l: t.sec },
   ];
-  const drawLocal = new Date(drawTime).toLocaleString(undefined, {
+  const drawLocal = new Date(drawTime).toLocaleString(localeTag, {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -137,13 +140,13 @@ function DrawInCountdown({ drawTime }: { drawTime: string | null }) {
 
   return (
     <View style={{ gap: space[2] }}>
-      <Text style={styles.drawInLabel}>Draw in</Text>
+      <Text style={styles.drawInLabel}>{t.drawIn}</Text>
       <View style={styles.countdownRow}>
         {segs.map((seg, i) => (
           <CountdownTile key={seg.l} value={seg.v} label={seg.l} showColon={i > 0} />
         ))}
       </View>
-      <Text style={styles.drawLocalText}>Draw {drawLocal}</Text>
+      <Text style={styles.drawLocalText}>{t.drawDateLabel(drawLocal)}</Text>
     </View>
   );
 }
@@ -151,10 +154,11 @@ function DrawInCountdown({ drawTime }: { drawTime: string | null }) {
 /** Same "no win data yet" rendering as web's TicketNumberCard when used without a winningNumbers
  *  prop — plain numbers (not bubbles), only the bonus gets the amber circle treatment. */
 function TicketNumberCard({ tn }: { tn: TicketNumbers }) {
+  const { t } = useTranslation();
   return (
     <View style={styles.numberCard}>
       <View style={styles.numberCardMain}>
-        <Text style={styles.numberCardLabel}>Numbers</Text>
+        <Text style={styles.numberCardLabel}>{t.ticketCardNumbersLabel}</Text>
         <View style={styles.numberCardMainRow}>
           {tn.main.map((n) => (
             <Text key={n} style={styles.numberCardDigit}>{n}</Text>
@@ -163,7 +167,7 @@ function TicketNumberCard({ tn }: { tn: TicketNumbers }) {
       </View>
       <View style={styles.numberCardDivider} />
       <View style={styles.numberCardBonusCol}>
-        <Text style={styles.numberCardLabel}>Bonus</Text>
+        <Text style={styles.numberCardLabel}>{t.ticketCardBonusLabel}</Text>
         <View style={styles.numberCardBonusCircle}>
           <Text style={styles.numberCardBonusText}>{tn.bonus}</Text>
         </View>
@@ -173,23 +177,6 @@ function TicketNumberCard({ tn }: { tn: TicketNumbers }) {
 }
 
 type BuyStep = 'idle' | 'signing' | 'sent' | 'bridging' | 'buying' | 'done' | 'error';
-
-const STEP_LABEL: Partial<Record<BuyStep, string>> = {
-  signing: 'Confirm in your wallet',
-  sent: 'Payment sent',
-  bridging: 'Bridging to Base',
-  buying: 'Buying your tickets',
-};
-
-// Same copy as apps/frontend/src/app/app/megapot/page.tsx's PurchaseProgressModal — cycled every
-// 3.5s while a purchase is in flight, purely cosmetic (independent of actual progress).
-const STEALTH_PHRASES = [
-  'nobody will know about your gambling addiction 🤫',
-  "shh, it's between us 🤐",
-  'ninjas are moving your money to megapot 🥷',
-  'printing tickets in the basement... 🎟️',
-  'cutting through back alleys so nobody can trace it 🕵️',
-];
 
 const STATUS_TO_STEP: Partial<Record<TicketStatus, BuyStep>> = {
   sent: 'sent',
@@ -241,6 +228,7 @@ interface TapParticle { id: number; value: number; crit: boolean; x: number; ani
 // The high score is the exception: it's read from/written to SecureStore so it survives across
 // every future wait, giving players something to beat next time.
 function TapGame() {
+  const { t } = useTranslation();
   const [charge, setCharge] = useState(0);
   const [highScore, setHighScore] = useState(0);
   const [particles, setParticles] = useState<TapParticle[]>([]);
@@ -333,7 +321,7 @@ function TapGame() {
           <Text style={styles.chargePillText}>⚡ {charge.toLocaleString()}</Text>
         </View>
         <View style={styles.bestPill}>
-          <Text style={styles.bestPillLabel}>BEST</Text>
+          <Text style={styles.bestPillLabel}>{t.tapGameBest}</Text>
           <Text style={styles.bestPillText}>{Math.max(highScore, charge).toLocaleString()}</Text>
         </View>
       </View>
@@ -375,7 +363,7 @@ function TapGame() {
           </View>
         </View>
 
-        <Text style={styles.tapHint}>tap to charge up ⚡</Text>
+        <Text style={styles.tapHint}>{t.tapGameHint}</Text>
       </View>
     </View>
   );
@@ -458,12 +446,13 @@ function ConfettiBurst() {
 }
 
 function CelebrationScreen() {
+  const { t } = useTranslation();
   return (
     <View style={styles.celebrationScreen}>
       <ConfettiBurst />
       <Text style={styles.celebrationEmoji}>🎉</Text>
-      <Text style={styles.celebrationTitle}>Tickets secured!</Text>
-      <Text style={styles.celebrationSubtitle}>Locking in your numbers…</Text>
+      <Text style={styles.celebrationTitle}>{t.ticketsSecured}</Text>
+      <Text style={styles.celebrationSubtitle}>{t.lockingInNumbers}</Text>
     </View>
   );
 }
@@ -472,6 +461,13 @@ function BuyScreenInner() {
   const { getAccessToken } = usePrivy();
   const router = useRouter();
   const { refreshBalances } = useBalances();
+  const { t, localeTag } = useTranslation();
+  const stepLabel: Partial<Record<BuyStep, string>> = {
+    signing: t.stepConfirmWallet,
+    sent: t.stepPaymentSent,
+    bridging: t.stepBridging,
+    buying: t.stepBuying,
+  };
 
   const [numTickets, setNumTicketsRaw] = useState(5);
   const [tickets, setTickets] = useState<TicketNumbers[]>(() => Array.from({ length: 5 }, randomTicket));
@@ -619,9 +615,9 @@ function BuyScreenInner() {
   const [phraseIdx, setPhraseIdx] = useState(0);
   useEffect(() => {
     if (!isRunning || gameStarted) return;
-    const id = setInterval(() => setPhraseIdx((i) => (i + 1) % STEALTH_PHRASES.length), 3_500);
+    const id = setInterval(() => setPhraseIdx((i) => (i + 1) % t.stealthPhrases.length), 3_500);
     return () => clearInterval(id);
-  }, [isRunning, gameStarted]);
+  }, [isRunning, gameStarted, t]);
 
   // If a purchase sits in the same step for 90s+, it's very likely still fine server-side (cron
   // ticks every 5s in the happy path) — but the buyer deserves an escape hatch rather than an
@@ -680,7 +676,7 @@ function BuyScreenInner() {
       pollStatus(ticketId);
     } catch (e: any) {
       setStep('error');
-      setStepError(e?.message ?? 'Unknown error');
+      setStepError(e?.message ?? t.unknownError);
       if (createdTicketId && !signAttempted) {
         // Never reached the wallet prompt at all (e.g. ticket creation itself failed) — no
         // signature could possibly exist, safe to cancel outright.
@@ -705,10 +701,10 @@ function BuyScreenInner() {
       return (
         <View style={styles.progressScreen}>
           <View style={styles.progressStatusBar}>
-            <Text style={styles.progressStatusText}>{STEP_LABEL[step] ?? 'Processing'}</Text>
+            <Text style={styles.progressStatusText}>{stepLabel[step] ?? t.stepProcessing}</Text>
             {stuckHint && (
               <TouchableOpacity onPress={() => router.push('/history')}>
-                <Text style={styles.stuckHint}>Taking longer than usual — check History for status</Text>
+                <Text style={styles.stuckHint}>{t.takingLonger}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -722,23 +718,23 @@ function BuyScreenInner() {
       <View style={styles.progressScreen}>
         <View style={styles.progressMain}>
           <Text style={styles.progressEmoji}>🎟️</Text>
-          <Text style={styles.progressLabel}>{STEP_LABEL[step] ?? 'Processing'}</Text>
-          <Text style={styles.progressTitle}>Hang tight</Text>
+          <Text style={styles.progressLabel}>{stepLabel[step] ?? t.stepProcessing}</Text>
+          <Text style={styles.progressTitle}>{t.hangTight}</Text>
           <View style={styles.progressGate}>
             <Text style={styles.progressHint} numberOfLines={2}>
-              {STEALTH_PHRASES[phraseIdx]}
+              {t.stealthPhrases[phraseIdx % t.stealthPhrases.length]}
             </Text>
             <TouchableOpacity style={styles.tapToWaitButton} onPress={() => setGameStarted(true)} activeOpacity={0.85}>
-              <Text style={styles.tapToWaitText}>Can&apos;t wait, click here</Text>
+              <Text style={styles.tapToWaitText}>{t.cantWaitClickHere}</Text>
             </TouchableOpacity>
           </View>
           {stuckHint && (
             <TouchableOpacity onPress={() => router.push('/history')}>
-              <Text style={styles.stuckHint}>Taking longer than usual — check History for status</Text>
+              <Text style={styles.stuckHint}>{t.takingLonger}</Text>
             </TouchableOpacity>
           )}
         </View>
-        <Text style={styles.progressSubHint}>🔒 Don&apos;t close the app — usually takes a minute.</Text>
+        <Text style={styles.progressSubHint}>{t.dontCloseApp}</Text>
         {devPanel}
       </View>
     );
@@ -753,7 +749,7 @@ function BuyScreenInner() {
   if (step === 'done') {
     const showPicks = tickets.length > 0 && tickets[0].main.length > 0;
     const shownTickets = showAllTickets ? tickets : tickets.slice(0, 5);
-    const prizePoolAmount = nextDraw.prizePool ? Math.round(parseFloat(nextDraw.prizePool)).toLocaleString('en-US') : null;
+    const prizePoolAmount = nextDraw.prizePool ? Math.round(parseFloat(nextDraw.prizePool)).toLocaleString(localeTag) : null;
 
     return (
       <ScrollView style={styles.container} contentContainerStyle={styles.doneScreen}>
@@ -763,37 +759,37 @@ function BuyScreenInner() {
 
         <View style={styles.doneHeader}>
           <Text style={styles.doneEmoji}>🎟️✨</Text>
-          <Text style={styles.doneEyebrow}>Tickets confirmed</Text>
+          <Text style={styles.doneEyebrow}>{t.ticketsConfirmed}</Text>
           <GradientText
             style={styles.doneHeadline}
             colors={['#FFFFFF', '#F1F5F9', '#FDE68A']}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
           >
-            Good luck! 🍀
+            {t.goodLuck}
           </GradientText>
-          {prizePoolAmount && <Text style={styles.donePrizePool}>${prizePoolAmount} prize pool</Text>}
+          {prizePoolAmount && <Text style={styles.donePrizePool}>{t.prizePoolSuffix(`$${prizePoolAmount}`)}</Text>}
         </View>
 
         <DrawInCountdown drawTime={nextDraw.drawTime} />
 
         {showPicks && (
           <View style={{ gap: space[2] }}>
-            <Text style={styles.drawInLabel}>Your tickets</Text>
-            {shownTickets.map((t, i) => (
-              <TicketNumberCard key={i} tn={t} />
+            <Text style={styles.drawInLabel}>{t.yourTickets}</Text>
+            {shownTickets.map((ticket, i) => (
+              <TicketNumberCard key={i} tn={ticket} />
             ))}
             {!showAllTickets && tickets.length > 5 && (
               <TouchableOpacity style={styles.moreTicketsButton} onPress={() => setShowAllTickets(true)}>
-                <Text style={styles.moreTicketsText}>+{tickets.length - 5} more tickets</Text>
+                <Text style={styles.moreTicketsText}>{t.moreTickets(tickets.length - 5)}</Text>
               </TouchableOpacity>
             )}
           </View>
         )}
 
-        <Text style={styles.doneCheckBack}>Check back soon to see if you&apos;ve won 🤞</Text>
+        <Text style={styles.doneCheckBack}>{t.checkBackSoon}</Text>
 
-        <GhostButton label="Buy more tickets" onPress={resetBuy} />
+        <GhostButton label={t.buyMoreTickets} onPress={resetBuy} />
       </ScrollView>
     );
   }
@@ -807,12 +803,12 @@ function BuyScreenInner() {
 
       <View style={styles.card}>
         <ScrollView contentContainerStyle={styles.cardScroll} showsVerticalScrollIndicator={false}>
-          <Text style={styles.formTitle}>Buy tickets privately</Text>
+          <Text style={styles.formTitle}>{t.buyTicketsPrivately}</Text>
 
           {/* Ticket count */}
           <View>
             <View style={styles.presetRow}>
-              <Text style={styles.sectionTitle}>Tickets</Text>
+              <Text style={styles.sectionTitle}>{t.ticketsFieldLabel}</Text>
               <View style={{ flexDirection: 'row', gap: 6 }}>
                 {PRESETS.map((n) => (
                   <TouchableOpacity
@@ -840,26 +836,26 @@ function BuyScreenInner() {
           {numTickets <= NUMBER_PICKER_LIMIT ? (
             <Card style={styles.chooseCard}>
               <TouchableOpacity style={styles.chooseHeader} onPress={() => setChooseOpen((o) => !o)}>
-                <Text style={styles.chooseHeaderText}>Choose numbers</Text>
+                <Text style={styles.chooseHeaderText}>{t.chooseNumbers}</Text>
                 {chooseOpen ? <ChevronUp size={18} color={color.fg3} /> : <ChevronDown size={18} color={color.fg3} />}
               </TouchableOpacity>
               {chooseOpen && (
                 <View style={styles.chooseBody}>
                   <TouchableOpacity style={styles.shuffleAllButton} onPress={() => setTickets(tickets.map(() => randomTicket()))}>
                     <Shuffle size={14} color={color.fg2} />
-                    <Text style={styles.shuffleAllText}>Shuffle all</Text>
+                    <Text style={styles.shuffleAllText}>{t.shuffleAll}</Text>
                   </TouchableOpacity>
                   <View style={styles.ticketList}>
-                    {tickets.map((t, i) => (
+                    {tickets.map((ticket, i) => (
                       <TouchableOpacity key={i} style={styles.ticketRow} onPress={() => setEditingIdx(i)}>
                         <View style={styles.ticketRowNumbers}>
-                          {t.main.map((n) => (
+                          {ticket.main.map((n) => (
                             <View key={n} style={styles.numberBubbleSmall}>
                               <Text style={styles.numberBubbleSmallText}>{n}</Text>
                             </View>
                           ))}
                           <View style={styles.bonusBubbleSmall}>
-                            <Text style={styles.bonusBubbleSmallText}>{t.bonus}</Text>
+                            <Text style={styles.bonusBubbleSmallText}>{ticket.bonus}</Text>
                           </View>
                         </View>
                       </TouchableOpacity>
@@ -872,40 +868,40 @@ function BuyScreenInner() {
                       setTicketCount(numTickets + 1);
                     }}
                   >
-                    <Text style={styles.addTicketButtonText}>+  Add ticket</Text>
+                    <Text style={styles.addTicketButtonText}>{t.addTicket}</Text>
                   </TouchableOpacity>
-                  <Text style={styles.chooseHint}>Tap any row to edit numbers</Text>
+                  <Text style={styles.chooseHint}>{t.tapRowToEdit}</Text>
                 </View>
               )}
             </Card>
           ) : (
             <View style={styles.field}>
               <Shuffle size={16} color={color.fg2} style={{ marginRight: 8 }} />
-              <Text style={styles.fieldHint}>Numbers picked randomly for {NUMBER_PICKER_LIMIT + 1}+ tickets</Text>
+              <Text style={styles.fieldHint}>{t.numbersPickedRandomly(NUMBER_PICKER_LIMIT + 1)}</Text>
             </View>
           )}
 
           {/* Fee breakdown */}
           <View style={styles.feeCard}>
             <View style={styles.feeRow}>
-              <Text style={styles.feeLabel}>{numTickets} ticket{numTickets === 1 ? '' : 's'}</Text>
-              <Text style={styles.feeValue}>{fmt(base)}</Text>
+              <Text style={styles.feeLabel}>{t.ticketCount(numTickets)}</Text>
+              <Text style={styles.feeValue}>{fmt(base, localeTag)}</Text>
             </View>
             <View style={styles.feeRow}>
-              <Text style={styles.feeLabel}>Private transfer fee</Text>
-              <Text style={styles.feeValue}>{fmt(mbFee(base))}</Text>
+              <Text style={styles.feeLabel}>{t.privateTransferFee}</Text>
+              <Text style={styles.feeValue}>{fmt(mbFee(base), localeTag)}</Text>
             </View>
             <View style={[styles.feeRow, styles.feeTotalRow]}>
-              <Text style={styles.feeTotalLabel}>Total</Text>
-              <Text style={styles.feeTotalValue}>{fmt(cost)}</Text>
+              <Text style={styles.feeTotalLabel}>{t.total}</Text>
+              <Text style={styles.feeTotalValue}>{fmt(cost, localeTag)}</Text>
             </View>
           </View>
         </ScrollView>
 
         <View style={styles.cardFooter}>
           {step === 'error' && stepError ? <Text style={styles.error}>{stepError}</Text> : null}
-          <PrimaryButton onPress={handleBuy} label={`Pay ${fmt(cost)}`} />
-          <Text style={styles.shieldedNote}>🔒 Shielded via MagicBlock. Paid from your Seeker wallet.</Text>
+          <PrimaryButton onPress={handleBuy} label={t.payButton(fmt(cost, localeTag))} />
+          <Text style={styles.shieldedNote}>{t.shieldedNote}</Text>
         </View>
       </View>
 
@@ -913,7 +909,7 @@ function BuyScreenInner() {
         <NumberPickerModal
           visible
           ticket={tickets[editingIdx]}
-          onSave={(t) => updateTicket(editingIdx, t)}
+          onSave={(updated) => updateTicket(editingIdx, updated)}
           onClose={() => setEditingIdx(null)}
         />
       )}
@@ -935,6 +931,7 @@ function NumberPickerModal({
   onSave: (t: TicketNumbers) => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState<TicketNumbers>(ticket);
   useEffect(() => {
     if (visible) setDraft(ticket);
@@ -954,17 +951,15 @@ function NumberPickerModal({
 
   const isComplete = draft.main.length === MAIN_COUNT && draft.bonus > 0;
   const mainRemaining = MAIN_COUNT - draft.main.length;
-  const saveLabel = !isComplete
-    ? [mainRemaining > 0 && `${mainRemaining} main`, draft.bonus === 0 && 'bonus'].filter(Boolean).join(' + ') + ' left'
-    : 'Save numbers';
+  const saveLabel = !isComplete ? t.pickerRemainingLabel(mainRemaining, draft.bonus === 0) : t.saveNumbers;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen">
       <View style={styles.pickerScreen}>
         <View style={styles.pickerHeader}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.pickerTitle}>Choose numbers</Text>
-            <Text style={styles.pickerProgress}>{draft.main.length}/{MAIN_COUNT} main · {draft.bonus > 0 ? 1 : 0}/1 bonus</Text>
+            <Text style={styles.pickerTitle}>{t.chooseNumbers}</Text>
+            <Text style={styles.pickerProgress}>{t.pickerProgress(draft.main.length, MAIN_COUNT, draft.bonus > 0 ? 1 : 0)}</Text>
           </View>
           <View style={styles.pickerHeaderActions}>
             <TouchableOpacity onPress={() => setDraft(randomTicket())} style={styles.pickerIconButton}>
@@ -977,7 +972,7 @@ function NumberPickerModal({
         </View>
 
         <ScrollView contentContainerStyle={styles.pickerBody}>
-          <Text style={styles.pickerSectionLabel}>Main numbers (pick {MAIN_COUNT})</Text>
+          <Text style={styles.pickerSectionLabel}>{t.mainNumbersPick(MAIN_COUNT)}</Text>
           <View style={styles.numberGrid}>
             {Array.from({ length: MAIN_MAX }, (_, i) => i + 1).map((n) => {
               const selected = draft.main.includes(n);
@@ -993,7 +988,7 @@ function NumberPickerModal({
             })}
           </View>
 
-          <Text style={styles.pickerSectionLabel}>Bonus number (pick 1)</Text>
+          <Text style={styles.pickerSectionLabel}>{t.bonusNumberPick}</Text>
           <View style={styles.numberGrid}>
             {Array.from({ length: BONUS_MAX }, (_, i) => i + 1).map((n) => {
               const selected = draft.bonus === n;
@@ -1020,7 +1015,7 @@ function NumberPickerModal({
             }}
           />
           <TouchableOpacity onPress={onClose} style={styles.pickerCancel}>
-            <Text style={styles.pickerCancelText}>Cancel</Text>
+            <Text style={styles.pickerCancelText}>{t.cancel}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1146,15 +1141,15 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   feeRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: space[4], paddingVertical: space[2] },
-  feeLabel: { color: color.fg2, fontSize: 14, fontFamily: FONT_BODY },
-  feeValue: { color: '#e2e8f0', fontSize: 14, fontFamily: FONT_BODY_MEDIUM },
+  feeLabel: { color: color.fg2, fontSize: 15, fontFamily: FONT_BODY },
+  feeValue: { color: '#e2e8f0', fontSize: 15, fontFamily: FONT_BODY_MEDIUM },
   feeTotalRow: { borderTopWidth: 1, borderTopColor: color.borderSofter, marginTop: 4, paddingTop: space[3], paddingBottom: space[4] - 2 },
-  feeTotalLabel: { color: color.fg, fontSize: 15, fontFamily: FONT_BODY_SEMIBOLD },
-  feeTotalValue: { color: color.fg, fontSize: 15, fontFamily: FONT_BODY_SEMIBOLD },
+  feeTotalLabel: { color: color.fg, fontSize: 16, fontFamily: FONT_BODY_SEMIBOLD },
+  feeTotalValue: { color: color.fg, fontSize: 16, fontFamily: FONT_BODY_SEMIBOLD },
 
-  error: { color: color.danger, fontSize: 13, fontFamily: FONT_BODY, textAlign: 'center' },
+  error: { color: color.danger, fontSize: 14, fontFamily: FONT_BODY, textAlign: 'center' },
 
-  stuckHint: { color: color.brandOrange, fontSize: 15, fontFamily: FONT_BODY_MEDIUM, textAlign: 'center', textDecorationLine: 'underline', marginTop: space[2] },
+  stuckHint: { color: color.brandOrange, fontSize: 16, fontFamily: FONT_BODY_MEDIUM, textAlign: 'center', textDecorationLine: 'underline', marginTop: space[2] },
 
   // Hang-tight tap game
   tapWrap: { flex: 1, width: '100%', alignItems: 'center', gap: space[2] },

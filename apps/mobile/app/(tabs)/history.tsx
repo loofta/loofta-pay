@@ -16,22 +16,12 @@ import {
   type TicketStatus,
 } from '../../lib/api/lottery';
 import { DEFAULT_WITHDRAW_MIN_USDC, fmt, isFreeTicketAmount } from '../../lib/lottery/fees';
+import { useTranslation } from '../../lib/i18n/LanguageProvider';
+import { type Translations } from '../../lib/i18n/locales';
 import { color, space } from '../../lib/theme';
 import { FONT_BODY, FONT_BODY_MEDIUM, FONT_TITLE } from '../../lib/fonts';
 
 const PAGE_SIZE = 20;
-
-const STATUS_LABEL: Record<TicketStatus, string> = {
-  pending_send: 'Pending',
-  sent: 'Sent',
-  bridging: 'Receiving',
-  buying: 'Buying',
-  active: 'Active',
-  won: 'Won',
-  lost: 'Lost',
-  failed: 'Failed',
-  withdrawn: 'Withdrawn',
-};
 
 /** Still in flight — ticket hasn't resolved to a win/loss yet. Shown amber ("in this draw"). */
 const PENDING_STATUSES: ReadonlySet<TicketStatus> = new Set(['pending_send', 'sent', 'bridging', 'buying', 'active']);
@@ -63,11 +53,7 @@ function statusTone(ticket: LotteryTicketSummary, isWin: boolean): StatusChipTon
 // status 'lost'. In-flight/failed tickets only ever show under "All", matching the fact that they
 // haven't (or didn't) resolve into either bucket.
 type FilterKey = 'all' | 'won' | 'lost';
-const FILTERS: { key: FilterKey; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'won', label: 'Won' },
-  { key: 'lost', label: 'Lost' },
-];
+const FILTER_KEYS: FilterKey[] = ['all', 'won', 'lost'];
 
 function matchesFilter(ticket: LotteryTicketSummary, filter: FilterKey): boolean {
   if (filter === 'all') return true;
@@ -75,17 +61,27 @@ function matchesFilter(ticket: LotteryTicketSummary, filter: FilterKey): boolean
   return ticket.status === 'lost';
 }
 
-function HistoryTicketRow({ ticket, withdrawMinUsdc }: { ticket: LotteryTicketSummary; withdrawMinUsdc: number }) {
+function HistoryTicketRow({
+  ticket,
+  withdrawMinUsdc,
+  t,
+  localeTag,
+}: {
+  ticket: LotteryTicketSummary;
+  withdrawMinUsdc: number;
+  t: Translations;
+  localeTag: string;
+}) {
   const [showNumbers, setShowNumbers] = useState(false);
   const winAmount = winAmountOf(ticket);
   const showFree = winAmount != null && isFreeTicketAmount(winAmount, withdrawMinUsdc);
 
-  const baseTitle = `${ticket.numTickets} ticket${ticket.numTickets === 1 ? '' : 's'}`;
-  const title = ticket.roundId ? `${baseTitle} · Draw #${ticket.roundId}` : baseTitle;
-  const dateLabel = new Date(ticket.createdAt).toLocaleDateString();
-  const subtitle = ticket.isGift ? `${dateLabel} · Gifted` : dateLabel;
+  const baseTitle = t.ticketCount(ticket.numTickets);
+  const title = ticket.roundId ? t.historyDrawTitle(baseTitle, ticket.roundId) : baseTitle;
+  const dateLabel = new Date(ticket.createdAt).toLocaleDateString(localeTag);
+  const subtitle = ticket.isGift ? t.historyGiftedSuffix(dateLabel) : dateLabel;
 
-  const amountLabel = winAmount != null ? (showFree ? 'Free' : `+${fmt(winAmount)}`) : `−${fmt(ticket.costUsdc)}`;
+  const amountLabel = winAmount != null ? (showFree ? t.free : `+${fmt(winAmount, localeTag)}`) : `−${fmt(ticket.costUsdc, localeTag)}`;
 
   const numbers = ticket.ticketNumbers ?? [];
 
@@ -94,7 +90,7 @@ function HistoryTicketRow({ ticket, withdrawMinUsdc }: { ticket: LotteryTicketSu
       <TicketRow
         title={title}
         subtitle={subtitle}
-        statusLabel={STATUS_LABEL[ticket.status]}
+        statusLabel={t.ticketStatusLabel[ticket.status]}
         statusTone={statusTone(ticket, winAmount != null)}
         amountLabel={amountLabel}
         onPress={numbers.length > 0 ? () => setShowNumbers(true) : undefined}
@@ -106,6 +102,7 @@ function HistoryTicketRow({ ticket, withdrawMinUsdc }: { ticket: LotteryTicketSu
 
 function HistoryList() {
   const { getAccessToken } = usePrivy();
+  const { t, localeTag } = useTranslation();
   const [tickets, setTickets] = useState<LotteryTicketSummary[]>([]);
   const [dashboard, setDashboard] = useState<LotteryDashboard | null>(null);
   const [filter, setFilter] = useState<FilterKey>('all');
@@ -133,9 +130,9 @@ function HistoryList() {
       setDashboard(dash);
       setError(null);
     } catch (e: any) {
-      setError(e?.message ?? 'Could not load history');
+      setError(e?.message ?? t.historyCouldNotLoad);
     }
-  }, [getAccessToken]);
+  }, [getAccessToken, t]);
 
   useEffect(() => {
     setLoading(true);
@@ -175,13 +172,13 @@ function HistoryList() {
   }
 
   const withdrawMinUsdc = dashboard?.withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC;
-  const filteredTickets = tickets.filter((t) => matchesFilter(t, filter));
+  const filteredTickets = tickets.filter((ticket) => matchesFilter(ticket, filter));
 
   return (
     <FlatList
       data={filteredTickets}
-      keyExtractor={(t) => t.id}
-      renderItem={({ item }) => <HistoryTicketRow ticket={item} withdrawMinUsdc={withdrawMinUsdc} />}
+      keyExtractor={(ticket) => ticket.id}
+      renderItem={({ item }) => <HistoryTicketRow ticket={item} withdrawMinUsdc={withdrawMinUsdc} t={t} localeTag={localeTag} />}
       ItemSeparatorComponent={() => <View style={styles.separator} />}
       contentContainerStyle={styles.list}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={color.brandOrange} />}
@@ -189,33 +186,36 @@ function HistoryList() {
         <View style={styles.header}>
           {dashboard && (
             <View style={styles.statsRow}>
-              <StatTile icon={<Ticket size={18} color={color.fg2} />} label="Spent" value={fmt(dashboard.stats.totalSpent)} />
+              <StatTile icon={<Ticket size={18} color={color.fg2} />} label={t.historySpent} value={fmt(dashboard.stats.totalSpent, localeTag)} />
               <StatTile
                 icon={<Trophy size={18} color={color.success} />}
-                label="Won"
-                value={fmt(dashboard.stats.totalWon)}
+                label={t.historyWon}
+                value={fmt(dashboard.stats.totalWon, localeTag)}
                 tone="success"
               />
             </View>
           )}
           <View style={styles.filterRow}>
-            {FILTERS.map((f) => (
-              <Pill key={f.key} label={f.label} active={filter === f.key} onPress={() => setFilter(f.key)} />
+            {FILTER_KEYS.map((key) => (
+              <Pill key={key} label={t.historyFilter[key]} active={filter === key} onPress={() => setFilter(key)} />
             ))}
           </View>
         </View>
       }
       ListEmptyComponent={
-        <Text style={styles.empty}>{tickets.length === 0 ? 'No tickets yet.' : `No ${filter} tickets.`}</Text>
+        <Text style={styles.empty}>
+          {tickets.length === 0 ? t.historyEmptyNone : t.historyEmptyFiltered(filter as 'won' | 'lost')}
+        </Text>
       }
     />
   );
 }
 
 export default function HistoryScreen() {
+  const { t } = useTranslation();
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>History</Text>
+      <Text style={styles.title}>{t.historyTitle}</Text>
       <AuthGate>
         <HistoryList />
       </AuthGate>

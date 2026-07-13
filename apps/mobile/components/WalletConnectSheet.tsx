@@ -1,4 +1,5 @@
 import { Modal, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from '../lib/i18n/LanguageProvider';
 import { color, radius, space } from '../lib/theme';
 import { FONT_BODY, FONT_BODY_SEMIBOLD, FONT_TITLE_SEMIBOLD } from '../lib/fonts';
 import { SolIcon } from './TokenIcons';
@@ -23,22 +24,23 @@ export function WalletConnectSheet({
   onCancel: () => void;
   onConnect: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={styles.backdrop}>
         <View style={styles.sheet}>
           <View style={styles.grabber} />
           <SolIcon size={32} />
-          <Text style={styles.title}>loofta^pot wants to connect</Text>
+          <Text style={styles.title}>{t.walletConnectTitle}</Text>
           <View style={styles.accountRow}>
-            <Text style={styles.accountLabel}>Your Seeker wallet</Text>
+            <Text style={styles.accountLabel}>{t.walletConnectYourWallet}</Text>
           </View>
           <View style={styles.actions}>
             <View style={{ flex: 1 }}>
-              <GhostButton label="Cancel" onPress={onCancel} disabled={busy} />
+              <GhostButton label={t.cancel} onPress={onCancel} disabled={busy} />
             </View>
             <View style={{ flex: 1 }}>
-              <PrimaryButton label={busy ? statusLabel : 'Connect'} onPress={onConnect} disabled={busy} />
+              <PrimaryButton label={busy ? statusLabel : t.connect} onPress={onConnect} disabled={busy} />
             </View>
           </View>
         </View>

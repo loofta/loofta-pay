@@ -1,6 +1,7 @@
 import { usePrivy } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useTranslation } from '../lib/i18n/LanguageProvider';
 import { FONT_TITLE } from '../lib/fonts';
 
 /**
@@ -10,6 +11,7 @@ import { FONT_TITLE } from '../lib/fonts';
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, isReady } = usePrivy();
   const router = useRouter();
+  const { t } = useTranslation();
 
   if (!isReady) {
     return <View style={styles.center} />;
@@ -18,9 +20,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   if (!user) {
     return (
       <View style={styles.center}>
-        <Text style={styles.title}>Log in to continue</Text>
+        <Text style={styles.title}>{t.authGateTitle}</Text>
         <TouchableOpacity style={styles.button} onPress={() => router.push('/profile')}>
-          <Text style={styles.buttonText}>Go to login</Text>
+          <Text style={styles.buttonText}>{t.authGateButton}</Text>
         </TouchableOpacity>
       </View>
     );

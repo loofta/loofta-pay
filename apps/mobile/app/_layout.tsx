@@ -9,6 +9,8 @@ import * as ExpoSplashScreen from 'expo-splash-screen';
 import { useCallback, useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AnimatedSplash } from '../components/SplashScreen';
+import { LanguagePickerScreen } from '../components/LanguagePickerScreen';
+import { LanguageProvider, useTranslation } from '../lib/i18n/LanguageProvider';
 import { FONT_ASSETS, FONT_TITLE } from '../lib/fonts';
 
 // Held until fonts are loaded and the animated intro below has mounted, so the native splash
@@ -20,7 +22,6 @@ const PRIVY_CLIENT_ID = process.env.EXPO_PUBLIC_PRIVY_CLIENT_ID!;
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(FONT_ASSETS);
-  const [showIntro, setShowIntro] = useState(true);
   const ready = fontsLoaded || !!fontError;
 
   const onRootLayout = useCallback(() => {
@@ -32,23 +33,45 @@ export default function RootLayout() {
   return (
     <PrivyProvider appId={PRIVY_APP_ID} clientId={PRIVY_CLIENT_ID}>
       <SafeAreaProvider onLayout={onRootLayout}>
-        <StatusBar style="light" />
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen
-            name="claim-gift"
-            options={{
-              headerShown: true,
-              presentation: 'modal',
-              title: 'Claim a gift',
-              headerStyle: { backgroundColor: '#0f0f12' },
-              headerTintColor: '#fff',
-              headerTitleStyle: { fontFamily: FONT_TITLE },
-            }}
-          />
-        </Stack>
-        {showIntro && <AnimatedSplash onFinish={() => setShowIntro(false)} />}
+        <LanguageProvider>
+          <AppShell />
+        </LanguageProvider>
       </SafeAreaProvider>
     </PrivyProvider>
+  );
+}
+
+/** Gates the app behind the mandatory first-use language picker (language === null means the
+ *  user has never picked one — see lib/storage/languagePreference.ts) before the normal
+ *  Stack + intro splash render. */
+function AppShell() {
+  const { ready, language, setLanguage, t } = useTranslation();
+  const [showIntro, setShowIntro] = useState(true);
+
+  if (!ready) return null;
+
+  if (language === null) {
+    return <LanguagePickerScreen onSelect={setLanguage} />;
+  }
+
+  return (
+    <>
+      <StatusBar style="light" />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen
+          name="claim-gift"
+          options={{
+            headerShown: true,
+            presentation: 'modal',
+            title: t.claimGiftTitle,
+            headerStyle: { backgroundColor: '#0f0f12' },
+            headerTintColor: '#fff',
+            headerTitleStyle: { fontFamily: FONT_TITLE },
+          }}
+        />
+      </Stack>
+      {showIntro && <AnimatedSplash onFinish={() => setShowIntro(false)} />}
+    </>
   );
 }

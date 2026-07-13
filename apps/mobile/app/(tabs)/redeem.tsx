@@ -5,19 +5,21 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AuthGate } from '../../components/AuthGate';
 import { GhostButton } from '../../components/ui/GhostButton';
+import { GlowCard, GlowPlayAgainButton } from '../../components/ui/GlowPlayAgainButton';
 import { GradientText } from '../../components/ui/GradientText';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { getBridgeFee, getDashboard, playAgain, withdrawBatch, type LotteryTicketSummary, type LotteryWithdrawalSummary } from '../../lib/api/lottery';
 import { fmt, DEFAULT_WITHDRAW_MIN_USDC, WITHDRAW_FEATURED_THRESHOLD_USDC, isFreeTicketAmount } from '../../lib/lottery/fees';
 import { connectSeekerWallet } from '../../lib/wallet/mwa';
 import { updateCachedSkrDomain } from '../../lib/storage/seekerIdentity';
+import { useTranslation } from '../../lib/i18n/LanguageProvider';
 import { color, radius, space } from '../../lib/theme';
 import { FONT_TITLE, FONT_TITLE_SEMIBOLD, FONT_BODY, FONT_BODY_MEDIUM, FONT_BODY_SEMIBOLD, FONT_BODY_BOLD } from '../../lib/fonts';
 
 /** Presentational only — mirrors the date format used elsewhere on the dashboard. */
-function formatDate(iso: string): string {
+function formatDate(iso: string, localeTag: string): string {
   try {
-    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return new Date(iso).toLocaleDateString(localeTag, { month: 'short', day: 'numeric' });
   } catch {
     return '';
   }
@@ -107,11 +109,12 @@ function RedeemGradientButton({ onPress, disabled, children }: { onPress?: () =>
 
 /** Redeemed → Traveling privately → In your wallet — mirrors desktop's 3-step tracker exactly. */
 function WithdrawalProgressTracker({ arrived }: { arrived: boolean }) {
+  const { t } = useTranslation();
   type StepState = 'done' | 'active' | 'pending';
   const steps: { label: string; state: StepState }[] = [
-    { label: 'Redeemed', state: 'done' },
-    { label: 'Traveling privately', state: arrived ? 'done' : 'active' },
-    { label: 'In your wallet', state: arrived ? 'done' : 'pending' },
+    { label: t.trackerRedeemed, state: 'done' },
+    { label: t.trackerTravelingPrivately, state: arrived ? 'done' : 'active' },
+    { label: t.trackerInYourWallet, state: arrived ? 'done' : 'pending' },
   ];
   return (
     <View style={styles.trackerRow}>
@@ -145,6 +148,7 @@ function WithdrawalProgressTracker({ arrived }: { arrived: boolean }) {
 
 function RedeemInner() {
   const { getAccessToken } = usePrivy();
+  const { t, localeTag } = useTranslation();
 
   const [loading, setLoading] = useState(true);
   const [wonTickets, setWonTickets] = useState<LotteryTicketSummary[]>([]);
@@ -192,9 +196,9 @@ function RedeemInner() {
       setEarlierTickets(dashboard.history.filter((t) => t.status === 'withdrawn'));
       setError(null);
     } catch (e: any) {
-      setError(e?.message ?? 'Could not load winnings');
+      setError(e?.message ?? t.redeemCouldNotLoad);
     }
-  }, [getAccessToken]);
+  }, [getAccessToken, t]);
 
   useEffect(() => {
     setLoading(true);
@@ -309,7 +313,7 @@ function RedeemInner() {
       setWithdrawalIds(ids);
       setDoneAmount(receiveUsdc ?? totalAmount);
     } catch (e: any) {
-      setRedeemError(e?.message ?? 'Unknown error');
+      setRedeemError(e?.message ?? t.unknownError);
     } finally {
       setRedeeming(false);
     }
@@ -331,7 +335,7 @@ function RedeemInner() {
       setPlayAgainDone({ numTickets });
       loadDashboard();
     } catch (e: any) {
-      setPlayAgainError(e?.message ?? 'Unknown error');
+      setPlayAgainError(e?.message ?? t.unknownError);
     } finally {
       setPlayingAgain(false);
     }
@@ -339,14 +343,14 @@ function RedeemInner() {
 
   const earlierSection = earlierTickets.length > 0 && (
     <View style={styles.earlierSection}>
-      <Text style={styles.earlierTitle}>Earlier</Text>
+      <Text style={styles.earlierTitle}>{t.earlier}</Text>
       <View style={styles.earlierList}>
-        {earlierTickets.map((t, i) => (
-          <View key={t.id} style={[styles.earlierRow, i === earlierTickets.length - 1 && styles.earlierRowLast]}>
+        {earlierTickets.map((ticket, i) => (
+          <View key={ticket.id} style={[styles.earlierRow, i === earlierTickets.length - 1 && styles.earlierRowLast]}>
             <Text style={styles.earlierRowText} numberOfLines={1}>
-              Draw #{t.roundId ?? '—'} · Redeemed {formatDate(t.createdAt)}
+              {t.earlierRow(ticket.roundId ?? '—', formatDate(ticket.createdAt, localeTag))}
             </Text>
-            <Text style={styles.earlierRowAmount}>+{fmt(t.winAmountUsdc ?? 0)}</Text>
+            <Text style={styles.earlierRowAmount}>+{fmt(ticket.winAmountUsdc ?? 0, localeTag)}</Text>
           </View>
         ))}
       </View>
@@ -378,29 +382,23 @@ function RedeemInner() {
     return (
       <View style={styles.center}>
         <Text style={styles.doneEmoji}>{arrived ? '🎉' : '🛡️✨'}</Text>
-        <Text style={styles.progressLabel}>{arrived ? 'Withdrawal complete' : 'Withdrawal on its way'}</Text>
+        <Text style={styles.progressLabel}>{arrived ? t.withdrawalComplete : t.withdrawalOnWay}</Text>
         <GradientText
           style={styles.progressTitle}
           colors={['#FFFFFF', '#F1F5F9', '#6EE7B7']}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
         >
-          {fmt(doneAmount)}
+          {fmt(doneAmount, localeTag)}
         </GradientText>
-        <Text style={styles.progressSubtitle}>{arrived ? 'is in your wallet' : 'is heading to your wallet'}</Text>
-        <Text style={styles.progressHint}>
-          {arrived
-            ? 'Delivered privately to your wallet — no on-chain link back to you.'
-            : 'Arrives in a few minutes. No on-chain link back to you.'}
-        </Text>
-        {transferFailed && (
-          <Text style={styles.error}>Something went wrong in transit — your funds are safe. Check History or contact support.</Text>
-        )}
+        <Text style={styles.progressSubtitle}>{arrived ? t.isInYourWallet : t.isHeadingToWallet}</Text>
+        <Text style={styles.progressHint}>{arrived ? t.deliveredPrivately : t.arrivesFewMinutes}</Text>
+        {transferFailed && <Text style={styles.error}>{t.transferFailedMsg}</Text>}
 
         <WithdrawalProgressTracker arrived={arrived} />
 
         <View style={{ gap: space[2], alignItems: 'center' }}>
-          {!arrived && !transferFailed && <Text style={styles.leavePageHint}>You can safely leave this page — it continues in the background.</Text>}
+          {!arrived && !transferFailed && <Text style={styles.leavePageHint}>{t.leavePageHint}</Text>}
           <TouchableOpacity
             onPress={() => {
               setWithdrawalIds([]);
@@ -410,7 +408,7 @@ function RedeemInner() {
               setPreviewMode(null);
             }}
           >
-            <Text style={styles.backLink}>Back to redeem</Text>
+            <Text style={styles.backLink}>{t.backToRedeem}</Text>
           </TouchableOpacity>
         </View>
         {devPanel}
@@ -422,19 +420,21 @@ function RedeemInner() {
   if (playAgainDone) {
     return (
       <View style={styles.center}>
-        <Text style={styles.doneEmoji}>🎟️</Text>
-        <Text style={styles.progressLabel}>Played again</Text>
-        <GradientText
-          style={styles.progressTitle}
-          colors={['#FFFFFF', '#F1F5F9', '#6EE7B7']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-        >
-          {`${playAgainDone.numTickets} new ticket${playAgainDone.numTickets === 1 ? '' : 's'}`}
-        </GradientText>
-        <Text style={styles.progressHint}>Your winnings went straight back into the next draw — no fees.</Text>
+        <GlowCard style={styles.playAgainDoneCard}>
+          <Text style={styles.doneEmoji}>🎟️</Text>
+          <Text style={styles.progressLabel}>{t.playedAgain}</Text>
+          <GradientText
+            style={styles.progressTitle}
+            colors={['#6ee7b7', '#99f6e4', '#fde68a']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+          >
+            {t.playAgainDoneTickets(playAgainDone.numTickets)}
+          </GradientText>
+          <Text style={styles.progressHint}>{t.playAgainNoFees}</Text>
+        </GlowCard>
         <TouchableOpacity onPress={() => { setPlayAgainDone(null); setPreviewMode(null); }}>
-          <Text style={styles.backLink}>Back</Text>
+          <Text style={styles.backLink}>{t.back}</Text>
         </TouchableOpacity>
         {devPanel}
       </View>
@@ -446,13 +446,13 @@ function RedeemInner() {
     return (
       <View style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.screen} showsVerticalScrollIndicator={false}>
-          <Text style={styles.sectionTitle}>Redeem</Text>
+          <Text style={styles.sectionTitle}>{t.redeemSectionTitle}</Text>
           <View style={styles.emptyWrap}>
             <View style={[styles.iconCircle, styles.iconCircleMuted]}>
               <Trophy size={26} color={color.fg3} />
             </View>
-            <Text style={styles.emptyTitle}>No winnings yet</Text>
-            <Text style={styles.emptySubtitle}>Win the daily draw and your prize lands here, ready to redeem privately.</Text>
+            <Text style={styles.emptyTitle}>{t.noWinningsTitle}</Text>
+            <Text style={styles.emptySubtitle}>{t.noWinningsSubtitle}</Text>
           </View>
           {earlierSection}
         </ScrollView>
@@ -465,16 +465,16 @@ function RedeemInner() {
   return (
     <View style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={styles.screen} showsVerticalScrollIndicator={false}>
-        <Text style={styles.sectionTitle}>Redeem</Text>
+        <Text style={styles.sectionTitle}>{t.redeemSectionTitle}</Text>
 
         <LinearGradient
           colors={['rgba(16,185,129,0.07)', 'rgba(255,255,255,0.04)', 'rgba(255,255,255,0.02)']}
           style={styles.heroCard}
         >
           <Text style={styles.heroEmoji}>🏆</Text>
-          <Text style={styles.heroEyebrow}>{isBatch ? `${wonTickets.length} winning draws` : 'You won'}</Text>
+          <Text style={styles.heroEyebrow}>{isBatch ? t.winningDraws(wonTickets.length) : t.youWon}</Text>
           {isFreeTicket ? (
-            <Text style={styles.heroAmount}>Free ticket</Text>
+            <Text style={styles.heroAmount}>{t.freeTicket}</Text>
           ) : (
             <GradientText
               style={styles.heroAmount}
@@ -482,27 +482,27 @@ function RedeemInner() {
               start={{ x: 0, y: 0 }}
               end={{ x: 0, y: 1 }}
             >
-              {fmt(totalAmount)}
+              {fmt(totalAmount, localeTag)}
             </GradientText>
           )}
-          <Text style={styles.heroSubtitle}>{isFreeTicket ? 'play it again in the next draw' : 'ready to redeem privately'}</Text>
+          <Text style={styles.heroSubtitle}>{isFreeTicket ? t.playAgainNextDraw : t.readyToRedeem}</Text>
 
           <View style={styles.winsList}>
-            <Text style={styles.winsLabel}>Your wins</Text>
-            {wonTickets.map((t) => (
-              <View key={t.id} style={styles.winRow}>
+            <Text style={styles.winsLabel}>{t.yourWins}</Text>
+            {wonTickets.map((ticket) => (
+              <View key={ticket.id} style={styles.winRow}>
                 <View style={styles.winRowLeft}>
                   <View style={styles.winIconCircle}>
                     <Trophy size={16} color={color.success} />
                   </View>
                   <View style={{ flexShrink: 1 }}>
-                    <Text style={styles.winRowTitle} numberOfLines={1}>Winning ticket{t.winTier ? ` · Tier ${t.winTier}` : ''}</Text>
+                    <Text style={styles.winRowTitle} numberOfLines={1}>{t.winningTicket(ticket.winTier)}</Text>
                     <Text style={styles.winRowSubtitle} numberOfLines={1}>
-                      {t.drawTime ? formatDate(t.drawTime) : '—'}{t.numTickets > 1 ? ` · from batch of ${t.numTickets}` : ''}
+                      {t.winRowSubtitle(ticket.drawTime ? formatDate(ticket.drawTime, localeTag) : '—', ticket.numTickets)}
                     </Text>
                   </View>
                 </View>
-                <Text style={styles.winRowAmount}>{t.isFreeTicket ? 'Free ticket' : `+${fmt(t.winAmountUsdc ?? 0)}`}</Text>
+                <Text style={styles.winRowAmount}>{ticket.isFreeTicket ? t.freeTicket : `+${fmt(ticket.winAmountUsdc ?? 0, localeTag)}`}</Text>
               </View>
             ))}
           </View>
@@ -511,8 +511,8 @@ function RedeemInner() {
             <View style={styles.shieldNoteCard}>
               <ShieldCheck size={16} color={color.success} style={{ marginTop: 2 }} />
               <View style={{ flex: 1 }}>
-                <Text style={styles.shieldNoteTitle}>{isBatch ? 'All your wins arrive as one private transfer' : 'Arrives privately in your Loofta balance'}</Text>
-                <Text style={styles.shieldNoteSubtitle}>No on-chain link between your winnings and your wallet</Text>
+                <Text style={styles.shieldNoteTitle}>{isBatch ? t.arrivesAsOneTransfer : t.arrivesPrivatelyBalance}</Text>
+                <Text style={styles.shieldNoteSubtitle}>{t.noOnChainLink}</Text>
               </View>
             </View>
           )}
@@ -523,16 +523,10 @@ function RedeemInner() {
         {isFreeTicket ? (
           /* Free ticket — replay it into the next draw (rounded up to a whole ticket). No withdraw. */
           <>
-            <PrimaryButton disabled={playingAgain} onPress={handlePlayAgain}>
-              {playingAgain ? (
-                <ActivityIndicator color={color.fg} />
-              ) : (
-                <Text style={styles.primaryButtonLabel}>
-                  ⚡ Play again — {playAgainTicketCount} ticket{playAgainTicketCount === 1 ? '' : 's'}, free
-                </Text>
-              )}
-            </PrimaryButton>
-            <Text style={styles.bestValueHint}>Your win goes straight into the next draw — no fees.</Text>
+            <GlowPlayAgainButton disabled={playingAgain} onPress={handlePlayAgain}>
+              {playingAgain ? <ActivityIndicator color={color.fg} /> : t.playAgainFreeButton(playAgainTicketCount)}
+            </GlowPlayAgainButton>
+            <Text style={styles.bestValueHint}>{t.winGoesIntoNextDraw}</Text>
           </>
         ) : preferWithdraw ? (
           /* Win ≥ $5: withdrawing is the featured CTA — a win this size shouldn't default to
@@ -544,13 +538,17 @@ function RedeemInner() {
                 <ActivityIndicator color="#fff" />
               ) : (
                 <Text style={styles.redeemGradientButtonLabel}>
-                  {feeUnavailable ? 'Fee unavailable — try again above' : feeLoading ? 'Getting real fee quote…' : `Withdraw ~${fmt(receiveUsdc ?? totalAmount)} privately`}
+                  {feeUnavailable
+                    ? t.feeUnavailableTryAgain
+                    : feeLoading
+                      ? t.gettingRealFeeQuote
+                      : t.withdrawPrivately(fmt(receiveUsdc ?? totalAmount, localeTag))}
                 </Text>
               )}
             </RedeemGradientButton>
             <TouchableOpacity disabled={playingAgain} onPress={handlePlayAgain}>
               <Text style={styles.withdrawInstead}>
-                {playingAgain ? 'Playing again…' : `or play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? '' : 's'} instead, free`}
+                {playingAgain ? t.playingAgainEllipsis : t.orPlayAgainInstead(playAgainTicketCount)}
               </Text>
             </TouchableOpacity>
           </>
@@ -558,38 +556,32 @@ function RedeemInner() {
           /* Cash win (< $5): play again is the featured, rounded-up, fee-free deal; withdraw is
              de-emphasised behind a confirmation showing the real net. */
           <>
-            <PrimaryButton disabled={playingAgain} onPress={handlePlayAgain}>
-              {playingAgain ? (
-                <ActivityIndicator color={color.fg} />
-              ) : (
-                <Text style={styles.primaryButtonLabel}>
-                  ⚡ Play again — {playAgainTicketCount} ticket{playAgainTicketCount === 1 ? '' : 's'}
-                </Text>
-              )}
-            </PrimaryButton>
-            <Text style={styles.bestValueHint}>
-              Best value — we round you up to {playAgainTicketCount} whole ticket{playAgainTicketCount === 1 ? '' : 's'}, no fees
-            </Text>
+            <GlowPlayAgainButton disabled={playingAgain} onPress={handlePlayAgain}>
+              {playingAgain ? <ActivityIndicator color={color.fg} /> : t.playAgainButton(playAgainTicketCount)}
+            </GlowPlayAgainButton>
+            <Text style={styles.bestValueHint}>{t.bestValueRoundUp(playAgainTicketCount)}</Text>
             {!confirmingRedeem ? (
               <TouchableOpacity
                 disabled={playingAgain || feeLoading || feeUnavailable}
                 onPress={() => setConfirmingRedeem(true)}
               >
                 <Text style={styles.withdrawInstead}>
-                  {feeUnavailable ? 'Fee unavailable, retry' : feeLoading ? 'Getting fee quote…' : `or withdraw ~${fmt(receiveUsdc ?? totalAmount)} instead`}
+                  {feeUnavailable
+                    ? t.feeUnavailableRetry
+                    : feeLoading
+                      ? t.gettingFeeQuote
+                      : t.orWithdrawInstead(fmt(receiveUsdc ?? totalAmount, localeTag))}
                 </Text>
               </TouchableOpacity>
             ) : (
               <View style={styles.confirmCard}>
                 <Text style={styles.playAgainHint}>
-                  You&apos;ll receive an estimated {fmt(receiveUsdc ?? totalAmount)} after fees (confirmed once claimed
-                  on-chain, may come in slightly lower) — playing again gets you {playAgainTicketCount} full new
-                  ticket{playAgainTicketCount === 1 ? '' : 's'} instead, free.
+                  {t.confirmRedeemHint(fmt(receiveUsdc ?? totalAmount, localeTag), playAgainTicketCount)}
                 </Text>
                 {redeemError && <Text style={styles.error}>{redeemError}</Text>}
                 <View style={styles.confirmActions}>
                   <View style={styles.confirmActionFlex}>
-                    <GhostButton label="Cancel" disabled={redeeming} onPress={() => setConfirmingRedeem(false)} />
+                    <GhostButton label={t.cancel} disabled={redeeming} onPress={() => setConfirmingRedeem(false)} />
                   </View>
                   <View style={styles.confirmActionFlex}>
                     <PrimaryButton disabled={redeeming} onPress={handleRedeem}>
@@ -598,7 +590,7 @@ function RedeemInner() {
                       ) : (
                         <>
                           <Download size={16} color={color.fg} />
-                          <Text style={styles.primaryButtonLabel}>Confirm redeem</Text>
+                          <Text style={styles.primaryButtonLabel}>{t.confirmRedeem}</Text>
                         </>
                       )}
                     </PrimaryButton>
@@ -618,19 +610,23 @@ function RedeemInner() {
                 <ActivityIndicator color="#fff" />
               ) : (
                 <Text style={styles.redeemGradientButtonLabel}>
-                  {feeUnavailable ? 'Fee unavailable — try again above' : feeLoading ? 'Getting real fee quote…' : `Redeem ~${fmt(receiveUsdc ?? totalAmount)} privately`}
+                  {feeUnavailable
+                    ? t.feeUnavailableTryAgain
+                    : feeLoading
+                      ? t.gettingRealFeeQuote
+                      : t.redeemPrivately(fmt(receiveUsdc ?? totalAmount, localeTag))}
                 </Text>
               )}
             </RedeemGradientButton>
             {feeUnavailable && (
               <TouchableOpacity onPress={() => setFeeUnavailable(false)}>
-                <Text style={styles.retryText}>Retry fee estimate</Text>
+                <Text style={styles.retryText}>{t.retryFeeEstimate}</Text>
               </TouchableOpacity>
             )}
           </>
         )}
 
-        <Text style={styles.privacyNote}>Payouts are shielded — only you can see the amount and destination.</Text>
+        <Text style={styles.privacyNote}>{t.payoutsShielded}</Text>
 
         {earlierSection}
       </ScrollView>
@@ -669,12 +665,12 @@ const styles = StyleSheet.create({
     padding: space[5],
   },
   heroEmoji: { fontSize: 48 },
-  heroEyebrow: { color: color.success, fontFamily: FONT_BODY_BOLD, fontSize: 13, letterSpacing: 3, textTransform: 'uppercase', marginTop: 4 },
-  heroAmount: { fontSize: 40, fontFamily: FONT_TITLE, fontVariant: ['tabular-nums'] },
+  heroEyebrow: { color: color.success, fontFamily: FONT_BODY_BOLD, fontSize: 15, letterSpacing: 3, textTransform: 'uppercase', marginTop: 4 },
+  heroAmount: { color: color.fg, fontSize: 40, fontFamily: FONT_TITLE, fontVariant: ['tabular-nums'] },
   heroSubtitle: { color: color.fg2, fontSize: 15, fontFamily: FONT_BODY, marginTop: 2 },
 
   winsList: { width: '100%', gap: space[2], marginTop: space[3] },
-  winsLabel: { color: color.fg2, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 13, letterSpacing: 1, textTransform: 'uppercase' },
+  winsLabel: { color: color.fg2, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 15, letterSpacing: 1, textTransform: 'uppercase' },
   winRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -690,7 +686,7 @@ const styles = StyleSheet.create({
   winRowLeft: { flexDirection: 'row', alignItems: 'center', gap: space[3], flexShrink: 1 },
   winIconCircle: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(16,185,129,0.15)', borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)', alignItems: 'center', justifyContent: 'center' },
   winRowTitle: { color: color.fg, fontFamily: FONT_BODY_MEDIUM, fontSize: 15 },
-  winRowSubtitle: { color: color.fg2, fontFamily: FONT_BODY, fontSize: 13, marginTop: 2 },
+  winRowSubtitle: { color: color.fg2, fontFamily: FONT_BODY, fontSize: 15, marginTop: 2 },
   winRowAmount: { color: color.success, fontFamily: FONT_BODY_BOLD, fontSize: 17, fontVariant: ['tabular-nums'] },
 
   shieldNoteCard: {
@@ -705,7 +701,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.surface1,
   },
   shieldNoteTitle: { color: '#cbd5e1', fontFamily: FONT_BODY_MEDIUM, fontSize: 15 },
-  shieldNoteSubtitle: { color: color.fg3, fontFamily: FONT_BODY, fontSize: 13, marginTop: 2 },
+  shieldNoteSubtitle: { color: color.fg3, fontFamily: FONT_BODY, fontSize: 15, marginTop: 2 },
 
   // Fee breakdown
   feeCard: {
@@ -716,33 +712,34 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   feeRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: space[4], paddingVertical: space[2] },
-  feeLabel: { color: color.fg2, fontSize: 14, fontFamily: FONT_BODY },
-  feeValue: { color: '#e2e8f0', fontSize: 14, fontFamily: FONT_BODY_MEDIUM },
+  feeLabel: { color: color.fg2, fontSize: 15, fontFamily: FONT_BODY },
+  feeValue: { color: '#e2e8f0', fontSize: 15, fontFamily: FONT_BODY_MEDIUM },
   feeTotalRow: { borderTopWidth: 1, borderTopColor: color.borderSofter, marginTop: 4, paddingTop: space[3], paddingBottom: space[4] - 2 },
   feeTotalLabel: { color: color.fg, fontSize: 15, fontFamily: FONT_BODY_SEMIBOLD },
   feeTotalValue: { color: color.success, fontSize: 15, fontFamily: FONT_BODY_SEMIBOLD },
 
   primaryButtonLabel: { color: color.fg, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 16 },
-  bestValueHint: { color: color.success, fontSize: 13, fontFamily: FONT_BODY_MEDIUM, textAlign: 'center' },
+  bestValueHint: { color: color.success, fontSize: 15, fontFamily: FONT_BODY_MEDIUM, textAlign: 'center' },
   withdrawInstead: { color: color.fg2, fontSize: 15, fontFamily: FONT_BODY_MEDIUM, textAlign: 'center', textDecorationLine: 'underline', paddingVertical: space[1] },
-  retryText: { color: color.brandOrange, textAlign: 'center', fontSize: 14, fontFamily: FONT_BODY_SEMIBOLD },
-  error: { color: color.danger, fontSize: 14, fontFamily: FONT_BODY, textAlign: 'center' },
+  retryText: { color: color.brandOrange, textAlign: 'center', fontSize: 15, fontFamily: FONT_BODY_SEMIBOLD },
+  error: { color: color.danger, fontSize: 15, fontFamily: FONT_BODY, textAlign: 'center' },
 
   redeemGradientButton: { borderRadius: radius.lg, paddingVertical: space[5], alignItems: 'center', justifyContent: 'center' },
   redeemGradientButtonLabel: { color: '#fff', fontFamily: FONT_BODY_SEMIBOLD, fontSize: 16 },
 
-  privacyNote: { color: color.fg3, fontSize: 12, fontFamily: FONT_BODY, textAlign: 'center' },
+  privacyNote: { color: color.fg3, fontSize: 15, fontFamily: FONT_BODY, textAlign: 'center' },
 
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: space[8] },
   emptyTitle: { color: color.fg, fontSize: 22, fontFamily: FONT_TITLE_SEMIBOLD },
   emptySubtitle: { color: color.fg2, fontSize: 15, fontFamily: FONT_BODY, textAlign: 'center' },
 
+  playAgainDoneCard: { width: '100%', gap: 10 },
   doneEmoji: { fontSize: 48 },
-  progressLabel: { color: color.success, fontSize: 12, fontFamily: FONT_BODY_BOLD, letterSpacing: 2, textTransform: 'uppercase' },
+  progressLabel: { color: color.success, fontSize: 15, fontFamily: FONT_BODY_BOLD, letterSpacing: 2, textTransform: 'uppercase' },
   progressTitle: { fontSize: 32, fontFamily: FONT_TITLE, fontVariant: ['tabular-nums'] },
   progressSubtitle: { color: '#e2e8f0', fontSize: 16, fontFamily: FONT_BODY_MEDIUM, marginTop: 4 },
-  progressHint: { color: color.fg2, fontSize: 13, fontFamily: FONT_BODY, textAlign: 'center' },
-  leavePageHint: { color: color.fg3, fontSize: 12, fontFamily: FONT_BODY, textAlign: 'center' },
+  progressHint: { color: color.fg2, fontSize: 15, fontFamily: FONT_BODY, textAlign: 'center' },
+  leavePageHint: { color: color.fg3, fontSize: 15, fontFamily: FONT_BODY, textAlign: 'center' },
   backLink: { color: color.fg2, fontSize: 15, fontFamily: FONT_BODY, textDecorationLine: 'underline' },
 
   // Withdrawal progress tracker
@@ -755,7 +752,7 @@ const styles = StyleSheet.create({
   trackerDotPending: { backgroundColor: color.surface3, borderColor: color.borderSoft },
   trackerPulseDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#34d399' },
   trackerPendingDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: 'rgba(255,255,255,0.2)' },
-  trackerLabel: { color: '#6ee7b7', fontSize: 13, fontFamily: FONT_BODY_MEDIUM, textAlign: 'center' },
+  trackerLabel: { color: '#6ee7b7', fontSize: 15, fontFamily: FONT_BODY_MEDIUM, textAlign: 'center' },
   trackerLabelPending: { color: color.fg3 },
   trackerLine: { height: 1, width: 24, backgroundColor: color.borderSoft, marginTop: 15 },
   trackerLineDone: { backgroundColor: 'rgba(52,211,153,0.6)' },
@@ -768,12 +765,12 @@ const styles = StyleSheet.create({
     padding: space[4] - 2,
     gap: space[3],
   },
-  playAgainHint: { color: color.fg2, fontSize: 13, fontFamily: FONT_BODY },
+  playAgainHint: { color: color.fg2, fontSize: 15, fontFamily: FONT_BODY },
   confirmActions: { flexDirection: 'row', gap: space[3] },
   confirmActionFlex: { flex: 1 },
 
   earlierSection: { gap: space[3], marginTop: space[2] },
-  earlierTitle: { color: color.fg3, fontSize: 13, fontFamily: FONT_BODY_BOLD, letterSpacing: 1, textTransform: 'uppercase' },
+  earlierTitle: { color: color.fg3, fontSize: 15, fontFamily: FONT_BODY_BOLD, letterSpacing: 1, textTransform: 'uppercase' },
   earlierList: {
     borderWidth: 1,
     borderColor: color.borderSofter,
@@ -792,8 +789,8 @@ const styles = StyleSheet.create({
     backgroundColor: color.surface1,
   },
   earlierRowLast: { borderBottomWidth: 0 },
-  earlierRowText: { color: color.fg2, fontSize: 13, fontFamily: FONT_BODY, flexShrink: 1 },
-  earlierRowAmount: { color: color.success, fontSize: 13, fontFamily: FONT_BODY_SEMIBOLD },
+  earlierRowText: { color: color.fg2, fontSize: 15, fontFamily: FONT_BODY, flexShrink: 1 },
+  earlierRowAmount: { color: color.success, fontSize: 15, fontFamily: FONT_BODY_SEMIBOLD },
 
   // Dev preview panel
   devPanel: {
