@@ -255,28 +255,56 @@ export class MegapotService {
     return data.data ?? [];
   }
 
-  /** Check if a companion wallet won in a specific round via the Data API. Returns null if no win or wallet not indexed. */
+  /**
+   * Check if a companion wallet won in a specific round via the Data API. Returns null if no win
+   * or wallet not indexed.
+   *
+   * Real incident: the API's `/wins/rounds/:id` entries nest the payout as
+   * `amount: { amount: "1000001", decimals: 6 }`, but this used to read `w.amount` directly and
+   * `parseFloat(String({...}))` → `parseFloat("[object Object]")` → `NaN` — every call silently
+   * contributed $0, so this always returned null. That broke resolveTicketWin's whole reason for
+   * existing (using this as the trusted override when on-chain NFT metadata undercounts) without
+   * ever raising an error. Also now captures each win's `user_ticket_id` — verified against real
+   * winning tickets to exactly match their on-chain NFT token ID — so this can tell a caller
+   * exactly which token(s) to claim instead of them having to guess from unreliable metadata or
+   * a possibly-mis-synced `ticket_nft_ids` column.
+   */
   async getWalletWinsForRound(
     address: Address,
     roundId: string,
-  ): Promise<{ winAmountUsdc: number; tier: number | null } | null> {
+  ): Promise<{ winAmountUsdc: number; tier: number | null; ticketIds: string[] } | null> {
     try {
       const res = await this.apiGet<{ data: any[] }>(`/wallets/${address}/wins/rounds/${roundId}`);
       const wins = res.data ?? [];
       if (!wins.length) return null;
-      const totalAmount = wins.reduce((sum: number, w: any) => {
-        const raw = w.amount ?? w.win_amount ?? '0';
-        const n = parseFloat(String(raw));
-        if (!Number.isFinite(n) || n <= 0) return sum;
-        return sum + (n > 1_000 ? n / 1_000_000 : n);
-      }, 0);
+
+      const parseAmount = (w: any): number => {
+        const raw = w.amount;
+        if (raw && typeof raw === 'object') {
+          const n = parseFloat(String(raw.amount ?? '0'));
+          const decimals = Number(raw.decimals ?? 6);
+          return Number.isFinite(n) ? n / 10 ** decimals : 0;
+        }
+        const n = parseFloat(String(raw ?? w.win_amount ?? '0'));
+        if (!Number.isFinite(n) || n <= 0) return 0;
+        return n > 1_000 ? n / 1_000_000 : n;
+      };
+
+      const winEntries = wins
+        .map(w => ({ ticketId: String(w.user_ticket_id ?? w.ticket_id ?? ''), amount: parseAmount(w) }))
+        .filter(w => w.ticketId && w.amount > 0);
+      const totalAmount = winEntries.reduce((sum, w) => sum + w.amount, 0);
+
       const topTier = wins.reduce((best: number | null, w: any) => {
         const t = w.tier ?? w.win_tier ?? null;
         if (t == null) return best;
         const num = Number(t);
         return best === null ? num : Math.min(best, num);
       }, null as number | null);
-      return totalAmount > 0 ? { winAmountUsdc: totalAmount, tier: topTier } : null;
+
+      return totalAmount > 0
+        ? { winAmountUsdc: parseFloat(totalAmount.toFixed(6)), tier: topTier, ticketIds: winEntries.map(w => w.ticketId) }
+        : null;
     } catch (e: any) {
       this.logger.warn(`getWalletWinsForRound ${address} round ${roundId}: ${e.message}`);
       return null;

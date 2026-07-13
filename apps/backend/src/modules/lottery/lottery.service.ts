@@ -4269,22 +4269,36 @@ export class LotteryService {
   }
 
   /**
-   * Figures out which of a ticket's stored NFTs to hand `claimWinnings`. The ticket's overall win
-   * (`storedWinUsdc`) is already trusted — confirmed against Megapot's Data API before the ticket
-   * was ever marked 'won' (see resolveTicketWin) — so this exists only to find which specific
-   * token IDs to claim, not to re-decide whether the ticket won.
+   * Figures out which of a ticket's stored NFTs to hand `claimWinnings`.
    *
-   * Real incident: a $1 ticket with a single stored NFT read `tier=2, Win Amount=$0` from its own
-   * tokenURI metadata on every retry over 30+ seconds, never changing — yet simulating
-   * `claimWinnings` for that exact token against the live contract succeeded immediately. The
-   * metadata trait was simply wrong, not stale, so no amount of local retrying would ever have
-   * fixed it. So: use the metadata read as a fast first pass (usually right, avoids an extra RPC
-   * round-trip per token), then for anything it didn't confirm, ask the contract itself via
-   * `isTokenClaimable` and trust that over the metadata — a non-reverting dry-run is ground truth
-   * regardless of what the NFT's traits say, and a genuine loser still safely reverts instead of
-   * being included.
+   * Primary source: Megapot's own Data API (`getWalletWinsForRound`) reports the exact
+   * `user_ticket_id`(s) it paid a wallet for a round — verified against real winning tickets to
+   * match their on-chain NFT token IDs exactly (and the payout amounts sum to the ticket's stored
+   * win to the penny). Ask it first instead of guessing from our own records, because our records
+   * have been wrong before: one ticket's stored NFT metadata read a permanent `tier=2, Win
+   * Amount=$0` no matter how many times it was checked, while the API pointed at a *completely
+   * different* token ID as the real winner — our on-chain sync had attributed the wrong NFT to
+   * that ticket in the first place. Trusting the API sidesteps that class of bug entirely instead
+   * of working around symptoms of it.
+   *
+   * Fallback (API down or wallet not yet indexed): read on-chain metadata as a first pass, then
+   * for anything it didn't confirm, ask the contract itself via `isTokenClaimable` — a
+   * non-reverting `claimWinnings` dry-run is ground truth regardless of what the NFT's own traits
+   * say, and a genuine loser still safely reverts instead of being included.
    */
-  private async resolveWinningNftIds(companionAddress: Address, allNftIds: string[], storedWinUsdc: number | null): Promise<bigint[]> {
+  private async resolveWinningNftIds(
+    companionAddress: Address,
+    roundId: string | null,
+    allNftIds: string[],
+    storedWinUsdc: number | null,
+  ): Promise<bigint[]> {
+    if (roundId) {
+      const apiWin = await this.megapot.getWalletWinsForRound(companionAddress, roundId).catch(() => null);
+      if (apiWin?.ticketIds.length) {
+        return apiWin.ticketIds.map(id => BigInt(id));
+      }
+    }
+
     const nftResults = await this.megapot.checkTicketResultsFromNft(allNftIds);
     const confirmed = new Set(nftResults.filter(r => r.winAmountUsdc > 0).map(r => r.tokenId));
     const winningNftIds = [...confirmed].map(id => BigInt(id));
@@ -4332,7 +4346,7 @@ export class LotteryService {
       const allNftIds: string[] = ticket.ticket_nft_ids ?? [];
       if (!allNftIds.length) throw new BadRequestException('No NFT IDs stored — sync ticket numbers first');
 
-      const winningNftIds = await this.resolveWinningNftIds(ticket.companion_address as Address, allNftIds, ticket.win_amount_usdc);
+      const winningNftIds = await this.resolveWinningNftIds(ticket.companion_address as Address, ticket.round_id, allNftIds, ticket.win_amount_usdc);
       if (!winningNftIds.length) {
         throw new BadRequestException('Could not confirm your win on-chain yet — please try again in a minute');
       }
@@ -4479,7 +4493,7 @@ export class LotteryService {
         if (!ticket.claim_tx_hash) {
           const allNftIds: string[] = ticket.ticket_nft_ids ?? [];
           if (!allNftIds.length) throw new Error('No NFT IDs stored — sync ticket numbers first');
-          const winningNftIds = await this.resolveWinningNftIds(ticket.companion_address as Address, allNftIds, ticket.win_amount_usdc);
+          const winningNftIds = await this.resolveWinningNftIds(ticket.companion_address as Address, ticket.round_id, allNftIds, ticket.win_amount_usdc);
           if (!winningNftIds.length) throw new Error('Could not confirm winnings on-chain yet — please try again in a minute');
           const claimTx = await this.rhinestone.claimWinnings({ companionPrivateKey: companionPrivHex, ticketNftIds: winningNftIds });
           await db.from('lottery_tickets').update({ claim_tx_hash: claimTx, updated_at: new Date().toISOString() }).eq('id', ticket.id);
