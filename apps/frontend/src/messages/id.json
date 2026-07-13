@@ -69,6 +69,14 @@
       "EXPIRED": "Kedaluwarsa"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "Anda memiliki 1 pembayaran belum diklaim",
+    "titleMany": "Anda memiliki {count} pembayaran belum diklaim",
+    "amountWaiting": "${amount} menunggu Anda.",
+    "claimOne": "Klaim",
+    "claimMany": "Klaim semua",
+    "dismiss": "Tutup"
+  },
   "HomePage": {
     "send": "Kirim",
     "to": "Ke",

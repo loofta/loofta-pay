@@ -68,6 +68,14 @@
       "EXPIRED": "समाप्त"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "आपका 1 भुगतान अनक्लेम्ड है",
+    "titleMany": "आपके {count} भुगतान अनक्लेम्ड हैं",
+    "amountWaiting": "${amount} आपका इंतज़ार कर रहे हैं।",
+    "claimOne": "क्लेम करें",
+    "claimMany": "सभी क्लेम करें",
+    "dismiss": "बंद करें"
+  },
   "HomePage": {
     "send": "भेजें",
     "to": "को",

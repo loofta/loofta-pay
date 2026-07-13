@@ -42,7 +42,7 @@ export type PaymentHistoryClaim = {
 const TERMINAL_STATUSES = ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CANCELLED", "REFUNDED", "EXPIRED", "DELETED"];
 const RECEIVED_VISIBLE_STATUSES = ["SUCCESS", "PRIVATE_TRANSFER_PENDING"];
 
-function isExpiredOpenPayment(p: PaymentHistoryClaim): boolean {
+function isExpiredOpenPayment(p: { status: string; created_at: string }): boolean {
   const status = String(p.status || "").toUpperCase();
   if (TERMINAL_STATUSES.includes(status)) return false;
   const cutoff = Date.now() - OPEN_PAYMENT_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
@@ -153,7 +153,7 @@ export async function GET(request: Request) {
     const networkParam = searchParams.get("network");
     const devnetOnly = networkParam ? networkParam !== "mainnet" : isNonMainnetCluster();
 
-    // Look up current user's username/email/twitter so we can find payments sent to them as
+                                                                                                  // Look up current user's username/email/twitter so we can find payments sent to them as
     // pending recipients. Mirrors the fallback in ClaimsService.checkIsRecipient: a
     // PENDING_USERNAME:<value> row may have been addressed to either the recipient's Loofta
     // username or their X handle (the sender doesn't know which one they'll end up with), so
@@ -362,13 +362,17 @@ export async function GET(request: Request) {
       // so backfilling there would show the creator's own username as the payee.
       const recipientUsername = c.recipient_username ||
         (c.direction === "from_sender" && ec._recipient_user_id && usernameMap[ec._recipient_user_id]) || null;
+      const creatorUsername = (c.created_by && usernameMap[c.created_by]) || null;
+      const senderUsername = (ec.sender_user_id && usernameMap[ec.sender_user_id]) || null;
+      // created_by/sender_user_id/_recipient_user_id are raw Privy user IDs used only to look up
+      // display usernames above — never send them to the client.
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { _recipient_user_id: _dropped, ...rest } = ec;
+      const { _recipient_user_id: _dropped, created_by: _droppedCreatedBy, sender_user_id: _droppedSenderUserId, ...rest } = ec;
       return {
         ...rest,
         recipient_username: recipientUsername,
-        creator_username: (c.created_by && usernameMap[c.created_by]) || null,
-        sender_username: (ec.sender_user_id && usernameMap[ec.sender_user_id]) || null,
+        creator_username: creatorUsername,
+        sender_username: senderUsername,
       };
     };
 

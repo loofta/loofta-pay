@@ -69,6 +69,14 @@
       "EXPIRED": "已过期"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "您有1笔未领取的付款",
+    "titleMany": "您有{count}笔未领取的付款",
+    "amountWaiting": "${amount} 等待您领取。",
+    "claimOne": "领取",
+    "claimMany": "全部领取",
+    "dismiss": "关闭"
+  },
   "HomePage": {
     "send": "发送",
     "to": "至",

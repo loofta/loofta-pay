@@ -69,6 +69,14 @@
       "EXPIRED": "Expirado"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "Você tem 1 pagamento não resgatado",
+    "titleMany": "Você tem {count} pagamentos não resgatados",
+    "amountWaiting": "${amount} esperando por você.",
+    "claimOne": "Resgatar",
+    "claimMany": "Resgatar",
+    "dismiss": "Fechar"
+  },
   "HomePage": {
     "send": "Enviar",
     "to": "Para",

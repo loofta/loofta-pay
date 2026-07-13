@@ -69,6 +69,14 @@
       "EXPIRED": "期限切れ"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "未受け取りの支払いが1件あります",
+    "titleMany": "未受け取りの支払いが{count}件あります",
+    "amountWaiting": "${amount} が受け取り待ちです。",
+    "claimOne": "受け取る",
+    "claimMany": "すべて受け取る",
+    "dismiss": "閉じる"
+  },
   "HomePage": {
     "send": "送金",
     "to": "宛先",

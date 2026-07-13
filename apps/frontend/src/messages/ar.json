@@ -69,6 +69,14 @@
       "EXPIRED": "منتهي الصلاحية"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "لديك دفعة واحدة لم يُطالَب بها",
+    "titleMany": "لديك {count} دفعات لم يُطالَب بها",
+    "amountWaiting": "${amount} في انتظارك.",
+    "claimOne": "المطالبة",
+    "claimMany": "المطالبة بالكل",
+    "dismiss": "إغلاق"
+  },
   "HomePage": {
     "send": "إرسال",
     "to": "إلى",

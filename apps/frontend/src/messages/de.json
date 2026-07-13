@@ -69,6 +69,14 @@
       "EXPIRED": "Abgelaufen"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "Sie haben 1 nicht beanspruchte Zahlung",
+    "titleMany": "Sie haben {count} nicht beanspruchte Zahlungen",
+    "amountWaiting": "${amount} warten auf Sie.",
+    "claimOne": "Beanspruchen",
+    "claimMany": "Beanspruchen",
+    "dismiss": "Schließen"
+  },
   "HomePage": {
     "send": "Senden",
     "to": "An",

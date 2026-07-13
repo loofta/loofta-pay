@@ -69,6 +69,14 @@
       "EXPIRED": "Expired"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "You have 1 unclaimed payment",
+    "titleMany": "You have {count} unclaimed payments",
+    "amountWaiting": "${amount} waiting for you to claim.",
+    "claimOne": "Claim it",
+    "claimMany": "Claim them",
+    "dismiss": "Dismiss"
+  },
   "HomePage": {
     "send": "Send",
     "to": "To",

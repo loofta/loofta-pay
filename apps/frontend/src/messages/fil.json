@@ -69,6 +69,14 @@
       "EXPIRED": "Nag-expire"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "May 1 hindi mo pa nakuhang bayad",
+    "titleMany": "May {count} hindi mo pa nakuhang bayad",
+    "amountWaiting": "Naghihintay ang ${amount} sa'yo.",
+    "claimOne": "Kunin ito",
+    "claimMany": "Kunin ang mga ito",
+    "dismiss": "Isara"
+  },
   "HomePage": {
     "send": "Magpadala",
     "to": "Kay",

@@ -29,7 +29,6 @@ export type PaymentHistoryClaim = {
   creator_email: string | null;
   creator_username?: string | null;
   sender_username?: string | null;
-  created_by: string | null;
   paid_with_token: string | null;
   paid_with_chain: string | null;
   is_private: boolean | null;

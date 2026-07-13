@@ -69,6 +69,14 @@
       "EXPIRED": "Süresi doldu"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "1 talep edilmemiş ödemeniz var",
+    "titleMany": "{count} talep edilmemiş ödemeniz var",
+    "amountWaiting": "${amount} sizi bekliyor.",
+    "claimOne": "Talep et",
+    "claimMany": "Talep et",
+    "dismiss": "Kapat"
+  },
   "HomePage": {
     "send": "Gönder",
     "to": "Kime",

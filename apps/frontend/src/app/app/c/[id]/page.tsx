@@ -39,7 +39,7 @@ import { DescriptionWithGif } from "@/components/DescriptionWithGif";
 import { TokenIcon } from "@/components/TokenIcon";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check } from "lucide-react";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign } from "lucide-react";
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { QRCodeSVG } from "qrcode.react";
@@ -183,21 +183,25 @@ function ClaimPageSenderShareView({
   const [editOpen, setEditOpen] = useState(false);
   const [editValue, setEditValue] = useState(recipientValue || "");
   const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const statusUpper = (status || "").toUpperCase();
   const isCancelled = statusUpper === "CANCELLED" || reclaimed;
 
-  useEffect(() => {
-    if (editOpen) setEditValue(recipientValue || "");
-  }, [editOpen, recipientValue]);
+  function startEditRecipient() {
+    setEditValue(recipientValue || "");
+    setEditError(null);
+    setEditOpen(true);
+  }
 
   const handleSaveRecipient = async () => {
     if (!userId || !recipientType) return;
     const trimmed = editValue.trim();
     if (!trimmed) {
-      toast({ variant: "destructive", title: recipientType === "email" ? "Enter an email" : "Enter a username" });
+      setEditError("Required");
       return;
     }
     setEditSubmitting(true);
+    setEditError(null);
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
       const token = await getSenderAccessToken();
@@ -217,8 +221,7 @@ function ClaimPageSenderShareView({
       setEditOpen(false);
       onRecipientUpdated?.();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Update failed";
-      toast({ variant: "destructive", title: "Couldn't update recipient", description: msg });
+      setEditError(e instanceof Error ? e.message : "Couldn't save — try again.");
     } finally {
       setEditSubmitting(false);
     }
@@ -333,21 +336,61 @@ function ClaimPageSenderShareView({
           triggerClassName="px-6 py-3"
         />
       </div>
-      {/* Edit recipient: only while unclaimed (recipientType present) and not mid-claim */}
+      {/* Edit recipient: only while unclaimed (recipientType present) and not mid-claim.
+          Same inline dark-themed edit-in-place pattern as the lottery gift flow's
+          "Edit recipient" (apps/frontend/src/app/app/megapot/page.tsx) — no modal. */}
       {!isCancelled && recipientType && userId && (
-        <div className="mt-4">
-          <button
-            type="button"
-            onClick={() => setEditOpen(true)}
-            disabled={!!claimLocked}
-            className="text-base md:text-sm font-medium text-[#FF4A26] hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:no-underline"
-          >
-            Edit recipient
-          </button>
-          {claimLocked && (
-            <p className="mt-1 text-sm text-gray-500">
-              The recipient is currently claiming this payment — try again in a minute.
-            </p>
+        <div className="mt-4 max-w-md mx-auto text-left">
+          {editOpen ? (
+            <div className="space-y-2">
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                  {recipientType === "email" ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
+                </span>
+                <input
+                  value={editValue}
+                  onChange={(e) => setEditValue(recipientType === "username" ? e.target.value.replace(/^@+/, "") : e.target.value)}
+                  placeholder={recipientType === "email" ? "name@example.com" : "username"}
+                  className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base"
+                  autoFocus
+                />
+              </div>
+              {editError && <p className="text-sm text-red-400">{editError}</p>}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleSaveRecipient}
+                  disabled={editSubmitting || !editValue.trim()}
+                  className="flex-1 h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
+                >
+                  {editSubmitting ? "Saving…" : "Save"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditOpen(false)}
+                  disabled={editSubmitting}
+                  className="flex-1 h-9 rounded-xl text-base font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={startEditRecipient}
+                disabled={!!claimLocked}
+                className="w-full h-9 rounded-xl text-base font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-400 disabled:hover:bg-transparent"
+              >
+                Edit recipient
+              </button>
+              {claimLocked && (
+                <p className="mt-1 text-sm text-slate-500">
+                  The recipient is currently claiming this payment — try again in a minute.
+                </p>
+              )}
+            </>
           )}
         </div>
       )}
@@ -373,35 +416,6 @@ function ClaimPageSenderShareView({
       {isCancelled && (
         <p className="mt-4 text-base md:text-sm text-gray-500">Payment cancelled. Any funds have been returned to your Loofta wallet.</p>
       )}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit recipient</DialogTitle>
-            <DialogDescription>
-              Fix a typo in the {recipientType === "email" ? "email" : "username"} before they claim this payment.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="edit-recipient-input">{recipientType === "email" ? "Email" : "Username"}</Label>
-            <Input
-              id="edit-recipient-input"
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              placeholder={recipientType === "email" ? "name@example.com" : "username"}
-              autoFocus
-            />
-          </div>
-          <div className="flex justify-end gap-2 mt-4">
-            <Button type="button" variant="outline" onClick={() => setEditOpen(false)} disabled={editSubmitting}>
-              Cancel
-            </Button>
-            <Button type="button" onClick={handleSaveRecipient} disabled={editSubmitting || !editValue.trim()}>
-              {editSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Save
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

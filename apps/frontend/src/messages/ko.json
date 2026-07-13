@@ -69,6 +69,14 @@
       "EXPIRED": "만료됨"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "미청구 결제가 1건 있습니다",
+    "titleMany": "미청구 결제가 {count}건 있습니다",
+    "amountWaiting": "${amount}가 당신을 기다리고 있습니다.",
+    "claimOne": "받기",
+    "claimMany": "모두 받기",
+    "dismiss": "닫기"
+  },
   "HomePage": {
     "send": "보내기",
     "to": "받는 이",

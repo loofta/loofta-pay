@@ -69,6 +69,14 @@
       "EXPIRED": "Scaduto"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "Hai 1 pagamento non riscosso",
+    "titleMany": "Hai {count} pagamenti non riscossi",
+    "amountWaiting": "${amount} ti stanno aspettando.",
+    "claimOne": "Riscuoti",
+    "claimMany": "Riscuoti",
+    "dismiss": "Chiudi"
+  },
   "HomePage": {
     "send": "Invia",
     "to": "A",

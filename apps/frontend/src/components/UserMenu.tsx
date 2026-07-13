@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 
 import { usePrivy, useUser, useWallets, useLinkAccount, useUnlinkOAuth, useUnlinkEmail } from "@privy-io/react-auth";
@@ -207,6 +208,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const menuRef = useRef<HTMLDivElement>(null);
   const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
   const { refreshUser } = useUser();
+  const queryClient = useQueryClient();
   const { linkTwitter, linkEmail } = useLinkAccount({
     onSuccess: async (arg: any) => {
       const linkedType = arg?.linkedAccount?.type;
@@ -236,6 +238,9 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       setLinkingMethod(null);
       // Force Privy to re-fetch the user so linkedAccounts is immediately up to date.
       try { await refreshUser(); } catch { /* non-critical */ }
+      // A newly-linked email/X handle may match a payment sent to us before we linked it —
+      // re-run the unclaimed-payments check now instead of waiting out its 5 min staleTime.
+      queryClient.invalidateQueries({ queryKey: ["payments", "unclaimed-nudge"] });
       toast({ title: "Account linked", description: "Sign-in method added successfully." });
     },
     onError: (err: unknown) => {

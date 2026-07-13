@@ -69,6 +69,14 @@
       "EXPIRED": "Đã hết hạn"
     }
   },
+  "UnclaimedPaymentToast": {
+    "titleOne": "Bạn có 1 khoản thanh toán chưa nhận",
+    "titleMany": "Bạn có {count} khoản thanh toán chưa nhận",
+    "amountWaiting": "${amount} đang chờ bạn.",
+    "claimOne": "Nhận ngay",
+    "claimMany": "Nhận tất cả",
+    "dismiss": "Đóng"
+  },
   "HomePage": {
     "send": "Gửi",
     "to": "Đến",
