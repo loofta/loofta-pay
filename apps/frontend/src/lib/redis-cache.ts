@@ -37,13 +37,3 @@ export async function redisDel(key: string): Promise<void> {
     /* fail open */
   }
 }
-
-export async function redisRPush(key: string, value: string): Promise<void> {
-  const redis = await getRedis();
-  await redis.rPush(key, value);
-}
-
-export async function redisLRange(key: string, start: number, stop: number): Promise<string[]> {
-  const redis = await getRedis();
-  return await redis.lRange(key, start, stop);
-}
