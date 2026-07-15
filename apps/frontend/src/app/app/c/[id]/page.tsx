@@ -3567,16 +3567,31 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     <>
                       {/* Hero */}
                       <div className="mt-4 text-center py-8 space-y-3">
-                        <div className="text-5xl mb-2">🎉</div>
-                        <h3 className="text-3xl font-semibold text-gray-900">
-                          ${parseFloat(claim.amount || "0").toFixed(2)} sent!
-                        </h3>
-                        {recipientLabel ? (
-                          <p className="text-lg text-gray-500">
-                            To <span className="font-medium text-gray-900">{recipientLabel}</span>
-                          </p>
-                        ) : (
-                          <p className="text-lg text-gray-500">Payment sent successfully.</p>
+                        <motion.div
+                          initial={{ scale: 0.5, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          transition={{ type: "spring", stiffness: 260, damping: 18, delay: 0.05 }}
+                          className="mb-3 text-5xl sm:text-6xl select-none"
+                        >
+                          🎉
+                        </motion.div>
+                        <motion.div
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.15 }}
+                          className="text-5xl sm:text-6xl font-sans font-semibold text-gray-900 mb-3"
+                        >
+                          +${parseFloat(claim.amount || "0").toFixed(2)}
+                        </motion.div>
+                        {recipientLabel && (
+                          <motion.p
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ delay: 0.25 }}
+                            className="text-xl text-gray-500 mt-1 mb-5"
+                          >
+                            sent to <span className="font-medium text-gray-700">{recipientLabel}</span>
+                          </motion.p>
                         )}
                         {/* Description / GIF */}
                         {!embedInApp && claim?.description && (
