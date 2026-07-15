@@ -103,7 +103,7 @@ export default function TermsPage() {
         <div className="flex flex-col gap-12">
           <Section id="acceptance" title="1. Acceptance of Terms">
             <P>
-              These Terms of Service ("Terms") constitute a legally binding agreement between you ("User," "you," or "your") and Loofta ("Company," "we," "us," or "our") governing your access to and use of the Loofta Pay application, website, and all related services (collectively, the "Service") available at pay.loofta.xyz and related domains.
+              These Terms of Service ("Terms") constitute a legally binding agreement between you ("User," "you," or "your") and Loofta Inc., a Delaware corporation with a registered address at 131 Continental Dr, Suite 305, Newark, DE 19713, USA ("Company," "we," "us," or "our"), governing your access to and use of the Loofta Pay application, website, and all related services (collectively, the "Service") available at pay.loofta.xyz and related domains.
             </P>
             <P>
               By creating an account, connecting a wallet, or otherwise accessing the Service, you confirm that you have read, understood, and agree to be bound by these Terms and our Privacy Policy. Your continued use of the Service constitutes ongoing acceptance of any updates to these Terms.
@@ -335,8 +335,10 @@ export default function TermsPage() {
               If you have any questions about these Terms, please contact us at:
             </P>
             <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-5 font-grotesk text-[14px] text-slate-400">
-              <p className="text-white font-medium mb-1">Loofta</p>
-              <p>Email: <a href="mailto:contact@loofta.xyz" className="text-[#FF1301] hover:underline">contact@loofta.xyz</a></p>
+              <p className="text-white font-medium mb-1">Loofta Inc.</p>
+              <p>131 Continental Dr, Suite 305</p>
+              <p>Newark, DE 19713, USA</p>
+              <p className="mt-1">Email: <a href="mailto:contact@loofta.xyz" className="text-[#FF1301] hover:underline">contact@loofta.xyz</a></p>
               <p className="mt-1">Website: <a href="https://loofta.xyz" className="text-[#FF1301] hover:underline">loofta.xyz</a></p>
             </div>
           </Section>

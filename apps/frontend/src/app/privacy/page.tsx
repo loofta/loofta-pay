@@ -98,7 +98,7 @@ export default function PrivacyPage() {
         {/* intro callout */}
         <div className="mb-12 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-6">
           <p className="font-grotesk text-base leading-[1.75] text-slate-400">
-            Loofta ("we," "us," "our") respects your privacy. This Privacy Policy explains what information we collect when you use Loofta Pay, how we use it, and your rights regarding that information. We are a non-custodial service — we never hold your funds — and we aim to collect only the minimum data necessary to operate the Service.
+Loofta Inc., a Delaware corporation with a registered address at 131 Continental Dr, Suite 305, Newark, DE 19713, USA ("we," "us," "our"), respects your privacy. This Privacy Policy explains what information we collect when you use Loofta Pay, how we use it, and your rights regarding that information. We are a non-custodial service — we never hold your funds — and we aim to collect only the minimum data necessary to operate the Service.
           </p>
         </div>
 
@@ -323,8 +323,10 @@ export default function PrivacyPage() {
               If you have questions, concerns, or requests regarding this Privacy Policy or your personal data, please contact us:
             </P>
             <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-5 font-grotesk text-[14px] text-slate-400">
-              <p className="text-white font-medium mb-1">Loofta — Privacy</p>
-              <p>Email: <a href="mailto:privacy@loofta.xyz" className="text-[#FF1301] hover:underline">privacy@loofta.xyz</a></p>
+              <p className="text-white font-medium mb-1">Loofta Inc. — Privacy</p>
+              <p>131 Continental Dr, Suite 305</p>
+              <p>Newark, DE 19713, USA</p>
+              <p className="mt-1">Email: <a href="mailto:privacy@loofta.xyz" className="text-[#FF1301] hover:underline">privacy@loofta.xyz</a></p>
               <p>General: <a href="mailto:contact@loofta.xyz" className="text-[#FF1301] hover:underline">contact@loofta.xyz</a></p>
               <p className="mt-1">Website: <a href="https://loofta.xyz" className="text-[#FF1301] hover:underline">loofta.xyz</a></p>
             </div>
