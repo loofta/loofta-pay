@@ -13,6 +13,10 @@ import { getMyGifts, updateGiftRecipient, type MyGiftItem } from "@/services/api
 import { MessageInput } from "@/components/MessageInput";
 import { Label } from "@/components/ui/label";
 import { DescriptionWithGif } from "@/components/DescriptionWithGif";
+import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
+import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
+import { isInsufficientSolOrNoPriorCreditError, privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
+import { getSolanaCluster } from "@/lib/solanaCluster";
 
 const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
 const MAGICBLOCK_BPS = 10;
@@ -26,6 +30,10 @@ const DEFAULT_WITHDRAW_MIN_USDC = 1.3;
 // Above this, withdrawing becomes the featured CTA instead of Play again — a win this size
 // shouldn't default to nudging the user straight back into another draw.
 const WITHDRAW_FEATURED_THRESHOLD_USDC = 5;
+// Round-up grace, mirrors the backend (lottery.service.ts ROUND_UP_GRACE_USDC): a win only 0-10c
+// past a whole ticket price doesn't round up to the next ticket, so the displayed count matches
+// what playAgain actually buys (e.g. a $2.00 win stays 2 tickets, not 3).
+const ROUND_UP_GRACE_USDC = 0.1;
 // Whether an aggregate/total win is below the withdrawal floor (→ "Free ticket", play-again only).
 // For a single ticket, prefer the authoritative ticket.isFreeTicket flag from the backend.
 function isFreeTicketAmount(winUsdc: number | null | undefined, thresholdUsdc: number): boolean {
@@ -984,6 +992,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   const [chooseOpen, setChooseOpen] = useState(false);
   const [step, setStep] = useState<BuyStep>("idle");
   const [stepError, setStepError] = useState("");
+  const [stepErrorIsBalance, setStepErrorIsBalance] = useState(false);
   const [lastTickets, setLastTickets] = useState<TicketNumbers[]>([]);
   const [lastNumTickets, setLastNumTickets] = useState(0);
 
@@ -996,6 +1005,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   const [giftGifUrl, setGiftGifUrl] = useState<string | null>(null);
   const [giftStep, setGiftStep] = useState<"idle" | "signing" | "done" | "error">("idle");
   const [giftError, setGiftError] = useState("");
+  const [giftErrorIsBalance, setGiftErrorIsBalance] = useState(false);
   const [giftClaimUrl, setGiftClaimUrl] = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1041,6 +1051,12 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   const { signAndSendTransaction } = useSignAndSendTransaction();
 
   const { user, getAccessToken, authenticated, login } = usePrivy();
+
+  // Purchases draw from the buyer's Loofta balance — check it up front so a short buyer sees a
+  // top-up prompt instead of a raw MagicBlock/Solana simulation error at signing time.
+  const { balanceUSD, isLoading: isBalanceLoading } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated === true });
+  const totalCostUsd = numTickets + mbFee(numTickets);
+  const insufficientBalance = authenticated === true && !isBalanceLoading && balanceUSD < totalCostUsd;
 
   const embeddedSolAddress = ((user?.linkedAccounts ?? [])
     .find((a: any) => a.type === "wallet" && a.chainType === "solana" &&
@@ -1125,6 +1141,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     setLastNumTickets(numTickets);
     setStep("signing");
     setStepError("");
+    setStepErrorIsBalance(false);
     try {
       const token = await getAccessToken();
       const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
@@ -1156,7 +1173,13 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
       pollStatus(ticketId);
     } catch (err: any) {
       setStep("error");
-      setStepError(err.message ?? "Unknown error");
+      const message = err?.message ?? "Unknown error";
+      if (isInsufficientSolOrNoPriorCreditError(message)) {
+        setStepErrorIsBalance(true);
+        setStepError("");
+      } else {
+        setStepError(privatePayErrorMessageForUser(message, getSolanaCluster()));
+      }
     }
   }
 
@@ -1175,6 +1198,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     const recipientType = giftLooksLikeEmail ? "email" : "handle";
     setGiftStep("signing");
     setGiftError("");
+    setGiftErrorIsBalance(false);
     try {
       const token = await getAccessToken();
       const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
@@ -1220,13 +1244,19 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
       } catch { /* claimUrl wasn't a valid absolute URL — nothing to pre-warm */ }
     } catch (err: any) {
       setGiftStep("error");
-      setGiftError(err.message ?? "Unknown error");
+      const message = err?.message ?? "Unknown error";
+      if (isInsufficientSolOrNoPriorCreditError(message)) {
+        setGiftErrorIsBalance(true);
+        setGiftError("");
+      } else {
+        setGiftError(privatePayErrorMessageForUser(message, getSolanaCluster()));
+      }
     }
   }
 
   const isRunning = !["idle", "done", "error"].includes(step);
 
-  function resetBuy() { setStep("idle"); setStepError(""); pollingStartedRef.current = false; }
+  function resetBuy() { setStep("idle"); setStepError(""); setStepErrorIsBalance(false); pollingStartedRef.current = false; }
 
   function startNewPayment() {
     stopPoll();
@@ -1236,6 +1266,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     pollingStartedRef.current = false;
     setStep("idle");
     setStepError("");
+    setStepErrorIsBalance(false);
   }
 
   if (dashboardLoading && step === "idle") {
@@ -1409,7 +1440,9 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
             </p>
           )}
 
-          {giftMode ? (
+          {authenticated && ((giftMode ? giftErrorIsBalance : stepErrorIsBalance) || (!isBalanceLoading && insufficientBalance)) ? (
+            <InsufficientBalanceCard balanceUSD={balanceUSD} neededUSD={totalCostUsd} />
+          ) : giftMode ? (
             <button onClick={!authenticated ? () => login() : () => handleGiftBuy()}
               disabled={authenticated && (drawCutoff || giftStep === "signing" || !giftIdentifier.trim())}
               className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 flex items-center justify-center gap-2">
@@ -1565,7 +1598,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   // consolidated into ONE companion first, so the round-up/floor applies ONCE to the combined
   // total — not once per ticket (that used to double-count round-ups: a $23.02 win + a $2.95 win
   // became 24 + 3 = 27 tickets instead of ceil(25.97) = 26).
-  const playAgainTicketCount = totalAmount >= minWithdraw ? Math.max(1, Math.ceil(totalAmount)) : Math.floor(totalAmount);
+  const playAgainTicketCount = totalAmount >= minWithdraw ? Math.max(1, Math.ceil(totalAmount - ROUND_UP_GRACE_USDC)) : Math.floor(totalAmount);
   const canPlayAgain = wonTickets.some(t => (t.winAmountUsdc ?? 0) > 0);
   const isFreeTicket = isFreeTicketAmount(totalAmount, minWithdraw) && canPlayAgain;
   // A win large enough to matter shouldn't default to steering the user back into another draw —

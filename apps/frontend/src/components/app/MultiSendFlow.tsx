@@ -9,7 +9,7 @@ import {
 import { Connection } from "@solana/web3.js";
 import { useAuthStore } from "@/store/auth";
 import { useMultiSendStore, type MultiSendRow, type MultiSendLink } from "@/store/multiSend";
-import { getRpcForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
+import { getRpcForMode, getRpcFallbackForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 import { getEphemeralRpcForMode } from "@/lib/per/constants";
 import {
   createMultiPayments,
@@ -23,6 +23,7 @@ import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
+import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -46,9 +47,9 @@ type SendPhase =
   | { kind: "idle" }
   | { kind: "review" }
   | { kind: "creating" }
-  | { kind: "building" }
+  | { kind: "building"; index: number; total: number }
   | { kind: "awaiting_signature" }
-  | { kind: "broadcasting" }
+  | { kind: "broadcasting"; index: number; total: number }
   | { kind: "done"; recipientCount: number; totalUsdc: number; links: MultiSendLinkItem[]; failedCount?: number }
   | { kind: "error"; message: string; retry?: ConfirmFeeData };
 
@@ -101,7 +102,7 @@ function parseCSV(text: string): { rows: MultiSendRow[]; errors: string[] } {
 
     if (!recipient) { errors.push(`Row ${i + 1}: recipient is empty`); continue; }
     const amount = parseFloat(amountStr);
-    if (!Number.isFinite(amount) || amount < 5) { errors.push(`Row ${i + 1}: amount must be ≥ $5`); continue; }
+    if (!Number.isFinite(amount) || amount <= 0) { errors.push(`Row ${i + 1}: amount must be greater than $0`); continue; }
     newRows.push({
       id: `ms-csv-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 5)}`,
       recipient,
@@ -220,14 +221,17 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     return sum + (Number.isFinite(n) ? n : 0);
   }, 0);
 
-  const MIN_AMOUNT = 5;
+  const MIN_TOTAL_AMOUNT = 5;
 
   const filledRows = rows.filter((r) => {
     const n = parseFloat(r.amount);
-    return r.recipient.trim().length > 0 && Number.isFinite(n) && n >= MIN_AMOUNT;
+    return r.recipient.trim().length > 0 && Number.isFinite(n) && n > 0;
   });
 
-  const canReview = filledRows.length >= 2;
+  const filledTotal = filledRows.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
+  const meetsMinTotal = filledTotal >= MIN_TOTAL_AMOUNT;
+
+  const canReview = filledRows.length >= 2 && meetsMinTotal;
 
   const recipients: MultiSendRecipient[] = rows
     .filter((r) => r.recipient.trim().length > 0)
@@ -279,10 +283,14 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     const broadcastConn = new Connection(rpc, "confirmed");
     const sig = await broadcastConn.sendRawTransaction(signedBytes, { skipPreflight: true, maxRetries: 3 });
     console.info(`[MultiSend] broadcast ok sig=${sig.slice(0, 12)}… paymentId=${paymentId}`);
-    const fallbackConn = sendTo === "ephemeral" ? new Connection(getRpcForMode(cluster), "confirmed") : undefined;
-    // MagicBlock base-layer txs confirm in seconds or not at all — 30s is plenty.
-    // Ephemeral cluster may need longer due to rollup finality.
-    const timeoutMs = sendTo === "base" ? 30_000 : 120_000;
+    // Base layer: fall back to the secondary RPC provider (Alchemy/Helius) in case the
+    // primary hasn't indexed the signature yet. Ephemeral: fall back to the base RPC.
+    const fallbackRpcUrl = sendTo === "ephemeral" ? getRpcForMode(cluster) : getRpcFallbackForMode(cluster);
+    const fallbackConn = fallbackRpcUrl ? new Connection(fallbackRpcUrl, "confirmed") : undefined;
+    // 120s for both — matches usePerPrivateTransfer's single-payment timeout. MagicBlock
+    // base-layer confirmation is a normal-speed tx (the 1-10min privacy delay applies to the
+    // crank's separate background settlement, not to this signature landing).
+    const timeoutMs = 120_000;
     try {
       await waitForSignatureConfirmation(broadcastConn, sig, timeoutMs, 1500, "multiSend", fallbackConn);
     } catch (e) {
@@ -324,13 +332,16 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
       console.info(`[MultiSend] building+signing+broadcasting ${paymentIds.length} txs one-by-one cluster=${cluster}`);
 
-      for (const paymentId of paymentIds) {
+      for (let i = 0; i < paymentIds.length; i++) {
+        const paymentId = paymentIds[i];
+        const stepIndex = i + 1;
+        const stepTotal = paymentIds.length;
         try {
-          setPhase({ kind: "building" });
+          setPhase({ kind: "building", index: stepIndex, total: stepTotal });
           const txData = await buildClaimPrivateTransfer(paymentId, user.id!, senderWallet, accessToken, apiCluster);
           const feeUsdc = txData.feeAmountUsdc ?? 0;
 
-          setPhase({ kind: "broadcasting" });
+          setPhase({ kind: "broadcasting", index: stepIndex, total: stepTotal });
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const signedOutput = await (privySolanaSignTransaction as any)({
             transaction: Buffer.from(txData.transactionBase64, "base64") as Uint8Array,
@@ -389,6 +400,10 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     }
     if (filledRows.length < 2) {
       toast({ variant: "destructive", title: "At least 2 recipients required", description: "Fill in at least 2 recipients to use multi-send." });
+      return;
+    }
+    if (!meetsMinTotal) {
+      toast({ variant: "destructive", title: "Minimum $5 total", description: `Total across all recipients must be at least $${MIN_TOTAL_AMOUNT}.` });
       return;
     }
     setReviewPending(true);
@@ -480,7 +495,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   if (reviewPending || phase.kind === "review") {
     const validRows = rows.filter((r) => {
       const n = parseFloat(r.amount);
-      return r.recipient.trim().length > 0 && Number.isFinite(n) && n >= MIN_AMOUNT;
+      return r.recipient.trim().length > 0 && Number.isFinite(n) && n > 0;
     });
     const reviewTotal = validRows.reduce((s, r) => s + parseFloat(r.amount), 0);
     const phaseKind = phase.kind as string;
@@ -578,26 +593,10 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           const isBalanceBusy = solanaPayment.isBalanceLoading;
           if (!isBalanceBusy && !hasEnough) {
             return (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5">
-                  <svg viewBox="0 0 56 57" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8 shrink-0" aria-hidden>
-                    <path d="M27.9532 49C20.655 49 14.8226 46.8696 10.4561 42.6087C6.15205 38.2861 4 32.2035 4 24.3611C4 19.5444 4.99805 15.3144 6.99415 11.6711C8.99025 8.02773 11.7661 5.18714 15.3216 3.14934C18.9396 1.04978 23.1501 0 27.9532 0C33.3177 0 37.7778 1.04978 41.3333 3.14934C44.8889 5.18714 47.54 8.02773 49.2865 11.6711C51.0955 15.3144 52 19.5444 52 24.3611C52 32.2035 50.0039 38.2861 46.0117 42.6087C42.0819 46.8696 36.0624 49 27.9532 49ZM15.1345 22.7864C15.1345 24.7007 16.1014 26.0592 18.0351 26.862C19.9688 27.603 23.2749 27.9735 27.9532 27.9735C32.6316 27.9735 35.9376 27.603 37.8713 26.862C39.8051 26.0592 40.7719 24.7007 40.7719 22.7864C40.7719 20.9338 39.8051 19.637 37.8713 18.896C35.9376 18.155 32.6316 17.7845 27.9532 17.7845C23.2749 17.7845 19.9688 18.155 18.0351 18.896C16.1014 19.637 15.1345 20.9338 15.1345 22.7864Z" fill="#FF4A26" />
-                  </svg>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-white text-base">Loofta wallet</div>
-                    <div className="text-base text-amber-400 mt-0.5">
-                      ${solanaPayment.balanceUSD.toFixed(2)} available — ${reviewTotalWithFees.toFixed(2)} needed (incl. fees)
-                    </div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => window.dispatchEvent(new CustomEvent("openBalanceModal"))}
-                  className="w-full h-12 rounded-xl font-semibold text-base border border-white/20 bg-white/10 text-white hover:bg-white/15 transition-colors"
-                >
-                  Add funds to your balance
-                </button>
-              </div>
+              <InsufficientBalanceCard
+                balanceUSD={solanaPayment.balanceUSD}
+                neededUSD={reviewTotalWithFees}
+              />
             );
           }
           return (
@@ -632,13 +631,16 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                     </div>
                   </div>
                   <DialogTitle className="text-xl font-semibold text-gray-900 text-center">
-                    {(phase.kind === "creating" || phase.kind === "building") && "Preparing payments"}
+                    {phase.kind === "creating" && "Preparing payments"}
+                    {phase.kind === "building" && `Preparing payment ${phase.index} of ${phase.total}`}
                     {phase.kind === "awaiting_signature" && "Approve in your wallet"}
-                    {phase.kind === "broadcasting" && "Finishing on-chain steps"}
+                    {phase.kind === "broadcasting" && `Sending payment ${phase.index} of ${phase.total}`}
                   </DialogTitle>
                   <p className="pt-2 text-base text-center text-muted-foreground max-w-sm">
-                    {(phase.kind === "creating" || phase.kind === "building") &&
+                    {phase.kind === "creating" &&
                       "Setting up transactions. Please keep this window open."}
+                    {phase.kind === "building" &&
+                      "Building this recipient's private transfer. Please keep this window open."}
                     {phase.kind === "awaiting_signature" && (
                       <>
                         Your wallet may show{" "}
@@ -648,8 +650,12 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                         in one approval. Do not close this tab until you finish signing.
                       </>
                     )}
-                    {phase.kind === "broadcasting" &&
-                      "Broadcasting to Solana. Confirmations can take a few seconds each."}
+                    {phase.kind === "broadcasting" && (
+                      <>
+                        Recipient <span className="font-medium text-orange-600">{phase.index} of {phase.total}</span>.
+                        Sent one at a time for privacy — each confirmation can take up to a couple of minutes.
+                      </>
+                    )}
                   </p>
                 </DialogHeader>
                 <div className="rounded-lg border border-amber-200 bg-amber-50/90 p-3 text-center text-base text-amber-950">
@@ -846,9 +852,6 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                 placeholder="100"
                 className="mt-1 h-10 bg-white/5 border-white/10 text-white placeholder:text-slate-400 text-base md:text-base"
               />
-              {row.amount && parseFloat(row.amount) > 0 && parseFloat(row.amount) < MIN_AMOUNT && (
-                <p className="text-amber-400 text-base mt-0.5">Min $5</p>
-              )}
             </div>
 
             <div>
@@ -896,6 +899,9 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
       {filledRows.length === 1 && (
         <p className="text-amber-400 text-base text-center">Multi-send requires at least 2 recipients</p>
+      )}
+      {filledRows.length >= 2 && !meetsMinTotal && (
+        <p className="text-amber-400 text-base text-center">Total across recipients must be at least ${MIN_TOTAL_AMOUNT}</p>
       )}
 
       <Button

@@ -33,6 +33,11 @@ const TICKET_PRICE_USDC = 1;
 // rule: the withdrawal endpoints enforce it, and the dashboard reports it (withdrawMinUsdc +
 // per-ticket isFreeTicket) so the UI never has to hardcode the number.
 export const WITHDRAW_MIN_USDC = 1.3;
+// Round-up grace: a win only 0-10c past a whole ticket price doesn't round up to the next ticket —
+// that would mean funding almost a full extra ticket from Loofta's wallet for a rounding artifact
+// (e.g. a $2.001 win jumping to 3 tickets for a $2.00 display). Past this grace band, round up as
+// before. The small leftover on a floor decision just carries forward in the companion balance.
+const ROUND_UP_GRACE_USDC = 0.1;
 
 // Fee-wallet low-balance alert (see checkFeeWalletBalance). The fee wallet funds bridge top-ups
 // (USDC) and gas/relay (SOL) and — since purchases no longer collect a Loofta fee — is no longer
@@ -4377,7 +4382,7 @@ export class LotteryService {
       if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy a ticket ($${claimedBalance.toFixed(6)} USDC)`);
       sweepLeftover = true;
     } else {
-      numTickets = Math.max(1, Math.ceil(claimedBalance));
+      numTickets = Math.max(1, Math.ceil(claimedBalance - ROUND_UP_GRACE_USDC));
       const gapUsdc = parseFloat((numTickets * TICKET_PRICE_USDC - claimedBalance).toFixed(6));
       if (gapUsdc > 0.0005) {
         const funded = await this.fundCompanionRoundUp(ticket.companion_address, gapUsdc, claimedBalance)
@@ -4565,7 +4570,7 @@ export class LotteryService {
       if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy a ticket ($${leadBalance.toFixed(6)} USDC)`);
       sweepLeftover = true;
     } else {
-      numTickets = Math.max(1, Math.ceil(leadBalance));
+      numTickets = Math.max(1, Math.ceil(leadBalance - ROUND_UP_GRACE_USDC));
       const gapUsdc = parseFloat((numTickets * TICKET_PRICE_USDC - leadBalance).toFixed(6));
       if (gapUsdc > 0.0005) {
         const funded = await this.fundCompanionRoundUp(leadAddress, gapUsdc, leadBalance)

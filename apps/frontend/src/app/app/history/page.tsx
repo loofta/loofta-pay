@@ -218,10 +218,15 @@ export default function HistoryPage() {
   }, [typeFilter]);
 
   const allPayments: { claim: PaymentHistoryClaim; type: "sent" | "received" }[] = useMemo(() => {
+    const isUnclaimed = (claim: PaymentHistoryClaim) => String(claim.status).toUpperCase() === "PRIVATE_TRANSFER_PENDING";
     const list = [
       ...sent.map((claim) => ({ claim, type: "sent" as const })),
       ...received.map((claim) => ({ claim, type: "received" as const })),
-    ].sort((a, b) => new Date(b.claim.created_at).getTime() - new Date(a.claim.created_at).getTime());
+    ].sort((a, b) => {
+      const unclaimedDiff = Number(isUnclaimed(b.claim)) - Number(isUnclaimed(a.claim));
+      if (unclaimedDiff !== 0) return unclaimedDiff;
+      return new Date(b.claim.created_at).getTime() - new Date(a.claim.created_at).getTime();
+    });
     return list;
   }, [sent, received]);
 

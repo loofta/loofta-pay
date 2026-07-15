@@ -31,23 +31,41 @@ export function getPrivySolanaChain(): PrivySolanaChain {
   return "solana:mainnet";
 }
 
-/** HTTP RPC for @solana/web3.js Connection. Helius key takes priority over explicit URL. */
+/**
+ * HTTP RPC for @solana/web3.js Connection. Alchemy (NEXT_PUBLIC_SOLANA_RPC_URL /
+ * NEXT_PUBLIC_SOLANA_DEVNET_RPC_URL) takes priority when set, then Helius, then public —
+ * see memory/project_alchemy_rpc_fallback.md for why.
+ */
 export function getSolanaHttpRpc(): string {
   const cluster = getSolanaCluster();
   const key = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
   if (cluster === "devnet") {
-    if (key) return `https://devnet.helius-rpc.com/?api-key=${key}`;
     return (
       process.env.NEXT_PUBLIC_SOLANA_DEVNET_RPC_URL?.trim() ||
+      (key ? `https://devnet.helius-rpc.com/?api-key=${key}` : "") ||
       "https://api.devnet.solana.com"
     );
   }
   if (cluster === "testnet") return "https://api.testnet.solana.com";
-  if (key) return `https://mainnet.helius-rpc.com/?api-key=${key}`;
   return (
     process.env.NEXT_PUBLIC_SOLANA_RPC_URL?.trim() ||
+    (key ? `https://mainnet.helius-rpc.com/?api-key=${key}` : "") ||
     "https://api.mainnet-beta.solana.com"
   );
+}
+
+/** Secondary HTTP RPC for the active cluster — Helius when Alchemy is primary. Null if only one is configured. */
+export function getSolanaHttpRpcFallback(): string | null {
+  const cluster = getSolanaCluster();
+  const key = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
+  const alchemyUrl = (cluster === "devnet"
+    ? process.env.NEXT_PUBLIC_SOLANA_DEVNET_RPC_URL
+    : process.env.NEXT_PUBLIC_SOLANA_RPC_URL
+  )?.trim();
+  if (!alchemyUrl || !key) return null;
+  return cluster === "devnet"
+    ? `https://devnet.helius-rpc.com/?api-key=${key}`
+    : `https://mainnet.helius-rpc.com/?api-key=${key}`;
 }
 
 export function getSolanaWsRpc(): string {

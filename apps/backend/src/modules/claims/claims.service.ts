@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, Optional } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, Optional, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { readFileSync, existsSync } from 'fs';
@@ -82,7 +82,7 @@ export class ClaimsService {
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
-    @Optional() private readonly encryption: SendPaymentEncryptionService | null,
+    @Optional() @Inject(forwardRef(() => SendPaymentEncryptionService)) private readonly encryption: SendPaymentEncryptionService | null,
     private readonly solanaSponsor: SolanaSponsorService,
     private readonly emailService: EmailService,
   ) {
@@ -482,21 +482,22 @@ export class ClaimsService {
   }
 
   /**
-   * Read SEND_PAYMENT_ENC_KEY from .env file (fallback when ConfigService/process.env don't have it).
+   * Read an encryption env var from .env file (fallback when ConfigService/process.env don't have it).
    * Tries backend root and cwd so it works whether run from monorepo root or apps/backend.
    */
-  private getClaimBurnerDecryptionKeyFromFile(): string | null {
+  private getClaimBurnerDecryptionKeyFromFile(envVar: string = 'SEND_PAYMENT_ENC_KEY'): string | null {
     const tryPaths = [
       join(process.cwd(), 'apps', 'backend', '.env.local'),
       join(process.cwd(), '.env.local'),
       join(__dirname, '..', '..', '..', '.env.local'),
       join(__dirname, '..', '..', '.env.local'),
     ];
+    const escaped = envVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     for (const p of tryPaths) {
       try {
         if (existsSync(p)) {
           const content = readFileSync(p, 'utf8');
-          const match = content.match(/SEND_PAYMENT_ENC_KEY\s*=\s*(["']?)([^\s#'"]+)\1/);
+          const match = content.match(new RegExp(`${escaped}\\s*=\\s*(["']?)([^\\s#'"]+)\\1`));
           if (match?.[2]) return match[2].trim();
         }
       } catch {
@@ -507,15 +508,15 @@ export class ClaimsService {
   }
 
   /**
-   * Read SEND_PAYMENT_ENC_KEY (ConfigService → process.env → .env.local file) so reclaim and
-   * recipient claim-sweep can decrypt even when SendPaymentEncryptionService is not injected.
+   * Read SEND_PAYMENT_ENC_KEY or SEND_PAYMENT_ENC_KEY_OLD (ConfigService → process.env → .env.local file)
+   * so reclaim and recipient claim-sweep can decrypt even when SendPaymentEncryptionService is not injected.
    */
-  private getClaimBurnerDecryptionKey(): Buffer | null {
+  private getClaimBurnerDecryptionKey(envVar: string = 'SEND_PAYMENT_ENC_KEY'): Buffer | null {
     let raw =
-      this.configService.get<string>('SEND_PAYMENT_ENC_KEY') ??
-      (typeof process !== 'undefined' ? process.env.SEND_PAYMENT_ENC_KEY : undefined);
+      this.configService.get<string>(envVar) ??
+      (typeof process !== 'undefined' ? process.env[envVar] : undefined);
     if (!raw || typeof raw !== 'string') {
-      raw = this.getClaimBurnerDecryptionKeyFromFile() ?? undefined;
+      raw = this.getClaimBurnerDecryptionKeyFromFile(envVar) ?? undefined;
     }
     if (!raw || typeof raw !== 'string') return null;
     const trimmed = raw.trim();
@@ -563,7 +564,16 @@ export class ClaimsService {
     if (!key) throw new Error('SEND_PAYMENT_ENC_KEY not available for decrypt');
     // v2 format in direct-key mode is not supported — all v2 secrets were produced
     // via EncryptionService and will be handled in the branch above.
-    return this.decryptBurnerSecretWithKey(ciphertextBase64, key);
+    try {
+      return this.decryptBurnerSecretWithKey(ciphertextBase64, key);
+    } catch (primaryErr) {
+      const oldKey = this.getClaimBurnerDecryptionKey('SEND_PAYMENT_ENC_KEY_OLD');
+      if (oldKey) {
+        this.logger.warn('decryptClaimBurnerSecret: primary key failed; retrying with SEND_PAYMENT_ENC_KEY_OLD (rotation fallback)');
+        return this.decryptBurnerSecretWithKey(ciphertextBase64, oldKey);
+      }
+      throw primaryErr;
+    }
   }
 
   /**
@@ -846,7 +856,10 @@ export class ClaimsService {
     if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
       throw new BadRequestException('Invalid claim amount');
     }
-    if (amountUsd < 5) {
+    // Multi-send recipient rows only need to satisfy the batch-level $5 minimum already
+    // enforced by BuildMultiSendDto — standalone payment links enforce it per-link here.
+    const isMultiSend = (row as unknown as { is_multi_send?: boolean }).is_multi_send === true;
+    if (amountUsd < 5 && !isMultiSend) {
       throw new BadRequestException('Minimum payment amount is $5.00 USDC.');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
@@ -1338,14 +1351,37 @@ export class ClaimsService {
   }
 
   /**
+   * Query recent network prioritization fees for the accounts a transaction will touch, so the
+   * first send attempt goes out competitively priced instead of relying on the retry-with-doubled-fee
+   * path in sendAndConfirmWithRebuild to eventually land. Falls back to `floor` if the RPC call
+   * fails or returns no data (e.g. brand-new accounts with no recent fee history).
+   */
+  private async estimatePriorityFeeMicroLamports(
+    conn: Connection,
+    writableAccounts: PublicKey[],
+    floor: number,
+  ): Promise<number> {
+    try {
+      const fees = await conn.getRecentPrioritizationFees({ lockedWritableAccounts: writableAccounts });
+      if (!fees.length) return floor;
+      const sorted = fees.map((f) => f.prioritizationFee).sort((a, b) => a - b);
+      const p75 = sorted[Math.floor(sorted.length * 0.75)];
+      return Math.max(floor, p75);
+    } catch {
+      return floor;
+    }
+  }
+
+  /**
    * Send a transaction and confirm it with blockhash-expiry-aware retries.
    * If the blockhash window expires before confirmation, re-signs with a fresh blockhash and retries.
    * The transaction must have its instructions already set; blockhash/feePayer/signatures are managed here.
    *
-   * Every attempt also (re)prepends a priority fee, escalating each retry. Without this, every
-   * attempt went out at the network's default (effectively zero) priority — under any real
-   * congestion a transaction can sit unconfirmed for the entire ~60-90s blockhash window before
-   * the expiry check above even fires, then retry at the *same* fee and stall again. This is why
+   * The first attempt uses a network-informed priority fee (see estimatePriorityFeeMicroLamports)
+   * instead of a flat base fee, and each retry still escalates from there. Without this, every
+   * attempt went out at a fixed price regardless of congestion — under real congestion a
+   * transaction could sit unconfirmed for the entire ~60-90s blockhash window before the expiry
+   * check above even fires, then retry at a fee still too low and stall again. This is why
    * production sweeps were observed taking 60s+ and multiple attempts even for a single simple
    * transfer: it wasn't bad luck, it was structurally underpriced every single time.
    */
@@ -1361,11 +1397,22 @@ export class ClaimsService {
     // Covers a transfer (~5k CU) plus an optional ATA-creation instruction (~25-30k CU) with
     // comfortable headroom, without setting the limit so high it inflates the fee for no reason.
     const COMPUTE_UNIT_LIMIT = 60_000;
+    const writableAccounts = Array.from(
+      new Set([
+        feePayer.toBase58(),
+        ...tx.instructions.flatMap((ix) => ix.keys.filter((k) => k.isWritable).map((k) => k.pubkey.toBase58())),
+      ]),
+    ).map((s) => new PublicKey(s));
+    const initialPriorityFeeMicroLamports = await this.estimatePriorityFeeMicroLamports(
+      conn,
+      writableAccounts,
+      BASE_PRIORITY_FEE_MICROLAMPORTS,
+    );
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       // Drop any compute-budget instructions from a prior attempt before adding this attempt's
       // (escalated) ones — otherwise they'd stack up across retries.
       tx.instructions = tx.instructions.filter((ix) => !ix.programId.equals(ComputeBudgetProgram.programId));
-      const priorityFeeMicroLamports = BASE_PRIORITY_FEE_MICROLAMPORTS * 2 ** (attempt - 1);
+      const priorityFeeMicroLamports = initialPriorityFeeMicroLamports * 2 ** (attempt - 1);
       tx.instructions.unshift(
         ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFeeMicroLamports }),
         ComputeBudgetProgram.setComputeUnitLimit({ units: COMPUTE_UNIT_LIMIT }),

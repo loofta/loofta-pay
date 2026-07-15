@@ -11,13 +11,46 @@ import {
   ValidateNested,
   ArrayMinSize,
   ArrayMaxSize,
+  registerDecorator,
+  ValidationOptions,
+  ValidationArguments,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+const MULTI_SEND_MIN_TOTAL_USD = 5;
+
+/** Sum of recipient amounts must reach the platform minimum, even though individual rows can be smaller. */
+function MinTotalAmount(minTotal: number, validationOptions?: ValidationOptions) {
+  return function (object: object, propertyName: string) {
+    registerDecorator({
+      name: 'minTotalAmount',
+      target: object.constructor,
+      propertyName,
+      options: validationOptions,
+      constraints: [minTotal],
+      validator: {
+        validate(recipients: unknown, args: ValidationArguments) {
+          const [min] = args.constraints as [number];
+          if (!Array.isArray(recipients)) return true;
+          const total = recipients.reduce(
+            (sum: number, r: { amount?: unknown }) => sum + (Number(r?.amount) || 0),
+            0,
+          );
+          return total >= min;
+        },
+        defaultMessage(args: ValidationArguments) {
+          const [min] = args.constraints as [number];
+          return `Total amount across all recipients must be at least $${min}`;
+        },
+      },
+    });
+  };
+}
 
 export class MultiSendRecipientDto {
   @ApiProperty({ example: 50 })
   @IsNumber()
-  @Min(5)
+  @Min(0.01)
   amount: number;
 
   @ApiProperty({ enum: ['email', 'twitter', 'username'] })
@@ -45,6 +78,7 @@ export class BuildMultiSendDto {
   @ArrayMinSize(2)
   @ArrayMaxSize(10)
   @Type(() => MultiSendRecipientDto)
+  @MinTotalAmount(MULTI_SEND_MIN_TOTAL_USD)
   recipients: MultiSendRecipientDto[];
 
   @ApiProperty({ description: 'Sender Solana wallet pubkey' })

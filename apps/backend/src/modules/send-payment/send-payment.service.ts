@@ -859,6 +859,7 @@ export class SendPaymentService {
           to_chain: 'solana',
           to_token: 'USDC',
           is_devnet: isDevnet,
+          is_multi_send: true,
         };
       } else {
         // Unregistered — create burner; recipient claims from /c/{id} after signing up
@@ -883,6 +884,7 @@ export class SendPaymentService {
           recipient_was_unregistered: true,
           burner_address: burner.publicKey.toBase58(),
           burner_encrypted_secret: burnerEncryptedSecret,
+          is_multi_send: true,
         };
       }
 
@@ -1166,6 +1168,7 @@ export class SendPaymentService {
           to_chain: 'solana',
           to_token: 'USDC',
           is_devnet: isDevnet,
+          is_multi_send: true,
         };
       } else {
         const burner = Keypair.generate();
@@ -1189,6 +1192,7 @@ export class SendPaymentService {
           recipient_was_unregistered: true,
           burner_address: burner.publicKey.toBase58(),
           burner_encrypted_secret: burnerEncryptedSecret,
+          is_multi_send: true,
         };
       }
 
@@ -1320,6 +1324,7 @@ export class SendPaymentService {
           to_token: 'USDC',
           is_devnet: isDevnet,
           short_id: shortId,
+          is_multi_send: true,
         };
       } else {
         const burner = Keypair.generate();
@@ -1345,6 +1350,7 @@ export class SendPaymentService {
           recipient_was_unregistered: true,
           burner_address: burner.publicKey.toBase58(),
           burner_encrypted_secret: burnerEncryptedSecret,
+          is_multi_send: true,
         };
       }
 

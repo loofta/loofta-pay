@@ -37,6 +37,7 @@ import { useClaimPayStore } from "@/store/claimPay";
 import { useAuthStore } from "@/store/auth";
 import { DescriptionWithGif } from "@/components/DescriptionWithGif";
 import { TokenIcon } from "@/components/TokenIcon";
+import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign } from "lucide-react";
@@ -4682,27 +4683,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   const isLoading = solanaPayment.isBalanceLoading;
                   if (!isLoading && !hasEnough) {
                     return (
-                      <>
-                        <div className="flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5">
-                          <LooftaIcon className="w-8 h-8 shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <div className="font-semibold text-white">Loofta wallet</div>
-                            <div className="text-base md:text-sm text-amber-400 mt-0.5">
-                              ${looftaBalanceUSD.toFixed(2)} available — ${needed.toFixed(2)} needed
-                            </div>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowPayNowModal(false);
-                            window.dispatchEvent(new CustomEvent("openBalanceModal"));
-                          }}
-                          className="w-full h-12 rounded-xl font-semibold text-base border border-white/20 bg-white/10 text-white hover:bg-white/15 transition-colors"
-                        >
-                          Add funds to your balance
-                        </button>
-                      </>
+                      <InsufficientBalanceCard
+                        balanceUSD={looftaBalanceUSD}
+                        neededUSD={needed}
+                        showFeesLabel={false}
+                        onBeforeTopUp={() => setShowPayNowModal(false)}
+                      />
                     );
                   }
                   return (

@@ -4,7 +4,7 @@ import { useCallback, useMemo } from "react";
 import type { Wallet } from "@coral-xyz/anchor";
 import { Connection, Transaction, VersionedTransaction, SendTransactionError } from "@solana/web3.js";
 import { useAuthStore } from "@/store/auth";
-import { getRpcForMode } from "@/lib/solanaRpc";
+import { getRpcForMode, getRpcFallbackForMode } from "@/lib/solanaRpc";
 import { formatMagicblockPrivateDelayLogMs } from "@/services/magicblockPaymentsApi";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { buildSendPaymentPrivateTransfer } from "@/services/api/sendPayment";
@@ -175,7 +175,12 @@ export function usePerPrivateTransfer() {
         console.warn("[PrivatePay] onSignature callback failed (non-fatal):", e);
       }
 
-      const fallbackConn = txData.sendTo === "ephemeral" ? connection : undefined;
+      // Ephemeral: fall back to the base RPC. Base layer: fall back to the secondary
+      // RPC provider (Alchemy/Helius) in case the primary hasn't indexed the signature yet.
+      const fallbackRpcUrl = txData.sendTo === "ephemeral" ? null : getRpcFallbackForMode(networkMode);
+      const fallbackConn = txData.sendTo === "ephemeral"
+        ? connection
+        : (fallbackRpcUrl ? new Connection(fallbackRpcUrl, "confirmed") : undefined);
       await waitForSignatureConfirmation(broadcastConn, signature, 120_000, 1500, "privateTransfer", fallbackConn);
       const explorerUrl = `https://explorer.solana.com/tx/${signature}?cluster=${apiCluster === "mainnet" ? "mainnet-beta" : "devnet"}`;
       console.info(`[PrivatePay] ✅ confirmed | sig=${signature} | ${explorerUrl}`);

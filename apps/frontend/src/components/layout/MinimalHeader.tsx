@@ -192,6 +192,9 @@ export function MinimalHeader() {
 
   const [showBalanceModal, setShowBalanceModal] = useState(false);
   const [balanceModalTab, setBalanceModalTab] = useState<"topup" | "withdraw" | "history">("topup");
+  // True when a CTA (e.g. "Add funds to your balance") asked for a specific tab — keeps
+  // BalanceModal's own "resume a stuck withdrawal" auto-redirect from stealing focus back to Recent.
+  const [balanceModalTabLocked, setBalanceModalTabLocked] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const {
@@ -226,8 +229,9 @@ export function MinimalHeader() {
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ tab?: string }>).detail;
-      const tab = detail?.tab === "withdraw" || detail?.tab === "history" ? detail.tab : "topup";
-      setBalanceModalTab(tab);
+      const explicitTab = detail?.tab === "withdraw" || detail?.tab === "history" || detail?.tab === "topup";
+      setBalanceModalTab(explicitTab ? (detail!.tab as "topup" | "withdraw" | "history") : "topup");
+      setBalanceModalTabLocked(explicitTab);
       setShowBalanceModal(true);
       refreshBalance();
     };
@@ -315,7 +319,7 @@ export function MinimalHeader() {
                 {/* Desktop: Balance button */}
                 <button
                   type="button"
-                  onClick={() => setShowBalanceModal(true)}
+                  onClick={() => { setBalanceModalTabLocked(false); setShowBalanceModal(true); }}
                   className="hidden sm:flex items-center gap-3 px-3 py-2 rounded-lg bg-white/10 text-slate-200 hover:text-white hover:bg-white/15 transition-colors border border-white/10 text-left"
                 >
                   <div className="flex flex-col min-w-0">
@@ -384,6 +388,7 @@ export function MinimalHeader() {
             onRefresh={refreshBalance}
             devnetMode={networkMode === "devnet"}
             initialTab={balanceModalTab}
+            lockInitialTab={balanceModalTabLocked}
             dark
           />
         )}
@@ -396,7 +401,7 @@ export function MinimalHeader() {
           onClose={() => setMobileMenuOpen(false)}
           balanceUSD={balanceUSD}
           loadingBalance={loadingBalance}
-          onOpenBalance={() => { setShowBalanceModal(true); refreshBalance(); }}
+          onOpenBalance={() => { setBalanceModalTabLocked(false); setShowBalanceModal(true); refreshBalance(); }}
           onLogout={() => logout()}
           username={username}
           email={email}

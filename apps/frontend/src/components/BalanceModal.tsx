@@ -6,6 +6,7 @@ import {
   DialogContent,
   DialogDescription,
   DialogHeader,
+  DialogPortal,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -289,6 +290,9 @@ export interface BalanceModalProps {
   devnetMode?: boolean;
   /** Tab to activate when the modal opens. Defaults to "topup". */
   initialTab?: "topup" | "withdraw" | "history";
+  /** When true, `initialTab` was explicitly requested by a CTA (e.g. "Add funds to your
+   * balance") — skip the auto-redirect to Recent for a stuck withdrawal so that request wins. */
+  lockInitialTab?: boolean;
 }
 
 export function BalanceModal({
@@ -302,6 +306,7 @@ export function BalanceModal({
   dark = false,
   devnetMode = false,
   initialTab,
+  lockInitialTab = false,
 }: BalanceModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -1324,7 +1329,7 @@ export function BalanceModal({
             setPeerCancelSubStep("bridging-back");
           }
           setWithdrawMethod("peer-offramp");
-          setTab("history");
+          if (!lockInitialTab) setTab("history");
           restoredFromSession = true;
         }
       }
@@ -1372,7 +1377,7 @@ export function BalanceModal({
             setPeerStep("deposited");
           }
           setWithdrawMethod("peer-offramp");
-          setTab("history");
+          if (!lockInitialTab) setTab("history");
         } catch { /* non-fatal */ }
       });
     }
@@ -2122,6 +2127,11 @@ export function BalanceModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()} modal={false}>
+      {/* modal={false} (see "fix modal blink") makes Radix's own DialogOverlay a no-op,
+          so the backdrop is rendered by hand here instead. */}
+      <DialogPortal>
+        <div className="fixed inset-0 z-50 bg-black/80 animate-in fade-in-0" aria-hidden />
+      </DialogPortal>
       <DialogContent
         ref={dialogContentRef}
         onInteractOutside={(e) => e.preventDefault()}
