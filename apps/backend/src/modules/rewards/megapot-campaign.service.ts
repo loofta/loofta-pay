@@ -68,11 +68,8 @@ export class MegapotCampaignService {
 
   /** Admin: eligible-participant list for running the lucky draw. */
   async getAllMegapotCampaignStatus(): Promise<MegapotAdminUserStatus[]> {
-    const { data: users, error } = await this.supabase.appUsers
-      .select('privy_user_id, username, email')
-      .not('privy_user_id', 'is', null);
-
-    if (error || !users?.length) return [];
+    const users = await this.supabase.getAllAppUsersWithPrivyId();
+    if (!users.length) return [];
 
     const CONCURRENCY = 5;
     const results: MegapotAdminUserStatus[] = [];

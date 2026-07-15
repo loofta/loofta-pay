@@ -116,6 +116,7 @@ export class BlinkCampaignService {
       const usersUrl = `https://api.blink.cash/v1/merchant-users?embeddedWalletAddress=${encodeURIComponent(solanaAddress)}&chainId=792703809`;
       const usersRes = await fetch(usersUrl, {
         headers: { 'X-Merchant-Authorization': authHeader1, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(8000),
       });
 
       if (!usersRes.ok) {
@@ -136,6 +137,7 @@ export class BlinkCampaignService {
       const depositsUrl = `https://api.blink.cash/v1/merchant-deposits?userId=${encodeURIComponent(blinkUserId)}&status=completed&createdAfter=${encodeURIComponent(CAMPAIGN_START.toISOString())}&limit=2`;
       const depositsRes = await fetch(depositsUrl, {
         headers: { 'X-Merchant-Authorization': authHeader2, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(8000),
       });
 
       if (!depositsRes.ok) {
@@ -156,13 +158,10 @@ export class BlinkCampaignService {
   }
 
   async getAllBlinkCampaignStatus(): Promise<BlinkAdminUserStatus[]> {
-    const { data: users, error } = await this.supabase.appUsers
-      .select('privy_user_id, username, email')
-      .not('privy_user_id', 'is', null);
+    const users = await this.supabase.getAllAppUsersWithPrivyId();
+    if (!users.length) return [];
 
-    if (error || !users?.length) return [];
-
-    const CONCURRENCY = 5;
+    const CONCURRENCY = 20;
     const results: BlinkAdminUserStatus[] = [];
 
     for (let i = 0; i < users.length; i += CONCURRENCY) {
@@ -199,7 +198,12 @@ export class BlinkCampaignService {
 
   private async getPrivySolanaAddress(privyUserId: string): Promise<string | null> {
     try {
-      const user = await this.privy.getPrivyUser(privyUserId);
+      // Bulk admin sweep hits this for ~1900 users — bound the wait so one slow
+      // Privy lookup can't stall its whole concurrency batch.
+      const user = await Promise.race([
+        this.privy.getPrivyUser(privyUserId),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
+      ]);
       const accounts: any[] = user?.linked_accounts ?? [];
       const solana = accounts.find(
         (a) =>

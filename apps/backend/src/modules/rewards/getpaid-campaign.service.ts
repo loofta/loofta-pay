@@ -74,11 +74,8 @@ export class GetPaidCampaignService {
 
   /** Admin: eligible-participant list for running the $50 x 3 lucky draw. */
   async getAllGetPaidCampaignStatus(): Promise<GetPaidAdminUserStatus[]> {
-    const { data: users, error } = await this.supabase.appUsers
-      .select('privy_user_id, username, email')
-      .not('privy_user_id', 'is', null);
-
-    if (error || !users?.length) return [];
+    const users = await this.supabase.getAllAppUsersWithPrivyId();
+    if (!users.length) return [];
 
     const CONCURRENCY = 5;
     const results: GetPaidAdminUserStatus[] = [];

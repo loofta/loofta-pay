@@ -67,6 +67,34 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('app_users');
   }
 
+  /**
+   * Fetches every app_users row with a non-null privy_user_id, paging past
+   * PostgREST's max_rows cap (1000) instead of silently truncating.
+   */
+  async getAllAppUsersWithPrivyId(): Promise<
+    { privy_user_id: string; username: string | null; email: string | null }[]
+  > {
+    const pageSize = 1000;
+    const all: { privy_user_id: string; username: string | null; email: string | null }[] = [];
+
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await this.client
+        .from('app_users')
+        .select('privy_user_id, username, email')
+        .not('privy_user_id', 'is', null)
+        .order('privy_user_id', { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (error) throw error;
+      if (!data?.length) break;
+
+      all.push(...data);
+      if (data.length < pageSize) break;
+    }
+
+    return all;
+  }
+
   get sendPaymentLinks() {
     return this.client.from('send_payment_links');
   }
