@@ -9,7 +9,8 @@
     "magicblock": {
       "source": "magicblock-labs/magicblock-dev-skill",
       "sourceType": "github",
-      "computedHash": "4c295d61e94e52af0ad925f97a92c0c04ec164ab02fdaeba29733a3d086f69a5"
+      "skillPath": "skill/SKILL.md",
+      "computedHash": "3f621cbfe7d082194361b0b681940733880f66dfda9f326bcd027b040599dd82"
     },
     "nestjs-best-practices": {
       "source": "xirothedev/agent-skills",
@@ -25,6 +26,11 @@
       "source": "solana-foundation/solana-dev-skill",
       "sourceType": "github",
       "computedHash": "4a4c953b235944cc5c2a76af9669406ee01213bf6892941399e646cfbf9259b9"
+    },
+    "solana-rent-free-dev": {
+      "source": "zkcompression.com",
+      "sourceType": "well-known",
+      "computedHash": "6a932a54b60ff7871cac00df02fd42550a18f9776d6e10d5a47fa1937f1e1d6a"
     }
   }
 }
