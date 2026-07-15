@@ -29,8 +29,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
-import { PlusIcon, XIcon, CheckCircle2, Copy, ExternalLink, Loader2, ArrowLeft, UploadCloud, FileDown, AlertCircle } from "lucide-react";
+import { PlusIcon, XIcon, CheckCircle2, Check, Copy, ExternalLink, Loader2, ArrowLeft, UploadCloud, FileDown, AlertCircle } from "lucide-react";
 import { MessageInput } from "@/components/MessageInput";
+import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 
 type ConfirmFeeData = {
   senderWallet: string;
@@ -134,6 +135,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
   const [showPaste, setShowPaste] = useState(false);
+  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { user, getAccessToken, login, authenticated } = usePrivy();
@@ -448,33 +450,60 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         )}
 
         <div className="space-y-2">
-          {phase.links.map((item) => (
-            <div key={item.id} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-white text-base font-medium truncate">{item.recipient_identifier}</p>
-                  <p className="text-slate-400 text-base">${parseFloat(item.amount).toFixed(2)} USDC</p>
+          {phase.links.map((item) => {
+            const copyLink = async () => {
+              try {
+                await navigator.clipboard.writeText(item.link);
+                setCopiedLinkId(item.id);
+                setTimeout(() => setCopiedLinkId((cur) => (cur === item.id ? null : cur)), 2000);
+              } catch {
+                toast({ variant: "destructive", title: "Copy failed" });
+              }
+            };
+            return (
+              <div key={item.id} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-white text-lg font-medium truncate">{item.recipient_identifier}</p>
+                    <p className="text-slate-400 text-base">${parseFloat(item.amount).toFixed(2)} USDC</p>
+                  </div>
+                  <a
+                    href={item.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+                    title="Open payment"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
                 </div>
-                <a
-                  href={item.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
-                  title="Open payment"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                </a>
+                <div className="flex gap-2">
+                  <div className="flex flex-1 gap-2 min-w-0">
+                    <Input
+                      readOnly
+                      value={item.link}
+                      className="font-mono text-xs flex-1 min-w-0 bg-white/5 border-white/10 text-white"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={copyLink}
+                      className="shrink-0 bg-transparent border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
+                    >
+                      {copiedLinkId === item.id ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                  <ShareLinkMenu
+                    url={item.link}
+                    title="Payment sent"
+                    text={`$${parseFloat(item.amount).toFixed(2)} sent to ${item.recipient_identifier} via Loofta.`}
+                    variant="subtle"
+                  />
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => navigator.clipboard.writeText(item.link)}
-                className="w-full flex items-center justify-center gap-1.5 text-base text-slate-400 hover:text-white hover:bg-white/10 border border-white/10 rounded-lg py-1.5 transition-colors"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                Copy link
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <Button
@@ -616,7 +645,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           onOpenChange={(open) => { if (!open) closeSettlementModal(); }}
         >
           <DialogContent
-            className="sm:max-w-sm p-6 border-white/10 bg-[#0f0f12] text-white [&_.text-gray-900]:!text-white [&_.text-muted-foreground]:!text-slate-400 [&_.bg-orange-100]:!bg-orange-500/20 [&_.text-orange-600]:!text-orange-300 [&_.bg-amber-50\/90]:!bg-amber-500/15 [&_.border-amber-200]:!border-amber-400/30 [&_.text-amber-950]:!text-amber-200"
+            className="sm:max-w-md p-8 border-white/10 bg-[#0f0f12] text-white [&_.text-gray-900]:!text-white [&_.text-muted-foreground]:!text-slate-400 [&_.bg-orange-100]:!bg-orange-500/20 [&_.text-orange-600]:!text-orange-300 [&_.bg-amber-50\/90]:!bg-amber-500/15 [&_.border-amber-200]:!border-amber-400/30 [&_.text-amber-950]:!text-amber-200"
             onPointerDownOutside={(e) => { if (isBusy) e.preventDefault(); }}
             onEscapeKeyDown={(e) => { if (isBusy) e.preventDefault(); }}
             aria-describedby={undefined}
@@ -706,7 +735,27 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <p className="text-white text-xl font-semibold">Multi Send</p>
+        <p className="text-white text-xl font-semibold flex-1">Multi Send</p>
+        {process.env.NODE_ENV === "development" && (
+          <button
+            type="button"
+            onClick={() => setPhase({
+              kind: "done",
+              recipientCount: 3,
+              totalUsdc: 152,
+              failedCount: 1,
+              links: [
+                { id: "dev-preview-1", link: `${window.location.origin}/app/c/dev-preview-1`, recipient_identifier: "alice_dev", amount: "100" },
+                { id: "dev-preview-2", link: `${window.location.origin}/app/c/dev-preview-2`, recipient_identifier: "bob@example.com", amount: "50" },
+                { id: "dev-preview-3", link: `${window.location.origin}/app/c/dev-preview-3`, recipient_identifier: "carol_dev", amount: "2" },
+              ],
+            })}
+            className="text-amber-400 hover:text-amber-300 text-xs border border-amber-400/30 rounded-lg px-2 py-1 transition-colors"
+            title="Dev only: preview the done screen with mock data"
+          >
+            Preview result
+          </button>
+        )}
       </div>
 
       {/* CSV import zone */}

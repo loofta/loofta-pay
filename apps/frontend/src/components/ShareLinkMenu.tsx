@@ -52,6 +52,7 @@ export function ShareLinkMenu({
   ogUrl,
   triggerClassName,
   triggerLabel = "Share",
+  variant = "gradient",
 }: {
   url: string;
   /** Subject-line-style summary (native share title, email subject). */
@@ -64,6 +65,11 @@ export function ShareLinkMenu({
   ogUrl?: string;
   triggerClassName?: string;
   triggerLabel?: string;
+  /** "gradient" (default): bold labeled CTA — use for a single, prominent share action.
+   *  "subtle": icon-only outline button matching muted list-row actions (e.g. a copy-link
+   *  button beside it) — use when this trigger repeats once per row in a list, where the
+   *  gradient pill reads as visual noise when stacked. */
+  variant?: "gradient" | "subtle";
 }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -136,16 +142,29 @@ export function ShareLinkMenu({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button
-          type="button"
-          className={cn(
-            "inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90 shrink-0",
-            triggerClassName,
-          )}
-        >
-          <Share2 className="h-5 w-5" />
-          {triggerLabel}
-        </Button>
+        {variant === "subtle" ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className={cn("shrink-0 bg-transparent border-white/10 text-slate-300 hover:bg-white/10 hover:text-white", triggerClassName)}
+            title={triggerLabel}
+          >
+            <Share2 className="h-4 w-4" />
+            <span className="sr-only">{triggerLabel}</span>
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            className={cn(
+              "inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90 shrink-0",
+              triggerClassName,
+            )}
+          >
+            <Share2 className="h-5 w-5" />
+            {triggerLabel}
+          </Button>
+        )}
       </PopoverTrigger>
       <PopoverContent
         align="center"
