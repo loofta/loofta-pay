@@ -1079,7 +1079,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   useEffect(() => () => stopPoll(), [stopPoll]);
 
   const pollStatus = useCallback((ticketId: string) => {
-    localStorage.setItem("megapot_ticket", ticketId);
+    localStorage.setItem("megapot_ticket", JSON.stringify({ ticketId, savedAt: Date.now() }));
     stopPoll();
     pollRef.current = setInterval(async () => {
       try {
@@ -1088,7 +1088,11 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!res.ok) return;
-        const t: TicketSummary = await res.json();
+        const t: TicketSummary | null = await res.json().catch(() => null);
+        // A missing/malformed row (e.g. a stale ticketId that no longer resolves for this user)
+        // must not crash the interval — that used to throw inside this try block and get silently
+        // swallowed by the catch below, wedging the "Hang tight" screen forever.
+        if (!t || !t.status) return;
         if (["active", "won"].includes(t.status)) {
           localStorage.removeItem("megapot_ticket");
           pollingStartedRef.current = false;
@@ -1104,14 +1108,29 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     }, 8_000);
   }, [getAccessToken, onPurchased, stopPoll]);
 
-  // Resume polling on mount if a ticket was in-flight on this device (localStorage persists across refreshes)
+  // Resume polling on mount if a ticket was in-flight on this device (localStorage persists across
+  // refreshes). Purchases confirm in "usually takes a minute" per the copy below — an hour is
+  // generous slack for backend hiccups while still guaranteeing a stale flag (e.g. left over from a
+  // crashed/dead poll) can't wedge this screen open indefinitely, mirroring the withdrawal fix.
+  const TICKET_STORAGE_TTL_MS = 60 * 60 * 1000;
   useEffect(() => {
-    const saved = localStorage.getItem("megapot_ticket");
-    if (saved && !pollingStartedRef.current) {
-      pollingStartedRef.current = true;
-      setStep("sent");
-      pollStatus(saved);
+    const raw = localStorage.getItem("megapot_ticket");
+    if (!raw || pollingStartedRef.current) return;
+    let ticketId: string | null = null;
+    try {
+      const parsed = JSON.parse(raw) as { ticketId?: string; savedAt?: number };
+      if (parsed?.ticketId && parsed.savedAt && Date.now() - parsed.savedAt <= TICKET_STORAGE_TTL_MS) {
+        ticketId = parsed.ticketId;
+      }
+    } catch {
+      // Legacy format from before this key stored JSON — treat the raw string as the ticket id but
+      // don't trust it indefinitely; it has no savedAt so we can't tell how old it is.
+      ticketId = raw;
     }
+    if (!ticketId) { localStorage.removeItem("megapot_ticket"); return; }
+    pollingStartedRef.current = true;
+    setStep("sent");
+    pollStatus(ticketId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1261,7 +1280,10 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   function startNewPayment() {
     stopPoll();
     const current = localStorage.getItem("megapot_ticket");
-    if (current) suppressedTicketIdRef.current = current;
+    if (current) {
+      try { suppressedTicketIdRef.current = (JSON.parse(current) as { ticketId?: string })?.ticketId ?? current; }
+      catch { suppressedTicketIdRef.current = current; }
+    }
     localStorage.removeItem("megapot_ticket");
     pollingStartedRef.current = false;
     setStep("idle");
@@ -1547,13 +1569,21 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   // first one and got permanently stuck. The backend is now idempotent against that too, but
   // resuming here avoids the confusing "stuck" UI in the first place.
   const WITHDRAWAL_STORAGE_KEY = "megapot_withdrawal";
+  // Transfers land in "a few minutes" per the copy below — an hour is generous slack for backend
+  // hiccups while still guaranteeing this can't resurrect a multi-day-old withdrawal and block the
+  // redeem screen for a ticket won after it.
+  const WITHDRAWAL_STORAGE_TTL_MS = 60 * 60 * 1000;
   useEffect(() => {
     if (previewDone) return;
     try {
       const saved = localStorage.getItem(WITHDRAWAL_STORAGE_KEY);
       if (!saved) return;
-      const parsed = JSON.parse(saved) as { withdrawalIds: string[]; doneAmount: number };
+      const parsed = JSON.parse(saved) as { withdrawalIds: string[]; doneAmount: number; savedAt?: number };
       if (!parsed?.withdrawalIds?.length) return;
+      if (!parsed.savedAt || Date.now() - parsed.savedAt > WITHDRAWAL_STORAGE_TTL_MS) {
+        localStorage.removeItem(WITHDRAWAL_STORAGE_KEY);
+        return;
+      }
       setWithdrawalIds(parsed.withdrawalIds);
       setDoneAmount(parsed.doneAmount ?? 0);
       setDone(true);
@@ -1657,7 +1687,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
       setDoneAmount(optimisticAmount);
       setDone(true); onWithdrawn();
       if (ids.length) {
-        localStorage.setItem(WITHDRAWAL_STORAGE_KEY, JSON.stringify({ withdrawalIds: ids, doneAmount: optimisticAmount }));
+        localStorage.setItem(WITHDRAWAL_STORAGE_KEY, JSON.stringify({ withdrawalIds: ids, doneAmount: optimisticAmount, savedAt: Date.now() }));
       }
     } catch (err: any) { setError(err.message ?? "Unknown error"); }
     finally { setLoading(false); }
@@ -1793,7 +1823,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
           {!arrived && !transferFailed && (
             <p className="text-sm text-slate-500">You can safely leave this page — it continues in the background.</p>
           )}
-          <button onClick={() => { setDone(false); setDoneAmount(0); setArrived(false); setTransferFailed(false); }}
+          <button onClick={() => { localStorage.removeItem(WITHDRAWAL_STORAGE_KEY); setDone(false); setDoneAmount(0); setArrived(false); setTransferFailed(false); }}
             className="text-base text-slate-400 hover:text-white underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 rounded">
             Back to redeem
           </button>

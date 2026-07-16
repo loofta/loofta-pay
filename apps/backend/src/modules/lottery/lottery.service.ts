@@ -1376,9 +1376,15 @@ export class LotteryService {
         .limit(20);
 
       for (const ticket of tickets ?? []) {
-        await this.tryStartBridge(ticket).catch(e =>
-          this.logger.warn(`processSent ${ticket.id}: ${e.message}`),
-        );
+        await this.tryStartBridge(ticket).catch(e => {
+          this.logger.warn(`processSent ${ticket.id}: ${e.message}`);
+          // A bridge-start failure is often the fee wallet running dry (SOL for gas or USDC for
+          // top-ups) — check right away instead of waiting for the next scheduled 30-min tick, so
+          // the alert email fires as soon as the problem starts rather than after tickets have
+          // already been silently stuck for up to half an hour. checkFeeWalletBalance reads the
+          // live balance and de-dupes on its own, so calling it here on every failure is safe.
+          this.checkFeeWalletBalance().catch(() => {});
+        });
       }
 
       // Closed-tab resilience: a user can sign the MagicBlock tx but the client never reaches
