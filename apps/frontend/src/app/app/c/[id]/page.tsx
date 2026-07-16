@@ -28,6 +28,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 import { trimDecimals, roundUpDecimals, formatUTCTimestamp } from "@/lib/format";
@@ -71,6 +72,7 @@ import {
   privatePaymentWaitingAfterSenderCopy,
 } from "@/lib/privatePaymentCopy";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
+import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
 function formatPerTransferStepName(step: string): string {
@@ -1483,16 +1485,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [showPayNowModal, setShowPayNowModal] = useState(false);
   const [payingWithLoofta, setPayingWithLoofta] = useState(false);
   const [payWithLooftaError, setPayWithLooftaError] = useState<string | null>(null);
-  const [payingWithWallet, setPayingWithWallet] = useState(false);
-  const [payWithWalletError, setPayWithWalletError] = useState<string | null>(null);
-  const [lastFailedPayMethod, setLastFailedPayMethod] = useState<"loofta" | "wallet" | null>(null);
   /** Actual fee confirmed by onTxBuilt — replaces the estimate once the tx is built. */
   const [pendingFeeUsdc, setPendingFeeUsdc] = useState<number | null>(null);
   /** True while silently pre-building tx to get real fee before modal opens. */
   const [preBuilding, setPreBuilding] = useState(false);
   /** When set, we're waiting for on-chain confirmation; show tracker UI in Pay Now modal. */
   const [confirmingTxSignature, setConfirmingTxSignature] = useState<string | null>(null);
-  const [confirmingTxSource, setConfirmingTxSource] = useState<"loofta" | "wallet" | null>(null);
+  const [confirmingTxSource, setConfirmingTxSource] = useState<"loofta" | null>(null);
   /** MagicBlock PER: signing popup + sequential broadcast (stay on page). */
   const [perTransferPhase, setPerTransferPhase] = useState<PerTransferProgress | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -1505,7 +1504,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
   /** Overlay / Escape / close must not dismiss Pay Now while Privy, Phantom, or confirmation is in flight. */
   const payNowModalDismissLocked =
-    confirmingTxSignature !== null || payingWithLoofta || payingWithWallet || perTransferPhase !== null;
+    confirmingTxSignature !== null || payingWithLoofta || perTransferPhase !== null;
 
   // fee_on_sender: true (default) = fees charged on top of amount; false = fees deducted from amount
   const isFeeOnSender = (claim as any)?.fee_on_sender !== false;
@@ -1513,6 +1512,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const requiresPrivate = claim ? (claim as any).is_private !== false : true;
   const privateRequired = requiresPrivate;
   const privatePayActive = requiresPrivate;
+  // Effective privacy for this payment: forced when the claim requires it, otherwise the payer's own choice via the switch.
+  const payingPrivately = requiresPrivate || isPrivateMode;
   const isCreatorView = !!user?.id && claim?.created_by === user.id;
 
   // True only once both queries have settled AND this render is actually showing (or would
@@ -1549,12 +1550,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const hidePaySectionForPendingClaimant =
     isPendingRecipientClaim && isRecipient && !isCreatorView;
 
-  // Auto-set private mode when private-only is required globally or by claim.
+  // Sync the toggle to the claim's declared privacy preference once it loads: forced on when
+  // the claim requires private payments, forced off when the creator explicitly asked for a
+  // non-private link. Waits for `claim` so the pre-load placeholder (requiresPrivate defaults
+  // true) doesn't get treated as the claim's real preference.
   useEffect(() => {
-    if (privateRequired) {
-      setIsPrivateMode(true);
-    }
-  }, [privateRequired]);
+    if (!claim) return;
+    setIsPrivateMode(privateRequired);
+  }, [claim, privateRequired]);
 
   // Refresh Loofta balance every time the Pay Now modal opens so the displayed amount is current.
   useEffect(() => {
@@ -2200,139 +2203,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const senderAddress = solanaPayment.senderAddress;
   const isPayerWalletReady = !authenticated || !senderAddress || !!solanaStandardWallets?.find((w) => w.address === senderAddress);
 
-  /** Phantom payment path. Pending recipients use burner ATA escrow; registered users use PER. */
-  async function payWithWallet(gasless = true) {
-    const effectiveRecipient = getEffectiveRecipient(claim);
-    const isRegisteredRecipient = !!(claim as { recipient_is_registered?: boolean }).recipient_is_registered;
-    if (!claim?.id || (!effectiveRecipient && !isRegisteredRecipient) || !claim?.amount) {
-      toast({ variant: "destructive", title: "Missing info", description: "Claim or recipient address is missing." });
-      return;
-    }
-    const baseAmount = parseFloat(claim.amount) || 0;
-    if (baseAmount <= 0) {
-      toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
-      return;
-    }
-    // Amount to send: claim amount only (no Privacy Cash gross-up for private mode)
-    const amountUSD = baseAmount;
-    const phantom = getPhantomProvider();
-    if (!phantom) {
-      toast({ variant: "destructive", title: "Phantom not found", description: "Install the Phantom extension to pay with wallet." });
-      return;
-    }
-    if (!usdcSolanaToken) {
-      toast({ variant: "destructive", title: "Token not loaded", description: "USDC on Solana is required. Please try again." });
-      return;
-    }
-    const isPending =
-      !!(claim as { recipient_pending_username?: boolean; recipient_pending_email?: boolean })
-        ?.recipient_pending_username ||
-      (claim as { recipient_pending_email?: boolean })?.recipient_pending_email;
-    setPayingWithWallet(true);
-    setPayWithWalletError(null);
-    setPerTransferPhase({ phase: "preparing" });
-    try {
-      let publicKey: PublicKey;
-      try {
-        const res = phantom.publicKey ? { publicKey: phantom.publicKey } : await phantom.connect();
-        publicKey = res.publicKey;
-      } catch {
-        throw new Error("Could not connect Phantom. Please try again.");
-      }
-      if (!publicKey) throw new Error("Could not get wallet address from Phantom.");
-
-      if (effectiveRecipient) {
-        const rawRecipient = effectiveRecipient.replace(/\s/g, "");
-        if (/^0x/i.test(rawRecipient)) {
-          throw new Error("This payment link is for a different network. Use Pay with Loofta.");
-        }
-        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(rawRecipient)) {
-          throw new Error("Recipient address is not a valid Solana address.");
-        }
-      }
-
-      const anchorWallet = phantomWalletToAnchorWallet({
-        publicKey,
-        signTransaction: async (tx: Transaction) => {
-          const signed = await phantom.signTransaction(tx as unknown as VersionedTransaction);
-          return signed as unknown as Transaction;
-        },
-      });
-      if (!user?.id) {
-        throw new Error("Log in to pay with your wallet.");
-      }
-      const isBurnerWallet = !!((claim as { claim_burner_address?: string }).claim_burner_address || "").trim();
-      const walletToken = await getAccessToken();
-      let walletFeeUsdc: number | null = null;
-      let walletFeeBreakdown: { looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number } | null = null;
-      const sig = await perTransfer(anchorWallet, {
-        privyUserId: user.id,
-        accessToken: walletToken,
-        claimId: claim.id,
-        onProgress: setPerTransferPhase,
-        isBurnerRecipient: isBurnerWallet,
-        gasless,
-        onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
-          walletFeeUsdc = feeAmountUsdc;
-          walletFeeBreakdown = feeBreakdown ?? null;
-          setPaidFeeUsdc(feeAmountUsdc);
-          setPendingFeeUsdc(feeAmountUsdc);
-          if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
-        },
-      });
-      setPerTransferPhase(null);
-      setConfirmingTxSignature(sig);
-      setConfirmingTxSource("wallet");
-
-      const connection = new Connection(getRpcForMode(networkMode), "confirmed");
-      const confirmed = await waitForConfirmation(connection, sig, 90_000);
-      if (!confirmed) {
-        throw new Error(
-          "Transaction did not confirm in time. Check Solscan for status."
-        );
-      }
-
-      console.info("[PayWithWallet] Updating claim status → SUCCESS, tx:", sig);
-      await updateClaimStatus(
-        claim.id,
-        "SUCCESS",
-        {
-          txHash: sig,
-          paidWith: "USDC (Phantom / Private)",
-          isPrivate: true,
-          paidWithToken: "USDC",
-          paidWithChain: "solana",
-          ...(walletFeeUsdc != null ? { feeAmountUsdc: walletFeeUsdc } : {}),
-          ...(walletFeeBreakdown ? { feeBreakdown: walletFeeBreakdown } : {}),
-        },
-        walletToken,
-      );
-      console.info("[PayWithWallet] Claim status updated to SUCCESS");
-      setStatus("SUCCESS");
-      useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
-      await claimQuery.refetch();
-      queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
-      queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
-      queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
-      setShowPayNowModal(false);
-      toast({
-        title: "Transfer submitted!",
-        description: `$${amountUSD.toFixed(2)} USDC sent privately. ${privatePaymentFundsAppearCopy()}`,
-      });
-    } catch (e: any) {
-      console.error("[PayWithWallet] Error:", e);
-      const message = e?.message || "Could not complete payment with wallet.";
-      setPayWithWalletError(message);
-      setLastFailedPayMethod("wallet");
-      toast({ variant: "destructive", title: "Payment failed", description: message });
-    } finally {
-      setPayingWithWallet(false);
-      setPerTransferPhase(null);
-      setConfirmingTxSignature(null);
-      setConfirmingTxSource(null);
-    }
-  }
-
   async function preBuildFee(): Promise<number | null> {
     const senderAddress = solanaPayment.senderAddress;
     if (!senderAddress || !claim?.id || !user?.id) return null;
@@ -2417,50 +2287,70 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       let looftaFeeUsdc: number | null = null;
       let looftaFeeBreakdown: { looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number } | null = null;
       const chain = getPrivySolanaChainForMode(networkMode);
-      const sig = await perTransfer(anchorWallet, {
-        privyUserId: user.id,
-        accessToken: looFtaToken,
-        claimId: claim.id,
-        onProgress: setPerTransferPhase,
-        isBurnerRecipient: isBurnerForLoofta,
-        gasless,
-        onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
-          looftaFeeUsdc = feeAmountUsdc;
-          looftaFeeBreakdown = feeBreakdown ?? null;
-          setPaidFeeUsdc(feeAmountUsdc);
-          setPendingFeeUsdc(feeAmountUsdc);
-          if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
-        },
-        privySignAndSend: async (txBytes) => {
-          // MagicBlock gasless=true: the validator is already the fee payer (pre-signed).
-          // Use sign-only so Privy doesn't run a gas-policy SOL-balance preflight check.
-          // We broadcast directly after signing.
-          console.info("[PrivySign] signing tx", {
-            walletAddress: wallet.address,
-            chain,
-            txBytesLen: txBytes.length,
-          });
-          let signedTxBytes: Uint8Array;
-          try {
-            const result = await privySolanaSignTransaction({
-              transaction: txBytes,
-              wallet,
+      const payPrivately = payingPrivately;
+      let sig: string;
+      if (payPrivately) {
+        sig = await perTransfer(anchorWallet, {
+          privyUserId: user.id,
+          accessToken: looFtaToken,
+          claimId: claim.id,
+          onProgress: setPerTransferPhase,
+          isBurnerRecipient: isBurnerForLoofta,
+          gasless,
+          onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
+            looftaFeeUsdc = feeAmountUsdc;
+            looftaFeeBreakdown = feeBreakdown ?? null;
+            setPaidFeeUsdc(feeAmountUsdc);
+            setPendingFeeUsdc(feeAmountUsdc);
+            if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
+          },
+          privySignAndSend: async (txBytes) => {
+            // MagicBlock gasless=true: the validator is already the fee payer (pre-signed).
+            // Use sign-only so Privy doesn't run a gas-policy SOL-balance preflight check.
+            // We broadcast directly after signing.
+            console.info("[PrivySign] signing tx", {
+              walletAddress: wallet.address,
               chain,
-              options: { uiOptions: { showWalletUIs: false } },
+              txBytesLen: txBytes.length,
             });
-            signedTxBytes = result.signedTransaction;
-          } catch (e: unknown) {
-            console.error("[PrivySign] sign error:", e);
-            throw e;
-          }
-          const sig = await connection.sendRawTransaction(signedTxBytes, {
-            skipPreflight: false,
-            preflightCommitment: "confirmed",
-          });
-          console.info("[PrivySign] broadcast | sig=", sig.slice(0, 12) + "…");
-          return sig;
-        },
-      });
+            let signedTxBytes: Uint8Array;
+            try {
+              const result = await privySolanaSignTransaction({
+                transaction: txBytes,
+                wallet,
+                chain,
+                options: { uiOptions: { showWalletUIs: false } },
+              });
+              signedTxBytes = result.signedTransaction;
+            } catch (e: unknown) {
+              console.error("[PrivySign] sign error:", e);
+              throw e;
+            }
+            const sig = await connection.sendRawTransaction(signedTxBytes, {
+              skipPreflight: false,
+              preflightCommitment: "confirmed",
+            });
+            console.info("[PrivySign] broadcast | sig=", sig.slice(0, 12) + "…");
+            return sig;
+          },
+        });
+      } else {
+        // Not private: plain SPL USDC transfer, gasless via our backend fee payer (same
+        // sponsorship model as the private path, just no MagicBlock PER session).
+        setPerTransferPhase({ phase: "awaiting_signature", walletTransactionCount: 1 });
+        sig = await sendUsdcWithBackendFeePayer({
+          senderAddress,
+          recipientAddress: effectiveRecipient,
+          amountUSDC: amountUSD,
+          connection,
+          wallet,
+          privyUserId: user.id,
+          signTransaction: privySolanaSignTransaction,
+          chain,
+          accessToken: looFtaToken,
+          network: networkMode === "mainnet" ? "mainnet" : "devnet",
+        });
+      }
       setPerTransferPhase(null);
       setConfirmingTxSignature(sig);
       setConfirmingTxSource("loofta");
@@ -2478,8 +2368,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         "SUCCESS",
         {
           txHash: sig,
-          paidWith: "USDC (Loofta / Private)",
-          isPrivate: true,
+          paidWith: payPrivately ? "USDC (Loofta / Private)" : "USDC (Loofta)",
+          isPrivate: payPrivately,
           paidWithToken: "USDC",
           paidWithChain: "solana",
           ...(looftaFeeUsdc != null ? { feeAmountUsdc: looftaFeeUsdc } : {}),
@@ -2505,13 +2395,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       setShowPayNowModal(false);
       toast({
         title: "Transfer submitted!",
-        description: `$${amountUSD.toFixed(2)} USDC sent privately. ${privatePaymentFundsAppearCopy()}`,
+        description: payPrivately
+          ? `$${amountUSD.toFixed(2)} USDC sent privately. ${privatePaymentFundsAppearCopy()}`
+          : `$${amountUSD.toFixed(2)} USDC sent.`,
       });
     } catch (e: any) {
       console.error("[PayWithLoofta] Error:", e);
-      const message = e?.message || "Could not send from Loofta balance. Try again or use wallet.";
+      const message = e?.message || "Could not send from Loofta balance. Try again.";
       setPayWithLooftaError(message);
-      setLastFailedPayMethod("loofta");
       toast({
         variant: "destructive",
         title: "Payment failed",
@@ -3910,12 +3801,26 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) && (!deposit ? (
               <>
                 {/* Private indicator — only when payment is private */}
-                {requiresPrivate && (
+                {requiresPrivate ? (
                   <div className="mt-5 flex gap-2 text-base md:text-sm text-gray-600">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0 mt-0.5">
                       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                     </svg>
                     <p className="min-w-0 leading-relaxed">{PRIVATE_PAYMENT_ALL_PRIVATE_LINE}</p>
+                  </div>
+                ) : (
+                  <div className="mt-5 flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <div className="min-w-0">
+                      <p className="text-base md:text-sm font-medium text-gray-900">
+                        {isPrivateMode ? "Private payment" : "This is not a private payment"}
+                      </p>
+                      <p className="text-base md:text-sm text-gray-500">
+                        {isPrivateMode
+                          ? "Amount and addresses stay hidden on-chain — you cover the added fee."
+                          : "Add privacy to hide the amount and addresses. You'd cover the extra fee."}
+                      </p>
+                    </div>
+                    <Switch checked={isPrivateMode} onCheckedChange={setIsPrivateMode} aria-label="Make this payment private" />
                   </div>
                 )}
 
@@ -3933,7 +3838,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
                     <div className="text-base md:text-sm font-medium font-sans text-gray-700 mb-2">Payment breakdown</div>
                     <div className="space-y-1.5 text-base md:text-sm">
-                      {!requiresPrivate ? (
+                      {!payingPrivately ? (
                         /* Non-private: no fees */
                         <>
                           <div className="flex items-center justify-between">
@@ -4005,15 +3910,16 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         onClick={async () => {
                           if (!authenticated) { login(); return; }
                           setPayWithLooftaError(null);
-                          setPayWithWalletError(null);
                           setConfirmingTxSignature(null);
                           setConfirmingTxSource(null);
                           setPerTransferPhase(null);
                           setPendingFeeUsdc(null);
                           setPreBuilding(true);
                           try {
-                            const fee = await preBuildFee();
-                            if (fee != null) setPendingFeeUsdc(fee);
+                            if (payingPrivately) {
+                              const fee = await preBuildFee();
+                              if (fee != null) setPendingFeeUsdc(fee);
+                            }
                           } finally {
                             setPreBuilding(false);
                           }
@@ -4546,7 +4452,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           setShowPayNowModal(open);
           if (open) {
             setPayWithLooftaError(null);
-            setPayWithWalletError(null);
             setConfirmingTxSignature(null);
             setConfirmingTxSource(null);
             setPerTransferPhase(null);
@@ -4568,7 +4473,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               : perTransferPhase
                 ? "Payment in progress"
                 : claim?.amount
-                  ? `Pay $${isFeeOnSender ? privatePayTotal.toFixed(2) : claimAmountUSD.toFixed(2)}`
+                  ? `Pay $${payingPrivately && isFeeOnSender ? privatePayTotal.toFixed(2) : claimAmountUSD.toFixed(2)}`
                   : "Pay now"}
           </DialogTitle>
           {confirmingTxSignature ? (
@@ -4587,7 +4492,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 </p>
                 {confirmingTxSource && (
                   <p className="pt-1 text-base md:text-sm text-gray-500">
-                    Paying with {confirmingTxSource === "loofta" ? "Loofta balance" : "your wallet"}
+                    Paying with Loofta balance
                   </p>
                 )}
               </DialogHeader>
@@ -4622,7 +4527,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 </a>
               </div>
             </>
-          ) : (payingWithLoofta || payingWithWallet) && perTransferPhase ? (
+          ) : payingWithLoofta && perTransferPhase ? (
             <>
               <DialogHeader className="flex flex-col items-center justify-center text-center space-y-0 pb-4 sm:text-center" aria-hidden>
                 <div className="mb-4 flex justify-center">
@@ -4646,11 +4551,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         {perTransferPhase.walletTransactionCount === 1 ? "" : "s"}
                       </span>{" "}
                       in one approval. Do not close this tab until you finish signing.
-                      {payingWithWallet && networkMode === "devnet" && (
-                        <span className="block mt-2 text-amber-600 font-medium">
-                          Phantom will show a simulation warning — tap "Confirm (unsafe)" to proceed.
-                        </span>
-                      )}
                     </>
                   )}
                   {perTransferPhase.phase === "broadcasting" && (
@@ -4673,12 +4573,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               <DialogHeader className="flex flex-col items-center justify-center text-center space-y-0 pb-5 sm:text-center" aria-hidden>
                 <div className="mb-3 text-4xl">💳</div>
                 <h2 className="text-xl font-semibold text-gray-900 text-center">
-                  Pay ${isFeeOnSender
+                  Pay ${payingPrivately && isFeeOnSender
                     ? (pendingFeeUsdc != null ? claimAmountUSD + pendingFeeUsdc : privatePayTotal).toFixed(2)
                     : claimAmountUSD.toFixed(2)}
                 </h2>
                 <p className="pt-0.5 text-base md:text-sm text-center text-muted-foreground">
-                  {isFeeOnSender ? (
+                  {!payingPrivately ? (
+                    <>no privacy fee</>
+                  ) : isFeeOnSender ? (
                     <>${claimAmountUSD.toFixed(2)} + {pendingFeeUsdc != null ? "" : "~"}$
                       {pendingFeeUsdc != null
                         ? pendingFeeUsdc.toFixed(3)
@@ -4691,7 +4593,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               </DialogHeader>
               <div className="space-y-3">
                 {(() => {
-                  const needed = isFeeOnSender
+                  const needed = payingPrivately && isFeeOnSender
                     ? (pendingFeeUsdc != null ? claimAmountUSD + pendingFeeUsdc : privatePayTotal)
                     : claimAmountUSD;
                   const hasEnough = solanaPayment.hasEnoughBalance(needed);

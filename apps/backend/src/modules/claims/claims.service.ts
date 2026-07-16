@@ -21,6 +21,7 @@ import { SendPaymentEncryptionService } from '../send-payment/encryption.service
 import { SolanaSponsorService } from './solana-sponsor.service';
 import { EmailService } from '../email/email.service';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
+import { isValidSolanaAddress } from '@/common/solana-address';
 import {
   MAGICBLOCK_GAS_SOL,
   MAGICBLOCK_GAS_USDC,
@@ -849,7 +850,7 @@ export class ClaimsService {
       );
     }
     const to = this.resolveEffectiveRecipientForPrivatePayment(row);
-    if (!to || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(to)) {
+    if (!to || !isValidSolanaAddress(to)) {
       throw new BadRequestException('Recipient is not available for this claim yet.');
     }
     const amountUsd = parseFloat(String(claim.amount || '0'));
@@ -866,7 +867,11 @@ export class ClaimsService {
     // fee_on_sender=true (Exact out): MagicBlock's own exactOut grosses up the sender's debit
     //   internally so the recipient receives exactly baseUnits — no manual gross-up on our side.
     // fee_on_sender=false (Exact in): send baseUnits directly, MB deducts its fee from the amount, recipient gets less.
-    const feeOnSender = (row as any).fee_on_sender !== false;
+    // Links explicitly created non-private always force fee-on-sender: the recipient declined
+    // private payments, so if the sender opts into a private transfer anyway, that's the
+    // sender's choice and the sender's cost — it can't come out of the recipient's amount.
+    const isNonPrivateLink = (row as any).is_private === false;
+    const feeOnSender = isNonPrivateLink || (row as any).fee_on_sender !== false;
     const cluster = requestCluster
       ?? (isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet');
     const effectiveMint = cluster === 'mainnet'

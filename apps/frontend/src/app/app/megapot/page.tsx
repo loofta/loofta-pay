@@ -66,7 +66,7 @@ const PRIZE_TIERS = [
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Tab = "buy" | "redeem" | "history";
-type BuyStep = "idle" | "signing" | "sent" | "bridging" | "buying" | "done" | "error";
+type BuyStep = "idle" | "signing" | "sent" | "confirmed" | "checking" | "bridging" | "buying" | "done" | "error";
 type TicketStatus = "pending_send" | "sent" | "bridging" | "buying" | "active" | "won" | "lost" | "failed" | "withdrawn";
 
 interface TicketNumbers { main: number[]; bonus: number }
@@ -644,6 +644,80 @@ function PurchaseProgressModal({ step, error, devReset }: { step: BuyStep; error
   );
 }
 
+/**
+ * Shown the moment the MagicBlock transfer is confirmed — the buyer's payment is in, so there's
+ * nothing left for them to wait on. Bridging + the actual Megapot purchase finish in the
+ * background (same as if they'd closed the tab, which the app already tolerates); unlike
+ * PurchaseProgressModal this is dismissible, so we don't hold anyone hostage on-screen for a step
+ * that no longer needs their attention.
+ *
+ * `uncertain` covers the case where the wallet's own confirmation watch timed out or our
+ * buy-confirm call failed to reach the backend — the signed transfer was still actually broadcast
+ * (see handlePrivateBuy), so this is not a real failure, just an unresolved one. We show a more
+ * honest "checking" message instead of "Good luck" until the background poll resolves it either
+ * way (the backend independently verifies the burner's on-chain balance, so it will catch a real
+ * success even if the buyer never sees a follow-up here).
+ */
+function PurchaseConfirmedModal({ numTickets, uncertain, onClose }: { numTickets: number; uncertain?: boolean; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-0 sm:p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-md bg-[#0f0f16] rounded-t-3xl sm:rounded-3xl border border-white/10 shadow-2xl px-6 pt-3 pb-6 flex flex-col items-center text-center gap-3"
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={uncertain ? "Checking payment status" : "Payment confirmed"}
+      >
+        <div className="flex items-center justify-end w-full">
+          <button onClick={onClose} aria-label="Close" className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        {uncertain ? (
+          <>
+            <div className="text-6xl select-none" aria-hidden="true">🔍</div>
+            <p className="text-sm font-bold text-amber-400 uppercase tracking-[0.2em]">Checking your payment</p>
+            <h2 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-white">
+              Didn't hear back in time
+            </h2>
+            <p className="text-slate-300 text-lg">
+              Your wallet didn't confirm quickly enough, but the transfer may already be on its way —
+              we're checking the real status now.
+            </p>
+            <p className="text-slate-400 text-sm">
+              If it landed, your {numTickets ? `${numTickets} ` : ""}ticket{numTickets === 1 ? "" : "s"} will show up under My Tickets in a few minutes. Safe to close this — we won't lose track of it.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="text-6xl select-none" aria-hidden="true">🎟️✨</div>
+            <p className="text-sm font-bold text-emerald-400 uppercase tracking-[0.2em]">Payment confirmed</p>
+            <h2 className="font-display text-4xl sm:text-5xl font-bold tracking-tight bg-gradient-to-b from-white via-slate-100 to-amber-200 bg-clip-text text-transparent">
+              Good luck! 🍀
+            </h2>
+            <p className="text-slate-300 text-lg">
+              You're in — {numTickets} ticket{numTickets === 1 ? "" : "s"} locked in for the next draw.
+            </p>
+            <p className="text-slate-400 text-sm">Numbers will show up under My Tickets in a few minutes. Feel free to close this.</p>
+          </>
+        )}
+        <button
+          onClick={onClose}
+          className={`mt-2 w-full h-12 rounded-xl text-white border-0 text-lg font-medium bg-gradient-to-r from-[#E5140A] to-[#C2790A]`}
+        >
+          Got it
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Draw success modal ────────────────────────────────────────────────────────
 
 function DrawSuccessModal({ tickets, drawTime, prizePool, onBuyMore, onClose }: {
@@ -1034,7 +1108,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   useEffect(() => {
     if (!IS_LOCALHOST || !previewParam) return;
     if (previewParam === "reset") { setStep("idle"); return; }
-    const validSteps: string[] = ["signing", "sent", "bridging", "buying", "done"];
+    const validSteps: string[] = ["signing", "sent", "confirmed", "checking", "bridging", "buying", "done"];
     if (validSteps.includes(previewParam)) {
       setLastTickets(PREVIEW_TICKETS);
       setLastNumTickets(PREVIEW_TICKETS.length);
@@ -1078,8 +1152,25 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   }, []);
   useEffect(() => () => stopPoll(), [stopPoll]);
 
-  const pollStatus = useCallback((ticketId: string) => {
-    localStorage.setItem("megapot_ticket", JSON.stringify({ ticketId, savedAt: Date.now() }));
+  // Tracks whichever ticket the most recent pollStatus() call is following — an older interval
+  // that's still ticking down (e.g. the user dismissed "confirmed" and started a second purchase
+  // before the first one's poll happened to fire) checks this before touching `step`, so a
+  // late-arriving update for an abandoned ticket can't clobber the screen for a newer purchase.
+  const activeTicketIdRef = useRef<string | null>(null);
+
+  const pollStatus = useCallback((ticketId: string, numTicketsForStorage?: number) => {
+    // Preserve whatever count is already on record if this particular call didn't pass one — every
+    // call to pollStatus rewrites this same key (e.g. resuming an in-flight ticket on mount), so an
+    // omitted count here must not clobber a real one a previous call already stored.
+    let numTicketsToStore = numTicketsForStorage;
+    if (numTicketsToStore === undefined) {
+      try {
+        const existing = JSON.parse(localStorage.getItem("megapot_ticket") ?? "null") as { ticketId?: string; numTickets?: number } | null;
+        if (existing?.ticketId === ticketId) numTicketsToStore = existing.numTickets;
+      } catch { /* ignore malformed existing entry */ }
+    }
+    localStorage.setItem("megapot_ticket", JSON.stringify({ ticketId, savedAt: Date.now(), numTickets: numTicketsToStore }));
+    activeTicketIdRef.current = ticketId;
     stopPoll();
     pollRef.current = setInterval(async () => {
       try {
@@ -1093,17 +1184,21 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
         // must not crash the interval — that used to throw inside this try block and get silently
         // swallowed by the catch below, wedging the "Hang tight" screen forever.
         if (!t || !t.status) return;
+        const isCurrent = activeTicketIdRef.current === ticketId;
+        // The buyer already saw "payment confirmed" the moment MagicBlock landed (see
+        // handlePrivateBuy) — bridging/buying finish in the background from here, so this poll
+        // only needs to catch the two terminal outcomes, not drive step-by-step UI anymore.
         if (["active", "won"].includes(t.status)) {
           localStorage.removeItem("megapot_ticket");
           pollingStartedRef.current = false;
-          stopPoll(); setStep("done"); onPurchased();
+          stopPoll(); onPurchased();
+          if (isCurrent) setStep("done");
         } else if (t.status === "failed") {
           localStorage.removeItem("megapot_ticket");
           pollingStartedRef.current = false;
-          stopPoll(); setStep("error"); setStepError("Purchase failed — contact support.");
-        } else if (t.status === "buying") setStep("buying");
-        else if (t.status === "bridging") setStep("bridging");
-        else if (t.status === "sent") setStep("sent");
+          stopPoll();
+          if (isCurrent) { setStep("error"); setStepError("Purchase failed — contact support."); }
+        }
       } catch { /* ignore */ }
     }, 8_000);
   }, [getAccessToken, onPurchased, stopPoll]);
@@ -1117,10 +1212,12 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     const raw = localStorage.getItem("megapot_ticket");
     if (!raw || pollingStartedRef.current) return;
     let ticketId: string | null = null;
+    let numTicketsForModal = 0;
     try {
-      const parsed = JSON.parse(raw) as { ticketId?: string; savedAt?: number };
+      const parsed = JSON.parse(raw) as { ticketId?: string; savedAt?: number; numTickets?: number };
       if (parsed?.ticketId && parsed.savedAt && Date.now() - parsed.savedAt <= TICKET_STORAGE_TTL_MS) {
         ticketId = parsed.ticketId;
+        numTicketsForModal = parsed.numTickets ?? 0;
       }
     } catch {
       // Legacy format from before this key stored JSON — treat the raw string as the ticket id but
@@ -1129,8 +1226,14 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     }
     if (!ticketId) { localStorage.removeItem("megapot_ticket"); return; }
     pollingStartedRef.current = true;
-    setStep("sent");
-    pollStatus(ticketId);
+    // Payment already landed on-chain by the time this key exists (it's written right after
+    // MagicBlock confirms) — resume quietly rather than re-showing a blocking "Hang tight" screen.
+    setLastNumTickets(numTicketsForModal);
+    setStep("confirmed");
+    // Must pass the count along — pollStatus rewrites this same localStorage entry on every call,
+    // so omitting it here would overwrite the real count with nothing on every resume, which is
+    // exactly what produced "0 tickets locked in" after leaving and coming back to this tab.
+    pollStatus(ticketId, numTicketsForModal);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1144,11 +1247,12 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     );
     if (!inFlight) return;
     pollingStartedRef.current = true;
-    const nextStep: BuyStep =
-      inFlight.status === "buying" ? "buying" :
-        inFlight.status === "bridging" ? "bridging" : "sent";
-    setStep(nextStep);
-    pollStatus(inFlight.id);
+    // Any of these statuses means the payment already landed — same as the localStorage-resume
+    // path above, show the dismissible confirmation rather than a blocking step-tracker.
+    setLastNumTickets(inFlight.numTickets);
+    setLastTickets(inFlight.ticketNumbers ?? []);
+    setStep("confirmed");
+    pollStatus(inFlight.id, inFlight.numTickets);
   }, [activeTickets, pollStatus]);
 
   async function handlePrivateBuy() {
@@ -1161,6 +1265,10 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     setStep("signing");
     setStepError("");
     setStepErrorIsBalance(false);
+    // Hoisted so the catch block can still reach the ticket + know whether the transfer was
+    // actually broadcast, even though both are normally set deep inside the try block.
+    let ticketId: string | undefined;
+    let paymentBroadcast = false;
     try {
       const token = await getAccessToken();
       const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
@@ -1170,29 +1278,66 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
         body: JSON.stringify({ numTickets, userSolanaAddress: embeddedWallet?.address }),
       });
       if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
-      const { ticketId, txBase64 } = await initRes.json();
+      const initData = await initRes.json();
+      const currentTicketId: string = initData.ticketId;
+      ticketId = currentTicketId;
+      const txBase64 = initData.txBase64;
 
       // Sign + send the MagicBlock private transfer — the only tx the buyer signs now. Loofta no
       // longer collects a separate upfront fee.
       const txBytes = Buffer.from(txBase64, "base64");
-      const { signature: sigBytes } = await signAndSendTransaction({
-        transaction: txBytes as unknown as Uint8Array,
-        wallet: embeddedWallet as any,
-      });
-      const signature = bs58.encode(sigBytes as Uint8Array);
+      let signature: string;
+      try {
+        const { signature: sigBytes } = await signAndSendTransaction({
+          transaction: txBytes as unknown as Uint8Array,
+          wallet: embeddedWallet as any,
+        });
+        signature = bs58.encode(sigBytes as Uint8Array);
+        paymentBroadcast = true;
+      } catch (signErr: any) {
+        // Privy's own confirmation watch is a 10s race against a websocket subscription that
+        // starts AFTER it has already broadcast the transaction — "confirmation timed out/failed"
+        // can only be thrown once that broadcast succeeded, so the transfer may well be in flight
+        // even though we never got a signature back. Flag it so the outer catch checks the real
+        // status instead of declaring a payment failure that may not have happened.
+        if (/confirmation (timed out|failed)/i.test(signErr?.message ?? "")) paymentBroadcast = true;
+        throw signErr;
+      }
       setStep("sent");
       await fetch("/api/lottery/buy-confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ ticketId, senderTxHash: signature }),
+        body: JSON.stringify({ ticketId: currentTicketId, senderTxHash: signature }),
       });
       suppressedTicketIdRef.current = null;
-      setStep("bridging");
+      // The buyer's payment is confirmed on-chain right here — bridging + the actual Megapot
+      // purchase happen in the background from this point, same as if they closed the tab (the
+      // backend already tolerates that). No reason to keep them staring at "Hang tight" for it.
+      setStep("confirmed");
       pollingStartedRef.current = true;
-      pollStatus(ticketId);
+      pollStatus(currentTicketId, numTickets);
+      // Dashboard data is otherwise only refetched once the ticket reaches active/won (inside
+      // pollStatus below) — without this, a buyer who checks History right after paying sees
+      // whatever was on the page before this purchase, with no sign their ticket even exists yet.
+      onPurchased();
     } catch (err: any) {
-      setStep("error");
       const message = err?.message ?? "Unknown error";
+      if (ticketId && paymentBroadcast) {
+        // The signed transfer really was sent (either signAndSendTransaction's own broadcast call
+        // succeeded before it lost the confirmation race, or buy-confirm just failed to reach us
+        // over a flaky connection after signing succeeded) — telling the buyer it failed here would
+        // be wrong. The backend independently checks the burner wallet's real on-chain balance
+        // every few seconds and will recover the ticket on its own if the funds landed, so just
+        // watch the real status instead of guessing.
+        suppressedTicketIdRef.current = null;
+        setStep("checking");
+        setStepError("");
+        pollingStartedRef.current = true;
+        pollStatus(ticketId, numTickets);
+        onPurchased();
+        return;
+      }
+      setStep("error");
       if (isInsufficientSolOrNoPriorCreditError(message)) {
         setStepErrorIsBalance(true);
         setStepError("");
@@ -1273,7 +1418,10 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     }
   }
 
-  const isRunning = !["idle", "done", "error"].includes(step);
+  // Only "signing" (waiting on the wallet) and "sent" (the brief buy-confirm POST right after)
+  // block the screen — everything past that point is background work the buyer already got a
+  // dismissible confirmation for (see PurchaseConfirmedModal / steps "confirmed" and "checking").
+  const isRunning = !["idle", "confirmed", "checking", "done", "error"].includes(step);
 
   function resetBuy() { setStep("idle"); setStepError(""); setStepErrorIsBalance(false); pollingStartedRef.current = false; }
 
@@ -1312,6 +1460,12 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           devReset={IS_LOCALHOST ? startNewPayment : undefined}
         />
       )}
+      {step === "confirmed" && (
+        <PurchaseConfirmedModal numTickets={lastNumTickets} onClose={resetBuy} />
+      )}
+      {step === "checking" && (
+        <PurchaseConfirmedModal numTickets={lastNumTickets} uncertain onClose={resetBuy} />
+      )}
       {step === "done" && (
         <DrawSuccessModal
           tickets={lastTickets}
@@ -1336,7 +1490,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           }}
         />
       )}
-      {!isRunning && step !== "done" && giftStep !== "done" && (
+      {!isRunning && step !== "confirmed" && step !== "checking" && step !== "done" && giftStep !== "done" && (
         <>
           <p className="text-slate-300 text-xl font-medium font-sans">Buy tickets privately</p>
 
@@ -3285,6 +3439,8 @@ function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRe
 const DEV_PREVIEW_LINKS = [
   { label: "Buy form", href: "/app/megapot?tab=buy&preview=reset" },
   { label: "Purchasing…", href: "/app/megapot?tab=buy&preview=buying" },
+  { label: "Payment confirmed", href: "/app/megapot?tab=buy&preview=confirmed" },
+  { label: "Checking payment (timeout)", href: "/app/megapot?tab=buy&preview=checking" },
   { label: "Good luck", href: "/app/megapot?tab=buy&preview=done" },
   { label: "Draw — Won", href: "/app/megapot?tab=buy&preview=won" },
   { label: "Draw — Lost", href: "/app/megapot?tab=buy&preview=lost" },

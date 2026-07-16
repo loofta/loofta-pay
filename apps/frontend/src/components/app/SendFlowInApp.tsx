@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import { Loader2 } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
 import { useRouter } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
@@ -238,13 +240,39 @@ export function SendFlowInApp({ recipientUsername, initialAmount = "", onBack, o
       <Button
         onClick={!authenticated ? () => login({ loginMethods: ["twitter", "email"], disableSignup: false }) : handleCreate}
         disabled={authenticated && (preparing || !amount || !Number.isFinite(amountNum) || amountNum <= 0 || belowMinAmount || insufficientBalance)}
-        className="w-full h-12 rounded-xl font-semibold bg-gradient-to-r text-lg from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+        className={`relative w-full h-12 rounded-xl font-semibold bg-gradient-to-r text-lg from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 overflow-hidden${preparing ? " disabled:opacity-100" : ""}`}
       >
-        {!authenticated
-          ? "Sign in to continue"
-          : preparing
-            ? "Creating…"
-            : onClaimCreated ? "Continue to pay" : "Create payment link"}
+        {!authenticated ? (
+          "Sign in to continue"
+        ) : preparing ? (
+          <span className="flex items-center justify-center gap-3">
+            <motion.span
+              animate={{ rotate: 360 }}
+              transition={{ duration: 0.9, repeat: Infinity, ease: "linear" }}
+              className="inline-flex"
+            >
+              <Loader2 className="h-6 w-6" />
+            </motion.span>
+            <motion.span
+              className="text-xl font-bold tracking-tight"
+              animate={{ opacity: [0.55, 1, 0.55] }}
+              transition={{ duration: 1.3, repeat: Infinity, ease: "easeInOut" }}
+            >
+              Creating your link…
+            </motion.span>
+            <motion.span
+              className="absolute inset-0 pointer-events-none"
+              style={{ background: "linear-gradient(110deg, transparent 20%, rgba(255,255,255,0.35) 50%, transparent 80%)" }}
+              initial={{ x: "-100%" }}
+              animate={{ x: "100%" }}
+              transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+            />
+          </span>
+        ) : onClaimCreated ? (
+          "Continue to pay"
+        ) : (
+          "Create payment link"
+        )}
       </Button>
     </div>
   );

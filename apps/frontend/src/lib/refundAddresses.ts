@@ -1,3 +1,19 @@
+import { PublicKey } from "@solana/web3.js";
+
+/**
+ * Validate a Solana address by actually decoding it (base58 -> exactly 32 bytes),
+ * not just checking length/charset — a regex accepts malformed strings that
+ * happen to be the right shape but fail to decode to a real public key.
+ */
+export function isValidSolanaAddress(address: string): boolean {
+  try {
+    new PublicKey(address.trim());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Validate that an address matches the expected format for the given chain/network.
  * Use for destination addresses and refund addresses across the app.
@@ -14,7 +30,7 @@ export function isValidAddressForChain(address: string, chain: string): boolean 
   ]);
   if (evmChains.has(ch)) return /^0x[a-fA-F0-9]{40}$/.test(raw);
 
-  if (ch === "solana" || ch === "sol") return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw);
+  if (ch === "solana" || ch === "sol") return isValidSolanaAddress(raw);
   if (ch === "near") return /^[a-z0-9_.-]+\.(near|testnet)$/i.test(raw) || /^[a-f0-9]{64}$/i.test(raw);
   if (ch === "btc" || ch === "bitcoin") return /^bc1[0-9a-zA-Z]{20,90}$/.test(raw) || /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(raw);
   if (ch === "ton") return /^[A-Za-z0-9_-]{48,66}$/.test(raw);

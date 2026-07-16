@@ -214,7 +214,14 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     if (burner) {
       claim.claim_burner_address = burner;
     }
-    delete claim.recipient_address; // Never expose real wallet address to either party
+    // Private links resolve the recipient server-side via the MagicBlock flow, so the real
+    // address never needs to reach the browser. Non-private links build the transfer
+    // client-side and genuinely need it — stripping it there left `recipient_address` (and
+    // `getEffectiveRecipient()`) empty, which fed an empty string into `new PublicKey(...)`
+    // downstream and threw "Invalid public key input" when paying.
+    if ((rawPayment as Record<string, unknown> | null)?.is_private !== false) {
+      delete claim.recipient_address;
+    }
   } else {
     delete claim.recipient_address;
   }

@@ -24,6 +24,7 @@ import {
 } from '@solana/spl-token';
 import { TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
+import { isValidSolanaAddress } from '@/common/solana-address';
 import { EmailService } from '../email/email.service';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const bs58Module = require('bs58');
@@ -136,7 +137,7 @@ export class SendPaymentService {
     }
     const row = link as { recipient_solana_pubkey?: string | null };
     const to = (row.recipient_solana_pubkey || '').trim();
-    if (!to || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(to)) {
+    if (!to || !isValidSolanaAddress(to)) {
       throw new BadRequestException('Recipient is not resolved for this link');
     }
     const amountUsd = parseFloat(String(link.amount || '0'));

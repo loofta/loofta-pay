@@ -11,9 +11,11 @@ import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import { findTokenBySelection } from "@/lib/tokens";
-import { maskLink } from "@/lib/format";
+import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { useClaimStore } from "@/store/claim";
-import { ArrowRight, Wallet } from "lucide-react";
+import { ArrowRight, Wallet, Check, Copy } from "lucide-react";
+import { motion } from "framer-motion";
+import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { useRouter, usePathname } from "next/navigation";
@@ -71,20 +73,6 @@ async function createClaim(
   return await r.json();
 }
 
-function CheckIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
-      <path
-        d="M20 6L9 17l-5-5"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 /** Named export for embedding in home page (accepts embedInApp). */
 export function ClaimPageContent(props: { embedInApp?: boolean }) {
   const { embedInApp } = props ?? {};
@@ -116,13 +104,18 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
   const [gifUrl, setGifUrl] = useState<string>("");
   const [amountMode, setAmountMode] = useState<"USD" | "TOKEN">("USD");
   const [showConfetti, setShowConfetti] = useState<boolean>(false);
+  const [createdLinkCopied, setCreatedLinkCopied] = useState(false);
   const { isPrivateMode, setIsPrivateMode, createdLink, setCreatedLink, clearLink, hydrated: claimHydrated } = useClaimStore();
   const [feeOnSender, setFeeOnSender] = useState(true);
+  /** Privacy can only be disabled for an external wallet — Loofta wallets always stay private. */
+  const [isPrivate, setIsPrivate] = useState(true);
   const [showMessage, setShowMessage] = useState(false);
   const [showPrivacyInfo, setShowPrivacyInfo] = useState<boolean>(false);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
   const [showAccessRequested, setShowAccessRequested] = useState<boolean>(false);
   const [pendingAccessRequest, setPendingAccessRequest] = useState<boolean>(false);
+  /** Step 1: amount + where to receive. Step 2: options (privacy, fees) + message. */
+  const [step, setStep] = useState<1 | 2>(1);
 
   // Handle email-only login for request access
   const handleRequestAccess = () => {
@@ -272,6 +265,16 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
     setAmountMode(next);
   }
 
+  /** Loofta wallets always stay private; external wallets follow the sender's choice. */
+  const effectivePrivate = receiveDestination === "loofta" ? true : isPrivate;
+  const recipientTrimmed = (recipient || "").trim();
+  const recipientAddressValid = !recipientTrimmed || isValidAddressForChain(recipientTrimmed, selectedTo?.chain || "solana");
+  const canContinueStep1 =
+    parsedAmount >= 5 &&
+    (receiveDestination === "loofta"
+      ? !!(solanaWallet?.address && defaultLooftaToken)
+      : !!selectedTo && !!recipientTrimmed && recipientAddressValid);
+
   if (isStandaloneClaim) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#18181F]">
@@ -286,6 +289,10 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
 
     if (!finalToSel || !amount || !finalRecipient) {
       toast({ variant: "destructive", title: "Missing fields", description: "Amount, destination token and recipient are required." });
+      return;
+    }
+    if (receiveDestination !== "loofta" && !isValidAddressForChain(finalRecipient, finalToSel.chain || "solana")) {
+      toast({ variant: "destructive", title: "Invalid address", description: `Enter a valid ${finalToSel.chain || "Solana"} address.` });
       return;
     }
     setCreating(true);
@@ -310,7 +317,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         direction: "from_recipient",
         description: combinedDescription,
         cluster: networkMode === "mainnet" ? "mainnet" : "devnet",
-        isPrivate: true,
+        isPrivate: effectivePrivate,
         feeOnSender,
       }, accessToken);
       setCreatedLink(res.link);
@@ -505,6 +512,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         clearLink();
                         setAmount("");
                         setRecipient("");
+                        setStep(1);
                       }}
                     >
                       Create New Payment
@@ -581,91 +589,90 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                 {showConfetti ? <ConfettiCanvas /> : null}
                 {creating ? (
                   <div className="flex flex-col items-center justify-center py-16">
-                    <div className="relative h-12 w-12">
+                    <div className="relative h-16 w-16">
                       <span className="absolute inset-0 rounded-full bg-gradient-to-r from-yellow-500 to-red-600 opacity-30 animate-ping" />
                       <span className="absolute inset-0 rounded-full border-2 border-gray-300" />
-                      <span className="absolute inset-1 rounded-full border-t-2 border-yellow-500 animate-spin" />
+                      <motion.span
+                        className="absolute inset-1 rounded-full border-t-2 border-yellow-500"
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 0.9, repeat: Infinity, ease: "linear" }}
+                      />
                     </div>
-                    <div className="mt-4 text-base text-gray-700">Creating your payment link…</div>
+                    <motion.div
+                      className="mt-5 text-xl md:text-2xl font-semibold text-gray-900"
+                      animate={{ opacity: [0.55, 1, 0.55] }}
+                      transition={{ duration: 1.3, repeat: Infinity, ease: "easeInOut" }}
+                    >
+                      Creating your payment link…
+                    </motion.div>
                   </div>
                 ) : createdLink ? (
                   <div>
-                    <div className="flex justify-center">
-                      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-orange-500/15 text-orange-500 border border-orange-400/30 shadow">
-                        <CheckIcon className="h-12 w-12" />
-                      </div>
+                    {/* Hero — mirrors the payment-received celebration on /c/[id] */}
+                    <div className="text-center py-4 space-y-3">
+                      <motion.div
+                        initial={{ scale: 0.5, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ type: "spring", stiffness: 260, damping: 18, delay: 0.05 }}
+                        className="mb-1 text-5xl md:text-6xl select-none"
+                      >
+                        🎉
+                      </motion.div>
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.15 }}
+                        className="text-3xl md:text-4xl font-sans font-semibold text-gray-900"
+                      >
+                        Your payment link is ready
+                      </motion.div>
+                      <motion.p
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.25 }}
+                        className="text-lg md:text-xl text-gray-500"
+                      >
+                        Share it and get paid in any token, on any chain.
+                      </motion.p>
                     </div>
-                    <div className="mt-4 text-center">
-                      <h2 className="text-2xl md:text-3xl text-gray-900 font-semibold">Congrats! Your payment link is ready</h2>
-                      <p className="mt-1 text-lg md:text-xl text-gray-700 font-medium font-sans">Share this link with your recipient.</p>
-                    </div>
-                    <div className="mt-5">
-                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-base md:text-sm flex items-center justify-between gap-3">
-                        <a className="text-gray-900 underline decoration-gray-400 hover:decoration-gray-700 break-all" href={createdLink} target="_blank" rel="noreferrer">
-                          {maskLink(createdLink)}
-                        </a>
-                        <button
+                    <div className="mt-5 flex gap-2">
+                      <div className="flex gap-2 flex-1">
+                        <Input
+                          readOnly
+                          value={createdLink}
+                          className="font-mono text-sm flex-1 bg-gray-50"
+                        />
+                        <Button
                           type="button"
-                          className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                          variant="outline"
+                          size="icon"
+                          className="shrink-0 !text-slate-900 border-gray-400 hover:bg-gray-100"
                           onClick={async () => {
                             try {
                               await navigator.clipboard.writeText(createdLink);
+                              setCreatedLinkCopied(true);
                               toast({ title: "Copied", description: "Payment link copied to clipboard." });
+                              setTimeout(() => setCreatedLinkCopied(false), 2000);
                             } catch {
                               toast({ variant: "destructive", title: "Copy failed", description: "Could not copy link. Please try again." });
                             }
                           }}
                         >
-                          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" className="text-gray-600">
-                            <path fill="currentColor" d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1Zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H10V7h9v14Z" />
-                          </svg>
-                          Copy
-                        </button>
+                          {createdLinkCopied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                        </Button>
                       </div>
-                    </div>
-                    <div className="mt-6 flex flex-wrap items-center gap-3">
-                      {(() => {
-                        const url = encodeURIComponent(createdLink);
-                        const text = encodeURIComponent("Pay me securely on Loofta with any token using this link:");
-                        return (
-                          <>
-                            <a
-                              href={`https://t.me/share/url?url=${url}&text=${text}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-base md:text-sm text-gray-700 hover:bg-gray-50"
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" className="text-sky-500"><path fill="currentColor" d="M9.04 15.49 8.9 18.6a.9.9 0 0 0 1.42.77l2.05-1.39 3.3 2.42c.61.45 1.48.12 1.67-.62l3.02-11.54c.2-.76-.52-1.44-1.25-1.16l-16 6.2c-.81.31-.78 1.49.04 1.75l4.9 1.55 9.04-6.48-9.16 7.39Z" /></svg>
-                              Share
-                            </a>
-                            <a
-                              href={`https://wa.me/?text=${text}%20${url}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-base md:text-sm text-gray-700 hover:bg-gray-50"
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" className="text-green-500"><path fill="currentColor" d="M20.52 3.48A11.82 11.82 0 0 0 12.07 0C5.52.03.2 5.34.22 11.88A11.77 11.77 0 0 0 2.5 18.5L1 24l5.63-1.48a11.86 11.86 0 0 0 5.44 1.39h.01c6.55-.03 11.86-5.34 11.89-11.89a11.8 11.8 0 0 0-3.45-8.54ZM12.08 21.3h-.01c-1.75 0-3.47-.47-4.98-1.36l-.36-.21-3.34.88.89-3.26-.23-.34a9.18 9.18 0 0 1-1.41-4.94c-.02-5.08 4.12-9.23 9.21-9.25h.01c2.46 0 4.77.96 6.51 2.7a9.14 9.14 0 0 1 2.7 6.53c-.02 5.08-4.16 9.25-9.26 9.25Zm5.04-6.9c-.27-.14-1.6-.79-1.85-.88-.25-.09-.43-.14-.62.14-.18.27-.71.88-.87 1.07-.16.18-.32.2-.59.07-.27-.14-1.12-.41-2.13-1.31-.79-.7-1.32-1.56-1.47-1.82-.15-.27-.02-.41.12-.55.12-.12.27-.32.41-.48.14-.16.18-.27.27-.45.09-.18.05-.34-.02-.48-.07-.14-.62-1.5-.85-2.06-.22-.53-.45-.46-.62-.47l-.53-.01c-.18 0-.48.07-.73.34-.25.27-.97.95-.97 2.31 0 1.36.99 2.67 1.13 2.85.14.18 1.95 2.98 4.73 4.18.66.28 1.18.45 1.58.58.66.21 1.26.18 1.73.11.53-.08 1.6-.65 1.83-1.27.23-.62.23-1.15.16-1.26-.07-.11-.25-.18-.52-.31Z" /></svg>
-                              WhatsApp
-                            </a>
-                            <a
-                              href={`mailto:?subject=${encodeURIComponent("Payment request")}&body=${text}%0A%0A${url}`}
-                              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-base md:text-sm text-gray-700 hover:bg-gray-50"
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
-                                <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                                <path d="M4 7l8 6 8-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                              Email
-                            </a>
-                          </>
-                        );
-                      })()}
+                      <ShareLinkMenu
+                        url={createdLink}
+                        title="Payment request"
+                        text="Pay me securely on Loofta with any token using this link:"
+                        triggerClassName="px-5 py-2"
+                      />
                     </div>
                     <div className="mt-6">
                       <Button
                         variant="outline"
                         className="w-full rounded-xl border-2 border-gray-200 bg-white text-gray-700 hover:bg-gray-50 font-medium"
-                        onClick={() => clearLink()}
+                        onClick={() => { clearLink(); setStep(1); }}
                       >
                         Create a new link
                       </Button>
@@ -685,7 +692,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                       </div>
                     )}
                   </div>
-                ) : (
+                ) : step === 1 ? (
                   <div className="space-y-5">
                     {/* Amount Input - with digit sizing */}
                     <div>
@@ -724,28 +731,28 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         <div className="flex flex-col gap-3">
                           <button
                             type="button"
-                            onClick={() => setReceiveDestination("loofta")}
-                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "loofta" ? "border-orange-400/50 bg-orange-500/20" : "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20"}`}
+                            onClick={() => { setReceiveDestination("loofta"); setIsPrivate(true); }}
+                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "loofta" ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/5 hover:bg-white/[0.06] hover:border-white/20"}`}
                           >
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 p-1.5 ${receiveDestination === "loofta" ? "bg-orange-500/30 border border-orange-400/40" : "bg-white/10 border border-white/20"}`}>
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 p-1.5 ${receiveDestination === "loofta" ? "bg-[#FF7A2A]/20 border border-[#FF7A2A]/40" : "bg-white/10 border border-white/20"}`}>
                               <LooftaIcon className="w-full h-full object-contain" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <span className="font-semibold text-gray-900 block">Receive on Loofta</span>
-                              <span className="text-base md:text-sm text-gray-500">
+                              <span className="text-base text-gray-500">
                                 {solanaWallet?.address && defaultLooftaToken
                                   ? `Your Loofta wallet · ${defaultLooftaToken.symbol}`
-                                  : "Your Loofta wallet · USDC"}
+                                  : "Your Loofta wallet"}
                               </span>
                             </div>
                             {receiveDestination === "loofta" && solanaWallet?.address && defaultLooftaToken && (
-                              <span className="text-sm font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Ready</span>
+                              <span className="text-base font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Ready</span>
                             )}
                           </button>
 
                           <div className="flex items-center gap-3">
                             <div className="flex-1 h-px bg-white/10" />
-                            <span className="text-base md:text-sm font-medium text-gray-400">or</span>
+                            <span className="text-base font-medium text-gray-400">or</span>
                             <div className="flex-1 h-px bg-white/10" />
                           </div>
 
@@ -757,17 +764,17 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                               const usdcSol = tokens.find(t => t.symbol?.toUpperCase() === 'USDC' && ['solana', 'sol'].includes(t.chain?.toLowerCase() ?? ''));
                               setToSel(usdcSol ? { symbol: usdcSol.symbol, chain: usdcSol.chain } : undefined);
                             }}
-                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "other" ? "border-orange-400/50 bg-orange-500/20" : "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20"}`}
+                            className={`flex items-center gap-3 w-full p-4 rounded-xl border transition-all text-left ${receiveDestination === "other" ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/5 hover:bg-white/[0.06] hover:border-white/20"}`}
                           >
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${receiveDestination === "other" ? "bg-orange-500/30 border border-orange-400/40" : "bg-white/10 border border-white/20"}`}>
-                              <Wallet className={`w-5 h-5 ${receiveDestination === "other" ? "text-orange-200" : "text-gray-700"}`} />
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${receiveDestination === "other" ? "bg-[#FF7A2A]/20 border border-[#FF7A2A]/40" : "bg-white/10 border border-white/20"}`}>
+                              <Wallet className={`w-5 h-5 ${receiveDestination === "other" ? "text-[#FF7A2A]" : "text-gray-700"}`} />
                             </div>
                             <div className="flex-1 min-w-0">
                               <span className="font-semibold text-gray-900 block">Use another wallet</span>
-                              <span className="text-base md:text-sm text-gray-500">{crossChainEnabled ? "Different token or network" : "USDC on Solana"}</span>
+                              <span className="text-base text-gray-500">{crossChainEnabled ? "Different token or network" : "USDC on Solana"}</span>
                             </div>
                             {receiveDestination === "other" ? (
-                              <span className="text-sm font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Selected</span>
+                              <span className="text-base font-medium text-emerald-300 bg-emerald-500/20 px-2 py-1 rounded-full shrink-0 border border-emerald-400/30">Selected</span>
                             ) : (
                               <ArrowRight className="w-5 h-5 text-gray-400 shrink-0" />
                             )}
@@ -819,6 +826,11 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                                   } catch { }
                                 }}
                               />
+                              {recipientTrimmed && !recipientAddressValid && (
+                                <p className="mt-1.5 text-base md:text-sm text-red-400">
+                                  Enter a valid {selectedTo?.chain || "Solana"} address.
+                                </p>
+                              )}
                             </div>
                           </>
                         )}
@@ -869,38 +881,97 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                               } catch { }
                             }}
                           />
+                          {recipientTrimmed && !recipientAddressValid && (
+                            <p className="mt-1.5 text-base md:text-sm text-red-400">
+                              Enter a valid {selectedTo?.chain || "Solana"} address.
+                            </p>
+                          )}
                         </div>
                       </>
                     )}
 
-                    {/* Options: exact out / exact in */}
-                    <div className="space-y-3 pt-1">
-                      <div>
-                        <p className="text-gray-600 mb-2 text-sm">Fee direction</p>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setFeeOnSender(true)}
-                            className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all ${feeOnSender ? 'border-orange-400/50 bg-orange-500/20 text-white' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'}`}
-                          >
-                            Fees on sender
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setFeeOnSender(false)}
-                            className={`flex-1 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all ${!feeOnSender ? 'border-orange-400/50 bg-orange-500/20 text-white' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'}`}
-                          >
-                            Fees on me
-                          </button>
+                    <GradientActionButton
+                      onClick={() => setStep(2)}
+                      disabled={!canContinueStep1}
+                    >
+                      Continue
+                    </GradientActionButton>
+                  </div>
+                ) : (
+                  <div className="space-y-5">
+                    {/* Step 2 header: amount + destination summary, editable via Change */}
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-slate-300 text-xl font-sans font-medium">
+                        ${amount || "0"} · {receiveDestination === "loofta" ? "Receive on Loofta" : (selectedTo ? `${selectedTo.symbol} on ${selectedTo.chain}` : "another wallet")}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setStep(1)}
+                        className="text-slate-400 hover:text-white text-base font-medium"
+                      >
+                        Change
+                      </button>
+                    </div>
+
+                    {/* Options */}
+                    <div className="space-y-4 pt-1">
+                      {/* Privacy: only optional for an external wallet — Loofta wallets always stay private */}
+                      {receiveDestination === "other" && (
+                        <div>
+                          <p className="text-gray-600 mb-2 text-base">Privacy</p>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setIsPrivate(true)}
+                              className={`flex-1 py-2.5 px-3 rounded-xl border text-base font-medium transition-all ${isPrivate ? 'border-[#FF7A2A]/40 bg-[#FF7A2A]/10 text-[#FF7A2A]' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/[0.06]'}`}
+                            >
+                              Private
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setIsPrivate(false)}
+                              className={`flex-1 py-2.5 px-3 rounded-xl border text-base font-medium transition-all ${!isPrivate ? 'border-[#FF7A2A]/40 bg-[#FF7A2A]/10 text-[#FF7A2A]' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/[0.06]'}`}
+                            >
+                              Not private
+                            </button>
+                          </div>
+                          <p className="mt-1.5 text-slate-400 text-base">
+                            {isPrivate
+                              ? "Amount and addresses stay hidden on-chain."
+                              : "Payment will be public on-chain, no privacy fee. Whoever pays can still switch it to private and cover the added fee themselves."}
+                          </p>
                         </div>
-                        <p className="mt-1.5 text-slate-500 text-sm">
-                          {feeOnSender
-                            ? "Sender pays fees on top — you receive the full amount"
-                            : parsedAmount > 0
-                              ? `You receive ~$${Math.max(0, parsedAmount - Math.ceil((parsedAmount * 0.001 + 0.20) * 100) / 100).toFixed(2)} after fees`
-                              : "Fees deducted from what you receive"}
-                        </p>
-                      </div>
+                      )}
+
+                      {/* Fee direction: only shown when this link is (or defaults to) private — no privacy fee otherwise */}
+                      {effectivePrivate && (
+                        <div>
+                          <p className="text-gray-600 mb-2 text-base">Fee direction</p>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setFeeOnSender(true)}
+                              className={`flex-1 py-2.5 px-3 rounded-xl border text-base font-medium transition-all ${feeOnSender ? 'border-[#FF7A2A]/40 bg-[#FF7A2A]/10 text-[#FF7A2A]' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/[0.06]'}`}
+                            >
+                              Fees on sender
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFeeOnSender(false)}
+                              className={`flex-1 py-2.5 px-3 rounded-xl border text-base font-medium transition-all ${!feeOnSender ? 'border-[#FF7A2A]/40 bg-[#FF7A2A]/10 text-[#FF7A2A]' : 'border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/[0.06]'}`}
+                            >
+                              Fees on me
+                            </button>
+                          </div>
+                          <p className="mt-1.5 text-slate-400 text-base">
+                            {feeOnSender
+                              ? "Sender pays fees on top — you receive the full amount"
+                              : parsedAmount > 0
+                                ? `You receive ~$${Math.max(0, parsedAmount - Math.ceil((parsedAmount * 0.001 + 0.20) * 100) / 100).toFixed(2)} after fees`
+                                : "Fees deducted from what you receive"}
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     {/* Message + GIF — collapsible */}
@@ -909,7 +980,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                         <button
                           type="button"
                           onClick={() => setShowMessage(true)}
-                          className="flex items-center gap-2 text-slate-400 hover:text-white text-sm font-medium transition-colors py-1"
+                          className="flex items-center gap-2 text-slate-400 hover:text-white text-base font-medium transition-colors py-1"
                         >
                           <span className="text-base leading-none font-semibold">+</span>
                           Add a message or GIF
@@ -917,11 +988,11 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                       ) : (
                         <div>
                           <div className="flex items-center justify-between mb-1.5">
-                            <label className="text-gray-600 text-sm">Message <span className="text-gray-400">(optional)</span></label>
+                            <label className="text-gray-600 text-base">Message <span className="text-gray-400">(optional)</span></label>
                             <button
                               type="button"
                               onClick={() => { setShowMessage(false); setMessage(""); setGifUrl(""); }}
-                              className="text-slate-500 hover:text-slate-300 text-sm transition-colors"
+                              className="text-slate-400 hover:text-slate-200 text-base transition-colors"
                             >
                               Remove
                             </button>
@@ -943,14 +1014,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                     {authenticated && !showAccessRequested ? (
                       <GradientActionButton
                         onClick={() => onCreate()}
-                        disabled={
-                          creating ||
-                          parsedAmount < 5 ||
-                          !(parsedAmount > 0 &&
-                            (receiveDestination === "loofta"
-                              ? !!(solanaWallet?.address && defaultLooftaToken)
-                              : !!selectedTo && !!(recipient || "").trim()))
-                        }
+                        disabled={creating || !canContinueStep1}
                         loading={creating}
                         loadingText="Creating…"
                       >

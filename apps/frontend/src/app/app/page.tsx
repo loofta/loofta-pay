@@ -525,7 +525,7 @@ export default function Home() {
                     </p>
                     {authenticated && username ? (
                       <>
-                        <p className="text-slate-300 text-base sm:text-sm">
+                        <p className="text-slate-300 text-lg sm:text-base">
                           {t('personalLinkDescription')}
                         </p>
                         <div className="flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5">
@@ -576,7 +576,7 @@ export default function Home() {
                       <PlusIcon className={"text-orange-400 w-4 h-4"} />
                       {t('createPaymentLink')}
                     </p>
-                    <p className="text-slate-300 text-base sm:text-sm">
+                    <p className="text-slate-300 text-lg sm:text-base">
                       {t('createLinkDescription')}
                     </p>
                     <Button

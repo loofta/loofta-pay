@@ -4,7 +4,8 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { isNonMainnetCluster } from "@/lib/solanaCluster";
 import { generateShortId } from "@/lib/shortId";
-import { getVerifiedUserId } from "@/lib/serverAuth";
+import { getVerifiedUserId, isWalletAddressRegisteredOnLoofta } from "@/lib/serverAuth";
+import { isValidAddressForChain } from "@/lib/refundAddresses";
 
 export async function POST(request: Request) {
   const uid = await getVerifiedUserId(request);
@@ -16,6 +17,21 @@ export async function POST(request: Request) {
     if (!amount || !recipient) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
+    // recipient_address is always stored as a Solana address (to_chain is hardcoded below) —
+    // reject malformed input here rather than only relying on the client-side check.
+    if (!isValidAddressForChain(String(recipient), "solana")) {
+      return NextResponse.json({ error: "Recipient must be a valid Solana wallet address." }, { status: 400 });
+    }
+
+    // Privacy can only be disabled for a genuinely external wallet — never for a wallet
+    // already registered on Loofta, even if the request claims it's "external".
+    if (isPrivate === false && (await isWalletAddressRegisteredOnLoofta(String(recipient).trim()))) {
+      return NextResponse.json(
+        { error: "This wallet is registered on Loofta. Private payments are required for Loofta wallets — only external wallets can opt out of privacy." },
+        { status: 400 },
+      );
+    }
+
     const supabase = getSupabaseAdmin();
     const isFromRecipient = direction === 'from_recipient';
     const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isNonMainnetCluster();
@@ -36,7 +52,10 @@ export async function POST(request: Request) {
         is_devnet: isDevnet,
         description: description ? String(description).slice(0, 1000) : null,
         short_id: shortId,
-        fee_on_sender: feeOnSender !== false,
+        // Non-private links always bill the sender: the recipient declined private payments,
+        // so any privacy fee incurred if the sender opts into one anyway is the sender's cost,
+        // never deducted from the recipient's amount.
+        fee_on_sender: isPrivate === false ? true : feeOnSender !== false,
         is_private: isPrivate !== false,
       })
       .select("id")

@@ -1523,7 +1523,7 @@ export function BalanceModal({
   useEffect(() => {
     if (!isUSDCOnSolana) { setAddressRiskStatus("idle"); return; }
     const raw = withdrawAddress.trim();
-    if (!raw || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw)) { setAddressRiskStatus("idle"); return; }
+    if (!raw || !isValidAddressForChain(raw, "solana")) { setAddressRiskStatus("idle"); return; }
     setAddressRiskStatus("checking");
     const t = setTimeout(async () => {
       const { safe } = await checkAddressRisk(raw);
@@ -2007,7 +2007,7 @@ export function BalanceModal({
     }
 
     if (isUSDCOnSolana) {
-      if (!rawAddress || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(rawAddress)) {
+      if (!rawAddress || !isValidAddressForChain(rawAddress, "solana")) {
         toast({ variant: "destructive", title: "Invalid address", description: "Enter a valid Solana wallet address." });
         return;
       }
@@ -2050,7 +2050,7 @@ export function BalanceModal({
         memo = depositInfo.memo ?? null;
         depositAddr = recipientAddress;
 
-        if (!recipientAddress || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(recipientAddress)) {
+        if (!recipientAddress || !isValidAddressForChain(recipientAddress, "solana")) {
           throw new Error("Invalid deposit address from Near Intents. Please try again.");
         }
       } else {
