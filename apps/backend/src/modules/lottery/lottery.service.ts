@@ -16,7 +16,7 @@ import type { Address } from 'viem';
 import { SupabaseService } from '@/database/supabase.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
-import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI, PrizeTiersSnapshot } from './megapot.service';
+import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI, PrizeTiersSnapshot, matchTicketTier } from './megapot.service';
 import { RhinestoneService } from './rhinestone.service';
 import { LifiService } from './lifi.service';
 import { RelayService } from './relay.service';
@@ -2319,11 +2319,25 @@ export class LotteryService {
    * first pass only, and let the Data API override it whenever it reports a HIGHER total — never
    * lower, since the metadata path is still needed to know exactly which NFTs to hand claimWinnings
    * for.
+   *
+   * Second real incident (2026-07-17): a round where metadata AND the Data API both reported no
+   * win for tickets that had plainly matched the drawn numbers (visible in the UI's own per-ticket
+   * number comparison) — the Data API can lag indexing a round by longer than either settlement
+   * pass waits. When both sources agree on zero, that's exactly the case they've both already been
+   * caught wrong in, so don't take it at face value: simulate claimWinnings directly against the
+   * contract (isTokenClaimable — the same ground-truth check resolveWinningNftIds already trusts
+   * for withdrawals) and price any token it confirms as claimable using that exact round's real
+   * settled prize_tiers payout for the tier its own numbers match. This can only ever raise the
+   * result off of an already-zero reading, never override a nonzero metadata/API figure.
    */
   private async resolveTicketWin(
     companionAddress: string,
     roundId: string | null,
     nftResults: { tokenId: string; tier: number | null; winAmountUsdc: number; drawingId: string | null }[],
+    opts?: {
+      ticketNumbers?: { main: number[]; bonus: number }[] | null;
+      winningNumbers?: { main: number[]; bonus: number } | null;
+    },
   ): Promise<{ totalWinUsdc: number; tier: number | null }> {
     const nftGross = nftResults.reduce((sum, r) => sum + r.winAmountUsdc, 0);
     const onChainDrawingId = nftResults.find(r => r.drawingId)?.drawingId;
@@ -2341,7 +2355,58 @@ export class LotteryService {
       }
       return { totalWinUsdc: apiWin.winAmountUsdc, tier: apiWin.tier ?? nftTier };
     }
+
+    if (nftNet <= 0 && !apiWin && roundId && opts?.winningNumbers && opts.ticketNumbers?.length) {
+      const groundTruth = await this.resolveTicketWinFromChain(
+        companionAddress as Address,
+        roundId,
+        nftResults,
+        opts.ticketNumbers,
+        opts.winningNumbers,
+      );
+      if (groundTruth.totalWinUsdc > 0) return groundTruth;
+    }
+
     return { totalWinUsdc: nftNet, tier: nftTier };
+  }
+
+  /**
+   * Ground-truth fallback used only when metadata AND the Data API both read zero (see
+   * resolveTicketWin's second incident note). nftResults, opts.ticketNumbers, and
+   * ticket.ticket_nft_ids are all built from the same ordered NFT list (getTicketNumbersFromNft /
+   * checkTicketResultsFromNft iterate `tokenIds` in place), so index i in nftResults is the same
+   * physical ticket as index i in ticketNumbers.
+   */
+  private async resolveTicketWinFromChain(
+    companionAddress: Address,
+    roundId: string,
+    nftResults: { tokenId: string; tier: number | null; winAmountUsdc: number; drawingId: string | null }[],
+    ticketNumbers: { main: number[]; bonus: number }[],
+    winningNumbers: { main: number[]; bonus: number },
+  ): Promise<{ totalWinUsdc: number; tier: number | null }> {
+    const prizeTiers = await this.megapot.getPrizeTiersForRound(roundId).catch(() => null);
+    if (!prizeTiers) return { totalWinUsdc: 0, tier: null };
+
+    let total = 0;
+    let bestTier: number | null = null;
+    for (let i = 0; i < nftResults.length; i++) {
+      const nums = ticketNumbers[i];
+      if (!nums) continue;
+      const { normalMatches, bonusMatch } = matchTicketTier(nums, winningNumbers);
+      const tierInfo = prizeTiers.tiers.find(t => t.normalMatches === normalMatches && t.bonusMatch === bonusMatch);
+      if (!tierInfo || tierInfo.netUsdc <= 0) continue;
+
+      const claimable = await this.megapot.isTokenClaimable(companionAddress, BigInt(nftResults[i].tokenId)).catch(() => false);
+      if (!claimable) continue;
+
+      total += tierInfo.netUsdc;
+      bestTier = bestTier === null ? normalMatches : Math.min(bestTier, normalMatches);
+    }
+
+    if (total > 0) {
+      this.logger.warn(`resolveTicketWin: metadata+Data API both showed no win for ${companionAddress} round ${roundId}, but on-chain claimWinnings simulation + settled tier payouts confirm $${total.toFixed(6)} — trusting the chain`);
+    }
+    return { totalWinUsdc: parseFloat(total.toFixed(6)), tier: bestTier };
   }
 
   private async checkDailyResultsInner(): Promise<void> {
@@ -2366,6 +2431,8 @@ export class LotteryService {
         let tokenIds: string[] = Array.isArray(ticket.ticket_nft_ids) && ticket.ticket_nft_ids.length > 0
           ? ticket.ticket_nft_ids
           : [];
+        let resolvedTicketNumbers: { main: number[]; bonus: number }[] | null =
+          Array.isArray(ticket.ticket_numbers) ? ticket.ticket_numbers : null;
 
         if (!tokenIds.length && ticket.companion_address) {
           this.logger.log(`checkDailyResults: scanning Transfer events for ticket ${ticket.id}`);
@@ -2375,6 +2442,7 @@ export class LotteryService {
           );
           tokenIds = found;
           if (tokenIds.length) {
+            if (ticketNumbers.length) resolvedTicketNumbers = ticketNumbers;
             await db.from('lottery_tickets').update({
               ticket_nft_ids: tokenIds,
               ...(ticketNumbers.length ? { ticket_numbers: ticketNumbers } : {}),
@@ -2400,7 +2468,10 @@ export class LotteryService {
         // Read on-chain NFT metadata to check Tier + Win Amount post-draw, cross-checked against
         // Megapot's Data API (see resolveTicketWin) since the metadata read alone has proven unreliable.
         const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
-        const { totalWinUsdc, tier: winTier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results);
+        const { totalWinUsdc, tier: winTier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results, {
+          ticketNumbers: resolvedTicketNumbers,
+          winningNumbers,
+        });
 
         if (totalWinUsdc > 0) {
           await db.from('lottery_tickets').update({
@@ -2455,8 +2526,18 @@ export class LotteryService {
         const tokenIds: string[] = Array.isArray(ticket.ticket_nft_ids) ? ticket.ticket_nft_ids : [];
         if (!tokenIds.length) continue;
 
+        // Some older rows never got winning_numbers persisted (e.g. the round-info fetch failed
+        // the one time this ticket's status was set) — re-fetch rather than silently skipping the
+        // ground-truth check below.
+        const winningNumbers = ticket.winning_numbers ?? (ticket.round_id
+          ? await this.megapot.getWinningNumbersForRound(ticket.round_id).catch(() => null)
+          : null);
+
         const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
-        const { totalWinUsdc, tier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results);
+        const { totalWinUsdc, tier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results, {
+          ticketNumbers: Array.isArray(ticket.ticket_numbers) ? ticket.ticket_numbers : null,
+          winningNumbers,
+        });
         const storedWin = ticket.win_amount_usdc ?? 0;
 
         if (totalWinUsdc > storedWin + 0.000001) {
@@ -2516,6 +2597,8 @@ export class LotteryService {
     let tokenIds: string[] = Array.isArray(ticket.ticket_nft_ids) && ticket.ticket_nft_ids.length > 0
       ? ticket.ticket_nft_ids
       : [];
+    let resolvedTicketNumbers: { main: number[]; bonus: number }[] | null =
+      Array.isArray(ticket.ticket_numbers) ? ticket.ticket_numbers : null;
 
     if (!tokenIds.length && ticket.companion_address) {
       const { tokenIds: found, ticketNumbers } = await this.megapot.getTicketNumbersFromNft(
@@ -2524,6 +2607,7 @@ export class LotteryService {
       );
       tokenIds = found;
       if (tokenIds.length) {
+        if (ticketNumbers.length) resolvedTicketNumbers = ticketNumbers;
         await db.from('lottery_tickets').update({
           ticket_nft_ids: tokenIds,
           ...(ticketNumbers.length ? { ticket_numbers: ticketNumbers } : {}),
@@ -2572,7 +2656,10 @@ export class LotteryService {
     // NFT metadata cross-checked against Megapot's Data API — see resolveTicketWin for why the
     // metadata read alone isn't trustworthy (23% of 'lost' tickets audited had actually won).
     const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
-    const { totalWinUsdc, tier: winTier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results);
+    const { totalWinUsdc, tier: winTier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results, {
+      ticketNumbers: resolvedTicketNumbers,
+      winningNumbers,
+    });
 
     if (totalWinUsdc > 0) {
       await db.from('lottery_tickets').update({

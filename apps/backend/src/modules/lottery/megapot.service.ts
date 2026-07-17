@@ -192,6 +192,17 @@ const PUBLIC_TIER_ORDER: Array<{ normalMatches: number; bonusMatch: boolean }> =
   { normalMatches: 0, bonusMatch: true },
 ];
 
+/** How many of a ticket's numbers match the drawn winning numbers, for pricing against real prize_tiers payouts. */
+export function matchTicketTier(
+  ticket: { main: number[]; bonus: number },
+  winning: { main: number[]; bonus: number },
+): { normalMatches: number; bonusMatch: boolean } {
+  const winSet = new Set(winning.main);
+  const normalMatches = ticket.main.filter(n => winSet.has(n)).length;
+  const bonusMatch = ticket.bonus === winning.bonus;
+  return { normalMatches, bonusMatch };
+}
+
 @Injectable()
 export class MegapotService {
   private readonly logger = new Logger(MegapotService.name);
@@ -331,6 +342,33 @@ export class MegapotService {
    * elsewhere) — an individual ticket's actual claim factor is still read live at payout time via
    * getWinClaimFactor().
    */
+  /** Builds a PrizeTiersSnapshot from a raw settled /rounds/{id} response, or null if unsettled. */
+  private buildPrizeTiersSnapshot(round: any, roundId: string): PrizeTiersSnapshot | null {
+    if (round.status !== 'settled' || !Array.isArray(round.prize_tiers)) return null;
+
+    const byKey = new Map<string, any>(
+      round.prize_tiers.map((t: any) => [`${t.normal_matches}:${!!t.bonusball_match}`, t]),
+    );
+    const tiers: PrizeTierInfo[] = PUBLIC_TIER_ORDER.map(({ normalMatches, bonusMatch }) => {
+      const t = byKey.get(`${normalMatches}:${bonusMatch}`);
+      const gross = t ? Number(t.payout?.amount ?? 0) / 10 ** (t.payout?.decimals ?? 6) : 0;
+      return {
+        normalMatches,
+        bonusMatch,
+        grossUsdc: gross,
+        netUsdc: parseFloat((gross * DEFAULT_REFERRAL_WIN_SHARE_FACTOR).toFixed(6)),
+        ticketCount: t?.ticket_count ?? 0,
+      };
+    });
+
+    return {
+      sourceRoundId: roundId,
+      settledAt: round.settled_at ?? null,
+      claimFactor: DEFAULT_REFERRAL_WIN_SHARE_FACTOR,
+      tiers,
+    };
+  }
+
   async getLatestSettledPrizeTiers(): Promise<PrizeTiersSnapshot | null> {
     if (this.prizeTiersCache && Date.now() - this.prizeTiersCache.fetchedAt < MegapotService.PRIZE_TIERS_CACHE_TTL_MS) {
       return this.prizeTiersCache.data;
@@ -344,29 +382,8 @@ export class MegapotService {
       // defensively in case a round was skipped or is still finalizing.
       for (let candidate = activeId - 1; candidate > activeId - 5 && candidate > 0; candidate--) {
         const round = await this.apiGet<any>(`/rounds/${candidate}`);
-        if (round.status !== 'settled' || !Array.isArray(round.prize_tiers)) continue;
-
-        const byKey = new Map<string, any>(
-          round.prize_tiers.map((t: any) => [`${t.normal_matches}:${!!t.bonusball_match}`, t]),
-        );
-        const tiers: PrizeTierInfo[] = PUBLIC_TIER_ORDER.map(({ normalMatches, bonusMatch }) => {
-          const t = byKey.get(`${normalMatches}:${bonusMatch}`);
-          const gross = t ? Number(t.payout?.amount ?? 0) / 10 ** (t.payout?.decimals ?? 6) : 0;
-          return {
-            normalMatches,
-            bonusMatch,
-            grossUsdc: gross,
-            netUsdc: parseFloat((gross * DEFAULT_REFERRAL_WIN_SHARE_FACTOR).toFixed(6)),
-            ticketCount: t?.ticket_count ?? 0,
-          };
-        });
-
-        const data: PrizeTiersSnapshot = {
-          sourceRoundId: String(candidate),
-          settledAt: round.settled_at ?? null,
-          claimFactor: DEFAULT_REFERRAL_WIN_SHARE_FACTOR,
-          tiers,
-        };
+        const data = this.buildPrizeTiersSnapshot(round, String(candidate));
+        if (!data) continue;
         this.prizeTiersCache = { data, fetchedAt: Date.now() };
         return data;
       }
@@ -375,6 +392,22 @@ export class MegapotService {
     } catch (e: any) {
       this.logger.warn(`getLatestSettledPrizeTiers: ${e.message} — serving stale cache if available`);
       return this.prizeTiersCache?.data ?? null;
+    }
+  }
+
+  /**
+   * Real per-tier payouts for one SPECIFIC round (as opposed to getLatestSettledPrizeTiers, which
+   * walks back from whatever round is active right now). Used to price a ticket's own win by
+   * matching its numbers against that exact round's drawn numbers — see resolveTicketWin's
+   * ground-truth fallback for why this is needed independently of the "latest settled" cache.
+   */
+  async getPrizeTiersForRound(roundId: string): Promise<PrizeTiersSnapshot | null> {
+    try {
+      const round = await this.apiGet<any>(`/rounds/${roundId}`);
+      return this.buildPrizeTiersSnapshot(round, roundId);
+    } catch (e: any) {
+      this.logger.warn(`getPrizeTiersForRound ${roundId}: ${e.message}`);
+      return null;
     }
   }
 
