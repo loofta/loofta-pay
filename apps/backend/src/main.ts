@@ -16,6 +16,12 @@ async function bootstrap() {
     logger: ['error', 'warn', 'log', 'debug', 'verbose'],
   });
 
+  // Railway terminates TLS and proxies with a single hop — without this, Express's req.ip
+  // resolves to Railway's internal proxy address for every request, collapsing the IP-keyed
+  // rate limiters (ThrottlerModule, RateLimitGuard's request.ip fallback) into one shared
+  // bucket across all users instead of one bucket per real client.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
   const configService = app.get(ConfigService);
   const isProduction = configService.get<string>('NODE_ENV') === 'production';
 
