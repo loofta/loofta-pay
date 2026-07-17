@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     devnetAllAmountsRes,
     mainnetAllAmountsRes,
     devnetTotalRes,
-    mainnetTotalRes,
+    mainnetAllStatusRes,
     totalUsersRes,
     usersWithEmailRes,
     waitlistTotalRes,
@@ -55,10 +55,13 @@ export async function GET(request: NextRequest) {
       .from("payments")
       .select("id", { count: "exact", head: true })
       .eq("is_devnet", true),
+    // Every mainnet payment link, any status — the raw material for the signup → link → funded →
+    // success funnel below. Superset of the mainnet total count, so it replaces that head-count query.
     supabase
       .from("payments")
-      .select("id", { count: "exact", head: true })
-      .eq("is_devnet", false),
+      .select("status, sender_user_id")
+      .eq("is_devnet", false)
+      .limit(100000),
     supabase
       .from("app_users")
       .select("id", { count: "exact", head: true }),
@@ -136,6 +139,40 @@ export async function GET(request: NextRequest) {
   const mainnet_active_users = mainnetActivityCounts.size;
   const mainnet_repeat_users = Array.from(mainnetActivityCounts.values()).filter((c) => c > 1).length;
 
+  // Funnel: signed up -> created a payment link -> funded it -> recipient claimed (SUCCESS).
+  // "Funded" = the burner actually received funds at some point (anything past OPEN/PENDING_DEPOSIT
+  // that isn't EXPIRED/CANCELLED/DELETED) — SUCCESS is a subset of funded, not a separate branch.
+  const FUNDED_STATUSES = new Set(["IN_FLIGHT", "FUNDED", "PRIVATE_TRANSFER_PENDING", "SUCCESS", "REFUNDED"]);
+  const mainnetLinks = mainnetAllStatusRes.data ?? [];
+  const usersCreatedLink = new Set<string>();
+  const usersFunded = new Set<string>();
+  const usersSuccess = new Set<string>();
+  let linksFunded = 0;
+  let linksSuccess = 0;
+  let linksExpired = 0;
+  for (const row of mainnetLinks as any[]) {
+    if (row.sender_user_id) usersCreatedLink.add(row.sender_user_id);
+    if (FUNDED_STATUSES.has(row.status)) {
+      linksFunded++;
+      if (row.sender_user_id) usersFunded.add(row.sender_user_id);
+    }
+    if (row.status === "SUCCESS") {
+      linksSuccess++;
+      if (row.sender_user_id) usersSuccess.add(row.sender_user_id);
+    }
+    if (row.status === "EXPIRED") linksExpired++;
+  }
+  const funnel_mainnet = {
+    users_signed_up: totalUsersRes.count ?? 0,
+    users_created_link: usersCreatedLink.size,
+    users_funded: usersFunded.size,
+    users_success: usersSuccess.size,
+    links_created: mainnetLinks.length,
+    links_funded: linksFunded,
+    links_success: linksSuccess,
+    links_expired: linksExpired,
+  };
+
   const volume_lottery = sum(lotteryRes.data, "cost_usdc");
   const volume_deposits = sum(depositsRes.data, "amount_usdc");
   const volume_withdrawals_devnet = sumCompletedWithdrawals(withdrawalsDevnetRes.data);
@@ -149,13 +186,14 @@ export async function GET(request: NextRequest) {
     tx_devnet_success: devnetSuccessRes.data?.length ?? 0,
     tx_mainnet_success: mainnetSuccessRes.data?.length ?? 0,
     tx_devnet_total: devnetTotalRes.count ?? 0,
-    tx_mainnet_total: mainnetTotalRes.count ?? 0,
+    tx_mainnet_total: mainnetLinks.length,
     total_users: totalUsersRes.count ?? 0,
     users_with_email: usersWithEmailRes.count ?? 0,
     // Distinct users who sent OR received a completed mainnet private payment, or bought a lottery ticket.
     mainnet_active_users,
     // Of those, how many show up more than once (any mix of sent/received/lottery).
     mainnet_repeat_users,
+    funnel_mainnet,
     waitlist_total: waitlistTotalRes.count ?? 0,
     waitlist_granted: waitlistGrantedRes.count ?? 0,
     waitlist_with_twitter: waitlistWithTwitterRes.count ?? 0,

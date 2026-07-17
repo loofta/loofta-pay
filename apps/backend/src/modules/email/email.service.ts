@@ -231,10 +231,18 @@ export class EmailService {
 
   private buildGiftTicketHtml(data: { numTickets: number; claimUrl: string; note?: string | null }): string {
     const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
-    const noteBlock = data.note
+    const { text: noteText, gifUrl } = data.note ? this.extractGifUrl(data.note) : { text: '', gifUrl: null };
+    const noteTextBlock = noteText
+      ? `<p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#9ca3af;">Message</p>
+         <p style="margin:0;font-size:14px;line-height:1.5;color:#d1d5db;">${noteText}</p>`
+      : '';
+    const gifBlock = gifUrl
+      ? `<div style="${noteText ? 'margin-top:12px;' : ''}text-align:center;"><img src="${gifUrl}" alt="GIF" style="max-width:100%;border-radius:8px;display:block;margin:0 auto;" /></div>`
+      : '';
+    const noteBlock = (noteText || gifBlock)
       ? `<div style="background:#1e1e23;border-radius:12px;padding:16px 18px;margin:0 0 28px;">
-           <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#9ca3af;">Message</p>
-           <p style="margin:0;font-size:14px;line-height:1.5;color:#d1d5db;">${data.note}</p>
+           ${noteTextBlock}
+           ${gifBlock}
          </div>`
       : '';
     return `<!DOCTYPE html>
@@ -590,11 +598,16 @@ export class EmailService {
 </html>`;
   }
 
-  private buildDescriptionHtml(description: string): string {
+  private extractGifUrl(text: string): { text: string; gifUrl: string | null } {
     const GIF_URL_REGEX = /https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\/[^\s]*/gi;
-    const gifMatch = description.match(GIF_URL_REGEX);
+    const gifMatch = text.match(GIF_URL_REGEX);
     const gifUrl = gifMatch ? gifMatch[0] : null;
-    const textOnly = description.replace(GIF_URL_REGEX, '').replace(/\s+/g, ' ').trim();
+    const textOnly = text.replace(GIF_URL_REGEX, '').replace(/\s+/g, ' ').trim();
+    return { text: textOnly, gifUrl };
+  }
+
+  private buildDescriptionHtml(description: string): string {
+    const { text: textOnly, gifUrl } = this.extractGifUrl(description);
 
     const textPart = textOnly
       ? `<p style="margin:12px 0 0;padding:12px 16px;background:#1e1e23;border-radius:8px;color:#9ca3af;font-size:14px;font-style:italic;">"${textOnly}"</p>`

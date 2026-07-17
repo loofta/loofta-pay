@@ -587,6 +587,16 @@ export default function AdminDashboard() {
     users_with_email: number;
     mainnet_active_users: number;
     mainnet_repeat_users: number;
+    funnel_mainnet: {
+      users_signed_up: number;
+      users_created_link: number;
+      users_funded: number;
+      users_success: number;
+      links_created: number;
+      links_funded: number;
+      links_success: number;
+      links_expired: number;
+    };
     waitlist_total: number;
     waitlist_granted: number;
     waitlist_with_twitter: number;
@@ -1821,6 +1831,14 @@ export default function AdminDashboard() {
             const twitterPct = twitterFromSparks != null && sparksData.length > 0
               ? Math.round((twitterFromSparks / sparksData.length) * 100)
               : null;
+            const funnel = analyticsData.funnel_mainnet;
+            const stepPct = (num: number, den: number) => (den > 0 ? Math.round((num / den) * 100) : 0);
+            const funnelSteps = [
+              { label: "Signed Up", value: funnel.users_signed_up },
+              { label: "Created a Link", value: funnel.users_created_link },
+              { label: "Funded It", value: funnel.users_funded },
+              { label: "Recipient Claimed", value: funnel.users_success },
+            ];
 
             return (
               <>
@@ -1947,6 +1965,44 @@ export default function AdminDashboard() {
                       <div className="text-[10px] text-purple-400 uppercase tracking-wider mb-1 font-medium">Waitlist Applicants</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.waitlist_total.toLocaleString()}</div>
                       <div className="text-sm text-gray-500 mt-0.5">{analyticsData.waitlist_granted.toLocaleString()} granted · {analyticsData.waitlist_with_twitter.toLocaleString()} with X</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Mainnet payment funnel */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Mainnet Payment Funnel</h3>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {funnelSteps.map((step, i) => {
+                      const prevValue = i > 0 ? funnelSteps[i - 1].value : null;
+                      const fromFirstPct = stepPct(step.value, funnelSteps[0].value);
+                      const fromPrevPct = prevValue != null ? stepPct(step.value, prevValue) : null;
+                      return (
+                        <div key={step.label} className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                          <div className="text-[10px] text-teal-400 uppercase tracking-wider mb-1 font-medium">{step.label}</div>
+                          <div className="text-2xl font-bold text-white tabular-nums">{step.value.toLocaleString()}</div>
+                          <div className="text-sm text-gray-500 mt-0.5">
+                            {fromPrevPct != null ? `${fromPrevPct}% of prev step` : `${fromFirstPct}% of signups`}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 mt-3">
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 font-medium">Links Created</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{funnel.links_created.toLocaleString()}</div>
+                      <div className="text-sm text-gray-500 mt-0.5">mainnet payment links, any status</div>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 font-medium">Links Funded → Success</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{funnel.links_funded.toLocaleString()} → {funnel.links_success.toLocaleString()}</div>
+                      <div className="text-sm text-gray-500 mt-0.5">{stepPct(funnel.links_success, funnel.links_created)}% of all links completed</div>
+                    </div>
+                    <div className="bg-gray-900 border border-red-900 rounded-lg p-4">
+                      <div className="text-[10px] text-red-400 uppercase tracking-wider mb-1 font-medium">Expired Unfunded</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{funnel.links_expired.toLocaleString()}</div>
+                      <div className="text-sm text-gray-500 mt-0.5">{stepPct(funnel.links_expired, funnel.links_created)}% of all links — sender never funded</div>
                     </div>
                   </div>
                 </div>

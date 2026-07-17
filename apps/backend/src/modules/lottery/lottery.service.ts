@@ -45,7 +45,7 @@ const ROUND_UP_GRACE_USDC = 0.1;
 // auto-replenished, so it must be watched. Defaults overridable via env; recipient defaults to the
 // operator's address.
 const FEE_WALLET_MIN_SOL = 0.15;
-const FEE_WALLET_MIN_USDC = 20;
+const FEE_WALLET_MIN_USDC = 10;
 const FEE_WALLET_ALERT_DEFAULT_EMAIL = 'lisa.bechina@gmail.com';
 // Re-alert cadence while still low, so one email doesn't get buried and forgotten.
 const FEE_WALLET_REALERT_MS = 24 * 60 * 60_000;
