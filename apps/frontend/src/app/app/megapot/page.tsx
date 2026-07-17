@@ -1321,7 +1321,10 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
       // The buyer's payment is confirmed on-chain right here — bridging + the actual Megapot
       // purchase happen in the background from this point, same as if they closed the tab (the
       // backend already tolerates that). No reason to keep them staring at "Hang tight" for it.
-      setStep("confirmed");
+      // The numbers themselves were already picked client-side before we ever charged them (see
+      // setLastTickets above), so there's nothing left to wait on before showing "Good luck" —
+      // straight to the real success screen instead of an intermediate "confirmed" placeholder.
+      setStep("done");
       pollingStartedRef.current = true;
       pollStatus(currentTicketId, numTickets);
       // Dashboard data is otherwise only refetched once the ticket reaches active/won (inside
@@ -3113,11 +3116,18 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                     {new Date(t.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                     {" · "}{fmt(t.costUsdc)}
                   </p>
-                  <p className="text-base text-slate-400">
-                    {t.status === "sent" && "Waiting for MagicBlock private transfer to arrive in burner wallet (up to 2 min)."}
-                    {t.status === "bridging" && "Your ticket(s) will appear soon."}
-                    {t.status === "buying" && "Funds arrived on Base — buying your tickets now."}
-                  </p>
+                  {/* Real users don't need to know which of sent/bridging/buying a ticket is in —
+                      it's all the same "still working on it" from their side, and the History tab
+                      now auto-refreshes (see the syncing poll effect) until real numbers show up. */}
+                  <p className="text-base text-slate-400">Syncing…</p>
+                  {IS_LOCALHOST && (
+                    <p className="text-sm text-slate-500">
+                      Dev detail — status: {t.status}
+                      {t.status === "sent" && " (waiting for MagicBlock transfer to arrive in burner wallet)"}
+                      {t.status === "bridging" && " (funds in transit to Base)"}
+                      {t.status === "buying" && " (funds arrived on Base — buying tickets now)"}
+                    </p>
+                  )}
                   <Link
                     href={megapotBase}
                     className="w-full h-10 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all flex items-center justify-center gap-1.5"
@@ -3148,8 +3158,9 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                     </div>
                   )}
                   {/* Bridging is fully automatic and can't be safely cancelled — funds are in
-                      transit and will arrive on Base. No action needed. */}
-                  {t.status === "buying" && (
+                      transit and will arrive on Base. No action needed. Same dev-only reasoning as
+                      the "sent" rescue box above — real users get "Syncing…" and nothing to act on. */}
+                  {t.status === "buying" && IS_LOCALHOST && (
                     <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-2">
                       <p className="text-base font-semibold text-slate-400">Stuck? Try one of these:</p>
                       {(retryResult[t.id] || rescueResult[t.id]) && (
@@ -3615,6 +3626,19 @@ export default function MegapotPage() {
       stuckIds.forEach(sid => autoCheckedIds.current.delete(sid));
       fetchDashboard();
     }, 45_000);
+    return () => clearInterval(id);
+  }, [dashboard, fetchDashboard]);
+
+  // Keep refreshing while any ticket is still syncing (pending_send/sent/bridging/buying) — History
+  // shows a plain "Syncing…" for these, so this is what actually replaces it with real numbers once
+  // they're ready, instead of requiring the user to manually reload the page.
+  useEffect(() => {
+    if (!dashboard) return;
+    const syncing = (dashboard.activeTickets ?? []).some(t =>
+      ["pending_send", "sent", "bridging", "buying"].includes(t.status)
+    );
+    if (!syncing) return;
+    const id = setInterval(fetchDashboard, 8_000);
     return () => clearInterval(id);
   }, [dashboard, fetchDashboard]);
 
