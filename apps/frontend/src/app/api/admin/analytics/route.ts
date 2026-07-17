@@ -24,6 +24,7 @@ export async function GET(request: NextRequest) {
     waitlistGrantedRes,
     waitlistWithTwitterRes,
     lotteryRes,
+    mainnetPayingSendersRes,
     depositsRes,
     withdrawalsDevnetRes,
     withdrawalsMainnetRes,
@@ -83,8 +84,16 @@ export async function GET(request: NextRequest) {
     // committed the spend yet, and failed tickets get refunded.
     supabase
       .from("lottery_tickets")
-      .select("cost_usdc")
+      .select("cost_usdc, user_id")
       .in("status", ["active", "won", "lost"])
+      .limit(100000),
+    // Sender IDs behind every completed mainnet private payment, for the distinct-paying-users count below.
+    supabase
+      .from("payments")
+      .select("sender_user_id")
+      .eq("is_devnet", false)
+      .eq("status", "SUCCESS")
+      .not("sender_user_id", "is", null)
       .limit(100000),
     supabase
       .from("user_deposits")
@@ -119,6 +128,10 @@ export async function GET(request: NextRequest) {
   const volume_devnet_total = sum(devnetAllAmountsRes.data);
   const volume_mainnet_total = sum(mainnetAllAmountsRes.data);
 
+  const mainnetPayingUsers = new Set<string>();
+  (mainnetPayingSendersRes.data ?? []).forEach((p: any) => mainnetPayingUsers.add(p.sender_user_id));
+  (lotteryRes.data ?? []).forEach((t: any) => { if (t.user_id) mainnetPayingUsers.add(t.user_id); });
+
   const volume_lottery = sum(lotteryRes.data, "cost_usdc");
   const volume_deposits = sum(depositsRes.data, "amount_usdc");
   const volume_withdrawals_devnet = sumCompletedWithdrawals(withdrawalsDevnetRes.data);
@@ -135,6 +148,8 @@ export async function GET(request: NextRequest) {
     tx_mainnet_total: mainnetTotalRes.count ?? 0,
     total_users: totalUsersRes.count ?? 0,
     users_with_email: usersWithEmailRes.count ?? 0,
+    // Distinct users with at least one completed mainnet spend — private payment (sent) or lottery ticket.
+    mainnet_paying_users: mainnetPayingUsers.size,
     waitlist_total: waitlistTotalRes.count ?? 0,
     waitlist_granted: waitlistGrantedRes.count ?? 0,
     waitlist_with_twitter: waitlistWithTwitterRes.count ?? 0,

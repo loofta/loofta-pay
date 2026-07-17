@@ -584,6 +584,7 @@ export default function AdminDashboard() {
     tx_mainnet_total: number;
     total_users: number;
     users_with_email: number;
+    mainnet_paying_users: number;
     waitlist_total: number;
     waitlist_granted: number;
     waitlist_with_twitter: number;
@@ -1913,6 +1914,11 @@ export default function AdminDashboard() {
                       <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-1 font-medium">Email Connected</div>
                       <div className="text-2xl font-bold text-white tabular-nums">{emailPct}%</div>
                       <div className="text-sm text-gray-500 mt-0.5">{analyticsData.users_with_email.toLocaleString()} of {analyticsData.total_users.toLocaleString()} users</div>
+                    </div>
+                    <div className="bg-gray-900 border border-green-900 rounded-lg p-4">
+                      <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Mainnet Paying Users</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.mainnet_paying_users.toLocaleString()}</div>
+                      <div className="text-sm text-gray-500 mt-0.5">sent a private payment or bought a lottery ticket</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-sky-400 uppercase tracking-wider mb-1 font-medium">X Connected</div>

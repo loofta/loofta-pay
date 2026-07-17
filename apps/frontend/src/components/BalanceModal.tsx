@@ -2567,158 +2567,166 @@ export function BalanceModal({
                   <p className={`text-base text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent activity.</p>
                 ) : (
                   <ul className="space-y-2">
-                    {/* Deposits saved to DB */}
-                    {dbDeposits.map((dep) => {
-                      const ageMs = Date.now() - new Date(dep.created_at).getTime();
-                      const effectiveStatus = (dep.status === "pending" && ageMs > ONE_HOUR_MS) ? "cancelled" : dep.status;
-                      const isPending = effectiveStatus === "pending";
-                      const isComplete = effectiveStatus === "complete";
-                      const isCancelled = effectiveStatus === "cancelled";
-                      const statusColor = isComplete ? "text-emerald-400"
-                        : effectiveStatus === "failed" ? "text-red-400"
-                        : isCancelled ? (dark ? "text-slate-500" : "text-gray-400")
-                        : "text-blue-400";
-                      const statusLabel = isComplete ? "Complete"
-                        : effectiveStatus === "failed" ? "Failed"
-                        : isCancelled ? "Cancelled"
-                        : dep.type === "near-intents" ? (dep.bridge_status ? bridgeStatusLabel(dep.bridge_status) : "Bridging…")
-                        : "Check your wallet";
-                      return (
-                        <li key={dep.id}>
-                          <div className={`rounded-lg border p-3 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0 flex-1">
-                                <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
-                                  {depositTypeLabel[dep.type] ?? dep.type} deposit
-                                  {dep.amount_usdc ? <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>· ${Number(dep.amount_usdc).toFixed(2)} USDC</span> : ""}
-                                </p>
-                                <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
-                                  {new Date(dep.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                                </p>
+                    {[
+                      ...dbDeposits.map((dep) => ({ kind: "deposit" as const, ts: new Date(dep.created_at).getTime(), dep })),
+                      ...peerOfframpHistory.map((record) => ({ kind: "peer" as const, ts: new Date(record.created_at).getTime(), record })),
+                      ...recentWithdrawals.map((item) => ({ kind: "withdrawal" as const, ts: item.createdAt, item })),
+                    ]
+                      .sort((a, b) => b.ts - a.ts)
+                      .map((entry) => {
+                        if (entry.kind === "deposit") {
+                          const dep = entry.dep;
+                          const ageMs = Date.now() - new Date(dep.created_at).getTime();
+                          const effectiveStatus = (dep.status === "pending" && ageMs > ONE_HOUR_MS) ? "cancelled" : dep.status;
+                          const isPending = effectiveStatus === "pending";
+                          const isComplete = effectiveStatus === "complete";
+                          const isCancelled = effectiveStatus === "cancelled";
+                          const statusColor = isComplete ? "text-emerald-400"
+                            : effectiveStatus === "failed" ? "text-red-400"
+                            : isCancelled ? (dark ? "text-slate-500" : "text-gray-400")
+                            : "text-blue-400";
+                          const statusLabel = isComplete ? "Complete"
+                            : effectiveStatus === "failed" ? "Failed"
+                            : isCancelled ? "Cancelled"
+                            : dep.type === "near-intents" ? (dep.bridge_status ? bridgeStatusLabel(dep.bridge_status) : "Bridging…")
+                            : "Check your wallet";
+                          return (
+                            <li key={dep.id}>
+                              <div className={`rounded-lg border p-3 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
+                                      {depositTypeLabel[dep.type] ?? dep.type} deposit
+                                      {dep.amount_usdc ? <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>· ${Number(dep.amount_usdc).toFixed(2)} USDC</span> : ""}
+                                    </p>
+                                    <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                                      {new Date(dep.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                    </p>
+                                  </div>
+                                  <span className={`text-base font-medium flex items-center gap-1 shrink-0 ${statusColor}`}>
+                                    {isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+                                    {statusLabel}
+                                  </span>
+                                </div>
                               </div>
-                              <span className={`text-base font-medium flex items-center gap-1 shrink-0 ${statusColor}`}>
-                                {isPending && <Loader2 className="h-3 w-3 animate-spin" />}
-                                {statusLabel}
-                              </span>
-                            </div>
-                          </div>
-                        </li>
-                      );
-                    })}
-                    {/* Peer cash out requests */}
-                    {peerOfframpHistory.map((record) => {
-                      const platform = getPlatform(record.platform);
-                      const isActive = ["PENDING_BRIDGE", "BRIDGING", "DEPOSITED", "CANCELLING"].includes(record.status);
-                      const canResume = ["DEPOSITED", "CANCELLING"].includes(record.status);
-                      const statusLabel = record.status === "PENDING_BRIDGE" ? "Sending…" : record.status === "BRIDGING" ? "Bridging…" : record.status === "DEPOSITED" ? "Waiting for peer" : record.status === "COMPLETE" ? "Complete" : record.status === "CANCELLING" ? "Cancelling…" : record.status === "CANCELLED" ? "Cancelled" : "Failed";
-                      const statusColor = record.status === "COMPLETE" ? "text-emerald-400" : record.status === "CANCELLED" ? (dark ? "text-slate-500" : "text-gray-400") : record.status === "FAILED" ? "text-red-400" : "text-blue-400";
-                      return (
-                        <li key={`peer-${record.id}`}>
-                          <div className={`rounded-lg border p-3 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0 flex-1">
-                                <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
-                                  ${Number(record.amount_usdc).toFixed(2)} → {record.currency} via {platform?.name ?? record.platform}
-                                </p>
-                                <p className={`text-base mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>{record.platform_identifier}</p>
-                                <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
-                                  {new Date(record.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                                </p>
-                              </div>
-                              <div className="flex flex-col items-end gap-2 shrink-0">
-                                <span className={`text-base font-medium flex items-center gap-1 ${statusColor}`}>
-                                  {isActive && <Loader2 className="h-3 w-3 animate-spin" />}
-                                  {statusLabel}
-                                </span>
-                                {canResume && (
-                                  <button
-                                    type="button"
-                                    onClick={() => resumePeerOfframp(record)}
-                                    className={`text-base font-medium underline underline-offset-2 ${dark ? "text-orange-400 hover:text-orange-300" : "text-orange-600 hover:text-orange-700"}`}
-                                  >
-                                    Resume →
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </li>
-                      );
-                    })}
-                    {/* Regular withdrawals (direct USDC / Near Intents) */}
-                    {recentWithdrawals.map((item) => {
-                      const withdrawAgeMs = Date.now() - item.createdAt;
-                      const isStaleWithdraw = item.isNearIntents && !item.nearIntentsComplete && withdrawAgeMs > ONE_HOUR_MS;
-                      const isInProgress = item.isNearIntents && !item.nearIntentsComplete && !isStaleWithdraw;
-                      return (
-                        <li key={item.id}>
-                          <div className={`rounded-lg border p-3 transition-colors ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
-                            <div className="flex items-center gap-3">
-                              <div className="min-w-0 flex-1">
-                                <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
-                                  ${item.amountUSDC.toFixed(2)} → {item.destinationToken}
-                                  {item.estimatedOut && (
-                                    <span className={`font-normal text-base ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                                      (~{Number(item.estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} received)
+                            </li>
+                          );
+                        }
+
+                        if (entry.kind === "peer") {
+                          const record = entry.record;
+                          const platform = getPlatform(record.platform);
+                          const isActive = ["PENDING_BRIDGE", "BRIDGING", "DEPOSITED", "CANCELLING"].includes(record.status);
+                          const canResume = ["DEPOSITED", "CANCELLING"].includes(record.status);
+                          const statusLabel = record.status === "PENDING_BRIDGE" ? "Sending…" : record.status === "BRIDGING" ? "Bridging…" : record.status === "DEPOSITED" ? "Waiting for peer" : record.status === "COMPLETE" ? "Complete" : record.status === "CANCELLING" ? "Cancelling…" : record.status === "CANCELLED" ? "Cancelled" : "Failed";
+                          const statusColor = record.status === "COMPLETE" ? "text-emerald-400" : record.status === "CANCELLED" ? (dark ? "text-slate-500" : "text-gray-400") : record.status === "FAILED" ? "text-red-400" : "text-blue-400";
+                          return (
+                            <li key={`peer-${record.id}`}>
+                              <div className={`rounded-lg border p-3 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
+                                      ${Number(record.amount_usdc).toFixed(2)} → {record.currency} via {platform?.name ?? record.platform}
+                                    </p>
+                                    <p className={`text-base mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>{record.platform_identifier}</p>
+                                    <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                                      {new Date(record.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                    </p>
+                                  </div>
+                                  <div className="flex flex-col items-end gap-2 shrink-0">
+                                    <span className={`text-base font-medium flex items-center gap-1 ${statusColor}`}>
+                                      {isActive && <Loader2 className="h-3 w-3 animate-spin" />}
+                                      {statusLabel}
                                     </span>
-                                  )}
-                                </p>
-                                <p className={`text-base font-mono mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                                  To {shortAddr(item.destinationAddress)} · {item.destinationChain}
-                                </p>
-                                <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
-                                  {new Date(item.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                                </p>
+                                    {canResume && (
+                                      <button
+                                        type="button"
+                                        onClick={() => resumePeerOfframp(record)}
+                                        className={`text-base font-medium underline underline-offset-2 ${dark ? "text-orange-400 hover:text-orange-300" : "text-orange-600 hover:text-orange-700"}`}
+                                      >
+                                        Resume →
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
-                              <div className="flex flex-col items-end gap-1.5 shrink-0">
-                                {isInProgress ? (
-                                  <span className="flex items-center gap-1 text-base font-medium text-blue-400">
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                    Bridging
-                                  </span>
-                                ) : isStaleWithdraw ? (
-                                  <span className={`text-base font-medium ${dark ? "text-slate-500" : "text-gray-400"}`}>Cancelled</span>
-                                ) : item.nearIntentsComplete && item.nearIntentsStatus ? (
-                                  <span className={`text-base font-medium ${SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "text-emerald-400" : "text-amber-400"}`}>
-                                    {SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "Completed" : item.nearIntentsStatus}
-                                  </span>
-                                ) : !item.isNearIntents ? (
-                                  <span className="text-base font-medium text-emerald-400">Sent</span>
-                                ) : null}
-                                <a
-                                  href={getExplorerTxUrl("solana", item.txSignature)}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className={`${dark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-600"}`}
+                            </li>
+                          );
+                        }
+
+                        const item = entry.item;
+                        const withdrawAgeMs = Date.now() - item.createdAt;
+                        const isStaleWithdraw = item.isNearIntents && !item.nearIntentsComplete && withdrawAgeMs > ONE_HOUR_MS;
+                        const isInProgress = item.isNearIntents && !item.nearIntentsComplete && !isStaleWithdraw;
+                        return (
+                          <li key={item.id}>
+                            <div className={`rounded-lg border p-3 transition-colors ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
+                              <div className="flex items-center gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
+                                    ${item.amountUSDC.toFixed(2)} → {item.destinationToken}
+                                    {item.estimatedOut && (
+                                      <span className={`font-normal text-base ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                                        (~{Number(item.estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} received)
+                                      </span>
+                                    )}
+                                  </p>
+                                  <p className={`text-base font-mono mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                                    To {shortAddr(item.destinationAddress)} · {item.destinationChain}
+                                  </p>
+                                  <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                                    {new Date(item.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                  </p>
+                                </div>
+                                <div className="flex flex-col items-end gap-1.5 shrink-0">
+                                  {isInProgress ? (
+                                    <span className="flex items-center gap-1 text-base font-medium text-blue-400">
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                      Bridging
+                                    </span>
+                                  ) : isStaleWithdraw ? (
+                                    <span className={`text-base font-medium ${dark ? "text-slate-500" : "text-gray-400"}`}>Cancelled</span>
+                                  ) : item.nearIntentsComplete && item.nearIntentsStatus ? (
+                                    <span className={`text-base font-medium ${SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "text-emerald-400" : "text-amber-400"}`}>
+                                      {SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "Completed" : item.nearIntentsStatus}
+                                    </span>
+                                  ) : !item.isNearIntents ? (
+                                    <span className="text-base font-medium text-emerald-400">Sent</span>
+                                  ) : null}
+                                  <a
+                                    href={getExplorerTxUrl("solana", item.txSignature)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className={`${dark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-600"}`}
+                                  >
+                                    <ExternalLink className="h-4 w-4" />
+                                  </a>
+                                </div>
+                              </div>
+                              {isInProgress && item.nearIntentsStatus && (
+                                <p className={`text-base mt-2 pt-2 border-t ${dark ? "border-white/10 text-slate-400" : "border-gray-100 text-gray-500"}`}>
+                                  {bridgeStatusLabel(item.nearIntentsStatus)}
+                                </p>
+                              )}
+                              {isInProgress && item.depositAddress && withdrawStep !== "bridging" && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveWithdrawal(item);
+                                    setBridgeStatus(item.nearIntentsStatus ?? null);
+                                    setWithdrawStep("bridging");
+                                    setDepositAddressForPolling(item.depositAddress!);
+                                    setTab("withdraw");
+                                  }}
+                                  className={`mt-2 text-base font-medium underline underline-offset-2 ${dark ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"}`}
                                 >
-                                  <ExternalLink className="h-4 w-4" />
-                                </a>
-                              </div>
+                                  Track progress →
+                                </button>
+                              )}
                             </div>
-                            {isInProgress && item.nearIntentsStatus && (
-                              <p className={`text-base mt-2 pt-2 border-t ${dark ? "border-white/10 text-slate-400" : "border-gray-100 text-gray-500"}`}>
-                                {bridgeStatusLabel(item.nearIntentsStatus)}
-                              </p>
-                            )}
-                            {isInProgress && item.depositAddress && withdrawStep !== "bridging" && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setActiveWithdrawal(item);
-                                  setBridgeStatus(item.nearIntentsStatus ?? null);
-                                  setWithdrawStep("bridging");
-                                  setDepositAddressForPolling(item.depositAddress!);
-                                  setTab("withdraw");
-                                }}
-                                className={`mt-2 text-base font-medium underline underline-offset-2 ${dark ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"}`}
-                              >
-                                Track progress →
-                              </button>
-                            )}
-                          </div>
-                        </li>
-                      );
-                    })}
+                          </li>
+                        );
+                      })}
                   </ul>
                 )}
               </div>
