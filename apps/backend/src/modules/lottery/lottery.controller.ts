@@ -101,11 +101,6 @@ class WithdrawDto {
   destinationAddress: string;
 }
 
-class RescueBurnerDto {
-  @IsString()
-  destinationSolAddress: string;
-}
-
 class PlayAgainBatchDto {
   @IsArray()
   @IsString({ each: true })
@@ -280,13 +275,12 @@ export class LotteryController {
 
   @Post('tickets/:ticketId/rescue-burner')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Rescue stuck USDC from Solana burner wallet back to user Solana address' })
+  @ApiOperation({ summary: 'Rescue stuck USDC from Solana burner wallet back to the wallet on file for this ticket (not client-supplied — see rescueBurnerFunds)' })
   async rescueBurner(
     @Param('ticketId') ticketId: string,
-    @Body() dto: RescueBurnerDto,
     @Request() req: any,
   ): Promise<{ ok: boolean; message: string }> {
-    return this.lottery.rescueBurnerFunds(ticketId, req.user.id, dto.destinationSolAddress);
+    return this.lottery.rescueBurnerFunds(ticketId, req.user.id);
   }
 
   @Post('tickets/:ticketId/check-results')

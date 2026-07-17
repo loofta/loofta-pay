@@ -566,6 +566,25 @@ export class ClaimsController {
           throw new ForbiddenException('Transaction signer does not match your account');
         }
       }
+
+      // Verify every wallet an ATA-creation instruction would fund a new account for belongs to
+      // the authenticated user. The program/mint whitelist in signAndBroadcast only checks that
+      // it's a USDC ATA — not who owns it — which otherwise lets any authenticated caller get the
+      // fee payer to sponsor creating a token account for an arbitrary wallet, repeatably, for free
+      // (confirmed exploited in production: 2026-07-15/16, ~166 sponsored creates to a single
+      // unrelated address, each closed independently by its owner to reclaim the rent).
+      const ataOwners = this.solanaSponsor.getAtaCreationOwners(body.transaction);
+      if (ataOwners.length > 0) {
+        const ataChecks = await Promise.all(
+          ataOwners.map((addr) => this.usersService.isSolanaAddressInLinkedAccounts(userId, addr)),
+        );
+        if (!ataChecks.every(Boolean)) {
+          this.logger.warn(
+            `ClaimsController[sign-and-broadcast]: userId=${userId} submitted tx creating an ATA for unlinked wallet(s): ${ataOwners.map((a) => a.slice(0, 8)).join(', ')}…`,
+          );
+          throw new ForbiddenException('Token account creation is only allowed for your own wallet');
+        }
+      }
     }
 
     try {
@@ -594,13 +613,61 @@ export class ClaimsController {
   @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
   async signAndBroadcastPER(
     @Body() body: { transaction: string },
+    @Headers('x-loofta-internal') internalKey: string | undefined,
+    @Req() req: { user?: { id: string } },
   ): Promise<{ signature: string }> {
+    // Require the request to have come through our Next.js BFF, not directly — this endpoint had
+    // been missing this check entirely (unlike the sibling sign-and-broadcast route above).
+    const expectedSecret =
+      this.configService.get<string>('LOOFTA_INTERNAL_SECRET') ??
+      process.env.LOOFTA_INTERNAL_SECRET;
+    if (expectedSecret) {
+      if (!internalKey || internalKey !== expectedSecret) {
+        this.logger.warn('ClaimsController[sign-and-broadcast-per]: blocked direct call — missing/invalid X-Loofta-Internal');
+        throw new ForbiddenException('Direct API access not permitted');
+      }
+    } else {
+      this.logger.warn('ClaimsController[sign-and-broadcast-per]: LOOFTA_INTERNAL_SECRET not set — skipping internal-key check (set it in Railway to enable protection)');
+    }
+
     if (!body?.transaction || typeof body.transaction !== 'string') {
       throw new BadRequestException('Missing or invalid transaction');
     }
     if (!this.solanaSponsor.isAvailable()) {
       throw new ServiceUnavailableException('Solana fee sponsorship is not configured');
     }
+
+    // Same ownership checks as sign-and-broadcast — this endpoint had neither, which combined
+    // with its previously-missing program whitelist made it the more exploitable of the two.
+    const userId = req.user?.id;
+    if (userId) {
+      const userSigners = this.solanaSponsor.getRequiredUserSigners(body.transaction);
+      if (userSigners.length > 0) {
+        const checks = await Promise.all(
+          userSigners.map((addr) => this.usersService.isSolanaAddressInLinkedAccounts(userId, addr)),
+        );
+        if (!checks.some(Boolean)) {
+          this.logger.warn(
+            `ClaimsController[sign-and-broadcast-per]: userId=${userId} submitted tx with unlinked signer(s): ${userSigners.map((a) => a.slice(0, 8)).join(', ')}…`,
+          );
+          throw new ForbiddenException('Transaction signer does not match your account');
+        }
+      }
+
+      const ataOwners = this.solanaSponsor.getAtaCreationOwners(body.transaction);
+      if (ataOwners.length > 0) {
+        const ataChecks = await Promise.all(
+          ataOwners.map((addr) => this.usersService.isSolanaAddressInLinkedAccounts(userId, addr)),
+        );
+        if (!ataChecks.every(Boolean)) {
+          this.logger.warn(
+            `ClaimsController[sign-and-broadcast-per]: userId=${userId} submitted tx creating an ATA for unlinked wallet(s): ${ataOwners.map((a) => a.slice(0, 8)).join(', ')}…`,
+          );
+          throw new ForbiddenException('Token account creation is only allowed for your own wallet');
+        }
+      }
+    }
+
     try {
       return await this.solanaSponsor.signAndBroadcastPER(body.transaction);
     } catch (e: any) {

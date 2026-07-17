@@ -1981,7 +1981,6 @@ export class LotteryService {
   async rescueBurnerFunds(
     ticketId: string,
     userId: string,
-    destinationSolAddress: string,
   ): Promise<{ ok: boolean; message: string }> {
     const db = this.supabase.getClient();
     const { data: ticket } = await db
@@ -1995,6 +1994,15 @@ export class LotteryService {
     if (!ticket.burner_sol_address || !ticket.burner_sol_key_enc) {
       throw new BadRequestException('No Solana burner wallet for this ticket');
     }
+    if (!ticket.user_solana_address) {
+      throw new BadRequestException('No destination wallet on record for this ticket');
+    }
+    // Always the address recorded at purchase time — never a client-supplied destination. This
+    // endpoint used to take `destinationSolAddress` straight from the request body, which let the
+    // fee payer be tricked into paying real SOL (~0.002 per call, ATA rent) to create a token
+    // account at ANY address the caller named, for any ticket they own, repeatably — the same
+    // class of gap the July 2026 sponsor-wallet drain hardening was meant to close elsewhere.
+    const destinationSolAddress: string = ticket.user_solana_address;
 
     const burnerBalance = await this.getBurnerUsdcBalance(ticket.burner_sol_address);
     if (burnerBalance === 0n) {

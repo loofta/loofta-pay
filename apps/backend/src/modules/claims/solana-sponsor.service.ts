@@ -35,6 +35,7 @@ const USDC_MINT_SET = new Set([
 ]);
 
 const ATA_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+const TOKEN_PROGRAM_ID_STR = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
 /** Read env var from .env.local on disk when ConfigService doesn't have it (e.g. run from monorepo root). */
 function getEnvFromFile(varName: string): string | null {
@@ -267,6 +268,38 @@ export class SolanaSponsorService {
         .slice(0, numSigners)
         .map((k) => k.toBase58())
         .filter((addr) => addr !== feePayerAddr);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Every wallet an Associated-Token-Account "create" instruction in this transaction would fund
+   * a brand-new account for — the fee payer pays real SOL rent for each one. The mint/program
+   * whitelist in signAndBroadcast only checks instruction *shape* (right program, right mint), not
+   * *who benefits* — a caller could otherwise get us to sponsor creating a USDC ATA for any wallet
+   * they name, then close it themselves outside our system and pocket the rent, repeatably, for
+   * free. The caller (claims.controller.ts) must verify every address returned here belongs to the
+   * authenticated user, exactly like it already does for getRequiredUserSigners.
+   */
+  getAtaCreationOwners(serializedBase64: string): string[] {
+    const txBuffer = Buffer.from(serializedBase64, 'base64');
+    try {
+      const tx = Transaction.from(txBuffer);
+      return tx.instructions
+        .filter((ix) => ix.programId.toBase58() === ATA_PROGRAM_ID)
+        .map((ix) => ix.keys[2]?.pubkey?.toBase58())
+        .filter((addr): addr is string => Boolean(addr));
+    } catch {
+      // not a legacy tx — try versioned
+    }
+    try {
+      const vtx = VersionedTransaction.deserialize(txBuffer);
+      const accountKeys = vtx.message.getAccountKeys().staticAccountKeys;
+      return vtx.message.compiledInstructions
+        .filter((ix) => accountKeys[ix.programIdIndex]?.toBase58() === ATA_PROGRAM_ID)
+        .map((ix) => accountKeys[ix.accountKeyIndexes[2]]?.toBase58())
+        .filter((addr): addr is string => Boolean(addr));
     } catch {
       return [];
     }
@@ -724,6 +757,30 @@ export class SolanaSponsorService {
       if (!legacy.feePayer || legacy.feePayer.toBase58() !== this.feePayerAddress) {
         throw new Error('Invalid fee payer in PER transaction');
       }
+      // Same disallowed-program / CloseAccount-strip / USDC-only-ATA guard as the generic
+      // sign-and-broadcast path — this endpoint used to skip all of it and only cap the SOL
+      // top-up amount, which still let a caller get the fee payer to sponsor creating a token
+      // account (or invoking any other whitelisted-looking instruction) with zero restriction on
+      // which program/mint/owner was involved.
+      const beforeStrip = legacy.instructions.length;
+      legacy.instructions = legacy.instructions.filter(ix => !(ix.data.length >= 1 && ix.data[0] === 0x09));
+      if (legacy.instructions.length < beforeStrip) {
+        this.logger.warn(`SolanaSponsor[sign-and-broadcast-per]: stripped ${beforeStrip - legacy.instructions.length} CloseAccount instruction(s) — possible drain attempt`);
+      }
+      for (const ix of legacy.instructions) {
+        const prog = ix.programId.toBase58();
+        if (!ALLOWED_SPONSOR_PROGRAMS.has(prog)) {
+          this.logger.warn(`SolanaSponsor[sign-and-broadcast-per]: blocked disallowed program ${prog}`);
+          throw new Error(`PER transaction contains disallowed program: ${prog}`);
+        }
+        if (prog === ATA_PROGRAM_ID) {
+          const mint = ix.keys[3]?.pubkey?.toBase58();
+          if (!mint || !USDC_MINT_SET.has(mint)) {
+            this.logger.warn(`SolanaSponsor[sign-and-broadcast-per]: blocked ATA creation for non-USDC mint ${mint ?? 'undefined'}`);
+            throw new Error('ATA creation only allowed for USDC');
+          }
+        }
+      }
       let totalFeePayerLamports = 0;
       for (const ix of legacy.instructions) {
         if (ix.programId.equals(SystemProgram.programId) && ix.data.length >= 12 && ix.data.readUInt32LE(0) === 2) {
@@ -752,6 +809,29 @@ export class SolanaSponsorService {
       const staticKeys = versioned.message.staticAccountKeys;
       if (!staticKeys[0] || staticKeys[0].toBase58() !== this.feePayerAddress) {
         throw new Error('Invalid fee payer in PER v0 transaction');
+      }
+      // Same disallowed-program / USDC-only-ATA guard as the legacy branch above — see that
+      // comment for why this was missing entirely before.
+      for (const ix of versioned.message.compiledInstructions) {
+        const prog = staticKeys[ix.programIdIndex]?.toBase58();
+        if (!prog || !ALLOWED_SPONSOR_PROGRAMS.has(prog)) {
+          this.logger.warn(`SolanaSponsor[sign-and-broadcast-per]: blocked disallowed program (v0) ${prog}`);
+          throw new Error(`PER v0 transaction contains disallowed program: ${prog}`);
+        }
+        if (prog === ATA_PROGRAM_ID) {
+          const mint = staticKeys[ix.accountKeyIndexes[3]]?.toBase58();
+          if (!mint || !USDC_MINT_SET.has(mint)) {
+            this.logger.warn(`SolanaSponsor[sign-and-broadcast-per]: blocked ATA creation for non-USDC mint (v0) ${mint ?? 'undefined'}`);
+            throw new Error('ATA creation only allowed for USDC');
+          }
+        }
+        // CloseAccount (SPL Token discriminator 0x09) — strip is not possible on a v0 message in
+        // place the way the legacy branch does (compiled instructions are positional/immutable),
+        // so reject outright instead of silently dropping it.
+        if (prog === TOKEN_PROGRAM_ID_STR && ix.data.length >= 1 && ix.data[0] === 0x09) {
+          this.logger.warn('SolanaSponsor[sign-and-broadcast-per]: blocked CloseAccount instruction (v0) — possible drain attempt');
+          throw new Error('PER v0 transaction attempts to close a token account');
+        }
       }
       let totalFeePayerLamports = 0;
       for (const ix of versioned.message.compiledInstructions) {

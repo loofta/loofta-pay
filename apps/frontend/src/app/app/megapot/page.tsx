@@ -1192,7 +1192,15 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           localStorage.removeItem("megapot_ticket");
           pollingStartedRef.current = false;
           stopPoll(); onPurchased();
-          if (isCurrent) setStep("done");
+          if (isCurrent) {
+            // Always take numbers/count from the server response here, not whatever `lastTickets`
+            // already held — this branch can be reached after a fresh page load (mount-resume or
+            // cross-device restore) where the buyer never went through handlePrivateBuy in this
+            // browser session at all, so there'd be nothing else to show them.
+            setLastTickets(t.ticketNumbers ?? []);
+            setLastNumTickets(t.numTickets);
+            setStep("done");
+          }
         } else if (t.status === "failed") {
           localStorage.removeItem("megapot_ticket");
           pollingStartedRef.current = false;
@@ -2678,8 +2686,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
       const token = await getAccessToken();
       const res = await fetch(`/api/lottery/tickets/${ticketId}/rescue-burner`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ destinationSolAddress: userSolanaAddress }),
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       const data = await res.json();
       if (res.ok && data.ok) {
@@ -3117,7 +3124,11 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                   >
                     View progress <ArrowUpRight className="w-3.5 h-3.5" />
                   </Link>
-                  {t.status === "sent" && (
+                  {/* Rescue-from-burner is a dev/debug escape hatch, not something to surface to
+                      real users — on prod the backend's own closed-tab-resilience + fee-wallet
+                      recovery already handles this automatically, so showing "funds stuck?" with
+                      no way to act on it would just alarm people over a normal in-progress ticket. */}
+                  {t.status === "sent" && IS_LOCALHOST && (
                     <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-2">
                       <p className="text-base font-semibold text-slate-400">Funds stuck in burner wallet?</p>
                       <p className="text-sm text-slate-500">If it has been more than 2 min since you sent, rescue will return the USDC to your Loofta balance.</p>
