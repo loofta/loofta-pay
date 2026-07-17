@@ -23,6 +23,7 @@ import { RelayService } from './relay.service';
 import { UsersService } from '../users/users.service';
 import { EmailService } from '../email/email.service';
 import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
+import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const TICKET_PRICE_USDC = 1;
@@ -230,6 +231,7 @@ export class LotteryService {
     private readonly relay: RelayService,
     private readonly usersService: UsersService,
     private readonly emailService: EmailService,
+    private readonly magicblockQuest: MagicblockQuestService,
   ) {}
 
   /** Which bridge to use for the Sol↔Base legs (both purchase and withdrawal). 'relay' (faster,
@@ -1017,6 +1019,10 @@ export class LotteryService {
       .eq('user_id', opts.userId);
     if (error) throw new Error(`confirmSend failed: ${error.message}`);
     this.logger.log(`Ticket ${opts.ticketId} marked sent, tx: ${opts.senderTxHash}`);
+
+    this.magicblockQuest.maybePushLotteryTicketQuest(opts.ticketId).catch((e) =>
+      this.logger.warn(`MagicBlock quest push failed for ticket ${opts.ticketId}: ${(e as Error)?.message}`),
+    );
   }
 
   /** Refunds the upfront fee back to the user, if one was collected and not already refunded. */

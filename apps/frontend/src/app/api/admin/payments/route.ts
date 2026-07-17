@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
       "id, created_at, updated_at, created_by, sender_user_id, amount, direction, " +
       "recipient_address, recipient_username, recipient_email, burner_address, " +
       "status, paid_at, sender_tx_hash, sweep_tx_hash, description, " +
-      "from_chain, from_token, to_chain, to_token, is_devnet, " +
+      "from_chain, from_token, to_chain, to_token, is_devnet, is_private, " +
       "legacy_claim_id, recipient_user_id, expires_at",
       { count: "exact" },
     )

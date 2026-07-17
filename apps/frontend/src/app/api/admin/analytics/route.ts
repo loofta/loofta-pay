@@ -24,7 +24,6 @@ export async function GET(request: NextRequest) {
     waitlistGrantedRes,
     waitlistWithTwitterRes,
     lotteryRes,
-    mainnetPayingSendersRes,
     depositsRes,
     withdrawalsDevnetRes,
     withdrawalsMainnetRes,
@@ -35,9 +34,10 @@ export async function GET(request: NextRequest) {
       .eq("is_devnet", true)
       .eq("status", "SUCCESS")
       .limit(100000),
+    // sender_user_id/recipient_user_id also feed the mainnet active/repeat user counts below.
     supabase
       .from("payments")
-      .select("amount")
+      .select("amount, sender_user_id, recipient_user_id")
       .eq("is_devnet", false)
       .eq("status", "SUCCESS")
       .limit(100000),
@@ -87,14 +87,6 @@ export async function GET(request: NextRequest) {
       .select("cost_usdc, user_id")
       .in("status", ["active", "won", "lost"])
       .limit(100000),
-    // Sender IDs behind every completed mainnet private payment, for the distinct-paying-users count below.
-    supabase
-      .from("payments")
-      .select("sender_user_id")
-      .eq("is_devnet", false)
-      .eq("status", "SUCCESS")
-      .not("sender_user_id", "is", null)
-      .limit(100000),
     supabase
       .from("user_deposits")
       .select("amount_usdc")
@@ -128,9 +120,21 @@ export async function GET(request: NextRequest) {
   const volume_devnet_total = sum(devnetAllAmountsRes.data);
   const volume_mainnet_total = sum(mainnetAllAmountsRes.data);
 
-  const mainnetPayingUsers = new Set<string>();
-  (mainnetPayingSendersRes.data ?? []).forEach((p: any) => mainnetPayingUsers.add(p.sender_user_id));
-  (lotteryRes.data ?? []).forEach((t: any) => { if (t.user_id) mainnetPayingUsers.add(t.user_id); });
+  // Per-user mainnet activity count — sender or recipient of a completed private payment, or a
+  // completed lottery ticket. Counting (not just a Set) lets us also derive repeat users below.
+  const mainnetActivityCounts = new Map<string, number>();
+  const bumpMainnetActivity = (id: string | null | undefined) => {
+    if (!id) return;
+    mainnetActivityCounts.set(id, (mainnetActivityCounts.get(id) ?? 0) + 1);
+  };
+  (mainnetSuccessRes.data ?? []).forEach((p: any) => {
+    bumpMainnetActivity(p.sender_user_id);
+    bumpMainnetActivity(p.recipient_user_id);
+  });
+  (lotteryRes.data ?? []).forEach((t: any) => bumpMainnetActivity(t.user_id));
+
+  const mainnet_active_users = mainnetActivityCounts.size;
+  const mainnet_repeat_users = Array.from(mainnetActivityCounts.values()).filter((c) => c > 1).length;
 
   const volume_lottery = sum(lotteryRes.data, "cost_usdc");
   const volume_deposits = sum(depositsRes.data, "amount_usdc");
@@ -148,8 +152,10 @@ export async function GET(request: NextRequest) {
     tx_mainnet_total: mainnetTotalRes.count ?? 0,
     total_users: totalUsersRes.count ?? 0,
     users_with_email: usersWithEmailRes.count ?? 0,
-    // Distinct users with at least one completed mainnet spend — private payment (sent) or lottery ticket.
-    mainnet_paying_users: mainnetPayingUsers.size,
+    // Distinct users who sent OR received a completed mainnet private payment, or bought a lottery ticket.
+    mainnet_active_users,
+    // Of those, how many show up more than once (any mix of sent/received/lottery).
+    mainnet_repeat_users,
     waitlist_total: waitlistTotalRes.count ?? 0,
     waitlist_granted: waitlistGrantedRes.count ?? 0,
     waitlist_with_twitter: waitlistWithTwitterRes.count ?? 0,

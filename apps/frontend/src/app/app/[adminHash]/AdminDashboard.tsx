@@ -44,6 +44,7 @@ type Payment = {
   to_chain: string | null;
   to_token: string | null;
   is_devnet: boolean;
+  is_private: boolean | null;
   legacy_claim_id: string | null;
   recipient_user_id: string | null;
   expires_at: string | null;
@@ -584,7 +585,8 @@ export default function AdminDashboard() {
     tx_mainnet_total: number;
     total_users: number;
     users_with_email: number;
-    mainnet_paying_users: number;
+    mainnet_active_users: number;
+    mainnet_repeat_users: number;
     waitlist_total: number;
     waitlist_granted: number;
     waitlist_with_twitter: number;
@@ -607,7 +609,7 @@ export default function AdminDashboard() {
   useEffect(() => { userIdRef.current = userId; }, [userId]);
 
   // Resizable columns for payments table (11 data columns, indices 0–10)
-  const [colWidths, setColWidths] = useState([110, 80, 140, 150, 90, 120, 140, 55, 110, 90, 90]);
+  const [colWidths, setColWidths] = useState([110, 80, 140, 150, 90, 120, 140, 55, 60, 110, 90, 90]);
   const resizeRef = useRef<{ colIdx: number; startX: number; startW: number } | null>(null);
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -1916,9 +1918,14 @@ export default function AdminDashboard() {
                       <div className="text-sm text-gray-500 mt-0.5">{analyticsData.users_with_email.toLocaleString()} of {analyticsData.total_users.toLocaleString()} users</div>
                     </div>
                     <div className="bg-gray-900 border border-green-900 rounded-lg p-4">
-                      <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Mainnet Paying Users</div>
-                      <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.mainnet_paying_users.toLocaleString()}</div>
-                      <div className="text-sm text-gray-500 mt-0.5">sent a private payment or bought a lottery ticket</div>
+                      <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Mainnet Active Users</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.mainnet_active_users.toLocaleString()}</div>
+                      <div className="text-sm text-gray-500 mt-0.5">sent, received, or bought a lottery ticket</div>
+                    </div>
+                    <div className="bg-gray-900 border border-green-900 rounded-lg p-4">
+                      <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Repeat Users</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.mainnet_repeat_users.toLocaleString()}</div>
+                      <div className="text-sm text-gray-500 mt-0.5">2+ mainnet payments/tickets</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-sky-400 uppercase tracking-wider mb-1 font-medium">X Connected</div>
@@ -2219,7 +2226,7 @@ export default function AdminDashboard() {
           <thead>
             <tr className="bg-gray-900 text-gray-500 text-[10px] uppercase tracking-wider border-b border-gray-800">
               <th style={{ width: 24 }} className="px-2 py-2" />
-              {(["Created","ID","Sender","Recipient","Amount","Chain","Status","Net","Expires","Sender TX","Sweep TX"] as const).map((label, i) => (
+              {(["Created","ID","Sender","Recipient","Amount","Chain","Status","Net","Private","Expires","Sender TX","Sweep TX"] as const).map((label, i) => (
                 <th
                   key={label}
                   className="px-3 py-2 text-left"
@@ -2311,6 +2318,15 @@ export default function AdminDashboard() {
                       {p.is_devnet
                         ? <span className="text-[9px] px-1 py-0.5 rounded border border-orange-800 bg-orange-950 text-orange-400">DEV</span>
                         : <span className="text-[9px] px-1 py-0.5 rounded border border-green-800 bg-green-950 text-green-400">MAIN</span>}
+                    </td>
+
+                    {/* Private vs public — is_private flips to true post-creation if a sender
+                        pays a non-private link privately anyway, so this reflects what actually
+                        happened, not just how the link was originally created. */}
+                    <td className="px-3 py-2">
+                      {p.is_private !== false
+                        ? <span className="text-[9px] px-1 py-0.5 rounded border border-violet-800 bg-violet-950 text-violet-400">PRIVATE</span>
+                        : <span className="text-[9px] px-1 py-0.5 rounded border border-gray-700 bg-gray-800 text-gray-400">PUBLIC</span>}
                     </td>
 
                     {/* Expires */}

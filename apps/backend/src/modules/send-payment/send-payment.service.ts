@@ -26,6 +26,7 @@ import { TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 import { isValidSolanaAddress } from '@/common/solana-address';
 import { EmailService } from '../email/email.service';
+import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const bs58Module = require('bs58');
 const bs58 = bs58Module?.default ?? bs58Module;
@@ -66,6 +67,7 @@ export class SendPaymentService {
     private readonly usersService: UsersService,
     private readonly encryption: SendPaymentEncryptionService,
     private readonly emailService: EmailService,
+    private readonly magicblockQuest: MagicblockQuestService,
   ) {
     const mintStr =
       this.configService.get<string>('SOLANA_USDC_MINT') ||
@@ -1052,6 +1054,11 @@ export class SendPaymentService {
       } else {
         this.logger.log(`[MultiSend] marked payment=${paymentId} ${status} fee=${rowFee?.toFixed(4) ?? 'n/a'} txHash=${txHash?.slice(0, 12) ?? 'n/a'}`);
         successfullyUpdatedIds.add(paymentId);
+        if (status === 'SUCCESS') {
+          this.magicblockQuest.maybePushPrivatePaymentQuest(paymentId).catch((e) =>
+            this.logger.warn(`MagicBlock quest push failed for payment ${paymentId}: ${(e as Error)?.message}`),
+          );
+        }
       }
     }
 

@@ -12,9 +12,10 @@ import { SendPaymentModule } from '../send-payment/send-payment.module';
 import { UsersModule } from '../users/users.module';
 import { EmailModule } from '../email/email.module';
 import { DatabaseModule } from '@/database/database.module';
+import { MagicblockQuestModule } from '../magicblock-quest/magicblock-quest.module';
 
 @Module({
-  imports: [IntentsModule, SendPaymentModule, UsersModule, EmailModule, DatabaseModule],
+  imports: [IntentsModule, SendPaymentModule, UsersModule, EmailModule, DatabaseModule, MagicblockQuestModule],
   controllers: [LotteryController, AdminLotteryController],
   providers: [LotteryService, LotteryCronService, MegapotService, RhinestoneService, LifiService, RelayService],
   exports: [LotteryService],

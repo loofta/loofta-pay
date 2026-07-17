@@ -24,6 +24,7 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module';
 import { TwitterPaymentsModule } from './modules/twitter-payments/twitter-payments.module';
 import { OfframpModule } from './modules/offramp/offramp.module';
 import { LotteryModule } from './modules/lottery/lottery.module';
+import { MagicblockQuestModule } from './modules/magicblock-quest/magicblock-quest.module';
 
 @Module({
   imports: [
@@ -80,6 +81,7 @@ import { LotteryModule } from './modules/lottery/lottery.module';
     TwitterPaymentsModule,
     OfframpModule,
     LotteryModule,
+    MagicblockQuestModule,
   ],
   providers: [
     {

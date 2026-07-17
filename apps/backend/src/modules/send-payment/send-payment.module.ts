@@ -4,9 +4,10 @@ import { SendPaymentService } from './send-payment.service';
 import { SendPaymentEncryptionService } from './encryption.service';
 import { UsersModule } from '../users/users.module';
 import { EmailModule } from '../email/email.module';
+import { MagicblockQuestModule } from '../magicblock-quest/magicblock-quest.module';
 
 @Module({
-  imports: [UsersModule, EmailModule],
+  imports: [UsersModule, EmailModule, MagicblockQuestModule],
   controllers: [SendPaymentController],
   providers: [SendPaymentService, SendPaymentEncryptionService],
   exports: [SendPaymentService, SendPaymentEncryptionService],

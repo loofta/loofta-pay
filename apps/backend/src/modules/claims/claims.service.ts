@@ -32,6 +32,7 @@ import {
   decodeActualSenderDebit,
   type MagicblockPrivateTransferClientResponse,
 } from '@/common/magicblock-private-transfer';
+import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
 
 const DEPOSIT_SEED = 'deposit';
 const VAULT_SEED = 'vault';
@@ -86,6 +87,7 @@ export class ClaimsService {
     @Optional() @Inject(forwardRef(() => SendPaymentEncryptionService)) private readonly encryption: SendPaymentEncryptionService | null,
     private readonly solanaSponsor: SolanaSponsorService,
     private readonly emailService: EmailService,
+    private readonly magicblockQuest: MagicblockQuestService,
   ) {
     const defaultUsdcMint = isSolanaDevnetFromConfig(this.configService)
       ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
@@ -878,12 +880,19 @@ export class ClaimsService {
       ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
       : new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || this.usdcMint.toBase58());
 
-    // Correct is_devnet and stamp sender_user_id so the payer sees it in history.
+    // Correct is_devnet and stamp sender_user_id so the payer sees it in history. Links created
+    // non-private only record that as the CREATOR's request — if the sender pays this one
+    // privately anyway (this function only runs on the private-transfer path), flip is_private
+    // to true so admin/reporting reflects what actually happened, not just the original ask.
     const correctIsDevnet = cluster !== 'mainnet';
     await this.supabaseService.payments
-      .update({ is_devnet: correctIsDevnet, sender_user_id: privyUserId })
+      .update({
+        is_devnet: correctIsDevnet,
+        sender_user_id: privyUserId,
+        ...(isNonPrivateLink ? { is_private: true } : {}),
+      })
       .eq('id', claimId);
-    this.logger.log(`[PrivatePay] stamped claim ${claimId}: is_devnet=${correctIsDevnet} sender_user_id=${privyUserId}`);
+    this.logger.log(`[PrivatePay] stamped claim ${claimId}: is_devnet=${correctIsDevnet} sender_user_id=${privyUserId}${isNonPrivateLink ? ' is_private=true (sender opted into private on a non-private link)' : ''}`);
 
     // MagicBlock cost = 10 BPS volume fee + flat 0.2 USDC gasless relay fee.
     const relayFeeUnits = gasless ? Math.round(MAGICBLOCK_GAS_USDC * 1_000_000) : 0;
@@ -2354,6 +2363,14 @@ export class ClaimsService {
     }
 
     this.logger.log(`Updated claim ${id} status to ${effectiveStatus}`);
+
+    // Only the primary `payments` table carries the from_chain/is_devnet/direction columns the
+    // quest qualifies on — legacy `claims` rows (read-only backward-compat) never qualify anyway.
+    if (effectiveStatus === 'SUCCESS' && updatedTable === 'payments') {
+      this.magicblockQuest.maybePushPrivatePaymentQuest(id).catch((e) =>
+        this.logger.warn(`MagicBlock quest push failed for payment ${id}: ${(e as Error)?.message}`),
+      );
+    }
 
     // claim_events FK references the legacy `claims` table only — skip for `payments` table rows
     // since fee_paid_usdc is already persisted directly on the payments row.
