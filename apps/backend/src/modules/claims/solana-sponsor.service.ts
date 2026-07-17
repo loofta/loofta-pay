@@ -283,13 +283,23 @@ export class SolanaSponsorService {
    * authenticated user, exactly like it already does for getRequiredUserSigners.
    */
   getAtaCreationOwners(serializedBase64: string): string[] {
+    return this.getAtaCreationDetails(serializedBase64).map((d) => d.owner);
+  }
+
+  /** Same as getAtaCreationOwners but also keeps the mint and the ATA address itself — the latter
+   * is what assertAtaNeverExistedBefore checks on-chain. */
+  private getAtaCreationDetails(serializedBase64: string): { owner: string; mint: string; ata: string }[] {
     const txBuffer = Buffer.from(serializedBase64, 'base64');
     try {
       const tx = Transaction.from(txBuffer);
       return tx.instructions
         .filter((ix) => ix.programId.toBase58() === ATA_PROGRAM_ID)
-        .map((ix) => ix.keys[2]?.pubkey?.toBase58())
-        .filter((addr): addr is string => Boolean(addr));
+        .map((ix) => ({
+          owner: ix.keys[2]?.pubkey?.toBase58(),
+          mint: ix.keys[3]?.pubkey?.toBase58(),
+          ata: ix.keys[1]?.pubkey?.toBase58(),
+        }))
+        .filter((d): d is { owner: string; mint: string; ata: string } => Boolean(d.owner && d.mint && d.ata));
     } catch {
       // not a legacy tx — try versioned
     }
@@ -298,8 +308,12 @@ export class SolanaSponsorService {
       const accountKeys = vtx.message.getAccountKeys().staticAccountKeys;
       return vtx.message.compiledInstructions
         .filter((ix) => accountKeys[ix.programIdIndex]?.toBase58() === ATA_PROGRAM_ID)
-        .map((ix) => accountKeys[ix.accountKeyIndexes[2]]?.toBase58())
-        .filter((addr): addr is string => Boolean(addr));
+        .map((ix) => ({
+          owner: accountKeys[ix.accountKeyIndexes[2]]?.toBase58(),
+          mint: accountKeys[ix.accountKeyIndexes[3]]?.toBase58(),
+          ata: accountKeys[ix.accountKeyIndexes[1]]?.toBase58(),
+        }))
+        .filter((d): d is { owner: string; mint: string; ata: string } => Boolean(d.owner && d.mint && d.ata));
     } catch {
       return [];
     }

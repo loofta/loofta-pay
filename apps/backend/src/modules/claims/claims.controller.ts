@@ -567,24 +567,13 @@ export class ClaimsController {
         }
       }
 
-      // Verify every wallet an ATA-creation instruction would fund a new account for belongs to
-      // the authenticated user. The program/mint whitelist in signAndBroadcast only checks that
-      // it's a USDC ATA — not who owns it — which otherwise lets any authenticated caller get the
-      // fee payer to sponsor creating a token account for an arbitrary wallet, repeatably, for free
-      // (confirmed exploited in production: 2026-07-15/16, ~166 sponsored creates to a single
-      // unrelated address, each closed independently by its owner to reclaim the rent).
-      const ataOwners = this.solanaSponsor.getAtaCreationOwners(body.transaction);
-      if (ataOwners.length > 0) {
-        const ataChecks = await Promise.all(
-          ataOwners.map((addr) => this.usersService.isSolanaAddressInLinkedAccounts(userId, addr)),
-        );
-        if (!ataChecks.every(Boolean)) {
-          this.logger.warn(
-            `ClaimsController[sign-and-broadcast]: userId=${userId} submitted tx creating an ATA for unlinked wallet(s): ${ataOwners.map((a) => a.slice(0, 8)).join(', ')}…`,
-          );
-          throw new ForbiddenException('Token account creation is only allowed for your own wallet');
-        }
-      }
+      // NOTE: we deliberately do NOT require an ATA-creation destination to be one of the caller's
+      // own linked wallets — withdraw-to-external-wallet is a legitimate flow where the destination
+      // is never linked to the sender's account (confirmed broken in production 2026-07-17 by an
+      // earlier version of this check). The actual drain protection lives in
+      // SolanaSponsorService.assertAtaNeverExistedBefore, which refuses to re-fund an ATA our own
+      // fee payer already paid to create once before and that's now missing again — that's ownership-
+      // agnostic and doesn't block a first-time payment to any destination.
     }
 
     try {
@@ -654,18 +643,9 @@ export class ClaimsController {
         }
       }
 
-      const ataOwners = this.solanaSponsor.getAtaCreationOwners(body.transaction);
-      if (ataOwners.length > 0) {
-        const ataChecks = await Promise.all(
-          ataOwners.map((addr) => this.usersService.isSolanaAddressInLinkedAccounts(userId, addr)),
-        );
-        if (!ataChecks.every(Boolean)) {
-          this.logger.warn(
-            `ClaimsController[sign-and-broadcast-per]: userId=${userId} submitted tx creating an ATA for unlinked wallet(s): ${ataOwners.map((a) => a.slice(0, 8)).join(', ')}…`,
-          );
-          throw new ForbiddenException('Token account creation is only allowed for your own wallet');
-        }
-      }
+      // See the matching note in signAndBroadcastSponsored above — ATA-creation destination is
+      // deliberately not restricted to the caller's own linked wallets (breaks withdraw-to-external-
+      // wallet); assertAtaNeverExistedBefore in SolanaSponsorService is the real drain guard.
     }
 
     try {
