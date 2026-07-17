@@ -246,6 +246,13 @@ export class LotteryController {
     return this.lottery.getDashboard(req.user.id);
   }
 
+  @Post('dashboard/refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Re-check every stale ticket (drawn-but-unresolved, or won/lost-but-unclaimed) for the current user, then return a fresh dashboard' })
+  async refreshDashboard(@Request() req: any): Promise<LotteryDashboard> {
+    return this.lottery.refreshDashboard(req.user.id);
+  }
+
   @Get('history')
   @ApiOperation({ summary: 'Paginated ticket history for current user (finished tickets, newest first)' })
   async history(

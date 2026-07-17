@@ -2483,9 +2483,8 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
   const [retrying, setRetrying] = useState<string | null>(null);
   const [retryResult, setRetryResult] = useState<Record<string, string>>({});
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [checkingResult, setCheckingResult] = useState<string | null>(null);
-  const [checkResultMsg, setCheckResultMsg] = useState<Record<string, string>>({});
   const [ticketShowAll, setTicketShowAll] = useState<Record<string, boolean>>({});
+  const [refreshingAll, setRefreshingAll] = useState(false);
 
   // Pagination: the dashboard ships the newest history; older pages come from
   // /api/lottery/history on demand. Rendering is windowed by visibleCount.
@@ -2622,33 +2621,21 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
     }
   }
 
-  async function handleCheckResults(ticketId: string) {
-    setCheckingResult(ticketId);
-    setCheckResultMsg(r => ({ ...r, [ticketId]: "Checking results on-chain…" }));
+  // Page-level "refresh everything" — re-derives every stale ticket server-side (drawn-but-
+  // unresolved, or won/lost-but-unclaimed, see refreshDashboard in lottery.service.ts) instead of
+  // a per-ticket "Check Results" button the user has to click one at a time.
+  async function handleRefreshAll() {
+    setRefreshingAll(true);
     try {
       const token = await getAccessToken();
-      const res = await fetch(`/api/lottery/tickets/${ticketId}/check-results`, {
+      await fetch("/api/lottery/dashboard/refresh", {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      const data = await res.json();
-      if (res.ok) {
-        const msg = data.status === "won"
-          ? (isFreeTicketAmount(data.winAmountUsdc, withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC)
-            ? "You won a free ticket! Go to Redeem tab to play it again."
-            : `Won $${data.winAmountUsdc?.toFixed(2)} (Tier ${data.winTier ?? "?"})! Go to Redeem tab.`)
-          : data.status === "lost"
-            ? "No win this draw — better luck next time!"
-            : `Status: ${data.status}`;
-        setCheckResultMsg(r => ({ ...r, [ticketId]: msg }));
-        setTimeout(onRefresh, 1500);
-      } else {
-        setCheckResultMsg(r => ({ ...r, [ticketId]: `Error: ${data.message ?? "Unknown error"}` }));
-      }
-    } catch (e: any) {
-      setCheckResultMsg(r => ({ ...r, [ticketId]: `Error: ${e.message}` }));
-    } finally {
-      setCheckingResult(null);
+    } catch { /* non-fatal — refetch below still shows whatever's already there */ }
+    finally {
+      setRefreshingAll(false);
+      refetch?.() ?? onRefresh();
     }
   }
 
@@ -2873,26 +2860,6 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
                 </p>
               </div>
             )}
-            {/* Check results button for active tickets past draw time */}
-            {t.status === "active" && (
-              (t.drawTime && new Date(t.drawTime) < new Date()) ||
-              (t.roundId && nextDrawRoundId && t.roundId !== nextDrawRoundId)
-            ) && (
-                <div className="space-y-2">
-                  {checkResultMsg[t.id] && (
-                    <p className={`text-base ${checkResultMsg[t.id].startsWith("Error") ? "text-red-400" : checkResultMsg[t.id].includes("Won") ? "text-emerald-400" : "text-slate-400"}`}>
-                      {checkResultMsg[t.id]}
-                    </p>
-                  )}
-                  <button
-                    onClick={() => handleCheckResults(t.id)}
-                    disabled={checkingResult === t.id}
-                    className="w-full h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
-                  >
-                    {checkingResult === t.id ? "Checking…" : "Check Results"}
-                  </button>
-                </div>
-              )}
             {/* Number balls */}
             {hasNumbers ? (
               <div className="space-y-2">
@@ -3207,7 +3174,19 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
         : mergedHistory.length > 0 && (
           <div className="mt-3">
             <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-              <p className="text-base font-medium text-slate-500 uppercase tracking-wider">Tickets</p>
+              <div className="flex items-center gap-1">
+                <p className="text-base font-medium text-slate-500 uppercase tracking-wider">Tickets</p>
+                <button
+                  type="button"
+                  onClick={handleRefreshAll}
+                  disabled={refreshingAll}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-50"
+                  aria-label="Refresh"
+                  title="Refresh results"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${refreshingAll ? "animate-spin" : ""}`} />
+                </button>
+              </div>
               {myGifts.length > 0 && (
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {([["all", "All"], ["mine", "My tickets"], ["gifted", "Gifted"]] as const).map(([key, label]) => (

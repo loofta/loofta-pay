@@ -2522,36 +2522,52 @@ export class LotteryService {
     if (!tickets?.length) return;
 
     for (const ticket of tickets) {
-      try {
-        const tokenIds: string[] = Array.isArray(ticket.ticket_nft_ids) ? ticket.ticket_nft_ids : [];
-        if (!tokenIds.length) continue;
+      await this.reconcileTicketRow(ticket, 'reconcileUnclaimedResults');
+    }
+  }
 
-        // Some older rows never got winning_numbers persisted (e.g. the round-info fetch failed
-        // the one time this ticket's status was set) — re-fetch rather than silently skipping the
-        // ground-truth check below.
-        const winningNumbers = ticket.winning_numbers ?? (ticket.round_id
-          ? await this.megapot.getWinningNumbersForRound(ticket.round_id).catch(() => null)
-          : null);
+  /**
+   * Re-derives a single already-'won'/'lost' ticket via resolveTicketWin's ground-truth fallback
+   * and, if it finds a HIGHER total than what's stored, persists the correction. Shared by the
+   * 15-minute cron sweep (reconcileUnclaimedResults) and the on-demand recheck path in
+   * checkTicketResult, so a user hitting "check results" on a mismarked ticket doesn't have to
+   * wait for the next cron tick to see the fix.
+   */
+  private async reconcileTicketRow(ticket: any, logPrefix: string): Promise<{ totalWinUsdc: number; tier: number | null } | null> {
+    try {
+      const tokenIds: string[] = Array.isArray(ticket.ticket_nft_ids) ? ticket.ticket_nft_ids : [];
+      if (!tokenIds.length) return null;
 
-        const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
-        const { totalWinUsdc, tier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results, {
-          ticketNumbers: Array.isArray(ticket.ticket_numbers) ? ticket.ticket_numbers : null,
-          winningNumbers,
-        });
-        const storedWin = ticket.win_amount_usdc ?? 0;
+      // Some older rows never got winning_numbers persisted (e.g. the round-info fetch failed
+      // the one time this ticket's status was set) — re-fetch rather than silently skipping the
+      // ground-truth check below.
+      const winningNumbers = ticket.winning_numbers ?? (ticket.round_id
+        ? await this.megapot.getWinningNumbersForRound(ticket.round_id).catch(() => null)
+        : null);
 
-        if (totalWinUsdc > storedWin + 0.000001) {
-          await db.from('lottery_tickets').update({
-            status: 'won',
-            win_amount_usdc: totalWinUsdc,
-            win_tier: tier ?? ticket.win_tier,
-            updated_at: new Date().toISOString(),
-          }).eq('id', ticket.id);
-          this.logger.warn(`reconcileUnclaimedResults: ticket ${ticket.id} was under-recorded — $${storedWin} → $${totalWinUsdc}`);
-        }
-      } catch (err: any) {
-        this.logger.warn(`reconcileUnclaimedResults ticket ${ticket.id}: ${err.message}`);
+      const results = await this.megapot.checkTicketResultsFromNft(tokenIds);
+      const { totalWinUsdc, tier } = await this.resolveTicketWin(ticket.companion_address, ticket.round_id, results, {
+        ticketNumbers: Array.isArray(ticket.ticket_numbers) ? ticket.ticket_numbers : null,
+        winningNumbers,
+      });
+      const storedWin = ticket.win_amount_usdc ?? 0;
+
+      if (totalWinUsdc > storedWin + 0.000001) {
+        const db = this.supabase.getClient();
+        await db.from('lottery_tickets').update({
+          status: 'won',
+          win_amount_usdc: totalWinUsdc,
+          win_tier: tier ?? ticket.win_tier,
+          ...(winningNumbers ? { winning_numbers: winningNumbers } : {}),
+          updated_at: new Date().toISOString(),
+        }).eq('id', ticket.id);
+        this.logger.warn(`${logPrefix}: ticket ${ticket.id} was under-recorded — $${storedWin} → $${totalWinUsdc}`);
+        return { totalWinUsdc, tier: tier ?? ticket.win_tier };
       }
+      return null;
+    } catch (err: any) {
+      this.logger.warn(`${logPrefix} ticket ${ticket.id}: ${err.message}`);
+      return null;
     }
   }
 
@@ -2572,11 +2588,25 @@ export class LotteryService {
       .single();
 
     if (!ticket) throw new BadRequestException('Ticket not found');
-    if (ticket.status === 'won' || ticket.status === 'lost') {
+    if (ticket.status === 'won') {
       return {
         status: ticket.status,
         winAmountUsdc: ticket.win_amount_usdc,
         winTier: ticket.win_tier,
+        winningNumbers: ticket.winning_numbers ?? null,
+        ticketNumbers: ticket.ticket_numbers ?? null,
+      };
+    }
+    if (ticket.status === 'lost') {
+      // Don't just trust a stored 'lost' at face value — metadata + Data API have both been
+      // caught wrong before (see resolveTicketWin). A user hitting "check results" is an explicit
+      // ask to re-verify, so run the same ground-truth recheck the cron does instead of making
+      // them wait up to 15 minutes for reconcileUnclaimedResults to catch it.
+      const corrected = await this.reconcileTicketRow(ticket, 'checkTicketResult');
+      return {
+        status: corrected ? 'won' : ticket.status,
+        winAmountUsdc: corrected?.totalWinUsdc ?? ticket.win_amount_usdc,
+        winTier: corrected?.tier ?? ticket.win_tier,
         winningNumbers: ticket.winning_numbers ?? null,
         ticketNumbers: ticket.ticket_numbers ?? null,
       };
@@ -3807,6 +3837,48 @@ export class LotteryService {
       nextDraw,
       withdrawMinUsdc: WITHDRAW_MIN_USDC,
     };
+  }
+
+  /**
+   * "Refresh" for the whole page (like the payment history refresh icon) instead of a per-ticket
+   * "Check Results" button: re-derives every one of this user's tickets that could be stale —
+   * 'active' tickets whose draw has passed (via checkTicketResult, same as the old per-ticket
+   * button) and already-'won'/'lost' tickets that haven't been claimed yet (via reconcileTicketRow,
+   * the ground-truth fallback — see resolveTicketWin for why a stored 'lost' isn't always
+   * trustworthy) — then returns a fresh dashboard. Sequential, not parallel: checkTicketResultsFromNft
+   * already throttles per-token RPC calls, and running many tickets at once would just multiply that
+   * burst against the same rate-limited RPC.
+   */
+  async refreshDashboard(userId: string): Promise<LotteryDashboard> {
+    const db = this.supabase.getClient();
+    const { data: tickets } = await db
+      .from('lottery_tickets')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    const activeRoundId = await this.megapot.getActiveRound().then(r => r?.id ?? null).catch(() => null);
+
+    for (const ticket of tickets ?? []) {
+      try {
+        if (ticket.status === 'active') {
+          // Same "stale" condition the frontend already polls on: draw time has passed, or the
+          // round it belongs to is no longer the active one — anything still in the current round
+          // hasn't drawn yet, so skip it rather than have checkTicketResult throw for nothing.
+          const drawPassed = (ticket.draw_time && new Date(ticket.draw_time) < new Date())
+            || (ticket.round_id && activeRoundId && ticket.round_id !== activeRoundId);
+          if (drawPassed) await this.checkTicketResult(ticket.id, userId);
+        } else if ((ticket.status === 'won' || ticket.status === 'lost') && !ticket.claim_tx_hash) {
+          await this.reconcileTicketRow(ticket, 'refreshDashboard');
+        }
+      } catch (err: any) {
+        // A single ticket's draw-not-happened-yet / RPC hiccup shouldn't block refreshing the rest.
+        this.logger.warn(`refreshDashboard ticket ${ticket.id}: ${err.message}`);
+      }
+    }
+
+    return this.getDashboard(userId);
   }
 
   async getTicketStatus(ticketId: string, userId: string): Promise<LotteryTicketSummary | null> {
