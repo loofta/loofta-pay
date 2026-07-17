@@ -62,6 +62,14 @@ export class AdminLotteryController {
     });
   }
 
+  @Post('reconcile')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Re-check every stale ticket across ALL users right now (same work the 15-minute cron does) — triggered by admin panel loads so an admin visiting the Lottery tab doesn\'t have to wait for the next tick' })
+  async reconcile(): Promise<{ ok: boolean }> {
+    await this.lottery.checkDailyResults();
+    return { ok: true };
+  }
+
   @Get('gifts')
   @ApiOperation({ summary: 'List gifted tickets (paginated, newest first)' })
   @ApiQuery({ name: 'page', required: false, type: Number })

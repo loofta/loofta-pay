@@ -1988,10 +1988,16 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
           {!arrived && !transferFailed && (
             <p className="text-sm text-slate-500">You can safely leave this page — it continues in the background.</p>
           )}
-          <button onClick={() => { localStorage.removeItem(WITHDRAWAL_STORAGE_KEY); setDone(false); setDoneAmount(0); setArrived(false); setTransferFailed(false); }}
-            className="text-base text-slate-400 hover:text-white underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 rounded">
-            Back to redeem
-          </button>
+          {/* Ticket status stays 'won' for the whole claim→bridge→deliver pipeline (see
+              initiateWithdrawalBatch) — showing this while still in flight let a user bail back
+              into what looked like the exact same unredeemed win, even though it was already being
+              delivered. Only offer it once there's actually nothing left in flight to lose track of. */}
+          {(arrived || transferFailed) && (
+            <button onClick={() => { localStorage.removeItem(WITHDRAWAL_STORAGE_KEY); setDone(false); setDoneAmount(0); setArrived(false); setTransferFailed(false); onWithdrawn(); }}
+              className="text-base text-slate-400 hover:text-white underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 rounded">
+              Back to redeem
+            </button>
+          )}
         </div>
       </div>
     );
@@ -3623,11 +3629,21 @@ export default function MegapotPage() {
 
   // Dev-only: mock winning tickets for redeem UI preview (see DevPreviewPanel)
   const redeemPreview = IS_LOCALHOST ? searchParams?.get("preview") : null;
+  // A ticket's status stays 'won' for its entire claim→bridge→deliver pipeline (only flips to
+  // 'withdrawn' at the very end — see initiateWithdrawalBatch) — so a withdrawal that's pending,
+  // processing, or already complete must still be excluded here by cross-referencing
+  // dashboard.withdrawals, or the redeem screen re-offers the same already-claimed win. A 'failed'
+  // withdrawal is the one exception: funds are safe but undelivered, so the ticket should stay
+  // redeemable to retry.
+  const inFlightOrDoneWithdrawalTicketIds = new Set(
+    (dashboard?.withdrawals ?? []).filter(w => w.status !== "failed").map(w => w.ticketId)
+  );
   const wonTickets = redeemPreview === "redeem" || redeemPreview === "redeem-done"
     ? PREVIEW_WON_TICKETS.slice(0, 1)
     : redeemPreview === "redeem-batch"
       ? PREVIEW_WON_TICKETS
-      : [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])].filter(t => t.status === "won");
+      : [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])]
+        .filter(t => t.status === "won" && !inFlightOrDoneWithdrawalTicketIds.has(t.id));
   const isRedeemPreview = redeemPreview === "redeem" || redeemPreview === "redeem-batch" || redeemPreview === "redeem-done";
 
   return (

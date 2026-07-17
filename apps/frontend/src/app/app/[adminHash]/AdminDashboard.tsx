@@ -806,6 +806,18 @@ export default function AdminDashboard() {
     }
   }, [authHeaders, toast]);
 
+  // Ticket win/loss status can go stale between the 15-minute settlement cron ticks (see
+  // resolveTicketWin's ground-truth fallback in lottery.service.ts) — re-check everything right
+  // now rather than making an admin who's actively looking at this tab wait for the next tick.
+  // Fire-and-forget: reconcile failing shouldn't block the list itself from loading.
+  const reconcileAndFetchLottery = useCallback(async (page = 1, status = "") => {
+    try {
+      const headers = await authHeaders();
+      await fetch("/api/admin/lottery/reconcile", { method: "POST", headers });
+    } catch { /* non-fatal — list below still loads with whatever's currently stored */ }
+    await fetchLottery(page, status);
+  }, [authHeaders, fetchLottery]);
+
   const fetchGifts = useCallback(async (page = 1) => {
     setGiftsLoading(true);
     try {
@@ -1144,7 +1156,7 @@ export default function AdminDashboard() {
             activeTab === "blink" ? fetchBlink :
             activeTab === "analytics" ? fetchAnalytics :
             activeTab === "cashout" ? () => fetchCashOuts(cashoutPage, cashoutStatusFilter) :
-            activeTab === "lottery" ? () => { fetchLottery(lotteryPage, lotteryStatusFilter); fetchGifts(giftsPage); fetchReferralFees(); } :
+            activeTab === "lottery" ? () => { reconcileAndFetchLottery(lotteryPage, lotteryStatusFilter); fetchGifts(giftsPage); fetchReferralFees(); } :
             () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })
           }
           disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading || cashoutLoading || lotteryLoading}
@@ -1205,7 +1217,7 @@ export default function AdminDashboard() {
         </button>
         <button
           type="button"
-          onClick={() => { setActiveTab("lottery"); if (!lotteryLoaded) fetchLottery(1, ""); if (!giftsLoaded) fetchGifts(1); if (!referralFeesLoaded) fetchReferralFees(); }}
+          onClick={() => { setActiveTab("lottery"); if (!lotteryLoaded) reconcileAndFetchLottery(1, ""); if (!giftsLoaded) fetchGifts(1); if (!referralFeesLoaded) fetchReferralFees(); }}
           className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "lottery" ? "border-teal-500 text-teal-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
           Lottery Tickets
