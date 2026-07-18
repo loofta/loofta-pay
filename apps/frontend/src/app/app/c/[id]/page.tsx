@@ -2217,6 +2217,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   }
 
   async function payWithLooftaBalance(gasless = true) {
+    // Set the in-flight guard synchronously, before any `await`, so a second click during the
+    // burner refetch below (or any other async step) can't start a second concurrent payment —
+    // that race is what let a single tap build+broadcast two competing MagicBlock transfers.
+    if (payingWithLoofta) return;
+    setPayingWithLoofta(true);
     const isPending = !!(claim as { recipient_pending_username?: boolean; recipient_pending_email?: boolean })?.recipient_pending_username || (claim as { recipient_pending_email?: boolean })?.recipient_pending_email;
     console.log("[PayWithLoofta] Clicked:", { claimId: claim?.id, isPending, hasBurner: !!(claim as { claim_burner_address?: string })?.claim_burner_address });
     let effectiveRecipient = getEffectiveRecipient(claim);
@@ -2234,11 +2239,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         ? "This payment link is for someone who hasn't signed up yet. The burner address could not be loaded — try refreshing the page or use a different browser."
         : "Claim or recipient address is missing.";
       toast({ variant: "destructive", title: "Missing info", description });
+      setPayingWithLoofta(false);
       return;
     }
     const baseAmount = parseFloat(claim.amount) || 0;
     if (baseAmount <= 0) {
       toast({ variant: "destructive", title: "Invalid amount", description: "Claim amount must be greater than 0." });
+      setPayingWithLoofta(false);
       return;
     }
     // Amount to send: claim amount only (no Privacy Cash gross-up for private mode)
@@ -2246,10 +2253,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     const senderAddress = solanaPayment.senderAddress;
     if (!senderAddress) {
       toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta Solana wallet was not found. Try logging in again." });
+      setPayingWithLoofta(false);
       return;
     }
     setShowPayNowModal(true);
-    setPayingWithLoofta(true);
     setPayWithLooftaError(null);
     try {
       // Normalize and validate Solana recipient (base58) — use burner when recipient not yet claimed
@@ -4613,7 +4620,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <button
                         type="button"
                         onClick={() => payWithLooftaBalance()}
-                        disabled={!authenticated || !isPayerWalletReady || isLoading}
+                        disabled={!authenticated || !isPayerWalletReady || isLoading || payingWithLoofta}
                         className="w-full flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <LooftaIcon className="w-8 h-8 shrink-0" />
