@@ -172,6 +172,13 @@ function getStepsForStatus(
     if (upperStatus === 'SUCCESS') {
       return buildSteps('completed', 'completed', 'completed', 'completed', 'completed');
     }
+    // Every payment now routes through a burner and requires an explicit claim — the sender's
+    // own funds have already fully left their wallet and landed privately by the time status
+    // reaches PRIVATE_TRANSFER_PENDING. The remaining step (recipient claiming from the burner)
+    // is the recipient's, not something the sender's own tracker should show as "processing."
+    if (upperStatus === 'PRIVATE_TRANSFER_PENDING') {
+      return buildSteps('completed', 'completed', 'completed', 'completed', 'completed');
+    }
     if (upperStatus === 'PROCESSING' || upperStatus === 'KNOWN_DEPOSIT_TX') {
       return buildSteps('completed', 'active', 'pending', 'pending', 'pending');
     }
@@ -346,7 +353,8 @@ function TimeEstimate({
   toChain,
   paidAt,
   paymentType,
-  isPrivate
+  isPrivate,
+  isLooftaPay,
 }: {
   status: PaymentStatus | null;
   startedAt?: string | null;
@@ -357,9 +365,14 @@ function TimeEstimate({
   paidAt?: string | null;
   paymentType?: PaymentType;
   isPrivate?: boolean;
+  isLooftaPay?: boolean;
 }) {
   const [elapsed, setElapsed] = useState(0);
   const upperStatus = String(status || '').toUpperCase();
+  // For Loofta Pay, the sender's own leg is done once status reaches PRIVATE_TRANSFER_PENDING —
+  // what's left (recipient claiming from the burner) isn't the sender's wait to track. Treat it
+  // the same as SUCCESS for display purposes, matching the "all steps completed" tracker state.
+  const isDoneForSender = upperStatus === 'SUCCESS' || (isLooftaPay && upperStatus === 'PRIVATE_TRANSFER_PENDING');
 
   // Only start timer when deposit is actually received (PROCESSING, KNOWN_DEPOSIT_TX, PRIVATE_TRANSFER_PENDING, or later)
   // Don't start timer for: PENDING_DEPOSIT, INCOMPLETE_DEPOSIT, FAILED, REFUNDED
@@ -377,10 +390,10 @@ function TimeEstimate({
     return Date.now();
   }, [depositReceivedAt, startedAt, shouldStartTimer]);
 
-  // Calculate actual elapsed time for SUCCESS status
+  // Calculate actual elapsed time for SUCCESS status (or its Loofta Pay equivalent)
   // Use depositReceivedAt to paidAt if available, otherwise use startedAt to paidAt
   const actualElapsedTime = useMemo(() => {
-    if (upperStatus === 'SUCCESS' && paidAt) {
+    if (isDoneForSender && paidAt) {
       let startTime: number | null = null;
 
       // Prefer depositReceivedAt (time from when deposit was received to completion)
@@ -401,14 +414,14 @@ function TimeEstimate({
   }, [upperStatus, depositReceivedAt, paidAt, startedAt]);
 
   useEffect(() => {
-    // For SUCCESS status, use actual elapsed time from timestamps
-    if (upperStatus === 'SUCCESS' && actualElapsedTime !== null) {
+    // For SUCCESS (or its Loofta Pay equivalent), use actual elapsed time from timestamps
+    if (isDoneForSender && actualElapsedTime !== null) {
       setElapsed(actualElapsedTime);
       return;
     }
 
     // Stop timer for terminal states
-    const isTerminal = upperStatus === 'SUCCESS' || upperStatus === 'FAILED' || upperStatus === 'REFUNDED';
+    const isTerminal = isDoneForSender || upperStatus === 'FAILED' || upperStatus === 'REFUNDED';
     if (isTerminal || !shouldStartTimer || !startTime) {
       setElapsed(0);
       return;
@@ -419,19 +432,19 @@ function TimeEstimate({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [startTime, upperStatus, shouldStartTimer, actualElapsedTime]);
+  }, [startTime, upperStatus, shouldStartTimer, actualElapsedTime, isDoneForSender]);
 
   // Calculate estimated time remaining
   const estimatedRemaining = useMemo(() => {
     const upperStatus = String(status || '').toUpperCase();
-    if (upperStatus === 'SUCCESS') return null;
+    if (upperStatus === 'SUCCESS' || (isLooftaPay && upperStatus === 'PRIVATE_TRANSFER_PENDING')) return null;
     // Don't show time estimate for PENDING_DEPOSIT or INCOMPLETE_DEPOSIT - deposit hasn't been fully received yet
     if (upperStatus === 'PENDING_DEPOSIT' || upperStatus === 'INCOMPLETE_DEPOSIT') return null;
     // Don't show for terminal states
     if (upperStatus === 'FAILED' || upperStatus === 'REFUNDED') return null;
     // Show time estimate for PRIVATE_TRANSFER_PENDING (private transfer step)
 
-    const steps = getStepsForStatus(status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate);
+    const steps = getStepsForStatus(status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate, isLooftaPay);
     const activeStepIndex = steps.findIndex(s => s.status === 'active');
     if (activeStepIndex === -1) return null;
 
@@ -443,9 +456,9 @@ function TimeEstimate({
 
     const remaining = Math.max(0, totalEstimate - elapsed);
     return remaining;
-  }, [status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate, elapsed]);
+  }, [status, averagePaymentTime, fromChain, toChain, paymentType, isPrivate, isLooftaPay, elapsed]);
 
-  if (upperStatus === 'SUCCESS') {
+  if (isDoneForSender) {
     // Calculate elapsed time: from deposit received to payment completed
     // Use actualElapsedTime if available (calculated from timestamps), otherwise use elapsed state
     const totalSeconds = actualElapsedTime !== null ? actualElapsedTime : (elapsed > 0 ? elapsed : 0);
@@ -661,6 +674,7 @@ export function PaymentStatusTracker({
         paidAt={paidAt}
         paymentType={paymentType}
         isPrivate={isPrivate}
+        isLooftaPay={isLooftaPay}
       />
 
       {/* Additional Info for Processing */}

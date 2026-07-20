@@ -1683,7 +1683,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         {claimAsRecipientMutation.isPending ? (
           <><Loader2 className={mobile ? "h-5 w-5 animate-spin" : "h-4 w-4 animate-spin"} /><span>Claiming…</span></>
         ) : (
-          <><CheckCircle2 className={mobile ? "h-5 w-5" : "h-4 w-4"} /><span>Claim publicly{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span></>
+          <>
+            <CheckCircle2 className={mobile ? "h-5 w-5" : "h-4 w-4"} />
+            {/* "Claim now" when the payment already arrived privately — "publicly" would be
+                misleading there. "Claim publicly" only makes sense as a contrast to the
+                "Claim privately" option, which only appears for a publicly-sent payment anyway. */}
+            <span>{canClaimPrivately ? "Claim publicly" : "Claim now"}{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span>
+          </>
         )}
       </button>
 
@@ -4102,6 +4108,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     ? `@${claim.creator_username}`
                     : claim?.creator_email || "Anonymous"}
                 </div>
+                {claim?.is_private && (
+                  <div className="flex items-center justify-center gap-1.5 -mt-3 mb-5 text-base md:text-sm text-amber-400/90">
+                    <GhostGlyph size={16} opacity={0.9} />
+                    <span>Sent privately</span>
+                  </div>
+                )}
                 <div className="flex items-center justify-center gap-2 text-base md:text-sm mb-4">
                   {burnerIsChecking ? (
                     <>
@@ -4370,31 +4382,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                   )}
                 */}
-                {String(status || "").toUpperCase() !== "SUCCESS" && (
-                  <div className="mt-6">
-                    <PaymentStatusTracker
-                      status={status}
-                      statusData={statusData}
-                      depositReceivedAt={latestIntentData?.depositReceivedAt || statusData?.updatedAt}
-                      startedAt={claim.created_at}
-                      fromChain={selectedFrom?.chain}
-                      toChain={destToken?.chain}
-                      depositAddress={deposit?.depositAddress}
-                      isPrivate={claim?.is_private === true || privatePayActive}
-                      paidAt={claim.paid_at}
-                      paymentType={
-                        deposit?.isDirect ? 'direct' :
-                          deposit?.isCompanionSwap ? 'companion-swap' :
-                            'near-intent'
-                      }
-                      isLooftaPay={
-                        claim?.paid_with_token?.toUpperCase() === "USDC" &&
-                        (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
-                      }
-                    />
-                  </div>
-                )}
-
               </>
             ) : (
               <>
