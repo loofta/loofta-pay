@@ -3514,7 +3514,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             </div>
             <h3 className="text-xl font-semibold text-white mb-2">Sign in to view details</h3>
             <p className="text-slate-400 text-base mb-6 max-w-xs">
-              {pendingSocialPlatformHint
+              {pendingSocialPlatformHint === "telegram"
+                ? "This was sent to a Telegram username. Sign in, then connect Telegram to check."
+                : pendingSocialPlatformHint
                 ? `This was sent to a ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "social"} username. Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "that account"} to check.`
                 : "This payment may be waiting for you. Sign in to check."}
             </p>
@@ -3523,14 +3525,22 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 if (pendingEmailHint) login({ loginMethods: ["email"], disableSignup: false });
                 else if (pendingSocialPlatformHint === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                 else if (pendingSocialPlatformHint === "github") login({ loginMethods: ["github"], disableSignup: false });
-                else if (pendingSocialPlatformHint === "telegram") login({ loginMethods: ["telegram"], disableSignup: false });
+                // Telegram's login widget doesn't work on this (.xyz) domain — Privy's native
+                // loginMethods:["telegram"] silently fails here. Sign in with any other method
+                // instead; once authenticated, SocialConnectPrompt/connectTelegram takes over and
+                // routes Telegram linking through the loofta.com relay, which does work.
+                else if (pendingSocialPlatformHint === "telegram") login({ disableSignup: false });
                 else login();
               }}
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white hover:opacity-90 transition-opacity"
               style={{ background: "linear-gradient(to right, #FF1301, #EAB308)" }}
             >
               <LogIn className="w-4 h-4" />
-              {pendingSocialPlatformHint ? `Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "account"}` : "Sign in"}
+              {pendingSocialPlatformHint === "telegram"
+                ? "Sign in"
+                : pendingSocialPlatformHint
+                ? `Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "account"}`
+                : "Sign in"}
             </button>
           </div>
         ) : claim ? (
@@ -4017,7 +4027,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   !user?.id ? (
                     <>
                       <p className="text-gray-500 text-base md:text-sm mb-5">
-                        Sign in with your {SOCIAL_PLATFORM_LABELS[claim.recipient_pending_social_platform ?? ""] ?? "social"} account to claim.
+                        {claim.recipient_pending_social_platform === "telegram"
+                          ? "Sign in, then connect Telegram to claim."
+                          : `Sign in with your ${SOCIAL_PLATFORM_LABELS[claim.recipient_pending_social_platform ?? ""] ?? "social"} account to claim.`}
                       </p>
                       <button
                         type="button"
@@ -4025,7 +4037,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           const platform = claim?.recipient_pending_social_platform;
                           if (platform === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                           else if (platform === "github") login({ loginMethods: ["github"], disableSignup: false });
-                          else if (platform === "telegram") login({ loginMethods: ["telegram"], disableSignup: false });
+                          // Telegram's widget doesn't work on this domain — sign in with any
+                          // method, then SocialConnectPrompt routes Telegram linking through the
+                          // loofta.com relay (see connectTelegram).
+                          else if (platform === "telegram") login({ disableSignup: false });
                           else login({ disableSignup: false });
                         }}
                         className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
@@ -4097,7 +4112,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       !user?.id ? (
                         <>
                           <p className="text-gray-500 text-base md:text-sm mb-5">
-                            Connect your {claim?.recipient_pending_social_platform ?? "social"} account (@{claim?.recipient_pending_social_value || "handle"}) on Loofta to claim.
+                            {claim?.recipient_pending_social_platform === "telegram"
+                              ? `Sign in, then connect Telegram (@${claim?.recipient_pending_social_value || "handle"}) on Loofta to claim.`
+                              : `Connect your ${claim?.recipient_pending_social_platform ?? "social"} account (@${claim?.recipient_pending_social_value || "handle"}) on Loofta to claim.`}
                           </p>
                           <button
                             type="button"
@@ -4105,7 +4122,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               const platform = claim?.recipient_pending_social_platform;
                               if (platform === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                               else if (platform === "github") login({ loginMethods: ["github"], disableSignup: false });
-                              else if (platform === "telegram") login({ loginMethods: ["telegram"], disableSignup: false });
+                              // Telegram's widget doesn't work on this domain — sign in with any
+                              // method, then SocialConnectPrompt routes Telegram linking through
+                              // the loofta.com relay (see connectTelegram).
+                              else if (platform === "telegram") login({ disableSignup: false });
                               else login({ disableSignup: false });
                             }}
                             className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"

@@ -153,6 +153,30 @@ export async function GET(request: NextRequest) {
       };
     })
     .sort((a, b) => b.totalAmount - a.totalAmount);
+
+  // Repeat senders: more than 2 successful payments total, any amount (not filtered to > $5 —
+  // a sender with 3+ smaller payments should still show up here).
+  const bySender = new Map<string, { txCount: number; totalAmount: number }>();
+  (mainnetSuccessRes.data ?? []).forEach((p: any) => {
+    if (!p.sender_user_id) return;
+    const entry = bySender.get(p.sender_user_id) ?? { txCount: 0, totalAmount: 0 };
+    entry.txCount += 1;
+    entry.totalAmount += Number(p.amount);
+    bySender.set(p.sender_user_id, entry);
+  });
+  const users_mainnet_success_above_5_repeat_list = Array.from(bySender.entries())
+    .filter(([, stats]) => stats.txCount > 2)
+    .map(([privyUserId, stats]) => {
+      const u = appUsersById.get(privyUserId) as any;
+      return {
+        privyUserId,
+        username: u?.username ?? null,
+        email: u?.email ?? null,
+        txCount: stats.txCount,
+        totalAmount: stats.totalAmount,
+      };
+    })
+    .sort((a, b) => b.totalAmount - a.totalAmount);
   const volume_devnet_total = sum(devnetAllAmountsRes.data);
   const volume_mainnet_total = sum(mainnetAllAmountsRes.data);
 
@@ -230,6 +254,7 @@ export async function GET(request: NextRequest) {
     tx_mainnet_success_above_5,
     users_mainnet_success_above_5,
     users_mainnet_success_above_5_list,
+    users_mainnet_success_above_5_repeat_list,
     tx_devnet_total: devnetTotalRes.count ?? 0,
     tx_mainnet_total: mainnetLinks.length,
     total_users: totalUsersRes.count ?? 0,

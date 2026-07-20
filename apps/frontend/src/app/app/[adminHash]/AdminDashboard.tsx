@@ -590,6 +590,13 @@ export default function AdminDashboard() {
       txCount: number;
       totalAmount: number;
     }>;
+    users_mainnet_success_above_5_repeat_list: Array<{
+      privyUserId: string;
+      username: string | null;
+      email: string | null;
+      txCount: number;
+      totalAmount: number;
+    }>;
     tx_devnet_total: number;
     tx_mainnet_total: number;
     total_users: number;
@@ -624,6 +631,7 @@ export default function AdminDashboard() {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
   const [showAbove5List, setShowAbove5List] = useState(false);
+  const [showRepeatAbove5List, setShowRepeatAbove5List] = useState(false);
 
   // Keep userId stable in callbacks via ref
   const userIdRef = useRef(userId);
@@ -1920,6 +1928,15 @@ export default function AdminDashboard() {
                       <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.users_mainnet_success_above_5.toLocaleString()}</div>
                       <div className="text-sm text-gray-500 mt-0.5">distinct senders · {showAbove5List ? "hide list" : "show list"}</div>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowRepeatAbove5List((v) => !v)}
+                      className="bg-gray-900 border border-green-900 rounded-lg p-4 text-left hover:bg-gray-800/60 transition-colors"
+                    >
+                      <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Repeat Senders</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.users_mainnet_success_above_5_repeat_list.length.toLocaleString()}</div>
+                      <div className="text-sm text-gray-500 mt-0.5">&gt;2 successful payments, any amount · {showRepeatAbove5List ? "hide list" : "show list"}</div>
+                    </button>
                   </div>
                   {showAbove5List && (
                     <div className="overflow-x-auto rounded-xl border border-gray-800 mt-3">
@@ -1938,7 +1955,11 @@ export default function AdminDashboard() {
                               <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
                               <td className="px-4 py-2.5">
                                 <div className="font-medium text-white">{u.username ? `@${u.username}` : "—"}</div>
-                                <div className="text-sm text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
+                                {u.email ? (
+                                  <div className="text-sm text-gray-500 truncate max-w-[200px]">{u.email}</div>
+                                ) : (
+                                  <div className="text-sm text-gray-500 font-mono break-all select-all" title={u.privyUserId}>{u.privyUserId}</div>
+                                )}
                               </td>
                               <td className="px-3 py-2.5 text-center tabular-nums text-white">{u.txCount}</td>
                               <td className="px-4 py-2.5 text-right tabular-nums text-white">
@@ -1948,6 +1969,42 @@ export default function AdminDashboard() {
                           ))}
                           {analyticsData.users_mainnet_success_above_5_list.length === 0 && (
                             <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-600">No users yet</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {showRepeatAbove5List && (
+                    <div className="overflow-x-auto rounded-xl border border-gray-800 mt-3">
+                      <table className="w-full text-base md:text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
+                            <th className="text-left px-4 py-2.5">#</th>
+                            <th className="text-left px-4 py-2.5">User</th>
+                            <th className="text-center px-3 py-2.5">Payments</th>
+                            <th className="text-right px-4 py-2.5">Total (USDC)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {analyticsData.users_mainnet_success_above_5_repeat_list.map((u, i) => (
+                            <tr key={u.privyUserId} className="border-b border-gray-800/60 hover:bg-gray-900/50">
+                              <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
+                              <td className="px-4 py-2.5">
+                                <div className="font-medium text-white">{u.username ? `@${u.username}` : "—"}</div>
+                                {u.email ? (
+                                  <div className="text-sm text-gray-500 truncate max-w-[200px]">{u.email}</div>
+                                ) : (
+                                  <div className="text-sm text-gray-500 font-mono break-all select-all" title={u.privyUserId}>{u.privyUserId}</div>
+                                )}
+                              </td>
+                              <td className="px-3 py-2.5 text-center tabular-nums text-white">{u.txCount}</td>
+                              <td className="px-4 py-2.5 text-right tabular-nums text-white">
+                                {u.totalAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          ))}
+                          {analyticsData.users_mainnet_success_above_5_repeat_list.length === 0 && (
+                            <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-600">No repeat senders yet</td></tr>
                           )}
                         </tbody>
                       </table>
@@ -2145,7 +2202,11 @@ export default function AdminDashboard() {
                             <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
                             <td className="px-4 py-2.5">
                               <div className="font-medium text-white">{u.username ? `@${u.username}` : "—"}</div>
-                              <div className="text-sm text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
+                              {u.email ? (
+                                <div className="text-sm text-gray-500 truncate max-w-[200px]">{u.email}</div>
+                              ) : (
+                                <div className="text-sm text-gray-500 font-mono break-all select-all" title={u.privyUserId}>{u.privyUserId}</div>
+                              )}
                             </td>
                             <td className="px-4 py-2.5 text-right font-bold text-amber-400 tabular-nums">{u.totalSparks.toLocaleString()}</td>
                             {["connect_email","connect_twitter","first_payment","payment_to_unregistered","payment_link_paid","ten_payments"].map((key) => (
@@ -2246,7 +2307,11 @@ export default function AdminDashboard() {
                           <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
                           <td className="px-4 py-2.5">
                             <div className="font-medium text-white">{u.username ? `@${u.username}` : "—"}</div>
-                            <div className="text-sm text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
+                            {u.email ? (
+                              <div className="text-sm text-gray-500 truncate max-w-[200px]">{u.email}</div>
+                            ) : (
+                              <div className="text-sm text-gray-500 font-mono break-all select-all" title={u.privyUserId}>{u.privyUserId}</div>
+                            )}
                           </td>
                           <td className="px-3 py-2.5 text-center">
                             {u.hasPasskeys ? <span className="text-green-400">✓</span> : <span className="text-gray-700">–</span>}
