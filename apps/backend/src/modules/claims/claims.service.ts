@@ -2607,6 +2607,16 @@ export class ClaimsService {
       }
     }
 
+    // Persist that the sender actually funded this privately — the frontend passes this after a
+    // MagicBlock private transfer confirms, but it was previously accepted into `extra` and never
+    // written to the row, leaving `is_private` stuck at whatever claim-creation defaulted to even
+    // for a genuinely private send. Only ever set true here, never false — false is already the
+    // safe default and no caller on this path should be able to erase a true flag set elsewhere
+    // (e.g. buildPrivateTransferForPayer's own is_private stamp).
+    if (extra?.isPrivate === true) {
+      updateData.is_private = true;
+    }
+
     // from_chain / from_token stored on payments; legacy claims fallback uses paid_with_chain
     if (extra?.paidWithChain) {
       updateData.from_chain = extra.paidWithChain;

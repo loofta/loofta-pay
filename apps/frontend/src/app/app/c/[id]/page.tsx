@@ -71,6 +71,7 @@ import {
   PRIVATE_PAYMENT_ALL_PRIVATE_LINE,
   privatePaymentFundsAppearCopy,
   privatePaymentWaitingAfterSenderCopy,
+  waitingForFundsCopy,
 } from "@/lib/privatePaymentCopy";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
@@ -1139,23 +1140,57 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       toast({ variant: "destructive", title: "Couldn't connect Telegram", description: "Try again." });
     }
   };
-  // An unauthenticated visitor clicking "Sign in with Telegram" can't actually sign in via
-  // Telegram directly — Privy's Telegram widget only works on the loofta.com relay domain, not
-  // here. And the relay can't run first either: connectTelegram needs an existing access token
-  // to know which Loofta account to attach the discovered handle to, so a session has to exist
-  // before the relay does. The only workable order is sign in (any method) then relay — this ref
-  // makes that continuation automatic the moment sign-in completes, instead of requiring the
-  // user to notice and click a separate "Connect Telegram" step afterward.
-  const autoConnectTelegramAfterSignInRef = useRef(false);
-  useEffect(() => {
-    if (!authenticated || !autoConnectTelegramAfterSignInRef.current) return;
-    autoConnectTelegramAfterSignInRef.current = false;
-    void connectTelegram();
-  }, [authenticated]);
-  const signInThenConnectTelegram = () => {
-    autoConnectTelegramAfterSignInRef.current = true;
-    login({ disableSignup: false });
+
+  // Pre-auth "is this payment for me?" Telegram check — a visitor with no Loofta account yet
+  // can't be signed in via connectTelegram (it needs an existing access token to know which
+  // account to attach the handle to). Instead, open the relay in "claimId" mode: it verifies
+  // ownership of the pending handle against THIS claim specifically and stores a short-lived,
+  // claim-scoped proof — no account needed yet. Once verification succeeds, the visitor signs in
+  // (any method) and the effect below redeems that proof against the now-known account.
+  const [telegramClaimVerified, setTelegramClaimVerified] = useState<boolean | null>(null);
+  const openTelegramClaimVerifyRelay = () => {
+    const relayBase = process.env.NEXT_PUBLIC_TELEGRAM_RELAY_URL || "https://loofta.com";
+    const popup = window.open(`${relayBase}/telegram-relay?claimId=${encodeURIComponent(claimId)}`, "_blank");
+    if (!popup) {
+      toast({ variant: "destructive", title: "Couldn't open Telegram check", description: "Allow popups and try again." });
+      return;
+    }
+    let attempts = 0;
+    const maxAttempts = 600; // ~10 minutes at 1s polling
+    const poll = setInterval(() => {
+      attempts += 1;
+      if (popup.closed) {
+        clearInterval(poll);
+        fetch(`/api/telegram-relay/verify-claim?claimId=${encodeURIComponent(claimId)}`)
+          .then((r) => r.json())
+          .then((data) => setTelegramClaimVerified(!!data?.verified))
+          .catch(() => setTelegramClaimVerified(false));
+      } else if (attempts >= maxAttempts) {
+        clearInterval(poll);
+      }
+    }, 1000);
   };
+  const attachVerifiedTelegramRef = useRef(false);
+  useEffect(() => {
+    if (!authenticated || telegramClaimVerified !== true || attachVerifiedTelegramRef.current) return;
+    attachVerifiedTelegramRef.current = true;
+    (async () => {
+      try {
+        const accessToken = await getAccessToken().catch(() => null);
+        await fetch("/api/telegram-relay/attach-verified", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
+          body: JSON.stringify({ claimId }),
+        });
+      } catch {
+        // best-effort — refreshIdentityInPlace below will just keep showing "sign in" if this failed
+      }
+      void refreshIdentityInPlace();
+    })();
+  }, [authenticated, telegramClaimVerified, claimId]);
   const connectSocialPlatform = (platform: string | null | undefined) => {
     if (platform === "discord") linkDiscord();
     else if (platform === "github") linkGithub();
@@ -3531,7 +3566,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             </div>
             <h3 className="text-xl font-semibold text-white mb-2">Sign in to view details</h3>
             <p className="text-slate-400 text-base mb-6 max-w-xs">
-              {pendingSocialPlatformHint
+              {pendingSocialPlatformHint === "telegram" && telegramClaimVerified === true
+                ? "Telegram confirmed — sign in to finish."
+                : pendingSocialPlatformHint
                 ? `This was sent to a ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "social"} username. Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "that account"} to check.`
                 : "This payment may be waiting for you. Sign in to check."}
             </p>
@@ -3540,17 +3577,22 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 if (pendingEmailHint) login({ loginMethods: ["email"], disableSignup: false });
                 else if (pendingSocialPlatformHint === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                 else if (pendingSocialPlatformHint === "github") login({ loginMethods: ["github"], disableSignup: false });
-                // Telegram's login widget doesn't work on this (.xyz) domain. Sign in with any
-                // other method, then auto-continue straight into the loofta.com relay to connect
-                // Telegram — see signInThenConnectTelegram.
-                else if (pendingSocialPlatformHint === "telegram") signInThenConnectTelegram();
+                // Telegram's login widget doesn't work on this (.xyz) domain. First prove
+                // ownership of the pending handle via the loofta.com relay (no account needed
+                // yet); once verified, sign in and attach-verified redeems it automatically.
+                else if (pendingSocialPlatformHint === "telegram") {
+                  if (telegramClaimVerified === true) login({ disableSignup: false });
+                  else openTelegramClaimVerifyRelay();
+                }
                 else login();
               }}
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white hover:opacity-90 transition-opacity"
               style={{ background: "linear-gradient(to right, #FF1301, #EAB308)" }}
             >
               <LogIn className="w-4 h-4" />
-              {pendingSocialPlatformHint ? `Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "account"}` : "Sign in"}
+              {pendingSocialPlatformHint === "telegram"
+                ? telegramClaimVerified === true ? "Sign in" : "Sign in with Telegram"
+                : pendingSocialPlatformHint ? `Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "account"}` : "Sign in"}
             </button>
           </div>
         ) : claim ? (
@@ -3901,9 +3943,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         </>
                       ) : (
                         <>
-                          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                           <span className="text-gray-500">
-                            {privatePaymentWaitingAfterSenderCopy()}
+                            {waitingForFundsCopy(claim?.is_private)}
                           </span>
                         </>
                       )}
@@ -3967,7 +4009,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           <>
                             <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                             <span className="text-gray-500">
-                              {privatePaymentWaitingAfterSenderCopy()}
+                              {waitingForFundsCopy(claim?.is_private)}
                             </span>
                           </>
                         )}
@@ -4037,7 +4079,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   !user?.id ? (
                     <>
                       <p className="text-gray-500 text-base md:text-sm mb-5">
-                        Sign in with your {SOCIAL_PLATFORM_LABELS[claim.recipient_pending_social_platform ?? ""] ?? "social"} account to claim.
+                        {claim.recipient_pending_social_platform === "telegram" && telegramClaimVerified === true
+                          ? "Telegram confirmed — sign in to finish."
+                          : `Sign in with your ${SOCIAL_PLATFORM_LABELS[claim.recipient_pending_social_platform ?? ""] ?? "social"} account to claim.`}
                       </p>
                       <button
                         type="button"
@@ -4045,9 +4089,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           const platform = claim?.recipient_pending_social_platform;
                           if (platform === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                           else if (platform === "github") login({ loginMethods: ["github"], disableSignup: false });
-                          // Telegram's widget doesn't work on this domain — sign in with any
-                          // other method, then auto-continue into the loofta.com relay.
-                          else if (platform === "telegram") signInThenConnectTelegram();
+                          // Telegram's widget doesn't work on this domain — verify ownership via
+                          // the loofta.com relay first, then sign in to redeem it.
+                          else if (platform === "telegram") {
+                            if (telegramClaimVerified === true) login({ disableSignup: false });
+                            else openTelegramClaimVerifyRelay();
+                          }
                           else login({ disableSignup: false });
                         }}
                         className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
@@ -4084,7 +4131,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           <>
                             <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                             <span className="text-gray-500">
-                              {privatePaymentWaitingAfterSenderCopy()}
+                              {waitingForFundsCopy(claim?.is_private)}
                             </span>
                           </>
                         )}
@@ -4119,7 +4166,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       !user?.id ? (
                         <>
                           <p className="text-gray-500 text-base md:text-sm mb-5">
-                            Connect your {claim?.recipient_pending_social_platform ?? "social"} account (@{claim?.recipient_pending_social_value || "handle"}) on Loofta to claim.
+                            {claim?.recipient_pending_social_platform === "telegram" && telegramClaimVerified === true
+                              ? "Telegram confirmed — sign in to finish."
+                              : `Connect your ${claim?.recipient_pending_social_platform ?? "social"} account (@${claim?.recipient_pending_social_value || "handle"}) on Loofta to claim.`}
                           </p>
                           <button
                             type="button"
@@ -4127,9 +4176,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                               const platform = claim?.recipient_pending_social_platform;
                               if (platform === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                               else if (platform === "github") login({ loginMethods: ["github"], disableSignup: false });
-                              // Telegram's widget doesn't work on this domain — sign in with any
-                              // other method, then auto-continue into the loofta.com relay.
-                              else if (platform === "telegram") signInThenConnectTelegram();
+                              // Telegram's widget doesn't work on this domain — verify ownership
+                              // via the loofta.com relay first, then sign in to redeem it.
+                              else if (platform === "telegram") {
+                                if (telegramClaimVerified === true) login({ disableSignup: false });
+                                else openTelegramClaimVerifyRelay();
+                              }
                               else login({ disableSignup: false });
                             }}
                             className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
@@ -4214,7 +4266,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     <>
                       <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                       <span className="text-gray-500">
-                        {privatePaymentWaitingAfterSenderCopy()}
+                        {waitingForFundsCopy(claim?.is_private)}
                       </span>
                     </>
                   )}

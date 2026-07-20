@@ -6,23 +6,33 @@ import { usePrivy } from "@privy-io/react-auth";
 /**
  * Hosted on loofta.com (not pay.loofta.xyz) because Telegram's Login Widget doesn't work on
  * .xyz domains — loofta.com is registered as an additional domain on the same Privy app instead.
- * `token` identifies which pay.loofta.xyz account to attach the resulting handle to (minted by
- * /api/users/telegram-relay-token there). Logging in here creates a separate, throwaway Privy
- * session scoped to this domain — we only read the resulting Telegram handle off it and hand it
- * back via /api/telegram-relay/complete, authenticated by the one-time token rather than Privy's
- * session, since the two domains don't share one.
+ * Logging in here creates a separate, throwaway Privy session scoped to this domain — we only
+ * read the resulting Telegram handle off it and hand it back to pay.loofta.xyz, since the two
+ * domains don't share a session. Two modes, mutually exclusive:
+ *  - `token`: connect Telegram to an ALREADY signed-in Loofta account. The token (minted by
+ *    /api/users/telegram-relay-token) identifies which account. See /api/telegram-relay/complete.
+ *  - `claimId`: pre-auth "is this payment for me?" check for a visitor with NO Loofta account
+ *    yet — proves handle ownership against a specific claim's pending recipient without needing
+ *    an account to attach it to. See /api/telegram-relay/verify-claim; the claim page redeems the
+ *    resulting claim-scoped verification via /api/telegram-relay/attach-verified once the visitor
+ *    has signed in to a real account.
  */
 export default function TelegramRelayPage() {
   const { ready, authenticated, user, login } = usePrivy();
   const [token, setToken] = useState<string | null>(null);
-  const [status, setStatus] = useState<"idle" | "connecting" | "done" | "error">("idle");
+  const [claimId, setClaimId] = useState<string | null>(null);
+  const [status, setStatus] = useState<"idle" | "connecting" | "done" | "mismatch" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const submittedRef = useRef(false);
   const autoLoginAttemptedRef = useRef(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setToken(params.get("token"));
+    setClaimId(params.get("claimId"));
   }, []);
+
+  const hasIdentifier = !!token || !!claimId;
 
   // Skip the extra manual click — trigger the Telegram login widget as soon as this page is
   // ready, so opening this tab immediately shows Telegram's own prompt instead of an
@@ -30,59 +40,68 @@ export default function TelegramRelayPage() {
   // since a login triggered outside a direct click can be blocked by some browsers' popup
   // blockers; only fires once so a cancelled/dismissed widget doesn't get reopened in a loop.
   useEffect(() => {
-    if (!ready || authenticated || !token || autoLoginAttemptedRef.current) return;
+    if (!ready || authenticated || !hasIdentifier || autoLoginAttemptedRef.current) return;
     autoLoginAttemptedRef.current = true;
     login({ loginMethods: ["telegram"], disableSignup: true });
-  }, [ready, authenticated, token, login]);
+  }, [ready, authenticated, hasIdentifier, login]);
 
   useEffect(() => {
-    if (!ready || !authenticated || !user || !token || submittedRef.current) return;
+    if (!ready || !authenticated || !user || !hasIdentifier || submittedRef.current) return;
     const account = (user.linkedAccounts || []).find((a: { type?: string }) => a.type === "telegram");
     const raw = account ? (account as { username?: string }).username : null;
     if (!raw) return;
 
     submittedRef.current = true;
     setStatus("connecting");
-    fetch("/api/telegram-relay/complete", {
+    const endpoint = token ? "/api/telegram-relay/complete" : "/api/telegram-relay/verify-claim";
+    const body = token ? { token, handle: raw } : { claimId, handle: raw };
+    fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, handle: raw }),
+      body: JSON.stringify(body),
     })
       .then((r) => r.json())
       .then((data) => {
         if (data?.success) {
           setStatus("done");
           // This tab is normally opened via window.open() from the claim page, which polls
-          // popup.closed to know linking finished — close() is the actual completion signal.
-          // If it wasn't opened via script (e.g. visited this link directly), close() is a
-          // silent no-op and the fallback redirect below covers that case instead.
+          // popup.closed to know linking/verifying finished — close() is the actual completion
+          // signal. If it wasn't opened via script (e.g. visited this link directly), close() is
+          // a silent no-op and the fallback redirect below covers that case instead.
           window.close();
           setTimeout(() => {
             const base = process.env.NEXT_PUBLIC_APP_URL || "https://pay.loofta.xyz";
             window.location.href = `${base}/app?connected=telegram`;
           }, 800);
+        } else if (!token && data?.error) {
+          // verify-claim's "wrong account" case — a real, informative mismatch, not a fetch/server error.
+          setStatus("mismatch");
+          setErrorMessage(data.error);
         } else {
           setStatus("error");
         }
       })
       .catch(() => setStatus("error"));
-  }, [ready, authenticated, user, token]);
+  }, [ready, authenticated, user, hasIdentifier, token, claimId]);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-[#0b0d12] text-white px-6 text-center">
       <h1 className="text-lg font-semibold">Connect Telegram to Loofta</h1>
-      {!token && (
+      {!hasIdentifier && (
         <p className="text-sm text-slate-400 max-w-sm">
           This link is missing or expired. Go back to Loofta and click &quot;Connect Telegram&quot; again.
         </p>
       )}
-      {token && status === "error" && (
+      {hasIdentifier && status === "error" && (
         <p className="text-sm text-red-400 max-w-sm">Something went wrong. Go back to Loofta and try again.</p>
       )}
-      {token && status === "done" && (
+      {hasIdentifier && status === "mismatch" && (
+        <p className="text-sm text-red-400 max-w-sm">{errorMessage ?? "This Telegram account doesn't match."}</p>
+      )}
+      {hasIdentifier && status === "done" && (
         <p className="text-sm text-slate-400 max-w-sm">Connected! You can close this tab and go back to Loofta.</p>
       )}
-      {token && (status === "idle" || status === "connecting") && (
+      {hasIdentifier && (status === "idle" || status === "connecting") && (
         <>
           {!ready ? (
             <p className="text-sm text-slate-400">Loading…</p>
