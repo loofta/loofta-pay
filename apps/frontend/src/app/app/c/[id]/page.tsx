@@ -950,12 +950,20 @@ function SocialConnectPrompt({
   platform,
   onConnect,
   isConfirmingIdentity,
+  platformLinked,
 }: {
   platform: string;
   onConnect: () => void;
   isConfirmingIdentity?: boolean;
+  /** Whether Privy's own live linkedAccounts already shows this platform connected. This
+   *  component only ever renders because the caller determined the platform is NOT linked, so
+   *  showing "Confirming…" here without also checking this would be self-contradictory — there is
+   *  nothing to confirm for a platform you don't have connected at all. Defaults to false (safe:
+   *  never show the spinner) if the caller doesn't pass it. */
+  platformLinked?: boolean;
 }) {
   const label = SOCIAL_PLATFORM_LABELS[platform] ?? "social";
+  const showConfirming = !!isConfirmingIdentity && !!platformLinked;
   return (
     <div className="py-16 flex flex-col items-center text-center">
       <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-6">
@@ -965,7 +973,7 @@ function SocialConnectPrompt({
       <p className="text-slate-300 text-base mb-8 max-w-xs">
         This was sent to a {label} username. Connect your {label} account to check.
       </p>
-      {isConfirmingIdentity ? (
+      {showConfirming ? (
         <p className="flex items-center gap-2 text-base text-slate-300">
           <Loader2 className="h-4 w-4 animate-spin" />
           Confirming your account…
@@ -3627,6 +3635,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   platform={claim.recipient_pending_social_platform ?? "discord"}
                   onConnect={() => connectSocialPlatform(claim.recipient_pending_social_platform)}
                   isConfirmingIdentity={isConfirmingIdentity}
+                  platformLinked={hasSocialPlatformLinked(claim.recipient_pending_social_platform)}
                 />
               ) : (
                 <PaymentNotFoundNotice
@@ -4216,6 +4225,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           platform={claim?.recipient_pending_social_platform ?? "discord"}
                           onConnect={() => connectSocialPlatform(claim?.recipient_pending_social_platform)}
                           isConfirmingIdentity={isConfirmingIdentity}
+                          platformLinked={hasSocialPlatformLinked(claim?.recipient_pending_social_platform)}
                         />
                       )
                     ) : (
@@ -5298,6 +5308,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             platform={pendingSocialPlatformHint}
             onConnect={() => connectSocialPlatform(pendingSocialPlatformHint)}
             isConfirmingIdentity={isConfirmingIdentity}
+            platformLinked={hasSocialPlatformLinked(pendingSocialPlatformHint)}
           />
         ) : isAwaitingSocialIdentityConfirmation ? (
           <ConfirmingIdentityNotice />

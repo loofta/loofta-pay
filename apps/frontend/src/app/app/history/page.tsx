@@ -229,7 +229,11 @@ export default function HistoryPage() {
   }, [typeFilter]);
 
   const allPayments: { claim: PaymentHistoryClaim; type: "sent" | "received" }[] = useMemo(() => {
-    const isUnclaimed = (claim: PaymentHistoryClaim) => String(claim.status).toUpperCase() === "PRIVATE_TRANSFER_PENDING";
+    // Require paid_at too — a row can sit at PRIVATE_TRANSFER_PENDING with paid_at still null
+    // (the sender's payment never actually completed; an old/abandoned row, not one genuinely
+    // waiting to land), and that shouldn't jump the queue as if it were.
+    const isUnclaimed = (claim: PaymentHistoryClaim) =>
+      String(claim.status).toUpperCase() === "PRIVATE_TRANSFER_PENDING" && !!claim.paid_at;
     const list = [
       ...sent.map((claim) => ({ claim, type: "sent" as const })),
       ...received.map((claim) => ({ claim, type: "received" as const })),
