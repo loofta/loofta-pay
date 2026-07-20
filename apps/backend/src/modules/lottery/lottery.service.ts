@@ -16,7 +16,7 @@ import type { Address } from 'viem';
 import { SupabaseService } from '@/database/supabase.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
-import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI, PrizeTiersSnapshot, matchTicketTier } from './megapot.service';
+import { MegapotService, MEGAPOT_USDC, MEGAPOT_JACKPOT, JACKPOT_ABI, PrizeTiersSnapshot, matchTicketTier, TicketPick, buildTicketTuples, MAX_CUSTOM_TICKETS_PER_BUY } from './megapot.service';
 import { RhinestoneService } from './rhinestone.service';
 import { LifiService } from './lifi.service';
 import { RelayService } from './relay.service';
@@ -267,8 +267,15 @@ export class LotteryService {
     userId: string;
     numTickets: number;
     userSolanaAddress: string;
+    pickedTickets?: TicketPick[];
   }): Promise<InitiatePurchaseResult> {
-    const { userId, numTickets, userSolanaAddress } = opts;
+    const { userId, numTickets, userSolanaAddress, pickedTickets } = opts;
+    // Only meaningful when it exactly covers the purchase and stays within the on-chain
+    // per-call cap on custom tickets — any mismatch just falls back to quick-pick at buy time
+    // rather than blocking the purchase (see the buy step below).
+    const requestedNumbers = pickedTickets && pickedTickets.length === numTickets && numTickets <= MAX_CUSTOM_TICKETS_PER_BUY
+      ? pickedTickets
+      : null;
     await this.assertNotInDrawCutoff();
     if (numTickets < 1 || numTickets > 100) throw new BadRequestException('1–100 tickets per private purchase');
 
@@ -353,6 +360,7 @@ export class LotteryService {
         num_tickets: numTickets,
         cost_usdc: costUsdc,
         status: 'pending_send',
+        requested_numbers: requestedNumbers,
       })
       .select('id')
       .single();
@@ -1770,14 +1778,28 @@ export class LotteryService {
     }
 
     try {
-      await this.rhinestone.buyMegapotTickets({
-        companionPrivateKey: companionPrivHex as `0x${string}`,
-        numTickets: ticket.num_tickets,
-        recipient: ticket.companion_address as Address,
-        sourceId: this.megapot.getSourceId(),
-        referrers: this.megapot.getReferrers(),
-        splits: this.megapot.getSplits(),
-      });
+      const requestedNumbers: TicketPick[] | null = Array.isArray(ticket.requested_numbers) ? ticket.requested_numbers : null;
+      if (requestedNumbers && requestedNumbers.length === ticket.num_tickets && ticket.num_tickets <= MAX_CUSTOM_TICKETS_PER_BUY) {
+        const bounds = await this.megapot.getCurrentDrawingBounds();
+        const tuples = buildTicketTuples(requestedNumbers, ticket.num_tickets, bounds);
+        await this.rhinestone.buyMegapotTicketsCustom({
+          companionPrivateKey: companionPrivHex as `0x${string}`,
+          tickets: tuples,
+          recipient: ticket.companion_address as Address,
+          sourceId: this.megapot.getSourceId(),
+          referrers: this.megapot.getReferrers(),
+          splits: this.megapot.getSplits(),
+        });
+      } else {
+        await this.rhinestone.buyMegapotTickets({
+          companionPrivateKey: companionPrivHex as `0x${string}`,
+          numTickets: ticket.num_tickets,
+          recipient: ticket.companion_address as Address,
+          sourceId: this.megapot.getSourceId(),
+          referrers: this.megapot.getReferrers(),
+          splits: this.megapot.getSplits(),
+        });
+      }
 
       let roundId: string | null = null, drawTime: string | null = null;
       try { const round = await this.megapot.getActiveRound(); roundId = round?.id ?? null; drawTime = round?.drawTime ?? null; } catch {}

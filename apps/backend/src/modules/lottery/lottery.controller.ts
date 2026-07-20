@@ -14,11 +14,24 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { IsNumber, IsString, IsIn, IsArray, IsOptional, Min, Max } from 'class-validator';
+import { IsNumber, IsString, IsIn, IsArray, IsOptional, IsInt, Min, Max, ArrayMinSize, ArrayMaxSize, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { AuthGuard, Public, OptionalAuthGuard } from '@/common/guards';
 import { LotteryService, InitiatePurchaseResult, InitiatePublicPurchaseResult, LotteryDashboard, LotteryTicketSummary } from './lottery.service';
 import { PrizeTiersSnapshot } from './megapot.service';
 import { LifiService } from './lifi.service';
+
+class TicketNumbersDto {
+  @IsArray()
+  @ArrayMinSize(5)
+  @ArrayMaxSize(5)
+  @IsInt({ each: true })
+  main: number[];
+
+  @IsInt()
+  @Min(1)
+  bonus: number;
+}
 
 class BuyTicketsDto {
   @IsNumber()
@@ -28,6 +41,12 @@ class BuyTicketsDto {
 
   @IsString()
   userSolanaAddress: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TicketNumbersDto)
+  tickets?: TicketNumbersDto[];
 }
 
 class BuyGiftDto {
@@ -158,6 +177,7 @@ export class LotteryController {
       userId: req.user.id,
       numTickets: dto.numTickets,
       userSolanaAddress: dto.userSolanaAddress,
+      pickedTickets: dto.tickets?.map(t => ({ main: t.main, bonus: t.bonus })),
     });
   }
 

@@ -14,7 +14,6 @@ import { MessageInput } from "@/components/MessageInput";
 import { Label } from "@/components/ui/label";
 import { DescriptionWithGif } from "@/components/DescriptionWithGif";
 import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
-import { useToast } from "@/components/ui/use-toast";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { isInsufficientSolOrNoPriorCreditError, privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
 import { getSolanaCluster } from "@/lib/solanaCluster";
@@ -43,7 +42,7 @@ function isFreeTicketAmount(winUsdc: number | null | undefined, thresholdUsdc: n
 }
 const MAIN_MAX = 30;
 const MAIN_COUNT = 5;
-const BONUS_MAX = 12;
+const BONUS_MAX = 10;
 
 // Snapshot of Megapot's published tiers (docs.megapot.io/learn/prize-structure, taken
 // 2026-07-12 against a ~$1.1M pool), net of the ~10% on-chain referral cut Loofta actually
@@ -169,73 +168,6 @@ function SignInGate({ message, login }: { message: string; login: () => void }) 
   );
 }
 
-// ─── SolanaWalletConnectCard ────────────────────────────────────────────────────
-// Standalone connect entry point for an external Solana wallet, shown on the Megapot page
-// regardless of tab/sign-in state — this is a raw injected wallet (Phantom-compatible)
-// connection via window.solana, separate from the Privy embedded wallet used to buy tickets.
-// $LOOFTA holder gating isn't built yet, so a successful connect just teases it via toast.
-
-function SolanaWalletConnectCard() {
-  const { toast } = useToast();
-  const [address, setAddress] = useState<string | null>(null);
-  const [connecting, setConnecting] = useState(false);
-
-  useEffect(() => {
-    try { setAddress(localStorage.getItem("solana_wallet_address")); } catch { /* ignore */ }
-  }, []);
-
-  const handleConnect = async () => {
-    setConnecting(true);
-    try {
-      const { getPhantomProvider } = await import("@/lib/per/phantomProvider");
-      const provider = getPhantomProvider();
-      if (!provider) throw new Error("No Solana wallet detected. Install Phantom to continue.");
-      const { publicKey } = await provider.connect();
-      const connected = publicKey.toBase58();
-      try { localStorage.setItem("solana_wallet_address", connected); } catch { /* ignore */ }
-      setAddress(connected);
-      toast({ title: "Solana wallet connected", description: "Free tickets for $LOOFTA holders — coming soon." });
-    } catch (e: unknown) {
-      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
-      toast({ variant: "destructive", title: "Could not connect Solana wallet", description: msg || "Try again." });
-    } finally {
-      setConnecting(false);
-    }
-  };
-
-  const handleDisconnect = () => {
-    try { localStorage.removeItem("solana_wallet_address"); } catch { /* ignore */ }
-    setAddress(null);
-  };
-
-  return (
-    <div className="mt-4 mb-2 rounded-2xl border border-white/10 bg-white/5 p-4 flex items-center gap-3">
-      <div className="w-10 h-10 rounded-xl bg-[#9945FF]/15 flex items-center justify-center shrink-0">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#9945FF]">
-          <rect x="3" y="6" width="18" height="12" rx="2" />
-          <circle cx="16" cy="12" r="1.5" fill="currentColor" stroke="none" />
-        </svg>
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-base font-medium text-white truncate">
-          {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "Solana Wallet"}
-        </p>
-        <p className="text-sm text-slate-500 truncate">
-          {address ? "Connected · $LOOFTA holder perks coming soon" : "Connect to get ready for $LOOFTA holder perks"}
-        </p>
-      </div>
-      <button
-        type="button"
-        onClick={address ? handleDisconnect : handleConnect}
-        disabled={connecting}
-        className="shrink-0 h-9 px-4 rounded-xl text-base font-medium text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-40"
-      >
-        {connecting ? <Loader2 className="w-4 h-4 animate-spin" /> : address ? "Disconnect" : "Connect"}
-      </button>
-    </div>
-  );
-}
-
 // ─── IconBubble ───────────────────────────────────────────────────────────────
 
 function IconBubble({ active, children }: { active: boolean; children: React.ReactNode }) {
@@ -345,9 +277,9 @@ function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPoo
               <div className="flex items-center gap-2">
                 <span className="w-9 h-9 rounded-full bg-[#1e1e26] border border-white/30 flex items-center justify-center text-white font-bold text-base">1</span>
                 <span className="text-[#FF7A2A] font-bold text-lg">→</span>
-                <span className="w-9 h-9 rounded-full bg-[#1e1e26] border border-white/30 flex items-center justify-center text-white font-bold text-base">12</span>
+                <span className="w-9 h-9 rounded-full bg-[#1e1e26] border border-white/30 flex items-center justify-center text-white font-bold text-base">{BONUS_MAX}</span>
               </div>
-              <p className="text-base text-slate-400">12 bonus balls</p>
+              <p className="text-base text-slate-400">{BONUS_MAX} bonus balls</p>
             </div>
           </div>
         </div>
@@ -498,7 +430,7 @@ function NumberPickerModal({ ticket, onSave, onClose }: {
             </div>
           </div>
 
-          {/* Bonus 1–12 */}
+          {/* Bonus 1–BONUS_MAX */}
           <div>
             <p className="text-base font-medium text-slate-500 mb-2">Bonus number — pick 1</p>
             <div className="grid grid-cols-6 gap-2">
@@ -1351,7 +1283,11 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
       const initRes = await fetch("/api/lottery/buy", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ numTickets, userSolanaAddress: embeddedWallet?.address }),
+        body: JSON.stringify({
+          numTickets,
+          userSolanaAddress: embeddedWallet?.address,
+          tickets: numTickets <= 10 ? tickets.map(t => ({ main: t.main, bonus: t.bonus })) : undefined,
+        }),
       });
       if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
       const initData = await initRes.json();
@@ -3719,7 +3655,6 @@ export default function MegapotPage() {
       <div className="w-full max-w-lg mx-auto px-4 py-6 min-h-[calc(100svh-var(--header-h,0px)-4rem)]">
 
         <MegapotTabs activeTab={tab} wonCount={wonTickets.length} />
-        <SolanaWalletConnectCard />
 
         {tab === "buy" && (
           <>

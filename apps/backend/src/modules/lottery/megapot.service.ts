@@ -108,7 +108,85 @@ export const JACKPOT_ABI = [
       },
     ],
   },
+  {
+    name: 'currentDrawingId',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
 ] as const;
+
+// Real Jackpot.buyTickets signature (verified against the deployed contract on Basescan) — takes
+// an explicit array of {normals, bonusball} per ticket, unlike RANDOM_BUYER_ABI/JACKPOT_ABI's
+// buyTickets above, which is the JackpotRandomTicketBuyer contract's count-only signature and
+// does NOT exist on Jackpot itself. This is the only path that supports user-chosen numbers.
+export const JACKPOT_BUY_TUPLE_ABI = [
+  {
+    name: 'buyTickets',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      {
+        name: '_tickets',
+        type: 'tuple[]',
+        components: [
+          { name: 'normals', type: 'uint8[]' },
+          { name: 'bonusball', type: 'uint8' },
+        ],
+      },
+      { name: '_recipient', type: 'address' },
+      { name: '_referrers', type: 'address[]' },
+      { name: '_referralSplit', type: 'uint256[]' },
+      { name: '_source', type: 'bytes32' },
+    ],
+    outputs: [{ name: 'ticketIds', type: 'uint256[]' }],
+  },
+] as const;
+
+/** Jackpot.buyTickets' on-chain per-call cap on custom tickets (per Megapot's own starter kit). */
+export const MAX_CUSTOM_TICKETS_PER_BUY = 10;
+
+export interface TicketPick { main: number[]; bonus: number }
+export interface TicketTuple { normals: number[]; bonusball: number }
+
+function isValidPick(pick: TicketPick | undefined, ballMax: number, bonusballMax: number): pick is TicketPick {
+  if (!pick) return false;
+  if (!Array.isArray(pick.main) || pick.main.length !== 5) return false;
+  const unique = new Set(pick.main);
+  if (unique.size !== 5) return false;
+  for (const n of pick.main) {
+    if (!Number.isInteger(n) || n < 1 || n > ballMax) return false;
+  }
+  return Number.isInteger(pick.bonus) && pick.bonus >= 1 && pick.bonus <= bonusballMax;
+}
+
+function randomTicketTuple(ballMax: number, bonusballMax: number): TicketTuple {
+  const normals = new Set<number>();
+  while (normals.size < 5) normals.add(1 + Math.floor(Math.random() * ballMax));
+  const bonusball = 1 + Math.floor(Math.random() * bonusballMax);
+  return { normals: [...normals].sort((a, b) => a - b), bonusball };
+}
+
+/**
+ * Resolve exactly `count` on-chain ticket tuples: use each picked ticket if present and valid for
+ * the live round bounds, else generate a random one in-bounds. Out-of-bounds picks (e.g. a stale
+ * frontend constant) are silently regenerated rather than submitted — the alternative is an
+ * on-chain revert for the whole batch.
+ */
+export function buildTicketTuples(
+  picked: TicketPick[] | null | undefined,
+  count: number,
+  bounds: { ballMax: number; bonusballMax: number },
+): TicketTuple[] {
+  const { ballMax, bonusballMax } = bounds;
+  return Array.from({ length: count }, (_, i) => {
+    const pick = picked?.[i];
+    return isValidPick(pick, ballMax, bonusballMax)
+      ? { normals: [...pick.main].sort((a, b) => a - b), bonusball: pick.bonus }
+      : randomTicketTuple(ballMax, bonusballMax);
+  });
+}
 
 // Raw API response shape (snake_case)
 export interface MegapotRoundRaw {
@@ -465,6 +543,34 @@ export class MegapotService {
       }
     }
     return DEFAULT_REFERRAL_WIN_SHARE_FACTOR;
+  }
+
+  /**
+   * Live ballMax/bonusballMax for the currently open drawing, read straight from the contract.
+   * Used to validate/bound picked ticket numbers right before a custom buy — defense-in-depth
+   * against a stale frontend constant (e.g. the BONUS_MAX 12→10 mismatch) causing an on-chain
+   * revert for the whole batch. Falls back to the frontend's known bounds if the read fails, since
+   * buildTicketTuples degrades any out-of-bounds pick to a fresh random one either way.
+   */
+  async getCurrentDrawingBounds(): Promise<{ ballMax: number; bonusballMax: number }> {
+    const client = this.getPublicClient();
+    try {
+      const drawingId = await client.readContract({
+        address: MEGAPOT_JACKPOT,
+        abi: JACKPOT_ABI,
+        functionName: 'currentDrawingId',
+      }) as bigint;
+      const state = await client.readContract({
+        address: MEGAPOT_JACKPOT,
+        abi: JACKPOT_ABI,
+        functionName: 'getDrawingState',
+        args: [drawingId],
+      }) as any;
+      return { ballMax: Number(state.ballMax), bonusballMax: Number(state.bonusballMax) };
+    } catch (e: any) {
+      this.logger.warn(`getCurrentDrawingBounds: ${e.message} — falling back to 30/10`);
+      return { ballMax: 30, bonusballMax: 10 };
+    }
   }
 
   /**

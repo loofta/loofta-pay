@@ -36,6 +36,33 @@ const RANDOM_BUYER_ABI = [
   },
 ] as const;
 
+// Real Jackpot.buyTickets signature (distinct from RANDOM_BUYER_ABI above, which targets the
+// separate JackpotRandomTicketBuyer contract) — takes an explicit array of {normals, bonusball}
+// per ticket, the only on-chain path that supports user-chosen numbers. See megapot.service.ts's
+// JACKPOT_BUY_TUPLE_ABI for the verification notes.
+const JACKPOT_BUY_TUPLE_ABI = [
+  {
+    name: 'buyTickets',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      {
+        name: '_tickets',
+        type: 'tuple[]',
+        components: [
+          { name: 'normals', type: 'uint8[]' },
+          { name: 'bonusball', type: 'uint8' },
+        ],
+      },
+      { name: '_recipient', type: 'address' },
+      { name: '_referrers', type: 'address[]' },
+      { name: '_referralSplit', type: 'uint256[]' },
+      { name: '_source', type: 'bytes32' },
+    ],
+    outputs: [{ name: 'ticketIds', type: 'uint256[]' }],
+  },
+] as const;
+
 const safeJson = (v: any) => JSON.stringify(v, (_, val) => typeof val === 'bigint' ? val.toString() : val);
 
 @Injectable()
@@ -110,6 +137,75 @@ export class RhinestoneService {
 
     const status = await account.waitForExecution(result);
     this.logger.log(`Rhinestone buy complete: ${safeJson(status)}`);
+  }
+
+  /**
+   * Buy Megapot tickets with specific user-chosen numbers, straight from the Jackpot contract
+   * (not the RandomTicketBuyer wrapper `buyMegapotTickets` above uses — that contract is
+   * count-only and cannot carry numbers). Same sponsored-batch pattern: approve + buy in one
+   * userOp. Dry-run simulated first (mirrors claimWinnings below) so a bad ticket/bounds mismatch
+   * surfaces a clear revert reason in logs instead of a silently-failed sponsored tx.
+   */
+  async buyMegapotTicketsCustom(opts: {
+    companionPrivateKey: `0x${string}`;
+    tickets: { normals: number[]; bonusball: number }[];
+    recipient: Address;
+    sourceId: `0x${string}`;
+    referrers?: Address[];
+    splits?: bigint[];
+  }): Promise<void> {
+    const { companionPrivateKey, tickets, recipient, sourceId, referrers = [], splits = [] } = opts;
+    const cost = BigInt(tickets.length * 1_000_000);
+
+    const account = await this.getAccount(companionPrivateKey);
+    const smartAcctAddress = account.getAddress() as Address;
+    this.logger.log(`Rhinestone: buying ${tickets.length} custom ticket(s) from ${smartAcctAddress}`);
+
+    const publicClient = createPublicClient({ chain: base, transport: http(this.baseRpcUrl) });
+    try {
+      await publicClient.simulateContract({
+        address: MEGAPOT_JACKPOT,
+        abi: JACKPOT_BUY_TUPLE_ABI,
+        functionName: 'buyTickets',
+        args: [tickets, recipient, referrers, splits, sourceId],
+        account: smartAcctAddress,
+      });
+      this.logger.log(`Rhinestone: custom buy dry-run OK — proceeding with sponsored sendTransaction`);
+    } catch (simErr: any) {
+      const msg: string = simErr.message ?? '';
+      const isRpcError = msg.includes('over rate limit') || msg.includes('RPC Request failed') ||
+                         msg.includes('timeout') || msg.includes('429');
+      if (isRpcError) {
+        this.logger.warn(`Rhinestone: custom buy dry-run skipped (RPC error, not a revert): ${msg.slice(0, 120)}`);
+      } else {
+        this.logger.warn(`Rhinestone: custom buy dry-run revert from ${smartAcctAddress}: ${msg.slice(0, 200)}`);
+        throw simErr;
+      }
+    }
+
+    const approveData = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [MEGAPOT_JACKPOT, cost],
+    });
+
+    const buyData = encodeFunctionData({
+      abi: JACKPOT_BUY_TUPLE_ABI,
+      functionName: 'buyTickets',
+      args: [tickets, recipient, referrers, splits, sourceId],
+    });
+
+    const result = await account.sendTransaction({
+      chain: base,
+      calls: [
+        { to: USDC_BASE, data: approveData },
+        { to: MEGAPOT_JACKPOT, data: buyData },
+      ],
+      sponsored: true,
+    });
+
+    const status = await account.waitForExecution(result);
+    this.logger.log(`Rhinestone custom buy complete: ${safeJson(status)}`);
   }
 
   /**
