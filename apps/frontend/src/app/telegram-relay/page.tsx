@@ -17,11 +17,23 @@ export default function TelegramRelayPage() {
   const [token, setToken] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "connecting" | "done" | "error">("idle");
   const submittedRef = useRef(false);
+  const autoLoginAttemptedRef = useRef(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setToken(params.get("token"));
   }, []);
+
+  // Skip the extra manual click — trigger the Telegram login widget as soon as this page is
+  // ready, so opening this tab immediately shows Telegram's own prompt instead of an
+  // intermediate "Log in with Telegram" button. The button below still renders as a fallback,
+  // since a login triggered outside a direct click can be blocked by some browsers' popup
+  // blockers; only fires once so a cancelled/dismissed widget doesn't get reopened in a loop.
+  useEffect(() => {
+    if (!ready || authenticated || !token || autoLoginAttemptedRef.current) return;
+    autoLoginAttemptedRef.current = true;
+    login({ loginMethods: ["telegram"], disableSignup: true });
+  }, [ready, authenticated, token, login]);
 
   useEffect(() => {
     if (!ready || !authenticated || !user || !token || submittedRef.current) return;
