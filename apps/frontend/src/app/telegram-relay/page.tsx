@@ -40,8 +40,15 @@ export default function TelegramRelayPage() {
       .then((data) => {
         if (data?.success) {
           setStatus("done");
-          const base = process.env.NEXT_PUBLIC_APP_URL || "https://pay.loofta.xyz";
-          window.location.href = `${base}/app?connected=telegram`;
+          // This tab is normally opened via window.open() from the claim page, which polls
+          // popup.closed to know linking finished — close() is the actual completion signal.
+          // If it wasn't opened via script (e.g. visited this link directly), close() is a
+          // silent no-op and the fallback redirect below covers that case instead.
+          window.close();
+          setTimeout(() => {
+            const base = process.env.NEXT_PUBLIC_APP_URL || "https://pay.loofta.xyz";
+            window.location.href = `${base}/app?connected=telegram`;
+          }, 800);
         } else {
           setStatus("error");
         }
@@ -61,7 +68,7 @@ export default function TelegramRelayPage() {
         <p className="text-sm text-red-400 max-w-sm">Something went wrong. Go back to Loofta and try again.</p>
       )}
       {token && status === "done" && (
-        <p className="text-sm text-slate-400 max-w-sm">Connected — redirecting you back to Loofta…</p>
+        <p className="text-sm text-slate-400 max-w-sm">Connected! You can close this tab and go back to Loofta.</p>
       )}
       {token && (status === "idle" || status === "connecting") && (
         <>

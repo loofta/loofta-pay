@@ -42,7 +42,7 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle } from "lucide-react";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User } from "lucide-react";
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { QRCodeSVG } from "qrcode.react";
@@ -268,6 +268,24 @@ function ClaimPayLayout({
   );
 }
 
+/** Every recipient-identifier type the edit-recipient selector offers — mirrors MultiSendFlow's RECIPIENT_TYPE_OPTIONS. */
+type EditRecipientKind = "email" | "username" | "twitter" | "discord" | "github" | "telegram";
+
+const EDIT_RECIPIENT_KIND_OPTIONS: { id: EditRecipientKind; label: string; icon: "user" | "mail" | SocialIconPlatform }[] = [
+  { id: "username", label: "Username", icon: "user" },
+  { id: "email", label: "Email", icon: "mail" },
+  { id: "twitter", label: "Twitter", icon: "twitter" },
+  { id: "discord", label: "Discord", icon: "discord" },
+  { id: "github", label: "GitHub", icon: "github" },
+  { id: "telegram", label: "Telegram", icon: "telegram" },
+];
+
+function EditRecipientKindIcon({ icon, className }: { icon: "user" | "mail" | SocialIconPlatform; className?: string }) {
+  if (icon === "user") return <User className={className} />;
+  if (icon === "mail") return <Mail className={className} />;
+  return <SocialPlatformIcon platform={icon} className={className} />;
+}
+
 /** Shown for logged-in creator of pending-recipient claim: copy/share/reclaim after payment. */
 function ClaimPageSenderShareView({
   claimId,
@@ -311,8 +329,10 @@ function ClaimPageSenderShareView({
   const [isLocalhost, setIsLocalhost] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editValue, setEditValue] = useState(recipientValue || "");
-  const [editPlatform, setEditPlatform] = useState<"discord" | "github" | "telegram">(
-    (recipientPlatform as "discord" | "github" | "telegram" | undefined) || "discord",
+  const [editKind, setEditKind] = useState<EditRecipientKind>(
+    recipientType === "social"
+      ? ((recipientPlatform as EditRecipientKind | undefined) || "discord")
+      : (recipientType || "email"),
   );
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -321,18 +341,24 @@ function ClaimPageSenderShareView({
 
   function startEditRecipient() {
     setEditValue(recipientValue || "");
-    setEditPlatform((recipientPlatform as "discord" | "github" | "telegram" | undefined) || "discord");
+    setEditKind(
+      recipientType === "social"
+        ? ((recipientPlatform as EditRecipientKind | undefined) || "discord")
+        : (recipientType || "email"),
+    );
     setEditError(null);
     setEditOpen(true);
   }
 
   const handleSaveRecipient = async () => {
-    if (!userId || !recipientType) return;
+    if (!userId) return;
     const trimmed = editValue.trim();
     if (!trimmed) {
       setEditError("Required");
       return;
     }
+    const isDirectType = editKind === "email" || editKind === "username";
+    const effectiveRecipientType: "email" | "username" | "social" = isDirectType ? editKind : "social";
     setEditSubmitting(true);
     setEditError(null);
     try {
@@ -345,9 +371,9 @@ function ClaimPageSenderShareView({
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          recipientType,
+          recipientType: effectiveRecipientType,
           recipientIdentifier: trimmed,
-          ...(recipientType === "social" ? { platform: editPlatform } : {}),
+          ...(!isDirectType ? { platform: editKind } : {}),
         }),
       });
       if (!r.ok) {
@@ -480,36 +506,34 @@ function ClaimPageSenderShareView({
         <div className="mt-4 max-w-md mx-auto text-left">
           {editOpen ? (
             <div className="space-y-2">
-              {recipientType === "social" && (
-                <div className="flex gap-1.5">
-                  {(["discord", "github", "telegram"] as const).map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() => setEditPlatform(p)}
-                      className={cn(
-                        "flex-1 h-9 rounded-lg text-base font-medium capitalize transition-all border",
-                        editPlatform === p
-                          ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10 text-[#FF7A2A]"
-                          : "border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06]",
-                      )}
-                    >
-                      {p}
-                    </button>
-                  ))}
+              <div className="flex gap-2">
+                <Select value={editKind} onValueChange={(v) => setEditKind(v as EditRecipientKind)}>
+                  <SelectTrigger className="h-10 w-[150px] shrink-0 bg-white/[0.03] border-white/10 text-slate-100 text-base">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EDIT_RECIPIENT_KIND_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.id} value={opt.id}>
+                        <span className="flex items-center gap-2">
+                          <EditRecipientKindIcon icon={opt.icon} className="h-4 w-4 shrink-0" />
+                          {opt.label}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                    {editKind === "email" ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
+                  </span>
+                  <input
+                    value={editValue}
+                    onChange={(e) => setEditValue(editKind !== "email" ? e.target.value.replace(/^@+/, "") : e.target.value)}
+                    placeholder={editKind === "email" ? "name@example.com" : editKind === "username" ? "username" : "handle"}
+                    className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base"
+                    autoFocus
+                  />
                 </div>
-              )}
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
-                  {recipientType === "email" ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
-                </span>
-                <input
-                  value={editValue}
-                  onChange={(e) => setEditValue(recipientType !== "email" ? e.target.value.replace(/^@+/, "") : e.target.value)}
-                  placeholder={recipientType === "email" ? "name@example.com" : recipientType === "social" ? "handle" : "username"}
-                  className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base"
-                  autoFocus
-                />
               </div>
               {editError && <p className="text-sm text-red-400">{editError}</p>}
               <div className="flex gap-2">
@@ -1082,12 +1106,35 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       if (!res.ok) throw new Error("Could not start Telegram connect.");
       const data = await res.json();
       const relayBase = process.env.NEXT_PUBLIC_TELEGRAM_RELAY_URL || "https://loofta.com";
-      window.open(`${relayBase}/telegram-relay?token=${encodeURIComponent(data.token)}`, "_blank", "noopener,noreferrer");
-      const onFocus = () => {
-        window.removeEventListener("focus", onFocus);
-        void refreshIdentityInPlace();
-      };
-      window.addEventListener("focus", onFocus);
+      // Deliberately no "noopener"/"noreferrer" here — we need a live handle back on our own
+      // relay tab (same-org, trusted) to detect completion. Was previously a one-shot `focus`
+      // listener that unregistered itself on the first focus event; a spurious app-switch/tab-peek
+      // almost always fires focus before the relay flow (which requires leaving this tab) actually
+      // finishes, permanently losing the "recheck now" signal for the rest of the page's life.
+      const popup = window.open(`${relayBase}/telegram-relay?token=${encodeURIComponent(data.token)}`, "_blank");
+      if (!popup) {
+        // Popup blocked — fall back to the old best-effort focus recheck so there's still some signal.
+        const onFocus = () => {
+          window.removeEventListener("focus", onFocus);
+          void refreshIdentityInPlace();
+        };
+        window.addEventListener("focus", onFocus);
+        return;
+      }
+      // Poll for the relay tab closing — it closes itself once linking succeeds (see
+      // telegram-relay/page.tsx), or the user closes it manually after giving up. Either way,
+      // that's the deterministic "they're done, go recheck" signal, unlike guessing from focus.
+      let attempts = 0;
+      const maxAttempts = 600; // ~10 minutes at 1s polling
+      const poll = setInterval(() => {
+        attempts += 1;
+        if (popup.closed) {
+          clearInterval(poll);
+          void refreshIdentityInPlace();
+        } else if (attempts >= maxAttempts) {
+          clearInterval(poll);
+        }
+      }, 1000);
     } catch {
       toast({ variant: "destructive", title: "Couldn't connect Telegram", description: "Try again." });
     }
@@ -2168,18 +2215,29 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // found" while signed in — otherwise a stale cached/pre-login snapshot can make an
   // already-matching account keep showing as "not the recipient". Gated on
   // isPaymentNotFoundView so this never runs on Pay Now / creator / already-resolved views,
-  // where isRecipient can never become true and the retries would just poll for nothing. Fires
-  // AT MOST ONCE per page load: `authRecheckFiredRef` only ever gets set, never reset, so
+  // where isRecipient can never become true and the retries would just poll for nothing.
+  //
+  // Also gated on authRecheckWorthTrying: when the claim was sent to a specific social handle
+  // (pendingSocialPlatformHint) and the client already knows — from Privy's own live
+  // linkedAccounts, zero-latency — that this platform isn't connected yet, a live recheck can
+  // only fail. Without this gate, an authenticated visitor who simply hasn't clicked "Connect"
+  // yet was made to sit through refreshIdentityInPlace's full ~15s doomed retry loop (10
+  // attempts x 1.5s) before the Connect button even appeared, which read as "stuck on
+  // Confirming your account…" even though it did eventually resolve.
+  //
+  // Fires AT MOST ONCE per page load: `authRecheckFiredRef` only ever gets set, never reset, so
   // flapping of `authenticated` or `isPaymentNotFoundView` (e.g. Privy re-validating its
   // session) can't re-trigger it. Shares refreshIdentityInPlace with the link-success
   // callbacks — same in-flight guard, same identityConfirmGaveUp terminal state, no reload.
+  const authRecheckWorthTrying = !pendingSocialPlatformHint || hasSocialPlatformLinked(pendingSocialPlatformHint);
   const authRecheckFiredRef = useRef(false);
   useEffect(() => {
     if (!authenticated || authRecheckFiredRef.current) return;
     if (!isPaymentNotFoundView) return;
+    if (!authRecheckWorthTrying) return;
     authRecheckFiredRef.current = true;
     void refreshIdentityInPlace();
-  }, [authenticated, isPaymentNotFoundView]);
+  }, [authenticated, isPaymentNotFoundView, authRecheckWorthTrying]);
   const isSenderPendingFundedView =
     isCreatorView &&
     isPendingRecipientClaim &&
