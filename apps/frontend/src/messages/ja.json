@@ -81,7 +81,7 @@
     "send": "送金",
     "to": "宛先",
     "amountLabel": "USD金額",
-    "recipientPlaceholder": "Loofta、Twitterユーザー名、正確なメール",
+    "recipientPlaceholder": "メールアドレス",
     "recipientHint": "LooftaまたはTwitterユーザー名、または正確なメール — そのアカウントでログインして請求します。",
     "continue": "続ける",
     "signInToContinue": "続けるにはログインしてください",

@@ -1,12 +1,17 @@
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
+/** Must match ClaimsService.PENDING_SOCIAL_PREFIX (backend claims.service.ts). Format: PENDING_SOCIAL:<platform>:<handle> */
+const PENDING_SOCIAL_PREFIX = "PENDING_SOCIAL:";
 
 export interface SharePreview {
   /** The id to link into `/c/:id` with — the short code when this payment has one, else its UUID. */
   short_id: string;
   sender_username: string | null;
   recipient_username: string | null;
+  /** Set instead of recipient_username when the payment is addressed to a Discord/GitHub/Telegram handle. */
+  recipient_social_platform: string | null;
+  recipient_social_handle: string | null;
   amount_usd: number;
   status: string;
   is_devnet: boolean;
@@ -65,10 +70,21 @@ export async function getSharePreview(shortIdOrUuid: string): Promise<SharePrevi
       ? recipientAddress.slice(PENDING_USERNAME_PREFIX.length).trim()
       : null);
 
+  let recipient_social_platform: string | null = null;
+  let recipient_social_handle: string | null = null;
+  if (!recipient_username && recipientAddress.startsWith(PENDING_SOCIAL_PREFIX)) {
+    const rest = recipientAddress.slice(PENDING_SOCIAL_PREFIX.length);
+    const sep = rest.indexOf(":");
+    recipient_social_platform = sep >= 0 ? rest.slice(0, sep).trim() : null;
+    recipient_social_handle = (sep >= 0 ? rest.slice(sep + 1) : rest).trim();
+  }
+
   return {
     short_id: payment.short_id || payment.id,
     sender_username,
     recipient_username,
+    recipient_social_platform,
+    recipient_social_handle,
     amount_usd: parseFloat(String(payment.amount || "0")),
     status,
     is_devnet: !!payment.is_devnet,

@@ -14,6 +14,10 @@ function forceUpdateKey(privyUserId: string, updateId: string) {
 
 const SEARCH_CACHE_TTL_MS = 60 * 1000; // 1 min
 
+/** Platforms backed by the normalized social_accounts table (see findSocialHandle/findBySocialHandle). */
+export type SocialPlatform = 'discord' | 'github' | 'telegram';
+export type RecipientType = 'email' | 'twitter' | 'username' | SocialPlatform;
+
 const TIER_THRESHOLDS: [number, string][] = [
   [1000000, 'legend'],
   [100000,  'mogul'],
@@ -89,6 +93,65 @@ export class UsersService {
       return null;
     }
     return { email: user.email ?? null, twitterUsername: user.twitter_username ?? null };
+  }
+
+  /**
+   * Fast-path lookup for a Discord/GitHub/Telegram handle connected via the normalized
+   * social_accounts table — same "our own DB first" pattern as findIdentityByPrivyId, since
+   * these platforms aren't mirrored onto app_users columns.
+   */
+  async findSocialHandle(privyUserId: string, platform: SocialPlatform): Promise<string | null> {
+    if (!privyUserId || !privyUserId.includes('did:privy:')) return null;
+    const { data, error } = await this.supabaseService.socialAccounts
+      .select('handle')
+      .eq('user_id', privyUserId)
+      .eq('platform', platform)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data.handle ?? null;
+  }
+
+  /**
+   * Reverse lookup: which Loofta user (if any) has this platform+handle connected. Used when
+   * creating a claim addressed to a social handle, to pay a registered user's wallet directly
+   * instead of falling back to a pending burner claim (mirrors findByUsername/findByEmail).
+   */
+  async findBySocialHandle(platform: SocialPlatform, handle: string): Promise<{
+    id: string;
+    privyUserId: string;
+    email: string | null;
+    username: string | null;
+    requirePrivatePayments: boolean;
+  }> {
+    const cleanHandle = (handle || '').replace(/^@/, '').toLowerCase().trim();
+    if (!cleanHandle) throw new NotFoundException('Handle is required');
+
+    const { data: social, error: socialError } = await this.supabaseService.socialAccounts
+      .select('user_id')
+      .eq('platform', platform)
+      .eq('handle', cleanHandle)
+      .maybeSingle();
+
+    if (socialError || !social?.user_id) {
+      throw new NotFoundException('User not found');
+    }
+
+    const { data: user, error } = await this.supabaseService.appUsers
+      .select('id, privy_user_id, email, username, require_private_payments')
+      .eq('privy_user_id', social.user_id)
+      .maybeSingle();
+
+    if (error || !user) {
+      throw new NotFoundException('User not found');
+    }
+
+    return {
+      id: user.id,
+      privyUserId: user.privy_user_id,
+      email: user.email,
+      username: user.username,
+      requirePrivatePayments: user.require_private_payments || false,
+    };
   }
 
   /**
@@ -413,7 +476,7 @@ export class UsersService {
    */
   async verifyRecipientIdentityForSendPayment(
     privyUserId: string,
-    recipientType: 'email' | 'twitter' | 'username',
+    recipientType: RecipientType,
     recipientIdentifier: string,
   ): Promise<boolean> {
     const normalized = this.normalizeRecipientIdentifier(recipientType, recipientIdentifier);
@@ -421,6 +484,35 @@ export class UsersService {
       const row = await this.findByPrivyId(privyUserId);
       const uname = (row?.username || '').replace(/^@/, '').toLowerCase().trim();
       return Boolean(uname && uname === normalized);
+    }
+
+    // Discord/GitHub/Telegram: backed by the normalized social_accounts table, not app_users
+    // columns or (for Telegram) Privy linked_accounts at all — see findSocialHandle.
+    if (recipientType === 'discord' || recipientType === 'github' || recipientType === 'telegram') {
+      const handle = await this.findSocialHandle(privyUserId, recipientType);
+      if (handle && handle.replace(/^@/, '').toLowerCase().trim() === normalized) return true;
+
+      // Telegram is linked via a separate throwaway Privy login on the loofta.com relay domain
+      // (Telegram's widget is blocked on pay.loofta.xyz's .xyz TLD), not the user's main Privy
+      // identity — so it's stored directly in social_accounts with no live fallback to try here.
+      if (recipientType === 'telegram') return false;
+
+      // Discord/GitHub also go through Privy OAuth linking, so fall back to a live check the
+      // same way email/twitter do below (in case social_accounts hasn't been written yet).
+      const user = await this.getPrivyUser(privyUserId);
+      if (!user) return false;
+      const oauthTypes = recipientType === 'discord' ? ['discord', 'discord_oauth'] : ['github', 'github_oauth'];
+      for (const account of user.linked_accounts) {
+        const type = (account.type || '').toLowerCase();
+        if (!oauthTypes.includes(type)) continue;
+        const handle = (account.username || account.name || account.address || '')
+          .toString()
+          .replace(/^@/, '')
+          .toLowerCase()
+          .trim();
+        if (handle && normalized === handle) return true;
+      }
+      return false;
     }
 
     // Fast path: our own DB, populated immediately (no external round-trip) whenever the
@@ -456,7 +548,7 @@ export class UsersService {
     return false;
   }
 
-  private normalizeRecipientIdentifier(type: 'email' | 'twitter' | 'username', value: string): string {
+  private normalizeRecipientIdentifier(type: RecipientType, value: string): string {
     const v = value.trim();
     if (type === 'email') return v.toLowerCase();
     return v.replace(/^@/, '').toLowerCase();

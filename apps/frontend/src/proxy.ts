@@ -17,6 +17,15 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // loofta.com exists solely to host the Telegram Connect widget — Privy/Telegram's login
+  // widget doesn't work on .xyz domains, so this relay domain hands the handle back to
+  // pay.loofta.xyz via a one-time token (see telegram-relay/page.tsx + api/telegram-relay).
+  const isTelegramRelayDomain = hostname === "loofta.com" || hostname === "www.loofta.com";
+  if (isTelegramRelayDomain) {
+    const rewritten = new URL(`/telegram-relay${request.nextUrl.search}`, request.url);
+    return NextResponse.rewrite(rewritten);
+  }
+
   const isAppDomain =
     hostname === "pay.loofta.xyz" ||
     hostname.startsWith("pay.");
@@ -32,6 +41,7 @@ export function proxy(request: NextRequest) {
   const marketingPaths = new Set([
     "/home",
     "/home-white",
+    "/home-v2",
     "/brand",
     "/terms",
     "/privacy",

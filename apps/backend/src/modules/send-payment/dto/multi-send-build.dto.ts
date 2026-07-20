@@ -53,10 +53,10 @@ export class MultiSendRecipientDto {
   @Min(0.01)
   amount: number;
 
-  @ApiProperty({ enum: ['email', 'twitter', 'username'] })
+  @ApiProperty({ enum: ['email', 'twitter', 'username', 'discord', 'github', 'telegram'] })
   @IsString()
-  @IsIn(['email', 'twitter', 'username'])
-  recipient_type: 'email' | 'twitter' | 'username';
+  @IsIn(['email', 'twitter', 'username', 'discord', 'github', 'telegram'])
+  recipient_type: 'email' | 'twitter' | 'username' | 'discord' | 'github' | 'telegram';
 
   @ApiProperty({ example: 'alice@example.com' })
   @IsString()

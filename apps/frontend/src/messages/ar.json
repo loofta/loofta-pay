@@ -81,7 +81,7 @@
     "send": "إرسال",
     "to": "إلى",
     "amountLabel": "المبلغ بالدولار الأمريكي",
-    "recipientPlaceholder": "Loofta، اسم مستخدم تويتر، بريد إلكتروني دقيق",
+    "recipientPlaceholder": "عنوان البريد الإلكتروني",
     "recipientHint": "اسم مستخدم Loofta أو تويتر، أو بريد إلكتروني دقيق — يطالبون بتسجيل الدخول بذلك الحساب.",
     "continue": "متابعة",
     "signInToContinue": "سجّل الدخول للمتابعة",

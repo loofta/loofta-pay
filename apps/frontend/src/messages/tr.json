@@ -81,7 +81,7 @@
     "send": "Gönder",
     "to": "Kime",
     "amountLabel": "USD cinsinden tutar",
-    "recipientPlaceholder": "Loofta, Twitter kullanıcı adı, tam e-posta",
+    "recipientPlaceholder": "E-posta adresi",
     "recipientHint": "Loofta veya Twitter kullanıcı adı ya da tam e-posta — o hesapla giriş yaparak talep ederler.",
     "continue": "Devam et",
     "signInToContinue": "Devam etmek için giriş yapın",

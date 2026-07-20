@@ -28,10 +28,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
-import { PlusIcon, XIcon, CheckCircle2, Check, Copy, ExternalLink, Loader2, ArrowLeft, UploadCloud, FileDown, AlertCircle } from "lucide-react";
+import { PlusIcon, XIcon, CheckCircle2, Check, Copy, ExternalLink, Loader2, ArrowLeft, UploadCloud, FileDown, AlertCircle, User, Mail } from "lucide-react";
 import { MessageInput } from "@/components/MessageInput";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
+import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
+import type { MultiSendRecipientType } from "@/store/multiSend";
 
 type ConfirmFeeData = {
   senderWallet: string;
@@ -63,6 +66,21 @@ function looksLikeEmail(s: string): boolean {
 
 function inferType(s: string): "email" | "username" {
   return looksLikeEmail(s) ? "email" : "username";
+}
+
+const RECIPIENT_TYPE_OPTIONS: { id: MultiSendRecipientType; label: string; icon: "user" | "mail" | SocialIconPlatform }[] = [
+  { id: "username", label: "Username", icon: "user" },
+  { id: "email", label: "Email", icon: "mail" },
+  { id: "twitter", label: "Twitter", icon: "twitter" },
+  { id: "discord", label: "Discord", icon: "discord" },
+  { id: "github", label: "GitHub", icon: "github" },
+  { id: "telegram", label: "Telegram", icon: "telegram" },
+];
+
+function RecipientTypeIcon({ icon, className }: { icon: "user" | "mail" | SocialIconPlatform; className?: string }) {
+  if (icon === "user") return <User className={className} />;
+  if (icon === "mail") return <Mail className={className} />;
+  return <SocialPlatformIcon platform={icon} className={className} />;
 }
 
 const EXAMPLE_CSV = `recipient,amount,message
@@ -115,13 +133,13 @@ function parseCSV(text: string): { rows: MultiSendRow[]; errors: string[] } {
 }
 
 function newRow(): MultiSendRow {
-  return { id: `ms-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, recipient: "", amount: "100", message: "" };
+  return { id: `ms-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, recipient: "", amount: "100", message: "", recipientType: "email" };
 }
 
 function defaultRows(): MultiSendRow[] {
   return [
-    { id: "ms-row-0", recipient: "", amount: "100", message: "" },
-    { id: "ms-row-1", recipient: "", amount: "100", message: "" },
+    { id: "ms-row-0", recipient: "", amount: "100", message: "", recipientType: "email" },
+    { id: "ms-row-1", recipient: "", amount: "100", message: "", recipientType: "email" },
   ];
 }
 
@@ -237,12 +255,16 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
   const recipients: MultiSendRecipient[] = rows
     .filter((r) => r.recipient.trim().length > 0)
-    .map((r) => ({
-      amount: parseFloat(r.amount),
-      recipient_type: inferType(r.recipient),
-      recipient_identifier: r.recipient.trim().replace(/^@/, "").toLowerCase(),
-      message: [r.message.trim(), r.gif].filter(Boolean).join(" ").trim() || undefined,
-    }));
+    .map((r) => {
+      const cleanRecipient = r.recipient.trim().replace(/^@/, "").toLowerCase();
+      return {
+        amount: parseFloat(r.amount),
+        recipient_type: r.recipientType ?? inferType(r.recipient),
+        // "loo-" is a fixed prefix in the row UI when recipientType is "username" — the field only holds the suffix.
+        recipient_identifier: r.recipientType === "username" ? `loo-${cleanRecipient}` : cleanRecipient,
+        message: [r.message.trim(), r.gif].filter(Boolean).join(" ").trim() || undefined,
+      };
+    });
 
   async function createPayments(senderWallet: string) {
     console.info(`[MultiSend] createPayments senderWallet=${senderWallet.slice(0, 8)}… recipients=${recipients.length}`);
@@ -874,13 +896,55 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
             </div>
 
             <div>
-              <Label className="text-slate-400 text-base">To (username or email)</Label>
-              <Input
-                value={row.recipient}
-                onChange={(e) => updateRow(row.id, "recipient", e.target.value)}
-                placeholder="alice or alice@email.com"
-                className="mt-1 h-10 bg-white/5 border-white/10 text-white placeholder:text-slate-400 text-base md:text-base"
-              />
+              <Label className="text-slate-400 text-base">To</Label>
+              <div className="mt-1 flex gap-2">
+                <Select
+                  value={row.recipientType ?? "email"}
+                  onValueChange={(v) => updateRow(row.id, "recipientType", v)}
+                >
+                  <SelectTrigger className="h-10 w-[150px] shrink-0 bg-white/5 border-white/10 text-white text-base">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {RECIPIENT_TYPE_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.id} value={opt.id}>
+                        <span className="flex items-center gap-2">
+                          <RecipientTypeIcon icon={opt.icon} className="h-4 w-4 shrink-0" />
+                          {opt.label}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="relative flex-1">
+                  {row.recipientType === "username" && (
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white font-medium select-none pointer-events-none">
+                      loo-
+                    </span>
+                  )}
+                  <Input
+                    value={row.recipient}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const cleaned = row.recipientType === "username"
+                        ? raw.replace(/^loo-/, "").replace(/[^a-z0-9_-]/gi, "")
+                        : raw;
+                      updateRow(row.id, "recipient", cleaned);
+                    }}
+                    placeholder={
+                      row.recipientType === "username"
+                        ? "Loofta Username"
+                        : row.recipientType === "email" || (!row.recipientType && looksLikeEmail(row.recipient))
+                          ? "alice@email.com"
+                          : "handle"
+                    }
+                    className={[
+                      "h-10 bg-white/5 border-white/10 text-white placeholder:text-slate-400 text-base md:text-base",
+                      row.recipientType === "username" ? "pl-10" : "",
+                    ].join(" ")}
+                  />
+                </div>
+              </div>
             </div>
 
             <div>

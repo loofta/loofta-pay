@@ -256,3 +256,40 @@ export function Icon3DShield({ size = 52 }: { size?: number }) {
     </svg>
   );
 }
+
+export function Icon3DNumber({ n, size = 52 }: { n: 1 | 2 | 3 | 4 | 5; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id={`i3d-num-${n}-base`} cx="36%" cy="28%" r="68%" gradientUnits="objectBoundingBox">
+          <stop offset="0%" stopColor="#ffe8d0" />
+          <stop offset="28%" stopColor="#ffa050" />
+          <stop offset="62%" stopColor="#ff4810" />
+          <stop offset="100%" stopColor="#c01400" />
+        </radialGradient>
+        <radialGradient id={`i3d-num-${n}-gloss`} cx="38%" cy="22%" r="52%" gradientUnits="objectBoundingBox">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.82" />
+          <stop offset="55%" stopColor="#ffffff" stopOpacity="0.18" />
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+        </radialGradient>
+        <filter id={`i3d-num-${n}-shadow`} x="-25%" y="-25%" width="150%" height="150%">
+          <feDropShadow dx="0" dy="3" stdDeviation="3.5" floodColor="#b01000" floodOpacity="0.38" />
+        </filter>
+      </defs>
+      <circle cx="28" cy="27" r="21" fill={`url(#i3d-num-${n}-base)`} filter={`url(#i3d-num-${n}-shadow)`} />
+      <text
+        x="28"
+        y="27"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontFamily="'Clash Display', sans-serif"
+        fontSize="24"
+        fontWeight="600"
+        fill="#fff0e8"
+      >
+        {n}
+      </text>
+      <ellipse cx="21" cy="18" rx="11" ry="7.5" fill={`url(#i3d-num-${n}-gloss)`} />
+    </svg>
+  );
+}

@@ -7,7 +7,7 @@ import { fetchApi } from './client';
 import type { MagicblockTxResponse } from '../magicblockPaymentsApi';
 
 export type SendPaymentStatus = 'OPEN' | 'FUNDED' | 'CLAIMED' | 'CANCELLED' | 'EXPIRED';
-export type RecipientType = 'email' | 'twitter' | 'username';
+export type RecipientType = 'email' | 'twitter' | 'username' | 'discord' | 'github' | 'telegram';
 
 export interface SendPaymentLinkPublic {
   id: string;
@@ -131,7 +131,7 @@ export async function reclaimSendPayment(
 
 export interface MultiSendRecipient {
   amount: number;
-  recipient_type: 'email' | 'twitter' | 'username';
+  recipient_type: RecipientType;
   recipient_identifier: string;
   message?: string;
 }

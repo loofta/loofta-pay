@@ -9,12 +9,16 @@ import { useAuthStore } from '@/store/auth'
 import { motion } from 'framer-motion'
 import { Loader2, ArrowDown, Lock, AlertCircle, CheckCircle2, ArrowRight, Mail, LogIn } from 'lucide-react'
 import { GradientActionButton } from '@/components/ui/GradientActionButton'
+import { SocialPlatformIcon, type SocialIconPlatform } from '@/components/SocialPlatformIcon'
 import confetti from 'canvas-confetti'
 
 interface SharePaymentPreview {
   short_id: string
   sender_username: string | null
   recipient_username: string | null
+  /** Set instead of recipient_username when the payment is addressed to a Discord/GitHub/Telegram handle. */
+  recipient_social_platform: string | null
+  recipient_social_handle: string | null
   amount_usd: number
   status: string
   is_devnet: boolean
@@ -68,7 +72,18 @@ export default function ShareClient({ short_id }: { short_id: string }) {
     request.amount_usd % 1 === 0 ? `$${request.amount_usd}` : `$${request.amount_usd.toFixed(2)}`
 
   const senderLabel = request?.sender_username ? `@${request.sender_username}` : 'Someone'
-  const recipientLabel = request?.recipient_username ? `@${request.recipient_username}` : 'someone'
+  const recipientHandle = request?.recipient_username
+    ? `@${request.recipient_username}`
+    : request?.recipient_social_handle
+      ? `@${request.recipient_social_handle}`
+      : 'someone'
+  const recipientPlatform = !request?.recipient_username ? (request?.recipient_social_platform as SocialIconPlatform | null | undefined) : null
+  const RecipientTag = ({ className }: { className?: string }) => (
+    <span className={`inline-flex items-center gap-1.5 align-middle ${className ?? ''}`}>
+      {recipientPlatform && <SocialPlatformIcon platform={recipientPlatform} className="h-[0.85em] w-[0.85em] shrink-0" />}
+      {recipientHandle}
+    </span>
+  )
 
   // ── Loading ──────────────────────────────────────────────────────────────
   if (isLoading || !ready) {
@@ -141,7 +156,7 @@ export default function ShareClient({ short_id }: { short_id: string }) {
               <ArrowDown className={`h-4 w-4 ${isPaid ? 'text-emerald-500/40' : 'text-white/20'}`} />
             </div>
 
-            <span className="text-xl font-bold text-white">{recipientLabel}</span>
+            <RecipientTag className="text-xl font-bold text-white" />
           </div>
 
           {/* Privacy note */}
@@ -210,7 +225,7 @@ export default function ShareClient({ short_id }: { short_id: string }) {
                 <div className="space-y-3">
                   <p className="text-center text-base text-white/50">
                     Are you <span className="text-white font-semibold">{senderLabel}</span> or{' '}
-                    <span className="text-white font-semibold">{recipientLabel}</span> on Loofta?
+                    <RecipientTag className="text-white font-semibold" /> on Loofta?
                   </p>
                   <GradientActionButton onClick={login}>
                     <LogIn className="h-4 w-4" />
@@ -227,7 +242,7 @@ export default function ShareClient({ short_id }: { short_id: string }) {
                     <p className="text-base font-medium text-amber-300">Wrong account</p>
                   </div>
                   <p className="text-base md:text-sm text-white/50">
-                    You&apos;re @{myUsername}. This payment is between {senderLabel} and {recipientLabel}.
+                    You&apos;re @{myUsername}. This payment is between {senderLabel} and <RecipientTag />.
                   </p>
                 </div>
               )}

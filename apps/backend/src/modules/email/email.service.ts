@@ -160,6 +160,22 @@ export class EmailService {
     }
   }
 
+  async sendPaymentsFixedEmail(recipientEmail: string): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: recipientEmail,
+        subject: 'payments are fixed 🔧',
+        html: this.buildPaymentsFixedHtml(),
+      });
+      this.logger.log(`Payments-fixed email sent to ${recipientEmail}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send payments-fixed email to ${recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
   async sendGiftTicketEmail(data: { recipientEmail: string; numTickets: number; claimUrl: string; note?: string | null }): Promise<void> {
     if (!this.resend) return;
     const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
@@ -394,6 +410,55 @@ export class EmailService {
                 </a>
               </div>
               <p style="margin:0;">Sorry for the trouble, and thanks for playing.</p>
+              <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildPaymentsFixedHtml(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Payments are fixed</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">✅ Payments are fixed</p>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:28px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
+              <p style="margin:0 0 16px;">hey, this is Lisa from Loofta.</p>
+              <p style="margin:0 0 16px;">We had a small issue with payments sent to someone who hadn't signed up for Loofta yet, some of those could get stuck mid-transfer instead of going through. Nothing was ever at risk, your funds stayed safely in your wallet the whole time, it just didn't complete.</p>
+              <p style="margin:0 0 28px;">It's fixed now, payments are working normally again.</p>
+              <div style="text-align:center;margin-bottom:24px;">
+                <a href="https://pay.loofta.xyz/app" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Make a payment now
+                </a>
+              </div>
+              <p style="margin:0;">Thanks for bearing with us, and reply here if you run into anything else.</p>
               <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
             </td>
           </tr>

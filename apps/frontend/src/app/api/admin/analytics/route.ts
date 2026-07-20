@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
     depositsRes,
     withdrawalsDevnetRes,
     withdrawalsMainnetRes,
+    appUsersRes,
   ] = await Promise.all([
     supabase
       .from("payments")
@@ -87,7 +88,7 @@ export async function GET(request: NextRequest) {
     // committed the spend yet, and failed tickets get refunded.
     supabase
       .from("lottery_tickets")
-      .select("cost_usdc, user_id")
+      .select("cost_usdc, user_id, num_tickets")
       .in("status", ["active", "won", "lost"])
       .limit(100000),
     supabase
@@ -105,6 +106,10 @@ export async function GET(request: NextRequest) {
       .select("amount_usdc, is_near_intents, near_intents_complete")
       .eq("is_devnet", false)
       .limit(100000),
+    supabase
+      .from("app_users")
+      .select("privy_user_id, username, email")
+      .limit(100000),
   ]);
 
   const sum = (rows: any[] | null, key = "amount") =>
@@ -120,6 +125,34 @@ export async function GET(request: NextRequest) {
 
   const volume_devnet = sum(devnetSuccessRes.data);
   const volume_mainnet = sum(mainnetSuccessRes.data);
+  const mainnetAbove5 = (mainnetSuccessRes.data ?? []).filter((p: any) => Number(p.amount) > 5);
+  const tx_mainnet_success_above_5 = mainnetAbove5.length;
+
+  const above5BySender = new Map<string, { txCount: number; totalAmount: number }>();
+  mainnetAbove5.forEach((p: any) => {
+    if (!p.sender_user_id) return;
+    const entry = above5BySender.get(p.sender_user_id) ?? { txCount: 0, totalAmount: 0 };
+    entry.txCount += 1;
+    entry.totalAmount += Number(p.amount);
+    above5BySender.set(p.sender_user_id, entry);
+  });
+  const users_mainnet_success_above_5 = above5BySender.size;
+
+  const appUsersById = new Map(
+    (appUsersRes.data ?? []).map((u: any) => [u.privy_user_id, u])
+  );
+  const users_mainnet_success_above_5_list = Array.from(above5BySender.entries())
+    .map(([privyUserId, stats]) => {
+      const u = appUsersById.get(privyUserId) as any;
+      return {
+        privyUserId,
+        username: u?.username ?? null,
+        email: u?.email ?? null,
+        txCount: stats.txCount,
+        totalAmount: stats.totalAmount,
+      };
+    })
+    .sort((a, b) => b.totalAmount - a.totalAmount);
   const volume_devnet_total = sum(devnetAllAmountsRes.data);
   const volume_mainnet_total = sum(mainnetAllAmountsRes.data);
 
@@ -174,6 +207,15 @@ export async function GET(request: NextRequest) {
   };
 
   const volume_lottery = sum(lotteryRes.data, "cost_usdc");
+  // Each row is one purchase event but can cover multiple tickets — sum num_tickets,
+  // not row count, to get the actual ticket total.
+  const tx_lottery_count = (lotteryRes.data ?? []).reduce(
+    (acc: number, t: any) => acc + Number(t.num_tickets ?? 1),
+    0
+  );
+  const users_lottery = new Set(
+    (lotteryRes.data ?? []).map((t: any) => t.user_id).filter(Boolean)
+  ).size;
   const volume_deposits = sum(depositsRes.data, "amount_usdc");
   const volume_withdrawals_devnet = sumCompletedWithdrawals(withdrawalsDevnetRes.data);
   const volume_withdrawals_mainnet = sumCompletedWithdrawals(withdrawalsMainnetRes.data);
@@ -185,6 +227,9 @@ export async function GET(request: NextRequest) {
     volume_mainnet_total,
     tx_devnet_success: devnetSuccessRes.data?.length ?? 0,
     tx_mainnet_success: mainnetSuccessRes.data?.length ?? 0,
+    tx_mainnet_success_above_5,
+    users_mainnet_success_above_5,
+    users_mainnet_success_above_5_list,
     tx_devnet_total: devnetTotalRes.count ?? 0,
     tx_mainnet_total: mainnetLinks.length,
     total_users: totalUsersRes.count ?? 0,
@@ -198,7 +243,8 @@ export async function GET(request: NextRequest) {
     waitlist_granted: waitlistGrantedRes.count ?? 0,
     waitlist_with_twitter: waitlistWithTwitterRes.count ?? 0,
     volume_lottery,
-    tx_lottery_count: lotteryRes.data?.length ?? 0,
+    tx_lottery_count,
+    users_lottery,
     volume_deposits,
     tx_deposits_count: depositsRes.data?.length ?? 0,
     volume_withdrawals_devnet,

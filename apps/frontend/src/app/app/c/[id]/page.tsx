@@ -73,6 +73,7 @@ import {
 } from "@/lib/privatePaymentCopy";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
+import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
 function formatPerTransferStepName(step: string): string {
@@ -507,7 +508,15 @@ async function fetchClaim(id: string, authToken?: string | null) {
     // this, every attempt of the background recheck loop briefly flipped isLoading back to true
     // (since a thrown/errored query is still "pending" until it actually gets data), collapsing
     // the whole page back to the loading skeleton on every single poll.
-    return { claim: null, latestIntent: null };
+    // The error body may still carry a pending-login hint (which sign-in method/platform this
+    // payment is waiting on) even though no claim data can be returned to this unconfirmed viewer.
+    const errData = await r.json().catch(() => ({} as Record<string, unknown>));
+    return {
+      claim: null,
+      latestIntent: null,
+      pendingEmail: !!(errData as { pendingEmail?: boolean }).pendingEmail,
+      pendingSocialPlatform: (errData as { pendingSocialPlatform?: string | null }).pendingSocialPlatform ?? null,
+    };
   }
   const data = await r.json();
   const c = data.claim || {};
@@ -517,13 +526,16 @@ async function fetchClaim(id: string, authToken?: string | null) {
     isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
-    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; recipient_claim_in_progress?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null },
+    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; recipient_pending_social?: boolean; recipient_pending_social_platform?: string | null; recipient_pending_social_value?: string | null; recipient_claim_in_progress?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null },
     latestIntent: data.latestIntent || null,
+    pendingEmail: false,
+    pendingSocialPlatform: null,
   };
 }
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
+const SOCIAL_PLATFORM_LABELS: Record<string, string> = { discord: "Discord", github: "GitHub", telegram: "Telegram" };
 
 function getEffectiveRecipient(claim: { claim_burner_address?: string; recipient_address?: string } | null): string {
   if (!claim) return "";
@@ -700,10 +712,8 @@ function PaymentNotFoundNotice({
   hasEmailLinked: boolean;
   onConnectTwitter: () => void;
   onConnectEmail: () => void;
-  /** True while confirmIdentityThenReload() is running after Connect X/email — the page is
-   *  about to reload once this resolves, so show that something is actively happening instead
-   *  of leaving the stale "not found" state sitting there looking frozen/broken for a few
-   *  seconds while the backend genuinely catches up. */
+  /** True while refreshIdentityInPlace() is running after Connect X/email, so the "not found"
+   *  state doesn't sit there looking frozen while the identity refetch is in flight. */
   isConfirmingIdentity?: boolean;
   backHref?: string;
   backLabel?: string;
@@ -759,6 +769,61 @@ function PaymentNotFoundNotice({
   );
 }
 
+/** Shown instead of PaymentNotFoundNotice when a viewer isn't (yet) confirmed as this payment's
+ *  recipient but the payment is pending on a social platform they haven't connected — never
+ *  reveals the actual pending handle, just which platform to connect to check. */
+function SocialConnectPrompt({
+  platform,
+  onConnect,
+  isConfirmingIdentity,
+}: {
+  platform: string;
+  onConnect: () => void;
+  isConfirmingIdentity?: boolean;
+}) {
+  const label = SOCIAL_PLATFORM_LABELS[platform] ?? "social";
+  return (
+    <div className="py-16 flex flex-col items-center text-center">
+      <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-6">
+        <SocialPlatformIcon platform={(platform || "discord") as SocialIconPlatform} className="w-8 h-8 text-white/70" />
+      </div>
+      <h3 className="text-xl font-semibold text-white mb-3">Is this payment for you?</h3>
+      <p className="text-slate-300 text-base mb-8 max-w-xs">
+        This was sent to a {label} username. Connect your {label} account to check.
+      </p>
+      {isConfirmingIdentity ? (
+        <p className="flex items-center gap-2 text-base text-slate-300">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Confirming your account…
+        </p>
+      ) : (
+        <button
+          type="button"
+          onClick={onConnect}
+          className="inline-flex items-center justify-center h-11 rounded-lg bg-white/10 text-white px-5 text-base font-semibold hover:bg-white/20 transition-colors"
+        >
+          Connect {label}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Shown once a viewer has connected the platform this payment is pending on, while the
+ *  backend hasn't yet confirmed them as the recipient — never shows "Payment not found" in
+ *  this window, since we already know the platform matched client-side. */
+function ConfirmingIdentityNotice() {
+  return (
+    <div className="py-16 flex flex-col items-center text-center">
+      <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-6">
+        <Loader2 className="w-8 h-8 text-white/70 animate-spin" />
+      </div>
+      <h3 className="text-xl font-semibold text-white mb-3">Confirming your account…</h3>
+      <p className="text-slate-300 text-base max-w-xs">This only takes a moment.</p>
+    </div>
+  );
+}
+
 function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
   const id = claimId;
   const router = useRouter();
@@ -787,25 +852,80 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     () => ((user?.linkedAccounts || []) as Array<{ type?: string }>).some((a) => a.type === "email"),
     [user?.linkedAccounts],
   );
+  const hasDiscordLinked = useMemo(
+    () => ((user?.linkedAccounts || []) as Array<{ type?: string }>).some((a) => a.type === "discord_oauth" || a.type === "discord"),
+    [user?.linkedAccounts],
+  );
+  const hasGithubLinked = useMemo(
+    () => ((user?.linkedAccounts || []) as Array<{ type?: string }>).some((a) => a.type === "github_oauth" || a.type === "github"),
+    [user?.linkedAccounts],
+  );
+  // Telegram isn't a Privy-linked account in this app (see telegram-relay/) — fetched from social_accounts.
+  const [telegramHandle, setTelegramHandle] = useState<string | null>(null);
+  useEffect(() => {
+    if (!authenticated) return;
+    void (async () => {
+      try {
+        const token = await getAccessToken().catch(() => null);
+        const res = await fetch("/api/users/social-handles", { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (res.ok) {
+          const data = await res.json();
+          setTelegramHandle(data?.handles?.telegram ?? null);
+        }
+      } catch {
+        // best-effort
+      }
+    })();
+  }, [authenticated, getAccessToken]);
+  const hasTelegramLinked = !!telegramHandle;
+  const hasSocialPlatformLinked = (platform: string | null | undefined) => {
+    if (platform === "discord") return hasDiscordLinked;
+    if (platform === "github") return hasGithubLinked;
+    if (platform === "telegram") return hasTelegramLinked;
+    return false;
+  };
+  const connectTelegram = async () => {
+    try {
+      const token = await getAccessToken().catch(() => null);
+      const res = await fetch("/api/users/telegram-relay-token", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error("Could not start Telegram connect.");
+      const data = await res.json();
+      const relayBase = process.env.NEXT_PUBLIC_TELEGRAM_RELAY_URL || "https://loofta.com";
+      window.open(`${relayBase}/telegram-relay?token=${encodeURIComponent(data.token)}`, "_blank", "noopener,noreferrer");
+      const onFocus = () => {
+        window.removeEventListener("focus", onFocus);
+        void refreshIdentityInPlace();
+      };
+      window.addEventListener("focus", onFocus);
+    } catch {
+      toast({ variant: "destructive", title: "Couldn't connect Telegram", description: "Try again." });
+    }
+  };
+  const connectSocialPlatform = (platform: string | null | undefined) => {
+    if (platform === "discord") linkDiscord();
+    else if (platform === "github") linkGithub();
+    else if (platform === "telegram") void connectTelegram();
+  };
   const [updatingUsernameToTwitter, setUpdatingUsernameToTwitter] = useState(false);
 
   // ---------------------------------------------------------------------------------------
   // Recipient-identity recheck: runs silently in the background after sign-in or linking a
-  // new account, until the claim + recipient-check genuinely confirm this user (or it times
-  // out) — no button, no visible loading state, the page just updates itself once resolved.
+  // new account, until the claim + recipient-check genuinely confirm this user (or it gives
+  // up) — see refreshIdentityInPlace below, which both the link-success callbacks and the
+  // routine-sign-in effect (further down) share, so there's exactly one place that decides
+  // when to stop trying and show a genuine "not found".
   //
-  // Why this exists: the backend caches each user's Privy record (linked_accounts) for 5 min
-  // (privy-verification.service.ts), and the recipient-identity check (checkIsRecipient) reads
-  // from that cache. So right after linking an account or signing in, "payment not found" /
-  // "not the recipient" can be stale even though the account now genuinely matches — busting
-  // the cache once and refetching once isn't reliable because of a real race: getAccessToken()
-  // can resolve before Privy's session is fully settled, and even a fresh backend call can hit
-  // Privy's own API before it has indexed the just-linked account. So this polls (busting the
-  // cache each attempt) on an interval up to a real ceiling instead of guessing a fixed count.
-  // `recheckInFlightRef` blocks overlapping loops if sign-in and link-success fire close together.
-  const RECIPIENT_RECHECK_TIMEOUT_MS = 30_000;
-  const RECIPIENT_RECHECK_INTERVAL_MS = 3_000;
-  const recheckInFlightRef = useRef(false);
+  // Why retries are needed at all: the backend caches each user's Privy record (linked_accounts)
+  // for 5 min (privy-verification.service.ts). Link events fast-path around this (the identity
+  // is pushed to our own DB — checked first — before refreshIdentityInPlace runs), but a
+  // routine sign-in via a platform that's never been linked before has no such fast path and
+  // falls back to a live Privy API call, which can lag briefly behind Privy's own eventual
+  // consistency. `identityRefreshInFlightRef` blocks overlapping runs if sign-in and a fresh
+  // link event fire close together.
+  const identityRefreshInFlightRef = useRef(false);
 
   const bustPrivyCacheOnce = async () => {
     const token = await getAccessToken();
@@ -816,60 +936,65 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     });
   };
 
-  /** Resolves true once the claim + recipient-check both confirm this user, false if it timed out. */
-  const recheckRecipientUntilResolved = async (): Promise<boolean> => {
-    if (recheckInFlightRef.current) return false;
-    recheckInFlightRef.current = true;
-    const deadline = Date.now() + RECIPIENT_RECHECK_TIMEOUT_MS;
+  // True only while refreshIdentityInPlace is actively running — drives a visible
+  // "Confirming your account…" state so the brief moment of refetching doesn't look like a
+  // frozen "Payment not found" screen with nothing happening.
+  const [isConfirmingIdentity, setIsConfirmingIdentity] = useState(false);
+  // Set only once refreshIdentityInPlace has exhausted every retry without the backend
+  // confirming this viewer as the recipient — the genuine "wrong account" outcome. Kept
+  // separate from isConfirmingIdentity so the render logic below (isAwaitingSocialIdentityHint)
+  // can derive "still confirming" purely from client-known state (hasSocialPlatformLinked) and
+  // never flash back to "not found" just because this async function hasn't started/finished a
+  // render tick yet — see that derivation's own comment for why the manual flag alone raced.
+  const [identityConfirmGaveUp, setIdentityConfirmGaveUp] = useState(false);
+
+  /**
+   * Shared by both triggers: (1) linking/connecting an account (Twitter, email, Discord,
+   * GitHub, Telegram) — the identity is already known from the link callback and already
+   * written to our own DB (the fast path verifyRecipientIdentityForSendPayment checks first,
+   * before any live Privy call — see users.service.ts), so this typically resolves on the
+   * very first attempt; and (2) a routine sign-in via the routine-recheck effect further down,
+   * where there's no such fast path (nothing was just linked) and the backend may need a
+   * moment to catch up to Privy's own eventual consistency, hence more retries. No polling
+   * loop that reloads the page — React Query's refetch updates claimQuery/recipientCheckQuery
+   * in place and the page re-renders itself from that new data. Always resolves one way or the
+   * other: identityConfirmGaveUp is set on exhaustion so the UI never spins forever waiting for
+   * an identity that will never match (e.g. a viewer who already has some unrelated Discord
+   * account linked from before, which never triggers this function's success path).
+   */
+  const refreshIdentityInPlace = async () => {
+    if (identityRefreshInFlightRef.current) return;
+    identityRefreshInFlightRef.current = true;
+    setIsConfirmingIdentity(true);
+    setIdentityConfirmGaveUp(false);
     try {
-      let first = true;
-      while (Date.now() < deadline) {
-        if (!first) await new Promise((r) => setTimeout(r, RECIPIENT_RECHECK_INTERVAL_MS));
-        first = false;
-        try {
-          await bustPrivyCacheOnce();
-        } catch {
-          // best-effort — the recheck itself is what actually matters
-        }
+      await bustPrivyCacheOnce().catch(() => {});
+      let resolved = false;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
         const [claimResult, recipientResult] = await Promise.all([
           claimQuery.refetch(),
           recipientCheckQuery.refetch(),
         ]);
-        const resolved = !!claimResult.data?.claim && recipientResult.data?.isRecipient === true;
-        if (resolved) return true;
+        resolved = !!claimResult.data?.claim && recipientResult.data?.isRecipient === true;
+        if (resolved) break;
       }
-      return false;
+      if (!resolved) setIdentityConfirmGaveUp(true);
     } finally {
-      recheckInFlightRef.current = false;
-    }
-  };
-
-  // True only while confirmIdentityThenReload is actively running — drives a visible
-  // "Confirming your account…" state so the few seconds of real backend/Privy propagation lag
-  // don't just look like a frozen "Payment not found" screen with nothing happening.
-  const [isConfirmingIdentity, setIsConfirmingIdentity] = useState(false);
-
-  /**
-   * The one place identity-driven actions on this page end: verify the recheck actually
-   * converged, then reload. A reload before confirming just relocates the race (see
-   * recheckRecipientUntilResolved's own doc comment); confirming first means the page that
-   * comes back after reload should be correct on its very first fetch.
-   */
-  const confirmIdentityThenReload = async () => {
-    setIsConfirmingIdentity(true);
-    try {
-      await recheckRecipientUntilResolved();
-    } finally {
-      // Only matters if it timed out without resolving — a successful resolve reloads the
-      // page right after this, tearing all component state down anyway.
+      identityRefreshInFlightRef.current = false;
       setIsConfirmingIdentity(false);
     }
-    window.location.reload();
   };
 
-  const { linkTwitter, linkEmail } = useLinkAccount({
+  const { linkTwitter, linkEmail, linkDiscord, linkGithub } = useLinkAccount({
     onSuccess: ({ linkedAccount }) => {
       void (async () => {
+        // Set this immediately, before the DB save below — Privy's client-side linkedAccounts
+        // already reflects the new account at this point (hasDiscordLinked/hasGithubLinked flip
+        // true right away), which would otherwise make the "not found" screen flash its plain
+        // (non-"Confirming…") text for a moment before refreshIdentityInPlace gets a chance to
+        // set this itself.
+        setIsConfirmingIdentity(true);
         // Push what Privy's client SDK just confirmed straight into our own DB before
         // rechecking — this is data we already have zero-latency, verified proof of (Privy
         // wouldn't have fired onSuccess otherwise), so there's no reason to wait on our
@@ -879,6 +1004,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         // the case where the client already knows the answer.
         const acct = linkedAccount as { type?: string; username?: string | null; name?: string | null };
         const isTwitter = acct?.type === "twitter_oauth" || acct?.type === "twitter" || acct?.type === "x";
+        const isDiscord = acct?.type === "discord_oauth" || acct?.type === "discord";
+        const isGithub = acct?.type === "github_oauth" || acct?.type === "github";
         const handle = (acct?.username || acct?.name || "").replace(/^@/, "").trim();
         if (isTwitter && handle) {
           try {
@@ -891,8 +1018,19 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           } catch {
             // best-effort — the recheck loop below still falls back to the live Privy check
           }
+        } else if ((isDiscord || isGithub) && handle) {
+          try {
+            const token = await getAccessToken().catch(() => null);
+            await fetch("/api/users/save-social-handle", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+              body: JSON.stringify({ platform: isDiscord ? "discord" : "github", handle }),
+            });
+          } catch {
+            // best-effort — the recheck loop below still falls back to the live Privy check
+          }
         }
-        await confirmIdentityThenReload();
+        await refreshIdentityInPlace();
       })();
     },
     onError: (error) => {
@@ -914,7 +1052,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         toast({ variant: "destructive", title: "Update failed", description: data?.error || "Try again." });
         return;
       }
-      await confirmIdentityThenReload();
+      await refreshIdentityInPlace();
     } catch {
       toast({ variant: "destructive", title: "Update failed", description: "Try again." });
     } finally {
@@ -975,6 +1113,19 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   });
   const claimData = claimQuery.data as any;
   const claim = claimData?.claim;
+  // Which sign-in method/platform this payment is pending on, from the viewer's perspective —
+  // populated either from the confirmed claim (once this viewer IS the recipient) or from the
+  // API's pending-login hint on a 403/404 (viewer not yet confirmed, so no claim data at all).
+  const pendingEmailHint: boolean = !!claim?.recipient_pending_email || !!claimData?.pendingEmail;
+  const pendingSocialPlatformHint: string | null = claim?.recipient_pending_social_platform ?? claimData?.pendingSocialPlatform ?? null;
+  // Derived (not driven by isConfirmingIdentity) so there's no race: Privy's client-side
+  // linkedAccounts — and therefore hasSocialPlatformLinked — can flip true a render or two
+  // before the useLinkAccount onSuccess callback actually runs and sets isConfirmingIdentity,
+  // which was causing a "Payment not found" flash in that gap. This instead goes straight from
+  // "not connected" to "confirming" the instant the client sees the platform as linked, and
+  // only falls back to a genuine "not found" once refreshIdentityInPlace has actually given up.
+  const isAwaitingSocialIdentityConfirmation =
+    !!pendingSocialPlatformHint && hasSocialPlatformLinked(pendingSocialPlatformHint) && !claim && !identityConfirmGaveUp;
   // Safe to use isLoading again now that fetchClaim() resolves with claim: null instead of
   // throwing on a 404/403 — "not found" is real success data, not an error state, so isLoading
   // (isPending && isFetching) is only ever true on the genuine first load, not on every
@@ -1051,6 +1202,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const isPendingRecipientClaim =
     !!claim?.recipient_pending_email ||
     !!claim?.recipient_pending_username ||
+    !!claim?.recipient_pending_social ||
     !!(claim as { recipient_is_registered?: boolean } | null)?.recipient_is_registered;
 
   // Poll claim burner USDC (per-claim pubkey — not the user’s Privy wallet). Privy cannot surface this; we must read chain state (or a future backend “burner funded” flag).
@@ -1460,11 +1612,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       isRecipient &&
       !claim?.recipient_pending_email &&
       !claim?.recipient_pending_username &&
+      !claim?.recipient_pending_social &&
       String(status || claim?.status || "").toUpperCase() === "SUCCESS";
     if (!alreadyClaimedStatically || staticSuccessBalanceRefreshedRef.current) return;
     staticSuccessBalanceRefreshedRef.current = true;
     refreshWalletBalances();
-  }, [isRecipient, claim?.recipient_pending_email, claim?.recipient_pending_username, status, claim?.status]);
+  }, [isRecipient, claim?.recipient_pending_email, claim?.recipient_pending_username, claim?.recipient_pending_social, status, claim?.status]);
 
   const [statusData, setStatusData] = useState<any>(null);
   const [paidFeeUsdc, setPaidFeeUsdc] = useState<number | null>(null);
@@ -1529,18 +1682,17 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // found" while signed in — otherwise a stale cached/pre-login snapshot can make an
   // already-matching account keep showing as "not the recipient". Gated on
   // isPaymentNotFoundView so this never runs on Pay Now / creator / already-resolved views,
-  // where isRecipient can never become true and the loop would just poll fetchClaim for the
-  // full 30s timeout for nothing. Fires AT MOST ONCE per page load: `authRecheckFiredRef`
-  // only ever gets set, never reset, so flapping of `authenticated` or `isPaymentNotFoundView`
-  // (e.g. Privy re-validating its session) can't re-trigger and silently reload the page out
-  // from under you. No reload here (unlike confirmIdentityThenReload) — this covers routine
-  // sign-ins, which happen on every visit, not just the rare deliberate actions below.
+  // where isRecipient can never become true and the retries would just poll for nothing. Fires
+  // AT MOST ONCE per page load: `authRecheckFiredRef` only ever gets set, never reset, so
+  // flapping of `authenticated` or `isPaymentNotFoundView` (e.g. Privy re-validating its
+  // session) can't re-trigger it. Shares refreshIdentityInPlace with the link-success
+  // callbacks — same in-flight guard, same identityConfirmGaveUp terminal state, no reload.
   const authRecheckFiredRef = useRef(false);
   useEffect(() => {
     if (!authenticated || authRecheckFiredRef.current) return;
     if (!isPaymentNotFoundView) return;
     authRecheckFiredRef.current = true;
-    void recheckRecipientUntilResolved();
+    void refreshIdentityInPlace();
   }, [authenticated, isPaymentNotFoundView]);
   const isSenderPendingFundedView =
     isCreatorView &&
@@ -2170,6 +2322,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       );
       setStatus("SUCCESS");
       useClaimPayStore.getState().setStatus(id, "SUCCESS");
+      // We just confirmed this signature and wrote SUCCESS ourselves — the backend may still
+      // report PRIVATE_TRANSFER_PENDING for burner-routed recipients, so pre-mark this hash as
+      // already handled to stop the txHashRecoveryRef effect from re-polling/re-confirming it
+      // right after the refetch below (that effect is for genuinely stale reloads, not this).
+      txHashRecoveryRef.current = signature;
       await claimQuery.refetch();
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
       queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
@@ -2222,7 +2379,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     // that race is what let a single tap build+broadcast two competing MagicBlock transfers.
     if (payingWithLoofta) return;
     setPayingWithLoofta(true);
-    const isPending = !!(claim as { recipient_pending_username?: boolean; recipient_pending_email?: boolean })?.recipient_pending_username || (claim as { recipient_pending_email?: boolean })?.recipient_pending_email;
+    const isPending =
+      !!(claim as { recipient_pending_username?: boolean; recipient_pending_email?: boolean; recipient_pending_social?: boolean })?.recipient_pending_username ||
+      !!(claim as { recipient_pending_email?: boolean })?.recipient_pending_email ||
+      !!(claim as { recipient_pending_social?: boolean })?.recipient_pending_social;
     console.log("[PayWithLoofta] Clicked:", { claimId: claim?.id, isPending, hasBurner: !!(claim as { claim_burner_address?: string })?.claim_burner_address });
     let effectiveRecipient = getEffectiveRecipient(claim);
     if (!effectiveRecipient && isPending && claim?.id) {
@@ -2387,6 +2547,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       console.info("[PayWithLoofta] Claim status updated to SUCCESS");
       setStatus("SUCCESS");
       useClaimPayStore.getState().setStatus(claim.id, "SUCCESS");
+      // Same reasoning as onPayPrivately: pre-mark this hash as handled so the txHashRecoveryRef
+      // effect doesn't re-poll/re-confirm it once the refetch below brings back the backend's
+      // (possibly downgraded to PRIVATE_TRANSFER_PENDING for burner-routed recipients) status.
+      txHashRecoveryRef.current = sig;
       await claimQuery.refetch();
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
       queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
@@ -2892,43 +3056,64 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         ) : !authenticated && claim?.direction !== 'from_recipient' ? (
           <div className="py-16 flex flex-col items-center text-center">
             <div className="w-16 h-16 rounded-full bg-white/10 border border-white/10 flex items-center justify-center mb-5">
-              <LogIn className="w-7 h-7 text-slate-400" />
+              {pendingSocialPlatformHint ? (
+                <SocialPlatformIcon platform={pendingSocialPlatformHint as SocialIconPlatform} className="w-7 h-7 text-slate-400" />
+              ) : (
+                <LogIn className="w-7 h-7 text-slate-400" />
+              )}
             </div>
             <h3 className="text-xl font-semibold text-white mb-2">Sign in to view details</h3>
             <p className="text-slate-400 text-base mb-6 max-w-xs">
-              This payment may be waiting for you. Sign in to check.
+              {pendingSocialPlatformHint
+                ? `This was sent to a ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "social"} username. Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "that account"} to check.`
+                : "This payment may be waiting for you. Sign in to check."}
             </p>
             <button
-              onClick={() => login()}
+              onClick={() => {
+                if (pendingEmailHint) login({ loginMethods: ["email"], disableSignup: false });
+                else if (pendingSocialPlatformHint === "discord") login({ loginMethods: ["discord"], disableSignup: false });
+                else if (pendingSocialPlatformHint === "github") login({ loginMethods: ["github"], disableSignup: false });
+                else if (pendingSocialPlatformHint === "telegram") login({ loginMethods: ["telegram"], disableSignup: false });
+                else login();
+              }}
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white hover:opacity-90 transition-opacity"
               style={{ background: "linear-gradient(to right, #FF1301, #EAB308)" }}
             >
               <LogIn className="w-4 h-4" />
-              Sign in
+              {pendingSocialPlatformHint ? `Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "account"}` : "Sign in"}
             </button>
           </div>
         ) : claim ? (
           <>
             {!isCreatorView && !isRecipient && claim?.direction !== 'from_recipient' ? (
-              <PaymentNotFoundNotice
-                message="This link may not be addressed to you, or may no longer exist."
-                hint={
-                  claim?.recipient_pending_email || claim?.recipient_pending_username
-                    ? "It might also be waiting on an email or X handle you haven't added to your account yet."
-                    : null
-                }
-                showLinkButtons={!!(claim?.recipient_pending_email || claim?.recipient_pending_username)}
-                hasTwitterLinked={hasTwitterLinked}
-                hasEmailLinked={hasEmailLinked}
-                onConnectTwitter={() => linkTwitter()}
-                onConnectEmail={() => linkEmail()}
-                isConfirmingIdentity={isConfirmingIdentity}
-                backHref={from === "history" ? "/history" : "/"}
-                backLabel={from === "history" ? "← Back to History" : "← Back to Send"}
-              />
+              claim?.recipient_pending_social && !hasSocialPlatformLinked(claim.recipient_pending_social_platform) ? (
+                <SocialConnectPrompt
+                  platform={claim.recipient_pending_social_platform ?? "discord"}
+                  onConnect={() => connectSocialPlatform(claim.recipient_pending_social_platform)}
+                  isConfirmingIdentity={isConfirmingIdentity}
+                />
+              ) : (
+                <PaymentNotFoundNotice
+                  message="This link may not be addressed to you, or may no longer exist."
+                  hint={
+                    claim?.recipient_pending_email || claim?.recipient_pending_username
+                      ? "It might also be waiting on an email or X handle you haven't added to your account yet."
+                      : null
+                  }
+                  showLinkButtons={!!(claim?.recipient_pending_email || claim?.recipient_pending_username)}
+                  hasTwitterLinked={hasTwitterLinked}
+                  hasEmailLinked={hasEmailLinked}
+                  onConnectTwitter={() => linkTwitter()}
+                  onConnectEmail={() => linkEmail()}
+                  isConfirmingIdentity={isConfirmingIdentity}
+                  backHref={from === "history" ? "/history" : "/"}
+                  backLabel={from === "history" ? "← Back to History" : "← Back to Send"}
+                />
+              )
             ) : isRecipient &&
               !claim?.recipient_pending_email &&
               !claim?.recipient_pending_username &&
+              !claim?.recipient_pending_social &&
               String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
               <div className="mt-6 py-6">
                 <div className="text-center mb-6">
@@ -3030,7 +3215,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   {claim?.paid_at && (
                     <div className="flex items-center justify-between">
                       <span className="text-gray-600 text-base md:text-sm">
-                        {claim?.recipient_pending_email || claim?.recipient_pending_username ? "Paid" : "Claimed"}
+                        {claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.recipient_pending_social ? "Paid" : "Claimed"}
                       </span>
                       <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
                     </div>
@@ -3390,6 +3575,165 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 claimLocked={!!claim?.recipient_claim_in_progress}
                 onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
               />
+            ) : claim?.recipient_pending_social && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+              <ClaimPageSenderShareView
+                claimId={id}
+                shortCode={claim?.short_id}
+                amount={parseFloat(claim?.amount || "0")}
+                recipientLabel={`@${claim.recipient_pending_social_value || "handle"} on ${claim.recipient_pending_social_platform ?? "social"}`}
+                status={String(status || claim?.status || "").toUpperCase()}
+                userId={user?.id}
+                claimLocked={!!claim?.recipient_claim_in_progress}
+                onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
+              />
+            ) : isRecipient && claim?.recipient_pending_social ? (
+              <div className="mt-6 text-center py-12 px-4">
+                <div className="mb-4 text-6xl">🎁</div>
+                <h3 className="text-2xl font-semibold text-gray-900 mb-2">This payment is for you</h3>
+                {["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(String(claim?.status || "").toUpperCase()) ? (
+                  !user?.id ? (
+                    <>
+                      <p className="text-gray-500 text-base md:text-sm mb-5">
+                        Sign in with your {SOCIAL_PLATFORM_LABELS[claim.recipient_pending_social_platform ?? ""] ?? "social"} account to claim.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const platform = claim?.recipient_pending_social_platform;
+                          if (platform === "discord") login({ loginMethods: ["discord"], disableSignup: false });
+                          else if (platform === "github") login({ loginMethods: ["github"], disableSignup: false });
+                          else if (platform === "telegram") login({ loginMethods: ["telegram"], disableSignup: false });
+                          else login({ disableSignup: false });
+                        }}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                      >
+                        Sign in to claim
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className={"text-6xl font-sans font-semibold"}>
+                        + ${parseFloat(claim?.amount || "0").toFixed(2)}
+                      </div>
+                      <div className={"text-xl text-gray-500 mt-3 mb-5"}>
+                        from{" "}
+                        {claim?.creator_username
+                          ? `@${claim.creator_username}`
+                          : claim?.creator_email || "Anonymous"}
+                      </div>
+                      <div className="text-left max-w-md mx-auto">
+                        <ClaimDescriptionMessageBox description={claim?.description} />
+                      </div>
+                      <div className="flex items-center justify-center gap-2 text-base md:text-sm mb-4">
+                        {burnerIsChecking ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                            <span className="text-gray-500">Checking if funds have arrived…</span>
+                          </>
+                        ) : burnerIsReady ? (
+                          <>
+                            <CheckCircle2 className="h-4 w-4 text-green-500" />
+                            <span className="text-green-600 font-medium">Funds ready — you can claim now.</span>
+                          </>
+                        ) : (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+                            <span className="text-gray-500">
+                              {privatePaymentWaitingAfterSenderCopy()}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
+                        disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady}
+                        className={cn(
+                          "hidden md:inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
+                          "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+                          (claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady) &&
+                          "opacity-50 cursor-not-allowed hover:opacity-50",
+                        )}
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Claim to wallet
+                        {walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}
+                      </button>
+                      {/* Mobile: sticky above BottomNav (h-16 = 64px) */}
+                      <div className="md:hidden fixed bottom-16 left-0 right-0 z-40 px-4 py-3 bg-[#0f0f12]/95 backdrop-blur-sm border-t border-white/10">
+                        <button
+                          type="button"
+                          onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
+                          disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady}
+                          className={cn(
+                            "w-full flex items-center justify-center gap-2 rounded-xl py-4 font-semibold text-base transition-all",
+                            "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+                            (claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady) && "opacity-50 cursor-not-allowed hover:opacity-50",
+                          )}
+                        >
+                          {claimAsRecipientMutation.isPending ? (
+                            <><Loader2 className="h-5 w-5 animate-spin" /><span>Claiming…</span></>
+                          ) : (
+                            <><CheckCircle2 className="h-5 w-5" /><span>Claim to wallet{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span></>
+                          )}
+                        </button>
+                      </div>
+                    </>
+                  )
+                ) : (
+                  <p className="text-gray-600 text-base mb-4">
+                    {user?.id
+                      ? `$${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay.`
+                      : "Waiting for the sender to pay. Sign in to see the amount and claim when it’s ready."}
+                  </p>
+                )}
+              </div>
+            ) : claim?.recipient_pending_social && !isRecipient && !(user?.id && claim?.created_by === user.id) ? (
+              (() => {
+                const senderHasPaid = ["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(
+                  String(claim?.status || "").toUpperCase()
+                );
+                return (
+                  <div className="mt-6 text-center py-12 px-4">
+                    <div className="mb-4 text-6xl">🎁</div>
+                    <h3 className="text-2xl font-semibold text-gray-900 mb-2">This payment is for you</h3>
+                    {senderHasPaid ? (
+                      !user?.id ? (
+                        <>
+                          <p className="text-gray-500 text-base md:text-sm mb-5">
+                            Connect your {claim?.recipient_pending_social_platform ?? "social"} account (@{claim?.recipient_pending_social_value || "handle"}) on Loofta to claim.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const platform = claim?.recipient_pending_social_platform;
+                              if (platform === "discord") login({ loginMethods: ["discord"], disableSignup: false });
+                              else if (platform === "github") login({ loginMethods: ["github"], disableSignup: false });
+                              else if (platform === "telegram") login({ loginMethods: ["telegram"], disableSignup: false });
+                              else login({ disableSignup: false });
+                            }}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                          >
+                            Sign in to claim
+                          </button>
+                        </>
+                      ) : (
+                        <SocialConnectPrompt
+                          platform={claim?.recipient_pending_social_platform ?? "discord"}
+                          onConnect={() => connectSocialPlatform(claim?.recipient_pending_social_platform)}
+                          isConfirmingIdentity={isConfirmingIdentity}
+                        />
+                      )
+                    ) : (
+                      <p className="text-gray-600 text-base mb-4">
+                        {user?.id
+                          ? `$${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay.`
+                          : "Waiting for the sender to pay. Sign in to see the amount and claim when it’s ready."}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()
             ) : claim?.recipient_pending_username && !(user?.id && claim?.created_by === user.id) ? (
               (() => {
                 const senderHasPaid = ["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(
@@ -3440,11 +3784,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       ? `@${(claim as any).recipient_pending_username_value}`
                       : claim?.recipient_username
                         ? `@${claim.recipient_username}`
-                        : (claim as any)?.recipient_pending_email_value
-                          ? (claim as any).recipient_pending_email_value
-                          : claim?.recipient_email
-                            ? claim.recipient_email
-                            : null;
+                        : (claim as any)?.recipient_pending_social_value
+                          ? `@${(claim as any).recipient_pending_social_value} on ${(claim as any)?.recipient_pending_social_platform ?? "social"}`
+                          : (claim as any)?.recipient_pending_email_value
+                            ? (claim as any).recipient_pending_email_value
+                            : claim?.recipient_email
+                              ? claim.recipient_email
+                              : null;
                   const shareId = (claim as any)?.short_id || claim?.id;
                   const claimLink = typeof window !== "undefined"
                     ? `${window.location.origin}/share/${shareId}`
@@ -3707,11 +4053,20 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             ? `@${(claim as { recipient_pending_username_value?: string }).recipient_pending_username_value}`
                             : claim?.recipient_username
                               ? `@${claim.recipient_username}`
-                              : (claim as { recipient_pending_email_value?: string } | null)?.recipient_pending_email_value
-                                ? (claim as { recipient_pending_email_value?: string }).recipient_pending_email_value
-                                : claim?.recipient_email
-                                  ? claim.recipient_email
-                                  : null}
+                              : (claim as { recipient_pending_social_value?: string } | null)?.recipient_pending_social_value ? (
+                                  <span className="inline-flex items-center gap-1.5 align-middle">
+                                    <SocialPlatformIcon
+                                      platform={((claim as { recipient_pending_social_platform?: string } | null)?.recipient_pending_social_platform ?? "github") as SocialIconPlatform}
+                                      className="h-4 w-4 shrink-0"
+                                    />
+                                    @{(claim as { recipient_pending_social_value?: string }).recipient_pending_social_value}
+                                  </span>
+                                )
+                                : (claim as { recipient_pending_email_value?: string } | null)?.recipient_pending_email_value
+                                  ? (claim as { recipient_pending_email_value?: string }).recipient_pending_email_value
+                                  : claim?.recipient_email
+                                    ? claim.recipient_email
+                                    : null}
                         </>
                       ) : (
                         <>
@@ -4433,15 +4788,23 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               </>
             ))}
           </>
+        ) : pendingSocialPlatformHint && !hasSocialPlatformLinked(pendingSocialPlatformHint) ? (
+          <SocialConnectPrompt
+            platform={pendingSocialPlatformHint}
+            onConnect={() => connectSocialPlatform(pendingSocialPlatformHint)}
+            isConfirmingIdentity={isConfirmingIdentity}
+          />
+        ) : isAwaitingSocialIdentityConfirmation ? (
+          <ConfirmingIdentityNotice />
         ) : (
           <PaymentNotFoundNotice
             message="This link may have expired, been cancelled, or never existed."
             hint={
-              !hasTwitterLinked || !hasEmailLinked
+              !pendingSocialPlatformHint && (!hasTwitterLinked || !hasEmailLinked)
                 ? "It might also be waiting on an email or X handle you haven't added to your account yet."
                 : null
             }
-            showLinkButtons
+            showLinkButtons={!pendingSocialPlatformHint}
             hasTwitterLinked={hasTwitterLinked}
             hasEmailLinked={hasEmailLinked}
             onConnectTwitter={() => linkTwitter()}
@@ -4660,10 +5023,19 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   );
 }
 
+function ClaimPayPageFallback() {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 min-h-screen">
+      <Loader2 className="h-7 w-7 animate-spin text-white/30" />
+      <p className="text-base text-white/40">Redirecting to payment...</p>
+    </div>
+  );
+}
+
 export default function ClaimPayPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = React.use(params);
   return (
-    <React.Suspense>
+    <React.Suspense fallback={<ClaimPayPageFallback />}>
       <ClaimPayView claimId={id} />
     </React.Suspense>
   );

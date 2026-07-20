@@ -17,7 +17,11 @@ export async function generateMetadata({
 
   const amount = preview.amount_usd % 1 === 0 ? `$${preview.amount_usd}` : `$${preview.amount_usd.toFixed(2)}`;
   const sender = preview.sender_username ? `@${preview.sender_username}` : "Someone";
-  const recipient = preview.recipient_username ? `@${preview.recipient_username}` : "someone";
+  const recipient = preview.recipient_username
+    ? `@${preview.recipient_username}`
+    : preview.recipient_social_handle
+      ? `@${preview.recipient_social_handle}${preview.recipient_social_platform ? ` on ${preview.recipient_social_platform}` : ""}`
+      : "someone";
   const title = `${sender} sent ${amount} to ${recipient} on Loofta`;
   const imageUrl = `${SITE_URL}/api/share/${short_id}/og`;
 

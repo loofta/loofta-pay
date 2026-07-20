@@ -80,7 +80,7 @@ function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & {
     // Only expose recipient_address for PENDING_* values — real wallet addresses stay hidden
     recipient_address: (() => {
       const addr = String(row.recipient_address ?? "").trim();
-      return addr.startsWith("PENDING_EMAIL:") || addr.startsWith("PENDING_USERNAME:") ? addr : undefined;
+      return addr.startsWith("PENDING_EMAIL:") || addr.startsWith("PENDING_USERNAME:") || addr.startsWith("PENDING_SOCIAL:") ? addr : undefined;
     })(),
     creator_email: null,
     created_by: (row.created_by as string | null) ?? null,
@@ -171,6 +171,15 @@ export async function GET(request: Request) {
       if (!pendingAddresses.includes(handle)) pendingAddresses.push(handle);
     }
     if (currentUser?.email) pendingAddresses.push(`PENDING_EMAIL:${currentUser.email.toLowerCase()}`);
+    // Same fallback for Discord/GitHub/Telegram — a payment sent to a handle before it was
+    // connected must still surface here once the matching social_accounts row exists.
+    const { data: socialAccounts } = await supabase
+      .from("social_accounts")
+      .select("platform, handle")
+      .eq("user_id", userId);
+    for (const row of (socialAccounts || []) as { platform: string; handle: string }[]) {
+      pendingAddresses.push(`PENDING_SOCIAL:${row.platform}:${row.handle.toLowerCase()}`);
+    }
 
     // ── payments table (new records) ──────────────────────────────────────
     // Sent: payments where this user is the sender (new schema)

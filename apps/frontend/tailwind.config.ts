@@ -18,7 +18,13 @@ const config = {
       },
     },
     extend: {
-     
+      // `text-md` was used across the app but was never a real Tailwind size (only
+      // xs/sm/base/lg/... exist by default) — it silently did nothing, leaving text at
+      // whatever size it happened to inherit. Defining it here makes every existing
+      // `text-md` usage actually apply a real, consistent 16px size app-wide.
+      fontSize: {
+        md: ["1rem", { lineHeight: "1.5rem" }],
+      },
       fontFamily: {
         sans: ['Clash Grotesk', 'sans-serif'],
         display: ['Clash Display', 'sans-serif'],

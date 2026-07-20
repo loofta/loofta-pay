@@ -33,7 +33,7 @@ import { ConfigService } from '@nestjs/config';
 import { DepositService, DepositResult } from './deposit.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
 import { UsersService } from '../users/users.service';
-import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto, RequestDepositDto } from './dto';
+import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto, CreateClaimFromSocialDto, RequestDepositDto } from './dto';
 import { Claim, ClaimIntent } from './entities/claim.entity';
 
 @ApiTags('claims')
@@ -128,6 +128,34 @@ export class ClaimsController {
     @Req() req: { user?: { id: string } },
   ): Promise<{ id: string; link: string }> {
     return this.claimsService.createFromEmail({ ...createDto, userId: req.user?.id });
+  }
+
+  /**
+   * Create a claim addressed to a Discord/GitHub/Telegram handle (wallet address fetched
+   * server-side if the handle is already connected to a Loofta account, never exposed).
+   * The caller's Privy user ID is derived from auth (verified), never from the request body.
+   */
+  @Post('create-from-social')
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'claims:create')
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Create claim from a Discord/GitHub/Telegram handle' })
+  @ApiResponse({
+    status: 201,
+    description: 'Claim created',
+    schema: {
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        link: { type: 'string', format: 'uri' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input' })
+  async createFromSocial(
+    @Body() createDto: CreateClaimFromSocialDto,
+    @Req() req: { user?: { id: string } },
+  ): Promise<{ id: string; link: string }> {
+    return this.claimsService.createFromSocial({ ...createDto, userId: req.user?.id });
   }
 
   /**

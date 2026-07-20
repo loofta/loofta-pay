@@ -28,6 +28,9 @@ import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalan
 import { ChangeUsernameModal } from "@/components/ChangeUsernameModal";
 /** Privy uses type "twitter_oauth" for Twitter (not "twitter" or "x"). */
 const TWITTER_TYPES = ["twitter_oauth", "twitter", "x"] as const;
+/** Exact Privy type strings for Discord/GitHub aren't publicly pinned down — check known variants defensively, same as Twitter above. */
+const DISCORD_TYPES = ["discord_oauth", "discord"] as const;
+const GITHUB_TYPES = ["github_oauth", "github"] as const;
 
 /** Twitter/X handle from Privy linked accounts (username || name || subject). */
 function getTwitterUsername(linkedAccounts: Array<{ type?: string; username?: string; name?: string; subject?: string }> | undefined): string | null {
@@ -39,6 +42,21 @@ function getTwitterUsername(linkedAccounts: Array<{ type?: string; username?: st
     || "";
   const s = String(raw).replace(/^@/, "").toLowerCase().trim();
   return s.length >= 3 ? s : null;
+}
+
+/** Handle for a given set of linked-account type strings (username || name || subject) — used for Discord/GitHub. */
+function getSocialUsername(
+  linkedAccounts: Array<{ type?: string; username?: string; name?: string; subject?: string }> | undefined,
+  types: readonly string[],
+): string | null {
+  const acc = (linkedAccounts || []).find((a) => a.type && types.includes(a.type));
+  if (!acc) return null;
+  const raw = (acc as { username?: string; name?: string; subject?: string }).username
+    || (acc as { name?: string }).name
+    || (acc as { subject?: string }).subject
+    || "";
+  const s = String(raw).replace(/^@/, "").toLowerCase().trim();
+  return s.length >= 1 ? s : null;
 }
 
 function formatVolume(n: number): string {
@@ -199,17 +217,23 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [exportedPrivateKey, setExportedPrivateKey] = useState<string | null>(null);
   const [updatingToTwitter, setUpdatingToTwitter] = useState(false);
   const [twitterLinkedOptimistic, setTwitterLinkedOptimistic] = useState(false);
-  const [linkingMethod, setLinkingMethod] = useState<"twitter" | "email" | null>(null);
+  const [linkingMethod, setLinkingMethod] = useState<"twitter" | "email" | "discord" | "github" | null>(null);
   const [unlinkingTwitter, setUnlinkingTwitter] = useState(false);
   const [confirmUnlinkTwitter, setConfirmUnlinkTwitter] = useState(false);
   const [unlinkingEmail, setUnlinkingEmail] = useState(false);
+  const [discordLinkedOptimistic, setDiscordLinkedOptimistic] = useState(false);
+  const [githubLinkedOptimistic, setGithubLinkedOptimistic] = useState(false);
+  const [unlinkingDiscord, setUnlinkingDiscord] = useState(false);
+  const [unlinkingGithub, setUnlinkingGithub] = useState(false);
+  const [telegramHandle, setTelegramHandle] = useState<string | null>(null);
+  const [connectingTelegram, setConnectingTelegram] = useState(false);
   const [switchingUsername, setSwitchingUsername] = useState(false);
   const [showChangeUsername, setShowChangeUsername] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
   const { refreshUser } = useUser();
   const queryClient = useQueryClient();
-  const { linkTwitter, linkEmail } = useLinkAccount({
+  const { linkTwitter, linkEmail, linkDiscord, linkGithub } = useLinkAccount({
     onSuccess: async (arg: any) => {
       const linkedType = arg?.linkedAccount?.type;
       const didLinkTwitter =
@@ -218,6 +242,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         linkedType === "x" ||
         arg?.linkMethod === "twitter" ||
         linkingMethod === "twitter";
+      const didLinkDiscord = DISCORD_TYPES.includes(linkedType) || linkingMethod === "discord";
+      const didLinkGithub = GITHUB_TYPES.includes(linkedType) || linkingMethod === "github";
       if (didLinkTwitter) {
         setTwitterLinkedOptimistic(true);
         // Persist Twitter handle to DB so the username toggle works
@@ -235,6 +261,23 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
           } catch { /* non-critical */ }
         }
       }
+      if (didLinkDiscord || didLinkGithub) {
+        const platform = didLinkDiscord ? "discord" : "github";
+        if (didLinkDiscord) setDiscordLinkedOptimistic(true);
+        else setGithubLinkedOptimistic(true);
+        const raw = arg?.linkedAccount?.username ?? arg?.linkedAccount?.name ?? "";
+        const handle = String(raw).replace(/^@/, "").toLowerCase().trim();
+        if (handle.length >= 1) {
+          try {
+            const token = await getAccessToken().catch(() => null);
+            await fetch("/api/users/save-social-handle", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+              body: JSON.stringify({ platform, handle }),
+            });
+          } catch { /* non-critical */ }
+        }
+      }
       setLinkingMethod(null);
       // Force Privy to re-fetch the user so linkedAccounts is immediately up to date.
       try { await refreshUser(); } catch { /* non-critical */ }
@@ -248,12 +291,15 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       setLinkingMethod(null);
       if (/already been linked|already linked|linked to another user/i.test(msg)) {
         const isTwitterConflict = linkingMethod === "twitter" || /twitter|x|oauth/i.test(msg);
+        const isSocialConflict = linkingMethod === "discord" || linkingMethod === "github";
         toast({
           variant: "destructive",
-          title: isTwitterConflict ? "X account already in use" : "Email already in use",
+          title: isTwitterConflict ? "X account already in use" : isSocialConflict ? "Account already in use" : "Email already in use",
           description: isTwitterConflict
             ? "This X account is already linked to another user. Use another X account or sign in to the existing account."
-            : "This email is linked to another account. Sign in with that email to use it.",
+            : isSocialConflict
+              ? `This ${linkingMethod === "discord" ? "Discord" : "GitHub"} account is already linked to another user.`
+              : "This email is linked to another account. Sign in with that email to use it.",
         });
       } else {
         toast({ variant: "destructive", title: "Could not link", description: msg || "Try again." });
@@ -284,6 +330,21 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   );
   const twitterSubject = (twitterAccount as { subject?: string } | undefined)?.subject ?? null;
   const totalMethods = [hasEmail, hasTwitterLinked].filter(Boolean).length;
+
+  // Discord/GitHub: connect-for-pay-by-handle, not counted toward the sign-in recovery total —
+  // they're a separate "Connect accounts" concern from the email/Twitter sign-in methods card.
+  const hasDiscordLinked = linkedAccounts.some((a) => a.type && DISCORD_TYPES.includes(a.type as any)) || discordLinkedOptimistic;
+  const hasGithubLinked = linkedAccounts.some((a) => a.type && GITHUB_TYPES.includes(a.type as any)) || githubLinkedOptimistic;
+  const discordHandle = useMemo(() => getSocialUsername(linkedAccounts, DISCORD_TYPES), [linkedAccounts]);
+  const githubHandle = useMemo(() => getSocialUsername(linkedAccounts, GITHUB_TYPES), [linkedAccounts]);
+  const discordSubject = useMemo(() =>
+    (linkedAccounts.find((a) => a.type && DISCORD_TYPES.includes(a.type as any)) as { subject?: string } | undefined)?.subject ?? null,
+    [linkedAccounts]
+  );
+  const githubSubject = useMemo(() =>
+    (linkedAccounts.find((a) => a.type && GITHUB_TYPES.includes(a.type as any)) as { subject?: string } | undefined)?.subject ?? null,
+    [linkedAccounts]
+  );
 
   // Get Solana wallet address from Privy
   // Use linkedAccounts - these are wallets tied to user (what shows in Privy dashboard)
@@ -425,6 +486,65 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       fetchPreferences();
     }
   }, [showShareModal, authenticated, getAccessToken, privyUser?.id]);
+
+  // Telegram isn't a Privy-linked account in this app (see telegram-relay/) — fetch its
+  // connected state from social_accounts whenever the settings modal opens.
+  const fetchTelegramHandle = async () => {
+    try {
+      const token = await getAccessToken().catch(() => null);
+      const res = await fetch("/api/users/social-handles", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTelegramHandle(data?.handles?.telegram ?? null);
+      }
+    } catch { /* non-critical */ }
+  };
+  useEffect(() => {
+    if (showSettingsModal && authenticated) {
+      fetchTelegramHandle();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSettingsModal, authenticated]);
+
+  // After returning from the loofta.com Telegram relay, show a toast, refetch, and clean the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("connected") !== "telegram") return;
+    const errorCode = params.get("error");
+    if (errorCode) {
+      toast({ variant: "destructive", title: "Could not connect Telegram", description: "Please try again." });
+    } else {
+      toast({ title: "Telegram connected", description: "Your Telegram handle has been added." });
+      fetchTelegramHandle();
+    }
+    params.delete("connected");
+    params.delete("error");
+    const qs = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleConnectTelegram = async () => {
+    setConnectingTelegram(true);
+    try {
+      const token = await getAccessToken().catch(() => null);
+      const res = await fetch("/api/users/telegram-relay-token", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error("Could not start Telegram connect.");
+      const data = await res.json();
+      const relayBase = process.env.NEXT_PUBLIC_TELEGRAM_RELAY_URL || "https://loofta.com";
+      window.open(`${relayBase}/telegram-relay?token=${encodeURIComponent(data.token)}`, "_blank", "noopener,noreferrer");
+    } catch (e: unknown) {
+      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
+      toast({ variant: "destructive", title: "Could not connect Telegram", description: msg || "Try again." });
+    } finally {
+      setConnectingTelegram(false);
+    }
+  };
 
   // Mainnet is open to everyone — always grant access on login.
   useEffect(() => {
@@ -589,6 +709,54 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       toast({ variant: "destructive", title: "Could not disconnect", description: msg || "Try again." });
     } finally {
       setUnlinkingTwitter(false);
+    }
+  };
+
+  const handleUnlinkDiscord = async () => {
+    if (!discordSubject) return;
+    setUnlinkingDiscord(true);
+    try {
+      await unlinkOAuth.unlink({ provider: "discord", subject: discordSubject });
+      setDiscordLinkedOptimistic(false);
+      try {
+        const token = await getAccessToken().catch(() => null);
+        await fetch("/api/users/save-social-handle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ platform: "discord", handle: null }),
+        });
+      } catch { /* non-critical — stale row just won't display anywhere important */ }
+      try { await refreshUser(); } catch { /* non-critical */ }
+      toast({ title: "Discord disconnected", description: "Your Discord account has been removed." });
+    } catch (e: unknown) {
+      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
+      toast({ variant: "destructive", title: "Could not disconnect", description: msg || "Try again." });
+    } finally {
+      setUnlinkingDiscord(false);
+    }
+  };
+
+  const handleUnlinkGithub = async () => {
+    if (!githubSubject) return;
+    setUnlinkingGithub(true);
+    try {
+      await unlinkOAuth.unlink({ provider: "github", subject: githubSubject });
+      setGithubLinkedOptimistic(false);
+      try {
+        const token = await getAccessToken().catch(() => null);
+        await fetch("/api/users/save-social-handle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ platform: "github", handle: null }),
+        });
+      } catch { /* non-critical — stale row just won't display anywhere important */ }
+      try { await refreshUser(); } catch { /* non-critical */ }
+      toast({ title: "GitHub disconnected", description: "Your GitHub account has been removed." });
+    } catch (e: unknown) {
+      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
+      toast({ variant: "destructive", title: "Could not disconnect", description: msg || "Try again." });
+    } finally {
+      setUnlinkingGithub(false);
     }
   };
 
@@ -1248,7 +1416,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </div>
                       </div>
                       <h2 className="text-xl font-bold text-white mb-1">{t('settingsTitle')}</h2>
-                      <p className="text-base text-slate-500">{t('settingsSubtitle')}</p>
+                      <p className="text-base text-slate-400">{t('settingsSubtitle')}</p>
                     </div>
 
                     <div className="space-y-3">
@@ -1265,23 +1433,23 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         <div className="px-4 pt-3 pb-4 space-y-2.5">
                           {/* Connected accounts */}
                           {(hasEmail || hasTwitterLinked) && (
-                            <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] overflow-hidden">
+                            <div className="rounded-xl bg-white/[0.06] border border-white/[0.10] overflow-hidden">
                               <div className="divide-y divide-white/[0.05]">
                                 {hasEmail && linkedEmailAddress && (
                                   <div className="flex items-center gap-3 px-3 py-2.5">
-                                    <div className="w-7 h-7 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
-                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400">
+                                    <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-300">
                                         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
                                         <polyline points="22,6 12,13 2,6" />
                                       </svg>
                                     </div>
-                                    <span className="flex-1 text-base text-white/80 truncate">{linkedEmailAddress}</span>
+                                    <span className="flex-1 text-base text-white/90 truncate">{linkedEmailAddress}</span>
                                     {totalMethods > 1 ? (
                                       <button
                                         type="button"
                                         onClick={handleUnlinkEmail}
                                         disabled={unlinkingEmail}
-                                        className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-500 hover:text-slate-300 hover:bg-white/8 transition-colors disabled:opacity-40"
+                                        className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
                                       >
                                         {unlinkingEmail ? <Loader2 className="w-3 h-3 animate-spin" /> : "Remove"}
                                       </button>
@@ -1293,12 +1461,12 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                 {hasTwitterLinked && twitterHandle && (
                                   <div className="flex flex-col gap-0 px-3 py-2.5">
                                     <div className="flex items-center gap-3">
-                                      <div className="w-7 h-7 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-slate-400">
+                                      <div className="w-7 h-7 rounded-lg bg-white/15 flex items-center justify-center shrink-0">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-white">
                                           <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
                                         </svg>
                                       </div>
-                                      <span className="flex-1 text-base text-white/80">@{twitterHandle}</span>
+                                      <span className="flex-1 text-base text-white/90">@{twitterHandle}</span>
                                       {totalMethods > 1 ? (
                                         confirmUnlinkTwitter ? (
                                           <div className="flex items-center gap-1 shrink-0">
@@ -1323,7 +1491,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                             type="button"
                                             onClick={() => setConfirmUnlinkTwitter(true)}
                                             disabled={unlinkingTwitter}
-                                            className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-500 hover:text-slate-300 hover:bg-white/8 transition-colors disabled:opacity-40"
+                                            className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
                                           >
                                             Remove
                                           </button>
@@ -1414,16 +1582,16 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                             <span className="text-base font-semibold text-white">Payment link</span>
                           </div>
                           <div className="px-4 pt-3 pb-4 space-y-2">
-                            <p className="text-base text-slate-500">Choose which username your payment link uses.</p>
-                            <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] overflow-hidden divide-y divide-white/[0.05]">
+                            <p className="text-base text-slate-400">Choose which username your payment link uses.</p>
+                            <div className="rounded-xl bg-white/[0.06] border border-white/[0.10] overflow-hidden divide-y divide-white/[0.08]">
                               {storeLooUsername && (
                                 <div className="flex items-center gap-3 px-3 py-2.5">
                                   <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
                                     <span className="text-base font-bold text-slate-400 leading-none">L</span>
                                   </div>
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-base text-white/80 truncate">@{storeLooUsername}</p>
-                                    <p className="text-base text-slate-600">Your Loofta username</p>
+                                    <p className="text-base text-white/90 truncate">@{storeLooUsername}</p>
+                                    <p className="text-base text-slate-500">Your Loofta username</p>
                                   </div>
                                   {username === storeLooUsername ? (
                                     <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
@@ -1432,7 +1600,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                       type="button"
                                       onClick={() => handleSwitchUsername("loo")}
                                       disabled={switchingUsername}
-                                      className="shrink-0 px-3 py-1 rounded-lg text-base text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-40"
+                                      className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors disabled:opacity-40"
                                     >
                                       {switchingUsername ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Use"}
                                     </button>
@@ -1452,13 +1620,13 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                               {storeTwitterUsername && hasTwitterLinked && (
                                 <div className="flex items-center gap-3 px-3 py-2.5">
                                   <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-slate-400">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-slate-300">
                                       <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
                                     </svg>
                                   </div>
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-base text-white/80 truncate">@{storeTwitterUsername}</p>
-                                    <p className="text-base text-slate-600">Your X username</p>
+                                    <p className="text-base text-white/90 truncate">@{storeTwitterUsername}</p>
+                                    <p className="text-base text-slate-500">Your X username</p>
                                   </div>
                                   {username === storeTwitterUsername ? (
                                     <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
@@ -1467,7 +1635,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                       type="button"
                                       onClick={() => handleSwitchUsername("twitter")}
                                       disabled={switchingUsername || !hasTwitterLinked}
-                                      className="shrink-0 px-3 py-1 rounded-lg text-base text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-40"
+                                      className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors disabled:opacity-40"
                                       title={!hasTwitterLinked ? "Re-link X to use this username" : undefined}
                                     >
                                       {switchingUsername ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Use"}
@@ -1520,6 +1688,160 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </div>
                       ) : null}
 
+                      {/* Connect accounts card — every platform people can pay you by handle on. X mirrors the Sign-in methods card above (read-only here, remove it there); Discord/GitHub link+unlink directly; Telegram is connected via its own flow (see loofta.com relay). */}
+                      <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
+                        <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-3 border-b border-white/[0.06]">
+                          <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300">
+                              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                            </svg>
+                          </div>
+                          <span className="text-base font-semibold text-white">Connect accounts</span>
+                        </div>
+                        <div className="px-4 pt-3 pb-4 space-y-2">
+                          <p className="text-base text-slate-400">People can pay you by handle on any of these — connect the rest to cover them all.</p>
+                          <div className="rounded-xl bg-white/[0.06] border border-white/[0.10] overflow-hidden divide-y divide-white/[0.08]">
+                            <div className="flex items-center gap-3 px-3 py-2.5">
+                              <div className="w-7 h-7 rounded-lg bg-white/15 flex items-center justify-center shrink-0">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-white">
+                                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                                </svg>
+                              </div>
+                              {hasTwitterLinked && twitterHandle ? (
+                                <>
+                                  <span className="flex-1 text-base text-white/90 truncate">@{twitterHandle}</span>
+                                  <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Connected</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="flex-1 text-base text-white/60">X (Twitter)</span>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      setLinkingMethod("twitter");
+                                      try { await linkTwitter(); } catch { /* surfaced via onError */ }
+                                    }}
+                                    className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors"
+                                  >
+                                    Connect
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 px-3 py-2.5">
+                              <div className="w-7 h-7 rounded-lg bg-[#5865F2]/20 flex items-center justify-center shrink-0">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-[#5865F2]">
+                                  <path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.076.076 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.947 2.418-2.157 2.418z" />
+                                </svg>
+                              </div>
+                              {hasDiscordLinked && discordHandle ? (
+                                <>
+                                  <span className="flex-1 text-base text-white/90 truncate">@{discordHandle}</span>
+                                  <button
+                                    type="button"
+                                    onClick={handleUnlinkDiscord}
+                                    disabled={unlinkingDiscord}
+                                    className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
+                                  >
+                                    {unlinkingDiscord ? <Loader2 className="w-3 h-3 animate-spin" /> : "Remove"}
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="flex-1 text-base text-white/60">Discord</span>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      setLinkingMethod("discord");
+                                      try { await linkDiscord(); } catch { /* surfaced via onError */ }
+                                    }}
+                                    className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors"
+                                  >
+                                    Connect
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 px-3 py-2.5">
+                              <div className="w-7 h-7 rounded-lg bg-white/15 flex items-center justify-center shrink-0">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-white">
+                                  <path d="M12 0C5.37 0 0 5.373 0 12c0 5.303 3.438 9.8 8.207 11.387.6.113.793-.26.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.91 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.303 24 12c0-6.627-5.373-12-12-12z" />
+                                </svg>
+                              </div>
+                              {hasGithubLinked && githubHandle ? (
+                                <>
+                                  <span className="flex-1 text-base text-white/90 truncate">@{githubHandle}</span>
+                                  <button
+                                    type="button"
+                                    onClick={handleUnlinkGithub}
+                                    disabled={unlinkingGithub}
+                                    className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
+                                  >
+                                    {unlinkingGithub ? <Loader2 className="w-3 h-3 animate-spin" /> : "Remove"}
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="flex-1 text-base text-white/60">GitHub</span>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      setLinkingMethod("github");
+                                      try { await linkGithub(); } catch { /* surfaced via onError */ }
+                                    }}
+                                    className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors"
+                                  >
+                                    Connect
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 px-3 py-2.5">
+                              <div className="w-7 h-7 rounded-lg bg-[#26A5E4]/20 flex items-center justify-center shrink-0">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-[#26A5E4]">
+                                  <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.831-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z" />
+                                </svg>
+                              </div>
+                              {telegramHandle ? (
+                                <>
+                                  <span className="flex-1 text-base text-white/90 truncate">@{telegramHandle}</span>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      const token = await getAccessToken().catch(() => null);
+                                      try {
+                                        await fetch("/api/users/save-social-handle", {
+                                          method: "POST",
+                                          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                                          body: JSON.stringify({ platform: "telegram", handle: null }),
+                                        });
+                                        setTelegramHandle(null);
+                                        toast({ title: "Telegram disconnected", description: "Your Telegram handle has been removed." });
+                                      } catch { /* non-critical */ }
+                                    }}
+                                    className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                                  >
+                                    Remove
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="flex-1 text-base text-white/60">Telegram</span>
+                                  <button
+                                    type="button"
+                                    onClick={handleConnectTelegram}
+                                    disabled={connectingTelegram}
+                                    className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors disabled:opacity-40"
+                                  >
+                                    {connectingTelegram ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Connect"}
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
 
                       {/* Wallet card */}
                       {walletAddress ? (

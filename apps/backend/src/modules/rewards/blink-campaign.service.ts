@@ -32,6 +32,13 @@ export interface BlinkAdminUserStatus {
   depositCount: number;
   privatePaymentsCount: number;
   qualified: boolean;
+  /** Set when the Blink merchant-API lookup failed — depositCount is unreliable (likely understated), not a genuine zero. */
+  depositLookupError: string | null;
+}
+
+interface BlinkDepositLookup {
+  count: number;
+  error: string | null;
 }
 
 @Injectable()
@@ -45,10 +52,11 @@ export class BlinkCampaignService {
   ) {}
 
   async getBlinkCampaign(privyUserId: string, solanaAddress?: string): Promise<BlinkCampaignData> {
-    const [blinkDeposits, privatePaymentsCount] = await Promise.all([
+    const [blinkLookup, privatePaymentsCount] = await Promise.all([
       this.getBlinkDepositsCount(solanaAddress),
       this.getMainnetPrivatePaymentsCount(privyUserId),
     ]);
+    const blinkDeposits = blinkLookup.count;
 
     // Quest 1: setup passkeys — inferred from having at least 1 Blink deposit
     // (you can't deposit without setting up passkeys first)
@@ -96,18 +104,17 @@ export class BlinkCampaignService {
    * Step 2: GET /v1/merchant-deposits?userId={id}&status=completed&createdAfter={start}&limit=2 → count items
    * Using limit=2 is enough since we only need to know if count is 0, 1, or ≥2.
    */
-  private async getBlinkDepositsCount(solanaAddress?: string): Promise<number> {
+  private async getBlinkDepositsCount(solanaAddress?: string): Promise<BlinkDepositLookup> {
     if (!solanaAddress) {
-      this.logger.debug('No Solana address provided — Blink deposit quests return 0');
-      return 0;
+      return { count: 0, error: null };
     }
 
     const merchantId = this.config.get<string>('BLINK_MERCHANT_ID');
     const privateKeyRaw = this.config.get<string>('BLINK_MERCHANT_PRIVATE_KEY');
 
     if (!merchantId || !privateKeyRaw) {
-      this.logger.debug('BLINK_MERCHANT_ID or BLINK_MERCHANT_PRIVATE_KEY not set — Blink quests return 0');
-      return 0;
+      this.logger.warn('BLINK_MERCHANT_ID or BLINK_MERCHANT_PRIVATE_KEY not set — Blink quests return 0');
+      return { count: 0, error: 'merchant_not_configured' };
     }
 
     try {
@@ -121,8 +128,8 @@ export class BlinkCampaignService {
 
       if (!usersRes.ok) {
         const errText = await usersRes.text().catch(() => '');
-        this.logger.warn(`Blink merchant-users API error: ${usersRes.status} — ${errText}`);
-        return 0;
+        this.logger.warn(`Blink merchant-users API error for ${solanaAddress}: ${usersRes.status} — ${errText}`);
+        return { count: 0, error: `merchant-users ${usersRes.status}` };
       }
 
       const usersBody = await usersRes.json();
@@ -130,7 +137,10 @@ export class BlinkCampaignService {
         Array.isArray(usersBody) ? usersBody : (usersBody.items ?? usersBody.data ?? []);
 
       const blinkUserId = users[0]?.userId;
-      if (!blinkUserId) return 0;
+      if (!blinkUserId) {
+        this.logger.debug(`No Blink merchant user found for wallet ${solanaAddress}`);
+        return { count: 0, error: null };
+      }
 
       // Step 2: count completed deposits since campaign start
       const authHeader2 = this.buildMerchantAuthHeader(merchantId, privateKeyRaw);
@@ -142,18 +152,18 @@ export class BlinkCampaignService {
 
       if (!depositsRes.ok) {
         const errText = await depositsRes.text().catch(() => '');
-        this.logger.warn(`Blink merchant-deposits API error: ${depositsRes.status} — ${errText}`);
-        return 0;
+        this.logger.warn(`Blink merchant-deposits API error for user ${blinkUserId}: ${depositsRes.status} — ${errText}`);
+        return { count: 0, error: `merchant-deposits ${depositsRes.status}` };
       }
 
       const depositsBody = await depositsRes.json();
       const deposits: unknown[] =
         Array.isArray(depositsBody) ? depositsBody : (depositsBody.items ?? depositsBody.data ?? []);
 
-      return deposits.length;
+      return { count: deposits.length, error: null };
     } catch (e) {
-      this.logger.warn(`Blink merchant API fetch failed: ${(e as Error)?.message}`);
-      return 0;
+      this.logger.warn(`Blink merchant API fetch failed for ${solanaAddress}: ${(e as Error)?.message}`);
+      return { count: 0, error: (e as Error)?.message ?? 'fetch_failed' };
     }
   }
 
@@ -169,10 +179,11 @@ export class BlinkCampaignService {
       const batchResults = await Promise.all(
         batch.map(async (u: any) => {
           const solanaAddress = await this.getPrivySolanaAddress(u.privy_user_id);
-          const [depositCount, privatePaymentsCount] = await Promise.all([
+          const [blinkLookup, privatePaymentsCount] = await Promise.all([
             this.getBlinkDepositsCount(solanaAddress ?? undefined),
             this.getMainnetPrivatePaymentsCount(u.privy_user_id),
           ]);
+          const depositCount = blinkLookup.count;
           return {
             privyUserId: u.privy_user_id,
             username: u.username ?? null,
@@ -182,6 +193,7 @@ export class BlinkCampaignService {
             depositCount,
             privatePaymentsCount,
             qualified: depositCount >= 2 && privatePaymentsCount >= 2,
+            depositLookupError: blinkLookup.error,
           };
         }),
       );

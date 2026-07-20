@@ -81,7 +81,7 @@
     "send": "Send",
     "to": "To",
     "amountLabel": "Amount in USD",
-    "recipientPlaceholder": "Loofta, Twitter username, exact email",
+    "recipientPlaceholder": "Email address",
     "recipientHint": "Loofta or Twitter username, or exact email – they claim by signing in with that account.",
     "continue": "Continue",
     "signInToContinue": "Sign in to continue",

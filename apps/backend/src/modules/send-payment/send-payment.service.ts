@@ -9,12 +9,12 @@ import { randomBytes } from 'crypto';
 import { MAGICBLOCK_GAS_SOL, MAGICBLOCK_GAS_USDC, estimateMagicblockGrossUp, decodeActualSenderDebit, type MagicblockPrivateTransferClientResponse } from '@/common/magicblock-private-transfer';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
-import { UsersService } from '../users/users.service';
+import { UsersService, type SocialPlatform } from '../users/users.service';
 import { SendPaymentEncryptionService } from './encryption.service';
 import { decryptWithPassphrase } from './vault/vault-crypto';
 import type { PassphraseEncryptedPayload } from './vault/vault-crypto';
 import { CreateSendPaymentDto, ClaimSendPaymentDto, BuildMultiSendDto } from './dto';
-import { SendPaymentLink, SendPaymentLinkPublic, SendPaymentLinkStatus } from './entities/send-payment-link.entity';
+import { SendPaymentLink, SendPaymentLinkPublic, SendPaymentLinkStatus, RecipientType } from './entities/send-payment-link.entity';
 import { Keypair, Connection, PublicKey, Transaction, AddressLookupTableAccount, SystemProgram } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
@@ -287,6 +287,10 @@ export class SendPaymentService {
         // For @handle recipients without account yet, we fallback to burner pending flow.
         return null;
       }
+      if (dto.recipient_type === 'discord' || dto.recipient_type === 'github' || dto.recipient_type === 'telegram') {
+        const u = await this.usersService.findBySocialHandle(dto.recipient_type, dto.recipient_identifier);
+        return await this.usersService.getSolanaWalletAddress(u.privyUserId);
+      }
     } catch (e) {
       this.logger.warn(`resolveRecipientSolanaPubkey failed (${dto.recipient_type}): ${(e as Error)?.message}`);
       return null;
@@ -418,7 +422,7 @@ export class SendPaymentService {
       }
       const matchesPer = await this.usersService.verifyRecipientIdentityForSendPayment(
         claimantPrivyUserId,
-        link.recipient_type as 'email' | 'twitter' | 'username',
+        link.recipient_type as RecipientType,
         link.recipient_identifier,
       );
       if (!matchesPer) {
@@ -798,6 +802,7 @@ export class SendPaymentService {
 
     const PENDING_EMAIL_PREFIX = 'PENDING_EMAIL:';
     const PENDING_USERNAME_PREFIX = 'PENDING_USERNAME:';
+    const PENDING_SOCIAL_PREFIX = 'PENDING_SOCIAL:';
 
     type RecipientInfo = {
       normalizedId: string;
@@ -836,6 +841,11 @@ export class SendPaymentService {
           resolvedPubkey = await this.usersService.getSolanaWalletAddress(u.privyUserId);
           recipientUserId = u.privyUserId;
           isRegistered = true;
+        } else if (recipient.recipient_type === 'discord' || recipient.recipient_type === 'github' || recipient.recipient_type === 'telegram') {
+          const u = await this.usersService.findBySocialHandle(recipient.recipient_type, normalizedId);
+          resolvedPubkey = await this.usersService.getSolanaWalletAddress(u.privyUserId);
+          recipientUserId = u.privyUserId;
+          isRegistered = true;
         }
       } catch {
         resolvedPubkey = null;
@@ -871,7 +881,9 @@ export class SendPaymentService {
         toPubkey = burner.publicKey;
         const recipientAddress = recipient.recipient_type === 'email'
           ? `${PENDING_EMAIL_PREFIX}${normalizedId}`
-          : `${PENDING_USERNAME_PREFIX}${normalizedId}`;
+          : (recipient.recipient_type === 'discord' || recipient.recipient_type === 'github' || recipient.recipient_type === 'telegram')
+            ? `${PENDING_SOCIAL_PREFIX}${recipient.recipient_type}:${normalizedId}`
+            : `${PENDING_USERNAME_PREFIX}${normalizedId}`;
         paymentInsert = {
           amount: parseFloat(amountStr),
           direction: 'from_sender',
@@ -1123,6 +1135,7 @@ export class SendPaymentService {
 
     const PENDING_EMAIL_PREFIX = 'PENDING_EMAIL:';
     const PENDING_USERNAME_PREFIX = 'PENDING_USERNAME:';
+    const PENDING_SOCIAL_PREFIX = 'PENDING_SOCIAL:';
 
     const transactions: Array<{
       paymentId: string; recipientIdentifier: string; amount: string;
@@ -1148,6 +1161,11 @@ export class SendPaymentService {
           isRegistered = true;
         } else if (recipient.recipient_type === 'email') {
           const u = await this.usersService.findByEmail(normalizedId);
+          resolvedPubkey = await this.usersService.getSolanaWalletAddress(u.privyUserId);
+          recipientUserId = u.privyUserId;
+          isRegistered = true;
+        } else if (recipient.recipient_type === 'discord' || recipient.recipient_type === 'github' || recipient.recipient_type === 'telegram') {
+          const u = await this.usersService.findBySocialHandle(recipient.recipient_type, normalizedId);
           resolvedPubkey = await this.usersService.getSolanaWalletAddress(u.privyUserId);
           recipientUserId = u.privyUserId;
           isRegistered = true;
@@ -1184,7 +1202,9 @@ export class SendPaymentService {
         toPubkey = burner.publicKey.toBase58();
         const recipientAddress = recipient.recipient_type === 'email'
           ? `${PENDING_EMAIL_PREFIX}${normalizedId}`
-          : `${PENDING_USERNAME_PREFIX}${normalizedId}`;
+          : (recipient.recipient_type === 'discord' || recipient.recipient_type === 'github' || recipient.recipient_type === 'telegram')
+            ? `${PENDING_SOCIAL_PREFIX}${recipient.recipient_type}:${normalizedId}`
+            : `${PENDING_USERNAME_PREFIX}${normalizedId}`;
         paymentInsert = {
           amount: amountUsd,
           direction: 'from_sender',
@@ -1279,6 +1299,10 @@ export class SendPaymentService {
 
     const PENDING_EMAIL_PREFIX = 'PENDING_EMAIL:';
     const PENDING_USERNAME_PREFIX = 'PENDING_USERNAME:';
+    // Matches ClaimsService.PENDING_SOCIAL_PREFIX exactly — multi-send inserts into the same
+    // shared `payments` table the claims module reads, so PENDING_SOCIAL: rows created here are
+    // already understood by ClaimsService.checkIsRecipient/claimAsRecipient with no further work.
+    const PENDING_SOCIAL_PREFIX = 'PENDING_SOCIAL:';
 
     const payment_ids: string[] = [];
     const links: Array<{ id: string; link: string; short_id: string; recipient_identifier: string; amount: string }> = [];
@@ -1303,6 +1327,11 @@ export class SendPaymentService {
           isRegistered = true;
         } else if (recipient.recipient_type === 'email') {
           const u = await this.usersService.findByEmail(normalizedId);
+          resolvedPubkey = await this.usersService.getSolanaWalletAddress(u.privyUserId);
+          recipientUserId = u.privyUserId;
+          isRegistered = true;
+        } else if (recipient.recipient_type === 'discord' || recipient.recipient_type === 'github' || recipient.recipient_type === 'telegram') {
+          const u = await this.usersService.findBySocialHandle(recipient.recipient_type, normalizedId);
           resolvedPubkey = await this.usersService.getSolanaWalletAddress(u.privyUserId);
           recipientUserId = u.privyUserId;
           isRegistered = true;
@@ -1339,7 +1368,9 @@ export class SendPaymentService {
         const burnerEncryptedSecret = this.encryption.encrypt(Buffer.from(burner.secretKey));
         const recipientAddress = recipient.recipient_type === 'email'
           ? `${PENDING_EMAIL_PREFIX}${normalizedId}`
-          : `${PENDING_USERNAME_PREFIX}${normalizedId}`;
+          : (recipient.recipient_type === 'discord' || recipient.recipient_type === 'github' || recipient.recipient_type === 'telegram')
+            ? `${PENDING_SOCIAL_PREFIX}${recipient.recipient_type}:${normalizedId}`
+            : `${PENDING_USERNAME_PREFIX}${normalizedId}`;
         paymentInsert = {
           amount: amountUsd,
           direction: 'from_sender',
@@ -1411,7 +1442,7 @@ export class SendPaymentService {
     return data as any;
   }
 
-  private normalizeIdentifier(type: 'email' | 'twitter' | 'username', value: string): string {
+  private normalizeIdentifier(type: 'email' | 'twitter' | 'username' | SocialPlatform, value: string): string {
     const v = value.trim();
     if (type === 'email') return v.toLowerCase();
     return v.replace(/^@/, '').toLowerCase();

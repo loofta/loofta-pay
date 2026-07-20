@@ -39,10 +39,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		<PrivyProvider
 			appId={appId}
 			config={{
-				// Email and Twitter for login and linking; encourage two methods for recovery.
-				// If you see "Login with Twitter not allowed", enable Twitter in the Privy Dashboard:
-				// https://dashboard.privy.io → your app → Login Methods → Socials → enable Twitter/X.
-				loginMethods: ["email", "twitter"],
+				// Email/Twitter/Discord/GitHub for login and linking; encourage two methods for recovery.
+				// If you see "Login with X not allowed", enable that method in the Privy Dashboard:
+				// https://dashboard.privy.io → your app → Login Methods → Socials → enable it.
+				// Telegram is intentionally NOT here — Privy's Telegram widget doesn't work on .xyz
+				// domains, so it's handled by a separate relay on loofta.com (see telegram-relay/).
+				loginMethods: ["email", "twitter", "discord", "github"],
 				embeddedWallets: {
 					// Create EVM (Base) wallets for users who don't have one yet.
 					// Needed for non-custodial peer offramp (ZKP2P on Base).

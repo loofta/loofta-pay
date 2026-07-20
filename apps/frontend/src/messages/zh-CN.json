@@ -81,7 +81,7 @@
     "send": "发送",
     "to": "至",
     "amountLabel": "金额（美元）",
-    "recipientPlaceholder": "Loofta、Twitter 用户名、精确电子邮件",
+    "recipientPlaceholder": "电子邮件地址",
     "recipientHint": "Loofta 或 Twitter 用户名，或精确电子邮件 — 他们通过该账户登录来认领。",
     "continue": "继续",
     "signInToContinue": "登录以继续",

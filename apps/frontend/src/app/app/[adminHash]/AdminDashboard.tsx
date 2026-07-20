@@ -581,6 +581,15 @@ export default function AdminDashboard() {
     volume_mainnet_total: number;
     tx_devnet_success: number;
     tx_mainnet_success: number;
+    tx_mainnet_success_above_5: number;
+    users_mainnet_success_above_5: number;
+    users_mainnet_success_above_5_list: Array<{
+      privyUserId: string;
+      username: string | null;
+      email: string | null;
+      txCount: number;
+      totalAmount: number;
+    }>;
     tx_devnet_total: number;
     tx_mainnet_total: number;
     total_users: number;
@@ -602,6 +611,7 @@ export default function AdminDashboard() {
     waitlist_with_twitter: number;
     volume_lottery: number;
     tx_lottery_count: number;
+    users_lottery: number;
     volume_deposits: number;
     tx_deposits_count: number;
     volume_withdrawals_devnet: number;
@@ -613,6 +623,7 @@ export default function AdminDashboard() {
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
+  const [showAbove5List, setShowAbove5List] = useState(false);
 
   // Keep userId stable in callbacks via ref
   const userIdRef = useRef(userId);
@@ -1895,7 +1906,53 @@ export default function AdminDashboard() {
                       <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.tx_mainnet_success.toLocaleString()}</div>
                       <div className="text-sm text-gray-500 mt-0.5">success · {analyticsData.tx_mainnet_total.toLocaleString()} total</div>
                     </div>
+                    <div className="bg-gray-900 border border-green-900 rounded-lg p-4">
+                      <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Mainnet Tx &gt; $5</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.tx_mainnet_success_above_5.toLocaleString()}</div>
+                      <div className="text-sm text-gray-500 mt-0.5">success, above $5 USDC</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowAbove5List((v) => !v)}
+                      className="bg-gray-900 border border-green-900 rounded-lg p-4 text-left hover:bg-gray-800/60 transition-colors"
+                    >
+                      <div className="text-[10px] text-green-400 uppercase tracking-wider mb-1 font-medium">Unique Users &gt; $5</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.users_mainnet_success_above_5.toLocaleString()}</div>
+                      <div className="text-sm text-gray-500 mt-0.5">distinct senders · {showAbove5List ? "hide list" : "show list"}</div>
+                    </button>
                   </div>
+                  {showAbove5List && (
+                    <div className="overflow-x-auto rounded-xl border border-gray-800 mt-3">
+                      <table className="w-full text-base md:text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
+                            <th className="text-left px-4 py-2.5">#</th>
+                            <th className="text-left px-4 py-2.5">User</th>
+                            <th className="text-center px-3 py-2.5">Payments &gt; $5</th>
+                            <th className="text-right px-4 py-2.5">Total (USDC)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {analyticsData.users_mainnet_success_above_5_list.map((u, i) => (
+                            <tr key={u.privyUserId} className="border-b border-gray-800/60 hover:bg-gray-900/50">
+                              <td className="px-4 py-2.5 text-gray-600 tabular-nums">{i + 1}</td>
+                              <td className="px-4 py-2.5">
+                                <div className="font-medium text-white">{u.username ? `@${u.username}` : "—"}</div>
+                                <div className="text-sm text-gray-500 truncate max-w-[200px]">{u.email ?? u.privyUserId}</div>
+                              </td>
+                              <td className="px-3 py-2.5 text-center tabular-nums text-white">{u.txCount}</td>
+                              <td className="px-4 py-2.5 text-right tabular-nums text-white">
+                                {u.totalAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          ))}
+                          {analyticsData.users_mainnet_success_above_5_list.length === 0 && (
+                            <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-600">No users yet</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
 
                 {/* Lottery / deposits / withdrawals volume */}
@@ -1908,6 +1965,11 @@ export default function AdminDashboard() {
                         {analyticsData.volume_lottery.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <div className="text-sm text-gray-500 mt-0.5">USDC · {analyticsData.tx_lottery_count.toLocaleString()} tickets</div>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                      <div className="text-[10px] text-purple-400 uppercase tracking-wider mb-1 font-medium">Lottery Users</div>
+                      <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.users_lottery.toLocaleString()}</div>
+                      <div className="text-sm text-gray-500 mt-0.5">unique buyers</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                       <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-1 font-medium">Deposit Volume</div>
@@ -2190,11 +2252,13 @@ export default function AdminDashboard() {
                             {u.hasPasskeys ? <span className="text-green-400">✓</span> : <span className="text-gray-700">–</span>}
                           </td>
                           <td className="px-3 py-2.5 text-center">
-                            {u.depositCount >= 2
-                              ? <span className="text-green-400">✓ {u.depositCount}</span>
-                              : u.depositCount > 0
-                                ? <span className="text-amber-400">{u.depositCount}/2</span>
-                                : <span className="text-gray-700">0/2</span>}
+                            {u.depositLookupError
+                              ? <span className="text-red-400" title={`Blink lookup failed: ${u.depositLookupError} — count below is unreliable`}>⚠ {u.depositCount}/2</span>
+                              : u.depositCount >= 2
+                                ? <span className="text-green-400">✓ {u.depositCount}</span>
+                                : u.depositCount > 0
+                                  ? <span className="text-amber-400">{u.depositCount}/2</span>
+                                  : <span className="text-gray-700">0/2</span>}
                           </td>
                           <td className="px-3 py-2.5 text-center">
                             {u.privatePaymentsCount >= 2

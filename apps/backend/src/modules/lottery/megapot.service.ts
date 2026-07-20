@@ -338,9 +338,8 @@ export class MegapotService {
    * tier that day — a number nobody, including Megapot's own live UI, knows before the draw
    * closes. So "the most recent settled round's real numbers" is the closest thing to ground
    * truth that can be shown; a live/projected figure for the still-open round isn't obtainable.
-   * Net figures apply DEFAULT_REFERRAL_WIN_SHARE_FACTOR (the same display-estimate cut used
-   * elsewhere) — an individual ticket's actual claim factor is still read live at payout time via
-   * getWinClaimFactor().
+   * netUsdc mirrors grossUsdc here — no display-estimate cut is applied; an individual ticket's
+   * actual claim factor is still read live at payout time via getWinClaimFactor().
    */
   /** Builds a PrizeTiersSnapshot from a raw settled /rounds/{id} response, or null if unsettled. */
   private buildPrizeTiersSnapshot(round: any, roundId: string): PrizeTiersSnapshot | null {
@@ -356,7 +355,7 @@ export class MegapotService {
         normalMatches,
         bonusMatch,
         grossUsdc: gross,
-        netUsdc: parseFloat((gross * DEFAULT_REFERRAL_WIN_SHARE_FACTOR).toFixed(6)),
+        netUsdc: gross,
         ticketCount: t?.ticket_count ?? 0,
       };
     });
@@ -364,7 +363,7 @@ export class MegapotService {
     return {
       sourceRoundId: roundId,
       settledAt: round.settled_at ?? null,
-      claimFactor: DEFAULT_REFERRAL_WIN_SHARE_FACTOR,
+      claimFactor: 1,
       tiers,
     };
   }

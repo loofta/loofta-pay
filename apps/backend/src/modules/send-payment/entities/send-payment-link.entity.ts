@@ -7,7 +7,7 @@ export type SendPaymentLinkStatus =
   | 'CANCELLED'
   | 'EXPIRED';
 
-export type RecipientType = 'email' | 'twitter' | 'username';
+export type RecipientType = 'email' | 'twitter' | 'username' | 'discord' | 'github' | 'telegram';
 
 export class SendPaymentLink {
   @ApiProperty({ description: 'Send payment link UUID' })
@@ -31,7 +31,7 @@ export class SendPaymentLink {
   @ApiProperty({ description: 'Chain', example: 'solana' })
   chain: string;
 
-  @ApiProperty({ description: 'Recipient identifier type', enum: ['email', 'twitter', 'username'] })
+  @ApiProperty({ description: 'Recipient identifier type', enum: ['email', 'twitter', 'username', 'discord', 'github', 'telegram'] })
   recipient_type: RecipientType;
 
   @ApiProperty({ description: 'Recipient identifier (email or Twitter handle)' })
@@ -73,7 +73,7 @@ export class SendPaymentLinkPublic {
   @ApiProperty()
   chain: string;
 
-  @ApiProperty({ enum: ['email', 'twitter', 'username'] })
+  @ApiProperty({ enum: ['email', 'twitter', 'username', 'discord', 'github', 'telegram'] })
   recipient_type: RecipientType;
 
   @ApiProperty({ enum: ['OPEN', 'FUNDED', 'CLAIMED', 'CANCELLED', 'EXPIRED'] })

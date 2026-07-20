@@ -81,7 +81,7 @@
     "send": "Magpadala",
     "to": "Kay",
     "amountLabel": "Halaga sa USD",
-    "recipientPlaceholder": "Loofta, Twitter username, eksaktong email",
+    "recipientPlaceholder": "Email address",
     "recipientHint": "Loofta o Twitter username, o eksaktong email — inire-claim nila sa pamamagitan ng pag-sign in sa account na iyon.",
     "continue": "Magpatuloy",
     "signInToContinue": "Mag-sign in para magpatuloy",

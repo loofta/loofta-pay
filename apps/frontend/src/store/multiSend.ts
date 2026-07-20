@@ -1,12 +1,16 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+export type MultiSendRecipientType = "email" | "username" | "twitter" | "discord" | "github" | "telegram";
+
 export interface MultiSendRow {
   id: string;
   recipient: string;
   amount: string;
   message: string;
   gif?: string;
+  /** Explicit type picked from the row's selector. Optional so rows persisted before this field existed still load (falls back to "email" at usage sites). */
+  recipientType?: MultiSendRecipientType;
 }
 
 export interface MultiSendLink {
@@ -31,8 +35,8 @@ type MultiSendState = {
 };
 
 const defaultRows = (): MultiSendRow[] => [
-  { id: "ms-row-0", recipient: "", amount: "100", message: "" },
-  { id: "ms-row-1", recipient: "", amount: "100", message: "" },
+  { id: "ms-row-0", recipient: "", amount: "100", message: "", recipientType: "email" },
+  { id: "ms-row-1", recipient: "", amount: "100", message: "", recipientType: "email" },
 ];
 
 export const useMultiSendStore = create<MultiSendState>()(

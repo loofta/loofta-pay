@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, type ReactNode, useMemo } from "react";
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
@@ -11,17 +10,32 @@ import { useMultiSendStore } from "@/store/multiSend";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SendFlowInApp } from "@/components/app/SendFlowInApp";
+import { GradientActionButton } from "@/components/ui/GradientActionButton";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { MultiSendFlow } from "@/components/app/MultiSendFlow";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
+import { MessageInput } from "@/components/MessageInput";
+import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
+import { SOCIAL_PLATFORMS } from "@/lib/socialPlatforms";
+import { createClaimFromEmail } from "@/lib/createClaimFromEmail";
+import { createClaimFromUsername } from "@/lib/createClaimFromUsername";
+import { createClaimFromSocial } from "@/lib/createClaimFromSocial";
 import { motion, AnimatePresence } from "framer-motion";
-import { AtSign, LinkIcon, Mail, PlusIcon } from "lucide-react";
+import { ArrowRight, AtSign, ChevronDown, LinkIcon, Lock, Mail, User, PlusIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { useToast } from "@/components/ui/use-toast";
 
 const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
   () => import("@/app/app/claim/ClaimPageContent").then((mod) => ({ default: mod.ClaimPageContent })),
   { ssr: false }
 );
+
+type SendMethod = "email" | "social" | "username";
+type SocialSendPlatform = SocialIconPlatform;
+const SOCIAL_PICKS: { id: SocialSendPlatform; name: string }[] = [
+  { id: "twitter", name: "Twitter" },
+  ...SOCIAL_PLATFORMS.map((p) => ({ id: p.id as SocialSendPlatform, name: p.name })),
+];
 
 const HOME_TAB_KEY = "loofta.home.tab";
 
@@ -37,7 +51,7 @@ export default function Home() {
   const username = useAuthStore((s) => s.username ?? null);
   const networkMode = useAuthStore((s) => s.networkMode);
   const canMultiSend = true;
-  const { login: privyLogin, getAccessToken } = usePrivy();
+  const { login: privyLogin, getAccessToken, user } = usePrivy();
   const [activeTab, setActiveTabState] = useState<"send" | "receive">(() => {
     const fromUrl = searchParams.get("tab") === "receive" ? "receive" : null;
     if (fromUrl) return fromUrl;
@@ -61,8 +75,6 @@ export default function Home() {
     if (!clean) return;
     setActiveTabState("send");
     setRecipient(clean.replace(/^@+/, ""));
-    setSelectedRecipient(clean);
-    setSendStep(2);
     const amt = searchParams.get("amount");
     if (amt != null && amt !== "" && !isNaN(Number(amt)) && Number(amt) >= 0) setAmount(amt);
   }, [toParam, searchParams]);
@@ -79,30 +91,25 @@ export default function Home() {
     setActiveTabState(tab);
     if (typeof window !== "undefined") localStorage.setItem(HOME_TAB_KEY, tab);
   };
+  const { toast } = useToast();
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
-  const [editingAmount, setEditingAmount] = useState(false);
-  const amountRef = useRef<HTMLInputElement>(null);
-  const [selectedRecipient, setSelectedRecipient] = useState<string | null>(null);
-  const [sendStep, setSendStep] = useState<1 | 2 | 3>(1);
-  const [claimId, setClaimId] = useState<string | null>(null);
+  const [description, setDescription] = useState("");
+  const [gifUrl, setGifUrl] = useState<string | null>(null);
+  /** "SEND TO" pill selection — matches the reference screenshot's Email/Social handle tabs, plus a Loofta username option. */
+  const [sendMethod, setSendMethod] = useState<SendMethod>("email");
+  /** Defaults to Twitter — the most common case — rather than making everyone pick a platform first. */
+  const [socialPlatform, setSocialPlatform] = useState<SocialSendPlatform | null>("twitter");
+  const [creating, setCreating] = useState(false);
   const { showMultiSend, setShowMultiSend } = useMultiSendStore();
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
-  const [dropdownClosed, setDropdownClosed] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [showClaimOverlay, setShowClaimOverlay] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(0);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const searchCacheRef = useRef<Map<string, { usernames: string[]; ts: number }>>(new Map());
-  const SEARCH_CACHE_TTL_MS = 2 * 60 * 1000;
-
-  const searchQuery = recipient.replace(/^@/, "").trim().toLowerCase();
-  const showDropdown = false;
 
   const mirrorRef = useRef<HTMLSpanElement | null>(null);
   const [amountInputWidthPx, setAmountInputWidthPx] = useState<number>(0);
+  const looPrefixMirrorRef = useRef<HTMLSpanElement | null>(null);
+  const [looPrefixWidthPx, setLooPrefixWidthPx] = useState<number>(0);
 
   function sanitizeNumberInput(v: string, maxDecimals: number = 9) {
     let s = String(v || "").replace(/,/g, ".");
@@ -145,7 +152,6 @@ export default function Home() {
   const amountFontPx = computeFontPx(totalDigitsCount);
   const suffixFontPx = Math.max(18, Math.round(amountFontPx * 0.62));
   const amountGapPx = 8;
-  const looksLikeEmail = recipient.includes("@") && recipient.includes(".");
 
   useEffect(() => {
     const el = mirrorRef.current;
@@ -153,6 +159,12 @@ export default function Home() {
     const rect = el.getBoundingClientRect();
     setAmountInputWidthPx(Math.ceil(rect.width));
   }, [displayAmount, amountFontPx]);
+
+  useEffect(() => {
+    const el = looPrefixMirrorRef.current;
+    if (!el) return;
+    setLooPrefixWidthPx(Math.ceil(el.getBoundingClientRect().width));
+  }, [sendMethod]);
 
   const faqItems: { question: string; answer: ReactNode }[] = useMemo(() => [
     {
@@ -240,90 +252,86 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [t]);
 
-  const isExactEmail = (q: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q);
+  const apiCluster = networkMode === "mainnet" ? "mainnet" : "devnet";
+  const minAmountUsd = 5;
+  const amountNum = Number(amount);
+  const canSend =
+    recipient.trim().length > 0 &&
+    !!amount &&
+    Number.isFinite(amountNum) &&
+    amountNum >= minAmountUsd &&
+    (sendMethod !== "social" || !!socialPlatform);
 
-  useEffect(() => {
-    if (searchQuery.length < 2) {
-      setSuggestions([]);
-      return;
-    }
-    const cached = searchCacheRef.current.get(searchQuery);
-    if (cached && Date.now() - cached.ts < SEARCH_CACHE_TTL_MS) {
-      setSuggestions(cached.usernames);
-      return;
-    }
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
-      const cachedAgain = searchCacheRef.current.get(searchQuery);
-      if (cachedAgain && Date.now() - cachedAgain.ts < SEARCH_CACHE_TTL_MS) {
-        setSuggestions(cachedAgain.usernames);
-        return;
-      }
-      setLoadingSuggestions(true);
-      try {
-        if (isExactEmail(searchQuery)) {
-          const token = await getAccessToken().catch(() => null);
-          const r = await fetch(`/api/users/resolve-recipient?q=${encodeURIComponent(searchQuery)}`, {
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
-          });
-          const data = await r.json();
-          const list = data?.username ? [data.username] : [];
-          setSuggestions(list);
-          searchCacheRef.current.set(searchQuery, { usernames: list, ts: Date.now() });
-        } else {
-          const token = await getAccessToken().catch(() => null);
-          const r = await fetch(`/api/users/search-usernames?q=${encodeURIComponent(searchQuery)}`, {
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
-          });
-          const data = await r.json();
-          const list = data.usernames || [];
-          setSuggestions(list);
-          searchCacheRef.current.set(searchQuery, { usernames: list, ts: Date.now() });
-        }
-      } catch {
-        setSuggestions([]);
-      } finally {
-        setLoadingSuggestions(false);
-      }
-    }, 100);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [recipient]);
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setDropdownClosed(true);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const handleSendContinue = async () => {
+  const handleSend = async () => {
     const trimmed = recipient.replace(/^@/, "").trim();
-    if (!trimmed) return;
+    if (!trimmed || !amount) return;
     if (!authenticated) {
       privyLogin({ loginMethods: ["email"], disableSignup: false });
       return;
     }
-    let resolvedUsername = trimmed.toLowerCase();
-    if (trimmed.includes("@")) {
-      try {
-        const token = await getAccessToken().catch(() => null);
-        const r = await fetch(`/api/users/resolve-recipient?q=${encodeURIComponent(trimmed)}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        const data = await r.json();
-        if (data?.username) resolvedUsername = data.username;
-      } catch {
-        // keep
-      }
+    if (amountNum < minAmountUsd) {
+      toast({ variant: "destructive", title: "Invalid amount", description: "Minimum payment amount is $5.00 USDC." });
+      return;
     }
-    setSelectedRecipient(resolvedUsername);
-    setSendStep(2);
-    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
+    setCreating(true);
+    const fullDescription = [description.trim(), gifUrl].filter(Boolean).join(" ").trim() || undefined;
+    try {
+      const accessToken = await getAccessToken();
+      let result: { id: string };
+      if (sendMethod === "social" && socialPlatform && socialPlatform !== "twitter") {
+        result = await createClaimFromSocial({
+          platform: socialPlatform,
+          handle: trimmed,
+          amount,
+          userId: user?.id,
+          accessToken,
+          isPrivate: true,
+          description: fullDescription,
+          cluster: apiCluster,
+        });
+      } else if (sendMethod === "email") {
+        result = await createClaimFromEmail({
+          email: trimmed.toLowerCase(),
+          amount,
+          userId: user?.id,
+          accessToken,
+          isPrivate: true,
+          description: fullDescription,
+          cluster: apiCluster,
+        });
+      } else if (sendMethod === "username") {
+        // "loo-" is a fixed prefix in the UI (recipient state only holds the suffix here).
+        result = await createClaimFromUsername({
+          username: `loo-${trimmed.toLowerCase()}`,
+          amount,
+          userId: user?.id,
+          accessToken,
+          isPrivate: true,
+          description: fullDescription,
+          cluster: apiCluster,
+        });
+      } else {
+        // Twitter handle (resolved via the existing username/twitter_username fallback).
+        result = await createClaimFromUsername({
+          username: trimmed.toLowerCase(),
+          amount,
+          userId: user?.id,
+          accessToken,
+          isPrivate: true,
+          description: fullDescription,
+          cluster: apiCluster,
+        });
+      }
+      router.push(`/c/${result.id}`);
+    } catch (e: unknown) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: e instanceof Error ? e.message : "Failed to create payment",
+      });
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
@@ -339,165 +347,233 @@ export default function Home() {
             <>
               {showMultiSend && canMultiSend ? (
                 <MultiSendFlow onBack={() => { setShowMultiSend(false); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }} />
-              ) : sendStep === 3 && claimId ? (
-                <div className="space-y-4">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setClaimId(null);
-                      setSelectedRecipient(null);
-                      setSendStep(1);
-                    }}
-                    className="text-slate-400 hover:text-white text-base font-medium"
-                  >
-                    {t('newPayment')}
-                  </button>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white space-y-4">
-                    <p className="text-slate-200">{t('paymentCreated')}</p>
-                    <Link
-                      href={`/c/${claimId}`}
-                      className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-6 py-3 text-white font-semibold hover:opacity-90"
-                    >
-                      {t('viewPayment')}
-                    </Link>
-                  </div>
-                </div>
-              ) : selectedRecipient ? (
-                <SendFlowInApp
-                  recipientUsername={selectedRecipient}
-                  initialAmount={amount}
-                  onBack={() => {
-                    setSelectedRecipient(null);
-                    setSendStep(1);
-                    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
-                  }}
-                  onClaimCreated={(id) => {
-                    router.push(`/c/${id}`);
-                  }}
-                />
               ) : (
-                <>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
-                    <div ref={wrapperRef} className="relative">
-                      <div className="flex items-center justify-between mb-5">
-                        <Label className="text-slate-300 text-xl font-sans font-medium">{t('send')}</Label>
-                        {canMultiSend && (
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-slate-300 text-xl font-sans font-medium">{t('send')}</Label>
+                    {canMultiSend && (
+                      <button
+                        type="button"
+                        onClick={() => { setShowMultiSend(true); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
+                        className="text-slate-500 hover:text-slate-300 text-sm font-medium transition-colors"
+                      >
+                        {t('multiSend')}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Amount */}
+                  <div className="rounded-2xl">
+                    <div className="flex items-baseline tabular-nums">
+                      <span
+                        className="font-semibold font-sans text-slate-500 mr-1"
+                        style={{ fontSize: `${suffixFontPx}px`, lineHeight: 1.05 }}
+                      >
+                        $
+                      </span>
+                      <span
+                        ref={mirrorRef}
+                        aria-hidden="true"
+                        className="invisible absolute -z-50 font-sans font-medium tracking-tight tabular-nums"
+                        style={{ fontSize: `${amountFontPx}px`, lineHeight: 1.05 }}
+                      >
+                        {displayAmount}
+                      </span>
+                      <input
+                        inputMode="numeric"
+                        value={amount}
+                        onBeforeInput={(e) => {
+                          const data = (e.nativeEvent as InputEvent).data;
+                          if (data && /[^0-9]/.test(data)) e.preventDefault();
+                        }}
+                        onChange={(e) => {
+                          const cleaned = e.target.value.replace(/[^0-9]/g, "");
+                          e.target.value = cleaned;
+                          onChangeAmount(cleaned);
+                        }}
+                        placeholder="0"
+                        className={[
+                          "text-white placeholder:text-slate-600",
+                          "font-semibold font-sans tracking-tight tabular-nums",
+                          "border-0 bg-transparent outline-none p-0 m-0",
+                        ].join(" ")}
+                        style={{
+                          fontSize: `${amountFontPx}px`,
+                          lineHeight: 1.05,
+                          width: `${Math.max(amountInputWidthPx, Math.round(amountFontPx * 0.6)) + amountGapPx}px`,
+                        }}
+                        aria-label={t('amountLabel')}
+                      />
+                    </div>
+                  </div>
+                  {amountNum > 0 && amountNum < minAmountUsd && (
+                    <p className="text-sm text-amber-400 -mt-3">Min. amount is $5.00 USDC</p>
+                  )}
+
+                  {/* SEND TO pills */}
+                  <div>
+                    <Label className="text-slate-400 text-sm mb-2 block">{t('to')}</Label>
+                    <div className="inline-flex items-center gap-1 p-1 rounded-full bg-white/5 border border-white/10">
+                      {([
+                        { id: "email" as const, label: "Email", icon: Mail },
+                        { id: "social" as const, label: "Social handle", icon: AtSign },
+                        { id: "username" as const, label: "Username", icon: User },
+                      ]).map(({ id, label, icon: Icon }) => (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => setSendMethod(id)}
+                          title={label}
+                          aria-label={label}
+                          className={[
+                            "inline-flex items-center justify-center gap-1.5 h-11 min-w-11 px-4 rounded-full text-sm font-medium transition-colors",
+                            sendMethod === id
+                              ? "bg-white text-[#0f0f12]"
+                              : "text-slate-400 hover:text-white",
+                          ].join(" ")}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          {/* Icon-only on mobile unless selected (keeps tap targets from cramping);
+                              always shown from sm: up, since desktop has plenty of room. */}
+                          <span
+                            className={[
+                              "whitespace-nowrap overflow-hidden transition-all duration-200",
+                              sendMethod === id
+                                ? "max-w-[160px] opacity-100"
+                                : "max-w-0 opacity-0 sm:max-w-[160px] sm:opacity-100",
+                            ].join(" ")}
+                          >
+                            {label}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Input row — for Social handle, the leading icon is a popover trigger (visibly a
+                      control at rest, not just on hover) so picking a platform never adds/removes a
+                      row and shifts this input's position. For Username, "loo-" is a fixed, non-editable
+                      prefix rendered outside the actual input value — it can't be backspaced away since
+                      it was never part of the editable text. */}
+                  <div className="relative">
+                    {sendMethod === "social" ? (
+                      <Popover>
+                        <PopoverTrigger asChild>
                           <button
                             type="button"
-                            onClick={() => { setShowMultiSend(true); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' })); }}
-                            className="text-slate-500 hover:text-slate-300 text-base sm:text-sm font-medium transition-colors"
+                            className="absolute left-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 pl-2 pr-1.5 py-1.5 rounded-lg bg-white/10 border border-white/15 text-slate-200 hover:text-white hover:bg-white/[0.16] transition-colors"
                           >
-                            {t('multiSend')}
+                            {socialPlatform ? (
+                              <SocialPlatformIcon platform={socialPlatform} className="h-4 w-4" />
+                            ) : (
+                              <AtSign className="h-4 w-4" />
+                            )}
+                            <ChevronDown className="h-3 w-3 opacity-70" />
                           </button>
-                        )}
-                      </div>
-
-                      <div className="rounded-2xl mt-3 mb-6">
-                        <span
-                          ref={mirrorRef}
-                          aria-hidden="true"
-                          className="invisible absolute -z-50 font-sans font-medium tracking-tight tabular-nums"
-                          style={{ fontSize: `${amountFontPx}px`, lineHeight: 1.05 }}
-                        >
-                          {displayAmount}
-                        </span>
-
-                        <div className="flex flex-col">
-                          <div className="flex items-baseline tabular-nums">
-                            <input
-                              inputMode="numeric"
-                              value={amount}
-                              onBeforeInput={(e) => {
-                                const data = (e.nativeEvent as InputEvent).data;
-                                if (data && /[^0-9]/.test(data)) e.preventDefault();
-                              }}
-                              onChange={(e) => {
-                                const cleaned = e.target.value.replace(/[^0-9]/g, "");
-                                e.target.value = cleaned;
-                                onChangeAmount(cleaned);
-                              }}
-                              placeholder="0"
+                        </PopoverTrigger>
+                        <PopoverContent align="start" className="w-44 p-1 bg-[#1a1a1f] border-white/10 text-white">
+                          {SOCIAL_PICKS.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => setSocialPlatform(p.id)}
                               className={[
-                                "text-white placeholder:text-slate-600",
-                                "font-semibold font-sans tracking-tight tabular-nums",
-                                "border-0 bg-transparent outline-none p-0 m-0 text-center",
+                                "w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors",
+                                socialPlatform === p.id ? "bg-white/10 text-white" : "text-slate-300 hover:text-white hover:bg-white/[0.06]",
                               ].join(" ")}
-                              style={{
-                                fontSize: `${amountFontPx}px`,
-                                lineHeight: 1.05,
-                                width: `${Math.max(amountInputWidthPx, Math.round(amountFontPx * 0.6)) + amountGapPx}px`,
-                              }}
-                              aria-label={t('amountLabel')}
-                            />
-                            <span
-                              className="font-semibold font-sans text-slate-500 ml-1"
-                              style={{ fontSize: `${suffixFontPx}px`, lineHeight: 1.05 }}
                             >
-                              USD
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <Label className="text-slate-300 text-xl font-sans font-medium">{t('to')}</Label>
-                      <div className="relative mt-3">
+                              <SocialPlatformIcon platform={p.id} className="h-4 w-4 shrink-0" />
+                              {p.name}
+                            </button>
+                          ))}
+                        </PopoverContent>
+                      </Popover>
+                    ) : sendMethod === "username" ? (
+                      <>
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
-                          {looksLikeEmail ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
+                          <AtSign className="h-4 w-4" />
                         </span>
-                        <Input
-                          type="text"
-                          name="send-to-recipient"
-                          placeholder={t('recipientPlaceholder')}
-                          value={recipient}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            const trimmed = raw.replace(/^@+/, "").trimStart();
-                            setRecipient(trimmed);
-                          }}
-                          autoComplete="off"
-                          className="h-12 pl-10 mb-2 bg-white/5 border-white/10 text-white text-md placeholder:text-slate-500 placeholder:text-[14px] sm:placeholder:text-[20px]"
+                        <span
+                          ref={looPrefixMirrorRef}
+                          aria-hidden="true"
+                          className="invisible absolute -z-50 font-medium whitespace-pre"
                           style={{ fontSize: `20px` }}
-                        />
-                      </div>
-                      {showDropdown && (
-                        <ul className="absolute z-50 top-full left-0 right-0 mt-1 rounded-xl border border-white/10 bg-[#1a1a1f] py-1 shadow-lg max-h-48 overflow-auto">
-                          {loadingSuggestions ? (
-                            <li className="px-3 py-2 text-slate-300 text-sm">{t('searching')}</li>
-                          ) : suggestions.length > 0 ? (
-                            suggestions.map((u) => (
-                              <li key={u}>
-                                <button
-                                  type="button"
-                                  className="w-full text-left px-3 py-2 text-white hover:bg-white/10 text-sm"
-                                  onClick={() => {
-                                    setRecipient(u);
-                                    setDropdownClosed(true);
-                                  }}
-                                >
-                                  <span>@{u}</span>
-                                  {suggestions.length === 1 && isExactEmail(searchQuery) && (
-                                    <span className="text-slate-400 text-sm ml-1">{t('fromEmail')}</span>
-                                  )}
-                                </button>
-                              </li>
-                            ))
-                          ) : (
-                            <li className="px-3 py-2 text-slate-400 text-sm">{t('noUsersFound')}</li>
-                          )}
-                        </ul>
-                      )}
-                      <p className="text-base sm:text-sm text-slate-400 mt-0.5 mb-1.5">
-                        {t('recipientHint')}
-                      </p>
-                    </div>
-                    <Button
-                      onClick={handleSendContinue}
-                      disabled={!recipient.trim()}
-                      className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-                    >
-                      {authenticated ? t('continue') : t('signInToContinue')}
-                    </Button>
+                        >
+                          loo-
+                        </span>
+                        <span
+                          className="absolute left-10 top-1/2 -translate-y-1/2 text-white font-medium select-none pointer-events-none"
+                          style={{ fontSize: `20px` }}
+                        >
+                          loo-
+                        </span>
+                      </>
+                    ) : (
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                        <Mail className="h-4 w-4" />
+                      </span>
+                    )}
+                    <Input
+                      type="text"
+                      name="send-to-recipient"
+                      placeholder={
+                        sendMethod === "email"
+                          ? t('recipientPlaceholder')
+                          : sendMethod === "username"
+                            ? "Loofta username"
+                            : socialPlatform
+                              ? `${SOCIAL_PICKS.find((p) => p.id === socialPlatform)?.name ?? ""} username`
+                              : "Pick a platform"
+                      }
+                      value={recipient}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const trimmed = sendMethod === "username"
+                          ? raw.replace(/^loo-/, "").replace(/[^a-z0-9_-]/gi, "")
+                          : raw.replace(/^@+/, "").trimStart();
+                        setRecipient(trimmed);
+                      }}
+                      autoComplete="off"
+                      className={[
+                        "h-12 bg-white/5 border-white/10 text-white text-md placeholder:text-slate-500 placeholder:text-[20px]",
+                        sendMethod === "social" ? "pl-16" : sendMethod === "username" ? "" : "pl-10",
+                      ].join(" ")}
+                      style={
+                        sendMethod === "username"
+                          ? { fontSize: `20px`, paddingLeft: `${40 + looPrefixWidthPx}px` }
+                          : { fontSize: `20px` }
+                      }
+                    />
                   </div>
-                </>
+
+                  <div>
+                    <Label className="text-slate-400 text-sm">Message (optional)</Label>
+                    <MessageInput
+                      value={description}
+                      onChange={setDescription}
+                      placeholder="Add a message..."
+                      maxLength={500}
+                      gifUrl={gifUrl}
+                      onGifChange={setGifUrl}
+                      className="mt-1.5 [&_input]:h-11 [&_input]:bg-white/5 [&_input]:border-white/10 [&_input]:text-white [&_input]:text-[20px] [&_input]:placeholder:text-slate-500 [&_input]:placeholder:text-[20px]"
+                    />
+                  </div>
+
+                  <GradientActionButton
+                    onClick={authenticated ? handleSend : () => privyLogin({ loginMethods: ["email"], disableSignup: false })}
+                    disabled={authenticated && (!canSend || creating)}
+                    loading={creating}
+                    loadingText="Creating payment…"
+                  >
+                    {authenticated ? (
+                      <>Send privately <ArrowRight className="h-4 w-4" /></>
+                    ) : t('signInToContinue')}
+                  </GradientActionButton>
+                  <p className="flex items-center justify-center gap-1.5 text-sm text-slate-500 -mt-2">
+                    <Lock className="h-3.5 w-3.5" />
+                    Shielded transfer · they don&apos;t need an account yet
+                  </p>
+                </div>
               )}
             </>
           )}

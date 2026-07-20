@@ -110,4 +110,8 @@ export class SupabaseService implements OnModuleInit {
   get forceUpdate() {
     return this.client.from('force_update');
   }
+
+  get socialAccounts() {
+    return this.client.from('social_accounts');
+  }
 }

@@ -81,7 +81,7 @@
     "send": "Gửi",
     "to": "Đến",
     "amountLabel": "Số tiền USD",
-    "recipientPlaceholder": "Loofta, tên người dùng Twitter, email chính xác",
+    "recipientPlaceholder": "Địa chỉ email",
     "recipientHint": "Tên người dùng Loofta hoặc Twitter, hoặc email chính xác — họ nhận bằng cách đăng nhập vào tài khoản đó.",
     "continue": "Tiếp tục",
     "signInToContinue": "Đăng nhập để tiếp tục",

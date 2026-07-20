@@ -81,7 +81,7 @@
     "send": "Invia",
     "to": "A",
     "amountLabel": "Importo in USD",
-    "recipientPlaceholder": "Loofta, nome utente Twitter, email esatta",
+    "recipientPlaceholder": "Indirizzo email",
     "recipientHint": "Nome utente Loofta o Twitter, o email esatta — reclamano accedendo con quell'account.",
     "continue": "Continua",
     "signInToContinue": "Accedi per continuare",

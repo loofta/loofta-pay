@@ -6,6 +6,8 @@ import { extractChainsFromAssets } from "@/lib/assetUtils";
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
+/** Must match ClaimsService.PENDING_SOCIAL_PREFIX (backend claims.service.ts). Format: PENDING_SOCIAL:<platform>:<handle> */
+const PENDING_SOCIAL_PREFIX = "PENDING_SOCIAL:";
 /** Must match ClaimsService.RECIPIENT_CLAIM_LOCK_TTL_MS (backend claims.service.ts). */
 const RECIPIENT_CLAIM_LOCK_TTL_MS = 5 * 60_000;
 
@@ -117,10 +119,25 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
   const requestingUserId = await getVerifiedUserId(request);
 
+  // Lets a viewer who isn't (yet) confirmed as the recipient know *which* sign-in method or
+  // platform this payment is pending on — without revealing the actual pending email/handle —
+  // so the UI can prompt "sign in with Discord" / "connect your GitHub" instead of a dead end.
+  function pendingLoginHint(ra: string): { pendingEmail: boolean; pendingSocialPlatform: string | null } | null {
+    if (ra.startsWith(PENDING_EMAIL_PREFIX)) return { pendingEmail: true, pendingSocialPlatform: null };
+    if (ra.startsWith(PENDING_SOCIAL_PREFIX)) {
+      const rest = ra.slice(PENDING_SOCIAL_PREFIX.length);
+      const sep = rest.indexOf(":");
+      const platform = sep >= 0 ? rest.slice(0, sep).trim() : null;
+      return { pendingEmail: false, pendingSocialPlatform: platform };
+    }
+    return null;
+  }
+
   if (!isPublicPaymentRequest) {
     // Authentication required for from_sender payments.
     if (!requestingUserId) {
-      return NextResponse.json({ error: "Authentication required to view this payment." }, { status: 403 });
+      const hint = pendingLoginHint(String(rawPayment?.recipient_address ?? "").trim());
+      return NextResponse.json({ error: "Authentication required to view this payment.", ...hint }, { status: 403 });
     }
 
     // Access control: only the creator or the intended recipient may view a claim.
@@ -131,7 +148,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
       // For PENDING_EMAIL/USERNAME claims the recipient_user_id is null (unregistered user).
       // Delegate identity check to the backend which has full Privy linked-account access.
       const ra = String(rawPayment?.recipient_address ?? "").trim();
-      const isPendingIdentity = ra.startsWith(PENDING_EMAIL_PREFIX) || ra.startsWith(PENDING_USERNAME_PREFIX);
+      const isPendingIdentity = ra.startsWith(PENDING_EMAIL_PREFIX) || ra.startsWith(PENDING_USERNAME_PREFIX) || ra.startsWith(PENDING_SOCIAL_PREFIX);
       if (isPendingIdentity) {
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
         const authHeader = request.headers.get("authorization");
@@ -145,11 +162,11 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
           });
           const checkData = checkRes.ok ? await checkRes.json().catch(() => ({})) : {};
           if (!checkData?.isRecipient) {
-            return NextResponse.json({ error: "Payment not found." }, { status: 404 });
+            return NextResponse.json({ error: "Payment not found.", ...pendingLoginHint(ra) }, { status: 404 });
           }
           // isRecipient confirmed — fall through to return the claim
         } catch {
-          return NextResponse.json({ error: "Payment not found." }, { status: 404 });
+          return NextResponse.json({ error: "Payment not found.", ...pendingLoginHint(ra) }, { status: 404 });
         }
       } else {
         return NextResponse.json({ error: "Payment not found." }, { status: 404 });
@@ -208,6 +225,14 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     claim.recipient_address = undefined;
     claim.recipient_pending_username = true;
     claim.recipient_pending_username_value = ra.slice(PENDING_USERNAME_PREFIX.length).trim();
+    if (burner) claim.claim_burner_address = burner;
+  } else if (ra.startsWith(PENDING_SOCIAL_PREFIX)) {
+    claim.recipient_address = undefined;
+    claim.recipient_pending_social = true;
+    const rest = ra.slice(PENDING_SOCIAL_PREFIX.length);
+    const sep = rest.indexOf(":");
+    claim.recipient_pending_social_platform = sep >= 0 ? rest.slice(0, sep).trim() : null;
+    claim.recipient_pending_social_value = sep >= 0 ? rest.slice(sep + 1).trim() : rest.trim();
     if (burner) claim.claim_burner_address = burner;
   } else if (ra) {
     claim.recipient_is_registered = true;

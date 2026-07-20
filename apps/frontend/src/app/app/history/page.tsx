@@ -12,6 +12,8 @@ import { useTranslations, useLocale } from "next-intl";
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
+/** Must match ClaimsService.PENDING_SOCIAL_PREFIX (backend claims.service.ts). Format: PENDING_SOCIAL:<platform>:<handle> */
+const PENDING_SOCIAL_PREFIX = "PENDING_SOCIAL:";
 
 export type PaymentHistoryClaim = {
   id: string;
@@ -58,6 +60,13 @@ function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string 
   const ra = (claim.recipient_address || "").trim();
   if (ra.startsWith(PENDING_USERNAME_PREFIX)) return `@${ra.slice(PENDING_USERNAME_PREFIX.length).trim()}`;
   if (ra.startsWith(PENDING_EMAIL_PREFIX)) return ra.slice(PENDING_EMAIL_PREFIX.length).trim();
+  if (ra.startsWith(PENDING_SOCIAL_PREFIX)) {
+    const rest = ra.slice(PENDING_SOCIAL_PREFIX.length);
+    const sep = rest.indexOf(":");
+    const platform = sep >= 0 ? rest.slice(0, sep).trim() : null;
+    const handle = (sep >= 0 ? rest.slice(sep + 1) : rest).trim();
+    return platform ? `@${handle} on ${platform}` : `@${handle}`;
+  }
   if (claim.recipient_email) return claim.recipient_email;
   return anonymous;
 }

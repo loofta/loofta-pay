@@ -81,7 +81,7 @@
     "send": "Enviar",
     "to": "Para",
     "amountLabel": "Valor em USD",
-    "recipientPlaceholder": "Usuário do Loofta, Twitter ou e-mail exato",
+    "recipientPlaceholder": "Endereço de e-mail",
     "recipientHint": "Usuário do Loofta ou Twitter, ou e-mail exato — eles resgatam entrando com essa conta.",
     "continue": "Continuar",
     "signInToContinue": "Entre para continuar",

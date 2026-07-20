@@ -82,9 +82,13 @@ async function renderImage(preview: NonNullable<Awaited<ReturnType<typeof getSha
   const { displayMedium, displayBold, groteskMedium, groteskBold } = await loadFonts();
   const amount = preview.amount_usd % 1 === 0 ? `$${preview.amount_usd}` : `$${preview.amount_usd.toFixed(2)}`;
   const senderLabel = preview.sender_username ? `@${preview.sender_username}` : "Someone";
-  const recipientLabel = preview.recipient_username ? `@${preview.recipient_username}` : "someone";
+  const recipientLabel = preview.recipient_username
+    ? `@${preview.recipient_username}`
+    : preview.recipient_social_handle
+      ? `@${preview.recipient_social_handle}`
+      : "someone";
   const senderInitial = (preview.sender_username || "?")[0]!.toUpperCase();
-  const recipientInitial = (preview.recipient_username || "?")[0]!.toUpperCase();
+  const recipientInitial = (preview.recipient_username || preview.recipient_social_handle || "?")[0]!.toUpperCase();
   const isPaid = PAID_STATUSES.has(preview.status);
 
   const avatar = (initial: string, background: string) => (

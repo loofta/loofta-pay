@@ -14,7 +14,7 @@ import {
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import { SupabaseService } from '@/database/supabase.service';
-import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto } from './dto';
+import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto, CreateClaimFromSocialDto } from './dto';
 import { Claim, ClaimIntent, ClaimStatus } from './entities/claim.entity';
 import { UsersService } from '../users/users.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
@@ -268,14 +268,132 @@ export class ClaimsService {
     return { id, short_id: claim.short_id ?? null, link };
   }
 
+  /**
+   * Create a claim addressed to a Discord/GitHub/Telegram handle. Mirrors createFromUsername:
+   * pay the connected user's wallet directly if the handle is already linked (social_accounts),
+   * otherwise fall back to a pending burner claim they can claim once they connect that handle.
+   */
+  async createFromSocial(dto: CreateClaimFromSocialDto): Promise<{ id: string; short_id: string | null; link: string }> {
+    const { platform, handle, amount, userId, isPrivate = false, description, cluster } = dto;
+    const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
+    const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
+    const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    if (!cleanHandle) throw new BadRequestException('A valid handle is required.');
+
+    let recipientAddress: string;
+    let requiresPrivate = false;
+    let finalIsPrivate = isPrivate;
+
+    try {
+      const user = await this.usersService.findBySocialHandle(platform, cleanHandle);
+      if (!isDevnet && !(await this.usersService.hasCompletedMainnetWalletUpdate(user.privyUserId))) {
+        throw new BadRequestException(
+          "This recipient is registered but hasn't updated Loofta to mainnet yet. Ask them to open Loofta and complete the update, then try sending again.",
+        );
+      }
+      requiresPrivate = user.requirePrivatePayments || false;
+      finalIsPrivate = requiresPrivate ? true : isPrivate;
+      if (requiresPrivate && !isPrivate) {
+        throw new BadRequestException(
+          'This user requires private payments only. Please enable privacy when creating the payment link.'
+        );
+      }
+      recipientAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
+
+      const { data: claim, error: claimError } = await this.supabaseService.payments
+        .insert({
+          amount: Number(amount),
+          direction: 'from_sender',
+          recipient_address: recipientAddress,
+          recipient_username: user.username ?? null,
+          recipient_user_id: user.privyUserId,
+          created_by: userId ? String(userId) : null,
+          status: 'OPEN',
+          description: description || null,
+          to_chain: 'solana',
+          to_token: 'USDC',
+          is_devnet: isDevnet,
+          short_id: generateShortId(),
+        })
+        .select('id, short_id')
+        .single();
+
+      if (claimError) {
+        this.logger.error('Error creating claim:', claimError);
+        throw new BadRequestException('Failed to create claim');
+      }
+
+      const id = claim.id;
+      const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
+      this.logger.log(`Created claim from ${platform}: ${id} for @${cleanHandle} (private: ${finalIsPrivate}, required: ${requiresPrivate})`);
+      return { id, short_id: claim.short_id ?? null, link };
+    } catch (err: unknown) {
+      if (err instanceof BadRequestException) throw err;
+      if (!(err instanceof NotFoundException)) throw err;
+      // Handle not connected to any Loofta account yet: create "burner" claim so they can
+      // claim later once they connect this platform.
+    }
+
+    recipientAddress = `${ClaimsService.PENDING_SOCIAL_PREFIX}${platform}:${cleanHandle}`;
+    const burner = this.createClaimBurner();
+    if (!burner) {
+      this.logger.warn('Creating pending-social claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Pay-with-Loofta will fail until the key is set.');
+    }
+
+    const { data: claim, error: claimError } = await this.supabaseService.payments
+      .insert({
+        amount: Number(amount),
+        direction: 'from_sender',
+        recipient_address: recipientAddress,
+        created_by: userId ? String(userId) : null,
+        status: 'OPEN',
+        description: description || null,
+        to_chain: 'solana',
+        to_token: 'USDC',
+        is_devnet: isDevnet,
+        recipient_was_unregistered: true,
+        short_id: generateShortId(),
+        ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
+      })
+      .select('id, short_id')
+      .single();
+
+    if (claimError) {
+      this.logger.error('Error creating claim from social handle (pending):', claimError);
+      throw new BadRequestException('Failed to create claim');
+    }
+
+    const id = claim.id;
+    const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
+    this.logger.log(`Created claim from ${platform} (pending): ${id} for @${cleanHandle} – they can claim once they connect this platform${burner ? ' (unique burner)' : ''}`);
+    return { id, short_id: claim.short_id ?? null, link };
+  }
+
   /** Sentinel prefix for claims created by email when recipient has no account yet; they claim by signing in with that email */
   static readonly PENDING_EMAIL_PREFIX = 'PENDING_EMAIL:';
   /** Sentinel prefix for claims when username doesn't exist yet; they claim by signing up with that username */
   static readonly PENDING_USERNAME_PREFIX = 'PENDING_USERNAME:';
+  /** Sentinel prefix for claims addressed to a Discord/GitHub/Telegram handle with no connected account yet. Format: PENDING_SOCIAL:<platform>:<handle> */
+  static readonly PENDING_SOCIAL_PREFIX = 'PENDING_SOCIAL:';
 
   private isPendingRecipientAddress(addr?: string | null): boolean {
     const v = (addr || '').trim();
-    return v.startsWith(ClaimsService.PENDING_EMAIL_PREFIX) || v.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
+    return (
+      v.startsWith(ClaimsService.PENDING_EMAIL_PREFIX) ||
+      v.startsWith(ClaimsService.PENDING_USERNAME_PREFIX) ||
+      v.startsWith(ClaimsService.PENDING_SOCIAL_PREFIX)
+    );
+  }
+
+  /** Parses "PENDING_SOCIAL:<platform>:<handle>" into its parts, or null if malformed. */
+  private parsePendingSocialAddress(addr: string): { platform: 'discord' | 'github' | 'telegram'; handle: string } | null {
+    const rest = addr.slice(ClaimsService.PENDING_SOCIAL_PREFIX.length);
+    const sep = rest.indexOf(':');
+    if (sep < 0) return null;
+    const platform = rest.slice(0, sep).trim();
+    const handle = rest.slice(sep + 1).trim().toLowerCase();
+    if (!handle || !['discord', 'github', 'telegram'].includes(platform)) return null;
+    return { platform: platform as 'discord' | 'github' | 'telegram', handle };
   }
 
   /**
@@ -742,6 +860,23 @@ export class ClaimsService {
       }
       if (burnerAddr) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = burnerAddr;
     }
+    // Mask pending-social claims: expose flag + platform + handle so UI can show "Claim as @handle on Discord"
+    else if (claim.recipient_address?.startsWith(ClaimsService.PENDING_SOCIAL_PREFIX)) {
+      const parsed = this.parsePendingSocialAddress(claim.recipient_address);
+      (claim as Claim & { recipient_address?: string }).recipient_address = undefined;
+      (claim as Claim & { recipient_pending_social?: boolean }).recipient_pending_social = true;
+      (claim as Claim & { recipient_pending_social_platform?: string | null }).recipient_pending_social_platform = parsed?.platform ?? null;
+      (claim as Claim & { recipient_pending_social_value?: string | null }).recipient_pending_social_value = parsed?.handle ?? null;
+      const claimWithBurner = claim as unknown as { claim_burner_address?: string | null };
+      this.logger.log(
+        `[findOne] Pending-social claim ${id}: burner=${claimWithBurner.claim_burner_address ? 'present' : 'missing'}`,
+      );
+      let burnerAddr = claimWithBurner.claim_burner_address?.trim() || null;
+      if (!burnerAddr) {
+        burnerAddr = await this.backfillBurnerForClaim(id);
+      }
+      if (burnerAddr) (claim as Claim & { claim_burner_address?: string }).claim_burner_address = burnerAddr;
+    }
     else if (claim.recipient_address?.trim()) {
       (claim as Claim & { recipient_is_registered?: boolean }).recipient_is_registered = true;
       const claimWithBurner = claim as unknown as { claim_burner_address?: string | null };
@@ -961,11 +1096,7 @@ export class ClaimsService {
   ): string {
     const ra = (claim.recipient_address || '').trim();
     const burner = (claim.claim_burner_address || '').trim();
-    if (
-      ra &&
-      !ra.startsWith(ClaimsService.PENDING_EMAIL_PREFIX) &&
-      !ra.startsWith(ClaimsService.PENDING_USERNAME_PREFIX)
-    ) {
+    if (ra && !this.isPendingRecipientAddress(ra)) {
       return ra;
     }
     return burner;
@@ -1008,6 +1139,16 @@ export class ClaimsService {
       );
       return { isRecipient: matchesTwitter };
     }
+    if (recipientAddress.startsWith(ClaimsService.PENDING_SOCIAL_PREFIX)) {
+      const parsed = this.parsePendingSocialAddress(recipientAddress);
+      if (!parsed) return { isRecipient: false };
+      const matches = await this.usersService.verifyRecipientIdentityForSendPayment(
+        privyUserId,
+        parsed.platform,
+        parsed.handle,
+      );
+      return { isRecipient: matches };
+    }
     try {
       const userWallet = await this.usersService.getSolanaWalletAddress(privyUserId);
       return { isRecipient: userWallet.trim().toLowerCase() === recipientAddress.trim().toLowerCase() };
@@ -1036,9 +1177,10 @@ export class ClaimsService {
     const ra = (claim.recipient_address || '').trim();
     const isPendingEmail = ra.startsWith(ClaimsService.PENDING_EMAIL_PREFIX);
     const isPendingUsername = ra.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
+    const isPendingSocial = ra.startsWith(ClaimsService.PENDING_SOCIAL_PREFIX);
     // Also allow registered recipients (real wallet stored, burner used as intermediary)
-    const isRegisteredRecipient = !isPendingEmail && !isPendingUsername && !!ra;
-    if (!isPendingEmail && !isPendingUsername && !isRegisteredRecipient) {
+    const isRegisteredRecipient = !isPendingEmail && !isPendingUsername && !isPendingSocial && !!ra;
+    if (!isPendingEmail && !isPendingUsername && !isPendingSocial && !isRegisteredRecipient) {
       throw new BadRequestException('This payment is not pending claim or has already been claimed.');
     }
     const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
@@ -1055,7 +1197,7 @@ export class ClaimsService {
     // in the window between reading `ra` above and committing the resolved wallet below (the
     // sweep call this guards can run for up to BURNER_INBOUND_INLINE_MAX_MS). Only pending
     // (unregistered) recipients are lockable/editable — registered recipients skip this.
-    const usesRecipientLock = isPendingEmail || isPendingUsername;
+    const usesRecipientLock = isPendingEmail || isPendingUsername || isPendingSocial;
     let recipientLockHeld = false;
     if (usesRecipientLock) {
       const lockCutoff = this.recipientClaimLockStaleCutoffIso();
@@ -1084,7 +1226,7 @@ export class ClaimsService {
       const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
 
       // Sweep didn't throw — safe to commit the resolved wallet to DB.
-      if (isPendingEmail || isPendingUsername) {
+      if (isPendingEmail || isPendingUsername || isPendingSocial) {
         const { error } = await this.updateRow(
           claimId,
           { recipient_address: wallet.trim(), recipient_user_id: privyUserId },

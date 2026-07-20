@@ -81,7 +81,7 @@
     "send": "Kirim",
     "to": "Ke",
     "amountLabel": "Jumlah dalam USD",
-    "recipientPlaceholder": "Loofta, username Twitter, email tepat",
+    "recipientPlaceholder": "Alamat email",
     "recipientHint": "Username Loofta atau Twitter, atau email tepat — mereka mengklaim dengan masuk menggunakan akun tersebut.",
     "continue": "Lanjutkan",
     "signInToContinue": "Masuk untuk melanjutkan",
