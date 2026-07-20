@@ -76,6 +76,8 @@ import {
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
+import { TELEGRAM_SEND_ENABLED } from "@/lib/socialPlatforms";
+import { GhostGlyph } from "@/components/GhostGlyph";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
 function formatPerTransferStepName(step: string): string {
@@ -98,18 +100,6 @@ function formatPerTransferStepName(step: string): string {
 /** When embedInApp: only the pay content in a dark card (no tabs, no full page). When false: full page with SendReceiveTabs and white card. */
 /** Claim-to-external-wallet is built but disabled for now — flip to re-enable. */
 const SHOW_EXTERNAL_CLAIM = false;
-const GHOST_PATH =
-  "M12 2C7.58 2 4 5.58 4 10v9.5c0 .5.5.8.9.5l1.6-1.2c.3-.2.7-.2 1 0l1.5 1.1c.3.2.7.2 1 0l1.5-1.1c.3-.2.7-.2 1 0l1.5 1.1c.3.2.7.2 1 0l1.6-1.2c.4-.3.9 0 .9.5V10c0-4.42-3.58-8-8-8z";
-
-function GhostGlyph({ size, opacity }: { size: number; opacity: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" style={{ opacity }} className="drop-shadow-[0_4px_14px_rgba(217,119,6,0.6)]">
-      <path d={GHOST_PATH} fill="#fef3c7" />
-      <ellipse cx="9" cy="10.2" rx="1.1" ry="1.5" fill="#78350f" />
-      <ellipse cx="15" cy="10.2" rx="1.1" ry="1.5" fill="#78350f" />
-    </svg>
-  );
-}
 
 /** Confetti-style burst of our own ghost SVG rising from the bottom of the screen — used instead
  *  of canvas-confetti's shapeFromText, which silently draws nothing (no error) if the browser's
@@ -278,7 +268,9 @@ const EDIT_RECIPIENT_KIND_OPTIONS: { id: EditRecipientKind; label: string; icon:
   { id: "twitter", label: "Twitter", icon: "twitter" },
   { id: "discord", label: "Discord", icon: "discord" },
   { id: "github", label: "GitHub", icon: "github" },
-  { id: "telegram", label: "Telegram", icon: "telegram" },
+  // Telegram login is currently broken in production — hidden from this picker until fixed.
+  // Editing an EXISTING telegram-pending claim to a different type still works fine either way.
+  ...(TELEGRAM_SEND_ENABLED ? [{ id: "telegram" as const, label: "Telegram", icon: "telegram" as const }] : []),
 ];
 
 function EditRecipientKindIcon({ icon, className }: { icon: "user" | "mail" | SocialIconPlatform; className?: string }) {
@@ -2308,6 +2300,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     !isRecipient &&
     !isCheckingRecipient &&
     !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase());
+  /** Same ghost + glow card treatment, mirrored for the recipient's side: viewing a payment that
+   *  was genuinely sent privately (claim.is_private), whether still pending claim or already
+   *  claimed — the "someone went out of their way to hide this from the public chain" fact is
+   *  true for the whole time the recipient looks at it, not just while the sender is paying. */
+  const showingPrivateRecipientView = !!claim && claim.is_private === true && isRecipient;
 
   // Sync the toggle to the claim's declared privacy preference once it loads: forced on when
   // the claim requires private payments, forced off when the creator explicitly asked for a
@@ -3443,7 +3440,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       <ClaimPayLayout
         embedInApp={embedInApp}
         from={from}
-        incognito={showingPrivatePayForm}
+        incognito={showingPrivatePayForm || showingPrivateRecipientView}
         topRight={
           user?.id && claim?.created_by === user.id && ["OPEN", "PENDING_DEPOSIT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
             <>
@@ -4245,12 +4242,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     ? `@${claim.creator_username}`
                     : claim?.creator_email || "Anonymous"}
                 </div>
-                {claim?.is_private && (
-                  <div className="flex items-center justify-center gap-1.5 -mt-3 mb-5 text-base md:text-sm text-amber-400/90">
-                    <GhostGlyph size={16} opacity={0.9} />
-                    <span>Sent privately</span>
-                  </div>
-                )}
                 <div className="flex items-center justify-center gap-2 text-base md:text-sm mb-4">
                   {burnerIsChecking ? (
                     <>

@@ -34,6 +34,7 @@ import { PlusIcon, XIcon, CheckCircle2, Check, Copy, ExternalLink, Loader2, Arro
 import { MessageInput } from "@/components/MessageInput";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
+import { TELEGRAM_SEND_ENABLED } from "@/lib/socialPlatforms";
 import type { MultiSendRecipientType } from "@/store/multiSend";
 
 type ConfirmFeeData = {
@@ -74,7 +75,8 @@ const RECIPIENT_TYPE_OPTIONS: { id: MultiSendRecipientType; label: string; icon:
   { id: "twitter", label: "Twitter", icon: "twitter" },
   { id: "discord", label: "Discord", icon: "discord" },
   { id: "github", label: "GitHub", icon: "github" },
-  { id: "telegram", label: "Telegram", icon: "telegram" },
+  // Telegram login is currently broken in production — hidden from this picker until fixed.
+  ...(TELEGRAM_SEND_ENABLED ? [{ id: "telegram" as const, label: "Telegram", icon: "telegram" as const }] : []),
 ];
 
 function RecipientTypeIcon({ icon, className }: { icon: "user" | "mail" | SocialIconPlatform; className?: string }) {
